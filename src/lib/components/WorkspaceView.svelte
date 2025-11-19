@@ -1,5 +1,38 @@
 <script lang="ts">
   import { projects, activeProjectId } from '$lib/stores/projects';
+  import { tick } from 'svelte';
+
+  // Store iframe references
+  const iframeElements = new Map<string, HTMLIFrameElement>();
+
+  // Focus the active iframe whenever it changes
+  $: {
+    if ($activeProjectId) {
+      focusActiveIframe($activeProjectId);
+    }
+  }
+
+  async function focusActiveIframe(projectId: string) {
+    // Wait for DOM update
+    await tick();
+    const iframe = iframeElements.get(projectId);
+    if (iframe) {
+      // Small delay to ensure iframe is fully rendered and visible
+      setTimeout(() => {
+        iframe.focus();
+      }, 100);
+    }
+  }
+
+  function handleIframeElement(node: HTMLIFrameElement, projectId: string) {
+    iframeElements.set(projectId, node);
+
+    return {
+      destroy() {
+        iframeElements.delete(projectId);
+      },
+    };
+  }
 </script>
 
 <div class="workspace-view">
@@ -11,6 +44,7 @@
   {:else}
     {#each $projects as project (project.id)}
       <iframe
+        use:handleIframeElement={project.id}
         src={project.url}
         title={project.name}
         class="workspace-iframe"
@@ -24,7 +58,7 @@
   .workspace-view {
     flex: 1;
     height: 100vh;
-    background: var(--vscode-editor-background);
+    background: var(--vscode-editor-background, #1e1e1e);
     position: relative;
   }
 
@@ -48,7 +82,7 @@
     justify-content: center;
     height: 100%;
     gap: 16px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--vscode-descriptionForeground, #ababab);
   }
 
   .empty-state p {

@@ -20,12 +20,13 @@
 
 <style>
   .sidebar {
-    width: clamp(200px, 20vw, 400px);
+    width: clamp(150px, 13vw, 280px);
     height: 100vh;
-    background: var(--vscode-sideBar-background);
+    background: var(--vscode-sideBar-background, #252526);
+    color: var(--vscode-sideBar-foreground, #cccccc);
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--vscode-sideBar-border);
+    border-right: 1px solid var(--vscode-sideBar-border, #3e3e42);
   }
 
   .header {
@@ -37,7 +38,7 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: var(--vscode-sideBarTitle-foreground);
+    color: var(--vscode-sideBarTitle-foreground, #bbbbbb);
     text-transform: uppercase;
   }
 

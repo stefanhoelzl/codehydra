@@ -36,17 +36,17 @@
     gap: 8px;
     padding: 6px 12px;
     cursor: pointer;
-    color: var(--vscode-sideBar-foreground);
+    color: var(--vscode-sideBar-foreground, #cccccc);
     user-select: none;
   }
 
   .project-item:hover {
-    background: var(--vscode-list-hoverBackground);
+    background: var(--vscode-list-hoverBackground, #2a2d2e);
   }
 
   .project-item.active {
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground);
+    background: var(--vscode-list-activeSelectionBackground, #04395e);
+    color: var(--vscode-list-activeSelectionForeground, #ffffff);
   }
 
   .icon {
@@ -73,6 +73,6 @@
   }
 
   .close-btn:hover {
-    color: var(--vscode-errorForeground);
+    color: var(--vscode-errorForeground, #f48771);
   }
 </style>

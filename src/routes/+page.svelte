@@ -24,5 +24,6 @@
     position: fixed;
     top: 0;
     left: 0;
+    background: var(--vscode-editor-background, #1e1e1e);
   }
 </style>
