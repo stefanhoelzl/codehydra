@@ -5,20 +5,25 @@
 **Chime** is a desktop IDE that enables developers to orchestrate multiple AI agents working in parallel across isolated git worktrees. Each agent operates independently in its own VSCode environment, allowing developers to tackle multiple tasks simultaneously without interference.
 
 ### Name Origin
+
 - **Chimera**: Mythological creature with multiple parts working as one - metaphor for multi-agent orchestration
 - **Chime**: Notification sound that alerts when an agent completes its task
 
 ## Core Concept
 
 ### The Problem
+
 Developers want to work on multiple features/fixes simultaneously with AI assistance, but:
+
 - Single AI session blocks other work
 - Context switching loses momentum
 - Can't parallelize independent tasks
 - Risk of conflicts when switching branches
 
 ### The Solution
+
 Chime provides:
+
 - **Multiple isolated agents** - Each in its own git worktree
 - **Parallel execution** - All agents work simultaneously
 - **Visual orchestration** - Clear status of all agents at a glance
@@ -149,14 +154,18 @@ UI reflects changes (status, notifications)
 ## Tech Stack
 
 ### Desktop Framework
+
 **Tauri**
+
 - Rust backend for performance and system integration
 - Smaller bundle size than Electron
 - Better security model
 - Native system access for process management
 
 ### Frontend
+
 **Svelte + TypeScript**
+
 - Smallest bundle size
 - Best performance (compiled to vanilla JS)
 - Cleanest syntax for reactive state
@@ -164,14 +173,18 @@ UI reflects changes (status, notifications)
 - Excellent TypeScript support
 
 ### UI Components
+
 **vscode-elements**
+
 - VSCode-like UI components (familiar to developers)
 - Web components work with any framework
 - Consistent look with embedded VSCode
 - URL: https://github.com/vscode-elements/elements
 
 ### VSCode Integration
+
 **code-server**
+
 - Full VSCode in the browser
 - Embeddable in Tauri WebView
 - Supports all VSCode extensions
@@ -180,7 +193,9 @@ UI reflects changes (status, notifications)
 - **Bundled with app** - Version controlled
 
 ### Workspace Isolation
+
 **Git Worktrees**
+
 - Native git feature
 - Share .git directory (efficient disk usage)
 - True filesystem isolation
@@ -188,13 +203,16 @@ UI reflects changes (status, notifications)
 - Easy cleanup
 
 ### Agent Runtime
+
 **Claude Code VSCode Extension**
+
 - Purpose-built for AI-assisted development
 - Interactive workflow
 - Full IDE integration
 - **Bundled with app** - Version controlled
 
 **Command Executor Extension**
+
 - Auto-executes commands on VSCode startup
 - Calls Claude Code focus command
 - **Bundled with app** - Ensures Claude Code opens automatically
@@ -204,7 +222,9 @@ UI reflects changes (status, notifications)
 ### Rust Backend (Tauri)
 
 #### Agent Manager
+
 **Responsibility:** Orchestrate agent lifecycle
+
 - Coordinate WorkspaceProvider and AgentProvider
 - Track agent metadata (ID, name, state, timestamps)
 - Handle agent creation/deletion workflow
@@ -212,7 +232,9 @@ UI reflects changes (status, notifications)
 - Manage agent registry
 
 #### WorkspaceProvider
+
 **Responsibility:** Provide isolated workspace directories
+
 - Create git branches and worktrees
 - Delete worktrees and branches on cleanup
 - List existing worktrees
@@ -221,6 +243,7 @@ UI reflects changes (status, notifications)
 - Provide workspace path for each agent
 
 **Interface:**
+
 ```rust
 trait WorkspaceProvider {
     fn initialize()        // Set up from project directory
@@ -234,11 +257,14 @@ trait WorkspaceProvider {
 **Initial Implementation:** GitWorktreeProvider (uses git worktrees)
 
 **Future Implementations:**
+
 - DockerWorkspaceProvider (container-based isolation)
 - RemoteWorkspaceProvider (SSH/remote workspaces)
 
 #### AgentProvider
+
 **Responsibility:** Provide complete agent runtime setup
+
 - Find available ports
 - Generate authentication tokens
 - Spawn code-server processes with correct configuration
@@ -249,6 +275,7 @@ trait WorkspaceProvider {
 - Handle orphaned processes on startup
 
 **Interface:**
+
 ```rust
 trait AgentProvider {
     fn setup()      // Configure agent environment
@@ -262,17 +289,21 @@ trait AgentProvider {
 **Initial Implementation:** ClaudeCodeAgentProvider (code-server + Claude Code)
 
 **Future Implementations:**
+
 - JupyterAgentProvider (Jupyter notebooks)
 - CustomAgentProvider (user-defined tools)
 
 #### AgentObserver
+
 **Responsibility:** Observe and report agent state
+
 - Monitor agent activity (idle vs running)
 - Detect state transitions
 - Emit state change events
 - **No lifecycle management** - only observation
 
 **Implementation approach:** To be determined
+
 - May use WebSocket interception
 - May use extension bridge
 - May use log monitoring
@@ -282,11 +313,13 @@ trait AgentProvider {
 ### Svelte Frontend
 
 #### Stores (State Management)
+
 - **projects**: Current project, path, metadata
 - **agents**: List of agents, states, selected agent
 - **ui**: Sidebar state, dialogs, preferences
 
 #### Components
+
 - **Sidebar**: Project tree with nested agents
 - **TabBar**: VSCode-style tabs for projects/agents
 - **MainView**: iframe embedding code-server for selected agent
@@ -294,20 +327,25 @@ trait AgentProvider {
 - **AgentItem**: Individual agent in sidebar with status indicator
 
 #### Services
+
 - **tauri-api**: Type-safe wrappers for Tauri commands
 - **notifications**: Audio playback (chime sound), system notifications
 
 ### VSCode Extensions
 
 #### Command Executor Extension
+
 **Responsibility:** Execute commands on VSCode startup
+
 - Bundled with application
 - Configured to run on workspace open
 - Executes Claude Code focus command
 - Ensures Claude Code panel opens automatically
 
 #### Claude Code Extension
+
 **Responsibility:** AI agent functionality
+
 - Bundled with application
 - Provides AI-assisted development
 - Interactive workflow with developer
@@ -315,6 +353,7 @@ trait AgentProvider {
 ## Core Features
 
 ### Project Management
+
 - Open project via directory picker
 - Auto-detect existing git worktrees on open
 - Display project hierarchy in sidebar
@@ -323,6 +362,7 @@ trait AgentProvider {
 ### Agent Management
 
 **Create Agent:**
+
 - User enters agent name
 - WorkspaceProvider creates git branch and worktree
 - AgentProvider spawns code-server with extensions
@@ -331,16 +371,19 @@ trait AgentProvider {
 - Main view switches to new agent's VSCode
 
 **Agent Display:**
+
 - Status indicator (🟢 idle, 🔴 running)
 - Agent name
 - Last activity timestamp
 
 **Select Agent:**
+
 - Click agent in sidebar
 - Main view switches to agent's VSCode iframe
 - URL includes auth token for code-server
 
 **Close Agent:**
+
 - User confirms deletion
 - AgentProvider stops code-server process
 - WorkspaceProvider removes worktree
@@ -355,6 +398,7 @@ trait AgentProvider {
 **AgentObserver Implementation:** To be determined during implementation
 
 **Possible Approaches:**
+
 1. **WebSocket Interception**
    - Intercept messages between VSCode and Claude Code
    - Parse protocol to detect state
@@ -380,6 +424,7 @@ trait AgentProvider {
 ### Notifications
 
 **Idle Transition:**
+
 - AgentObserver detects agent becomes idle
 - Event emitted to frontend
 - Chime sound plays
@@ -387,22 +432,26 @@ trait AgentProvider {
 - Optional: System notification
 
 **Audio:**
+
 - Bundled chime sound file
 - Play via Web Audio API in Svelte
 
 ### Git Worktree Management
 
 **Atomic Operations:**
+
 - Create branch and worktree together
 - Rollback branch if worktree creation fails
 - Validation before operations
 
 **Concurrent Operation Safety:**
+
 - Coordinate git operations to prevent conflicts
 - Handle lock contention gracefully
 - Retry failed operations if appropriate
 
 **Cleanup:**
+
 - Remove worktree from filesystem
 - Delete git branch
 - Update git worktree registry
@@ -411,6 +460,7 @@ trait AgentProvider {
 ### Code-Server Process Management
 
 **Startup:**
+
 - Find available port
 - Generate unique auth token
 - Spawn code-server with configuration
@@ -419,11 +469,13 @@ trait AgentProvider {
 - Return URL for embedding
 
 **Monitoring:**
+
 - Track process IDs
 - Detect crashes
 - Auto-restart on unexpected exit (optional)
 
 **Shutdown:**
+
 - Graceful process termination
 - Cleanup on app exit
 - Track processes across app restarts
@@ -432,16 +484,19 @@ trait AgentProvider {
 ### Extension Management
 
 **Bundled Extensions:**
+
 - Claude Code extension (.vsix)
 - Command Executor extension (.vsix)
 - Bundled with application distribution
 
 **Installation:**
+
 - Auto-install on code-server startup
 - Verify installation succeeded
 - Configure command executor to focus Claude Code
 
 **Configuration:**
+
 - VSCode settings per agent
 - User data directory per agent
 - Shared extensions directory
@@ -449,6 +504,7 @@ trait AgentProvider {
 ## Workflow Philosophy
 
 ### User-Controlled Workflows
+
 Chime provides **infrastructure** for parallel agent orchestration. All **workflow decisions** are left to the user:
 
 - **No automatic operations**: User initiates all actions
@@ -457,12 +513,14 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 - **Full control**: App provides tools, user defines workflow
 
 ### Agent Isolation
+
 - **No inter-agent awareness**: Agents don't know about each other
 - **No context sharing**: Each agent operates independently
 - **No coordination**: User manually transfers knowledge between agents if needed
 - **Complete isolation**: Each agent in separate worktree with separate VSCode
 
 ### Resource Cleanup
+
 - **Complete cleanup on close**: Worktree, branch, and all resources removed
 - **User initiates**: User closes agent when ready
 - **Before closing**: User responsible for merging/preserving work
@@ -478,12 +536,14 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 ## Performance Characteristics
 
 ### Resource Usage
+
 - **Memory**: Each code-server instance uses significant memory
 - **CPU**: Multiple VSCode instances active simultaneously
 - **Disk**: Each worktree is full repository checkout
 - **Target**: Support 3-10 concurrent agents on typical dev machines
 
 ### Timing
+
 - **App startup**: Fast (Tauri is lightweight)
 - **Agent creation**: Multi-second operation (spawn code-server, load extensions)
 - **Agent switching**: Near-instant (just switch iframe URL)
@@ -492,12 +552,14 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 ## Technical Constraints
 
 ### Git Worktrees
+
 - **Shared .git directory**: All worktrees share same .git
 - **Concurrent operations**: Need coordination to prevent conflicts
 - **Lock contention**: Git uses locks that can conflict
 - **Mitigation**: Coordinate operations, handle errors gracefully
 
 ### Bundled Binaries
+
 - **code-server**: Bundled with application
 - **Extensions**: Bundled as .vsix files
 - **Version control**: App controls versions
@@ -505,6 +567,7 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 - **Advantage**: No external dependencies, consistent behavior
 
 ### Iframe Embedding
+
 - **Security**: CSP configuration, sandboxing
 - **Authentication**: Token-based auth for code-server
 - **Communication**: PostMessage API for cross-frame communication
@@ -513,9 +576,11 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 ## Open Questions
 
 ### 1. AgentObserver Implementation
+
 **Question:** How to reliably detect Claude Code agent state?
 
 **Research Needed:**
+
 - Can we intercept WebSocket from iframe? (Frontend vs backend)
 - Does Claude Code expose state via extension API?
 - Best fallback methods?
@@ -523,9 +588,11 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 **Decision:** Prototype and test during implementation
 
 ### 2. Worktree Directory Location
+
 **Question:** Where to create worktrees?
 
 **Options:**
+
 - Sibling to main repo
 - Subdirectory of main repo
 - User-configurable location
@@ -534,9 +601,11 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 **Decision:** Determine during implementation, consider user preferences
 
 ### 3. Process Cleanup Strategy
+
 **Question:** How to ensure no orphaned processes?
 
 **Considerations:**
+
 - PID tracking across app restarts
 - Platform-specific process management
 - Graceful vs forceful shutdown
@@ -544,9 +613,11 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 **Decision:** Platform abstraction during implementation
 
 ### 4. Extension Auto-Installation
+
 **Question:** When to install extensions?
 
 **Options:**
+
 - On first code-server startup
 - On every startup (ensure latest)
 - Verify before each agent creation
@@ -556,6 +627,7 @@ Chime provides **infrastructure** for parallel agent orchestration. All **workfl
 ## Success Criteria
 
 **MVP is successful when:**
+
 - ✅ Can create multiple agents simultaneously
 - ✅ Agents work in isolated worktrees without conflicts
 - ✅ State detection accurately reflects Claude Code activity

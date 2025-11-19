@@ -27,7 +27,7 @@
     background: var(--vscode-editor-background);
     position: relative;
   }
-  
+
   .workspace-iframe {
     width: 100%;
     height: 100%;
@@ -36,11 +36,11 @@
     top: 0;
     left: 0;
   }
-  
+
   .workspace-iframe.hidden {
     display: none;
   }
-  
+
   .empty-state {
     display: flex;
     flex-direction: column;
@@ -50,7 +50,7 @@
     gap: 16px;
     color: var(--vscode-descriptionForeground);
   }
-  
+
   .empty-state p {
     margin: 0;
     font-size: 14px;

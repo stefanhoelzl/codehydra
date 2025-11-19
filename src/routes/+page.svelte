@@ -3,7 +3,7 @@
   import WorkspaceView from '$lib/components/WorkspaceView.svelte';
   import { onDestroy } from 'svelte';
   import { cleanupAllServers } from '$lib/api/tauri';
-  
+
   // Cleanup on page unload
   onDestroy(() => {
     cleanupAllServers().catch(console.error);

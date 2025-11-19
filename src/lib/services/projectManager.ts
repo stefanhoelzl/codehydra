@@ -7,33 +7,33 @@ export async function openNewProject(): Promise<void> {
     console.log('Opening directory picker...');
     const path = await openDirectory();
     console.log('Selected path:', path);
-    
+
     if (!path) {
       console.log('User cancelled directory selection');
       return; // User cancelled
     }
-    
+
     const name = path.split('/').pop() || 'Project';
     const id = crypto.randomUUID();
-    
+
     console.log('Starting code-server for:', path);
-    
+
     // Start code-server (may take a few seconds)
     const info = await startCodeServer(path);
-    
+
     console.log('Code-server started:', info);
-    
+
     const project: Project = {
       id,
       name,
       path,
       port: info.port,
-      url: info.url
+      url: info.url,
     };
-    
+
     addProject(project);
     setActiveProject(id);
-    
+
     console.log('Project added to store:', project);
   } catch (error) {
     console.error('Failed to open project:', error);

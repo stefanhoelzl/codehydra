@@ -8,16 +8,14 @@
   <div class="header">
     <h2>Projects</h2>
   </div>
-  
+
   <div class="projects-list">
     {#each $projects as project (project.id)}
       <ProjectItem {project} active={$activeProjectId === project.id} />
     {/each}
   </div>
-  
-  <vscode-button class="open-btn" on:click={openNewProject}>
-    Open Project
-  </vscode-button>
+
+  <vscode-button class="open-btn" on:click={openNewProject}> Open Project </vscode-button>
 </aside>
 
 <style>
@@ -29,12 +27,12 @@
     flex-direction: column;
     border-right: 1px solid var(--vscode-sideBar-border);
   }
-  
+
   .header {
     padding: 12px 16px;
     border-bottom: 1px solid var(--vscode-sideBar-border);
   }
-  
+
   .header h2 {
     margin: 0;
     font-size: 14px;
@@ -42,12 +40,12 @@
     color: var(--vscode-sideBarTitle-foreground);
     text-transform: uppercase;
   }
-  
+
   .projects-list {
     flex: 1;
     overflow-y: auto;
   }
-  
+
   .open-btn {
     margin: 12px;
     width: calc(100% - 24px);

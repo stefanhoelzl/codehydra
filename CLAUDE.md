@@ -9,6 +9,7 @@ For detailed concept and architecture, see `docs/INITIAL_CONCEPT.md`.
 ## Current Status
 
 This is a freshly scaffolded Tauri 2.0 application with:
+
 - **Frontend**: Svelte 5 + TypeScript + SvelteKit
 - **Backend**: Rust with Tauri 2.9
 - **Package Manager**: pnpm
@@ -17,17 +18,20 @@ This is a freshly scaffolded Tauri 2.0 application with:
 ## Tech Stack
 
 ### Frontend
+
 - **Svelte 5.43.11** - Reactive UI framework
 - **SvelteKit 2.48.5** - Application framework with routing
 - **TypeScript 5.6.3** - Type safety
 - **Vite 6.4.1** - Build tool and dev server
 
 ### Backend
+
 - **Rust (Edition 2021)** - System programming language
 - **Tauri 2.9** - Desktop application framework
 - **serde & serde_json** - JSON serialization
 
 ### Tauri Plugins
+
 - `@tauri-apps/plugin-opener` - Open URLs and files
 
 ## Project Structure
@@ -83,6 +87,7 @@ pnpm tauri dev
 ```
 
 This will:
+
 1. Start Vite dev server on http://localhost:1420
 2. Compile Rust backend
 3. Launch the Tauri desktop application with hot reload
@@ -122,6 +127,7 @@ pnpm preview    # Preview production build
 ## Key Configuration Files
 
 ### `src-tauri/tauri.conf.json`
+
 - **Product name**: "chime"
 - **Identifier**: "com.stefan.chime"
 - **Window size**: 800x600 (default)
@@ -129,11 +135,13 @@ pnpm preview    # Preview production build
 - **Frontend dist**: ../build (SvelteKit output)
 
 ### `package.json`
+
 - **Name**: "chime"
 - **Version**: 0.1.0
 - **Type**: "module" (ES modules)
 
 ### `src-tauri/Cargo.toml`
+
 - **Package name**: "chime"
 - **Crate type**: staticlib, cdylib, rlib
 - **Lib name**: chime_lib
@@ -141,12 +149,14 @@ pnpm preview    # Preview production build
 ## Development Workflow
 
 ### Frontend Development
+
 1. Edit files in `src/` directory
 2. Vite will hot-reload changes automatically
 3. Use Svelte 5 syntax (latest version)
 4. TypeScript strict mode is enabled
 
 ### Backend Development
+
 1. Edit Rust files in `src-tauri/src/`
 2. Define Tauri commands in `lib.rs`
 3. Expose commands to frontend via `#[tauri::command]`
@@ -155,6 +165,7 @@ pnpm preview    # Preview production build
 ### Adding Tauri Commands
 
 Example Rust command:
+
 ```rust
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -163,6 +174,7 @@ fn greet(name: &str) -> String {
 ```
 
 Register in `main.rs`:
+
 ```rust
 fn main() {
     tauri::Builder::default()
@@ -173,6 +185,7 @@ fn main() {
 ```
 
 Call from Svelte:
+
 ```typescript
 import { invoke } from '@tauri-apps/api/core';
 
@@ -182,12 +195,14 @@ const greeting = await invoke<string>('greet', { name: 'World' });
 ## Architecture Patterns
 
 ### Frontend (Svelte)
+
 - Use **Svelte stores** for state management
 - Follow **SvelteKit conventions** for routing
 - Keep components small and focused
 - Use **TypeScript** for all logic
 
 ### Backend (Rust)
+
 - Follow the **Provider pattern** for components (see INITIAL_CONCEPT.md):
   - `WorkspaceProvider` - Git worktree management
   - `AgentProvider` - Code-server process management
@@ -197,6 +212,7 @@ const greeting = await invoke<string>('greet', { name: 'World' });
 - Use **async/await** for concurrent operations
 
 ### IPC Communication
+
 - Use Tauri commands for frontend → backend calls
 - Use Tauri events for backend → frontend updates
 - Keep payloads serializable (use serde)
@@ -229,6 +245,7 @@ According to `docs/INITIAL_CONCEPT.md`, the next phases involve:
 ## Troubleshooting
 
 ### Missing System Dependencies (Linux)
+
 ```bash
 # Fedora/RHEL
 sudo dnf install webkit2gtk4.1-devel librsvg2-devel
@@ -238,9 +255,11 @@ sudo apt install libwebkit2gtk-4.1-dev librsvg2-dev
 ```
 
 ### Port Already in Use
+
 If port 1420 is taken, kill the process or change the port in `tauri.conf.json` under `build.devUrl`.
 
 ### Rust Compilation Errors
+
 ```bash
 cd src-tauri
 cargo clean
@@ -248,6 +267,7 @@ cargo build
 ```
 
 ### pnpm Issues
+
 ```bash
 rm -rf node_modules pnpm-lock.yaml
 pnpm install
@@ -256,6 +276,7 @@ pnpm install
 ## Git Integration
 
 The project is already initialized with git. Key files ignored:
+
 - `node_modules/`
 - `src-tauri/target/` (Rust build artifacts)
 - `build/` (Frontend build output)
@@ -263,6 +284,7 @@ The project is already initialized with git. Key files ignored:
 ## Contributing
 
 This is an early-stage project. Follow these principles:
+
 1. Read `docs/INITIAL_CONCEPT.md` thoroughly
 2. Keep frontend and backend concerns separated
 3. Use the Provider pattern for backend components
