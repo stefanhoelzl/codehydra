@@ -1,5 +1,28 @@
-<iframe
-  src="http://localhost:7000"
-  title="VSCode"
-  style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; border: none;"
-></iframe>
+<script lang="ts">
+  import Sidebar from '$lib/components/Sidebar.svelte';
+  import WorkspaceView from '$lib/components/WorkspaceView.svelte';
+  import { onDestroy } from 'svelte';
+  import { cleanupAllServers } from '$lib/api/tauri';
+  
+  // Cleanup on page unload
+  onDestroy(() => {
+    cleanupAllServers().catch(console.error);
+  });
+</script>
+
+<main>
+  <Sidebar />
+  <WorkspaceView />
+</main>
+
+<style>
+  main {
+    display: flex;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    position: fixed;
+    top: 0;
+    left: 0;
+  }
+</style>
