@@ -1,4 +1,4 @@
-use chime_lib::code_server::ProcessManager;
+use chime_lib::code_server::{cleanup_all_servers_internal, ProcessManager};
 use chime_lib::workspace_provider::ProjectHandle;
 use chime_lib::{close_project_impl, discover_workspaces_impl, open_project_impl, AppState};
 use git2::{Repository, Signature};
@@ -296,5 +296,141 @@ async fn test_parallel_code_server_startup_unique_ports() {
         unique_urls.len(),
         "Found duplicate URLs! URLs: {:?}",
         urls
+    );
+}
+
+#[tokio::test]
+async fn test_cleanup_all_servers_stops_all_processes() {
+    let test_repo = TestRepo::new().unwrap();
+    
+    // Create worktrees to have multiple code-servers
+    test_repo.create_worktree("feature-1", "feat-1").unwrap();
+    test_repo.create_worktree("feature-2", "feat-2").unwrap();
+
+    let process_manager = Arc::new(ProcessManager::new());
+    let state = Arc::new(AppState::new(process_manager.clone()));
+
+    let handle = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+
+    // Start code-servers
+    let workspaces = discover_workspaces_impl(&state, handle.clone())
+        .await
+        .unwrap();
+
+    // Should have 3 workspaces (main + 2 worktrees)
+    assert_eq!(workspaces.len(), 3);
+
+    // Verify 3 processes are being managed
+    assert_eq!(
+        process_manager.process_count().await,
+        3,
+        "Should have 3 managed processes"
+    );
+
+    // Cleanup all servers
+    cleanup_all_servers_internal(&process_manager)
+        .await
+        .unwrap();
+
+    // Verify all processes have been cleaned up
+    assert_eq!(
+        process_manager.process_count().await,
+        0,
+        "All processes should be cleaned up"
+    );
+}
+
+#[tokio::test]
+async fn test_close_project_stops_code_servers() {
+    let test_repo = TestRepo::new().unwrap();
+    test_repo.create_worktree("feature-1", "feat-1").unwrap();
+
+    let process_manager = Arc::new(ProcessManager::new());
+    let state = Arc::new(AppState::new(process_manager.clone()));
+
+    let handle = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+
+    // Start code-servers
+    let workspaces = discover_workspaces_impl(&state, handle.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(workspaces.len(), 2);
+
+    // Verify 2 processes are running
+    assert_eq!(
+        process_manager.process_count().await,
+        2,
+        "Should have 2 managed processes"
+    );
+
+    // Close project - should stop all code-servers
+    close_project_impl(&state, handle.clone())
+        .await
+        .unwrap();
+
+    // Verify all processes have been stopped
+    assert_eq!(
+        process_manager.process_count().await,
+        0,
+        "All processes should be stopped after closing project"
+    );
+}
+
+#[tokio::test]
+async fn test_cleanup_multiple_projects_independently() {
+    let test_repo1 = TestRepo::new().unwrap();
+    let test_repo2 = TestRepo::new().unwrap();
+
+    let process_manager = Arc::new(ProcessManager::new());
+    let state = Arc::new(AppState::new(process_manager.clone()));
+
+    // Open both projects
+    let handle1 = open_project_impl(&state, test_repo1.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+
+    let handle2 = open_project_impl(&state, test_repo2.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+
+    // Start code-servers for both
+    let _workspaces1 = discover_workspaces_impl(&state, handle1.clone())
+        .await
+        .unwrap();
+
+    let _workspaces2 = discover_workspaces_impl(&state, handle2.clone())
+        .await
+        .unwrap();
+
+    // Should have 2 processes total (one per project)
+    assert_eq!(
+        process_manager.process_count().await,
+        2,
+        "Should have 2 managed processes"
+    );
+
+    // Close only project 1
+    close_project_impl(&state, handle1).await.unwrap();
+
+    // Should now have only 1 process (project 2 still running)
+    assert_eq!(
+        process_manager.process_count().await,
+        1,
+        "Should have 1 managed process after closing project 1"
+    );
+
+    // Close project 2
+    close_project_impl(&state, handle2).await.unwrap();
+
+    // All processes should be cleaned up
+    assert_eq!(
+        process_manager.process_count().await,
+        0,
+        "All processes should be cleaned up"
     );
 }

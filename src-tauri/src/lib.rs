@@ -3,12 +3,13 @@ pub mod git_worktree_provider;
 pub mod test_utils;
 pub mod workspace_provider;
 
-use code_server::{cleanup_all_servers, start_code_server, start_code_server_internal, stop_code_server, stop_code_server_internal, ProcessManager};
+use code_server::{cleanup_all_servers, cleanup_all_servers_internal, start_code_server, start_code_server_internal, stop_code_server, stop_code_server_internal, ProcessManager};
 use git_worktree_provider::GitWorktreeProvider;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::Manager;
 use tokio::sync::RwLock;
 use workspace_provider::{ProjectHandle, ToTauriResult, Workspace, WorkspaceError, WorkspaceProvider};
 
@@ -197,6 +198,9 @@ pub fn run() {
     let process_manager = Arc::new(ProcessManager::new());
     let app_state = AppState::new(process_manager.clone());
 
+    // Clone for cleanup handler
+    let cleanup_manager = process_manager.clone();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -212,6 +216,25 @@ pub fn run() {
             discover_workspaces,
             close_project
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .setup(|_app| {
+            // Register cleanup handler for Ctrl+C
+            tauri::async_runtime::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                println!("Ctrl+C received - cleaning up code-servers...");
+                let _ = cleanup_all_servers_internal(&cleanup_manager).await;
+            });
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Handle app exit event
+            if let tauri::RunEvent::Exit = event {
+                println!("App exiting - cleaning up code-servers...");
+                let app_state: tauri::State<AppState> = app_handle.state();
+                tauri::async_runtime::block_on(async {
+                    let _ = cleanup_all_servers_internal(&app_state.code_server_manager).await;
+                });
+            }
+        });
 }

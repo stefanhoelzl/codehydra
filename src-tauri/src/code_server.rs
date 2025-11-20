@@ -24,6 +24,12 @@ impl ProcessManager {
             processes: Mutex::new(HashMap::new()),
         }
     }
+
+    /// Get the number of running code-server processes (for testing)
+    pub async fn process_count(&self) -> usize {
+        let processes = self.processes.lock().await;
+        processes.len()
+    }
 }
 
 impl Default for ProcessManager {
@@ -132,6 +138,8 @@ pub async fn stop_code_server_internal(
     if let Some(mut child) = processes.remove(&port) {
         drop(processes); // Release lock before awaiting
         let _ = child.kill().await;
+        // Wait for the process to actually terminate
+        let _ = child.wait().await;
     }
     
     Ok(())
@@ -145,17 +153,24 @@ pub async fn stop_code_server(
     stop_code_server_internal(port, &state).await
 }
 
-#[tauri::command]
-pub async fn cleanup_all_servers(
-    state: tauri::State<'_, ProcessManager>,
-) -> Result<(), String> {
-    let mut processes = state.processes.lock().await;
+/// Internal function to cleanup all servers
+pub async fn cleanup_all_servers_internal(manager: &ProcessManager) -> Result<(), String> {
+    let mut processes = manager.processes.lock().await;
     let children: Vec<Child> = processes.drain().map(|(_, child)| child).collect();
     drop(processes); // Release lock before awaiting
     
     for mut child in children {
         let _ = child.kill().await;
+        // Wait for the process to actually terminate
+        let _ = child.wait().await;
     }
     
     Ok(())
+}
+
+#[tauri::command]
+pub async fn cleanup_all_servers(
+    state: tauri::State<'_, ProcessManager>,
+) -> Result<(), String> {
+    cleanup_all_servers_internal(&state).await
 }
