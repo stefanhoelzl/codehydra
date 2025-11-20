@@ -119,17 +119,26 @@ pnpm validate:full
 
 ---
 
+## Architecture Documentation
+
+Before implementing features, familiarize yourself with the project architecture:
+
+- **`docs/ARCHITECTURE.md`** - System architecture, component design, data flow
+- **`docs/INITIAL_CONCEPT.md`** - Overall project vision and goals
+- **`docs/INITIAL_WORKSPACE_PROVIDER.md`** - WorkspaceProvider implementation plan
+
 ## Agent Workflow
 
 When implementing a feature:
 
-1. **Read AGENTS.md** for project context and architecture
-2. **Implement the feature** following the patterns described
-3. **Run `pnpm validate`** to check all quality gates
-4. **Fix any issues** reported by the checks
-5. **Test in dev mode**: `pnpm tauri dev`
-6. **Test the build**: `pnpm build:debug`
-7. **Verify everything works** before marking as done
+1. **Read architecture docs** (`docs/ARCHITECTURE.md`) to understand system design
+2. **Read AGENTS.md** for project context and quality standards
+3. **Implement the feature** following the patterns described in architecture docs
+4. **Run `pnpm validate`** to check all quality gates
+5. **Fix any issues** reported by the checks
+6. **Test in dev mode**: `pnpm tauri dev`
+7. **Test the build**: `pnpm build:debug`
+8. **Verify everything works** before marking as done
 
 ---
 
@@ -179,7 +188,7 @@ When implementing a feature:
    - Ignore patterns: modifications to `.prettierignore`, `.eslintignore`, or `ignores` in `eslint.config.js`
 4. **Never ignore compiler warnings** - Fix the underlying issue
 5. **Always test in both dev and build modes**
-6. **Read CLAUDE.md for architecture patterns before implementing**
+6. **Read docs/ARCHITECTURE.md for architecture patterns before implementing**
 7. **Follow the Provider pattern for backend components**
 
 ---

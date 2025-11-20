@@ -6,8 +6,11 @@
   export let project: Project;
   export let active: boolean = false;
 
+  // Extract project name from path
+  $: projectName = project.path.split('/').pop() || project.path;
+
   function handleClick() {
-    setActiveProject(project.id);
+    setActiveProject(project.handle);
   }
 
   function handleClose(e: MouseEvent) {
@@ -25,8 +28,9 @@
   tabindex="0"
 >
   <vscode-icon name="folder" class="icon"></vscode-icon>
-  <span class="name">{project.name}</span>
-  <vscode-icon name="close" class="close-btn" on:click={handleClose}></vscode-icon>
+  <span class="name">{projectName}</span>
+  <vscode-icon name="close" class="close-btn" on:click={handleClose} role="button" tabindex="-1"
+  ></vscode-icon>
 </div>
 
 <style>

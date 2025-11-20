@@ -26,9 +26,17 @@ impl ProcessManager {
     }
 }
 
-fn find_available_port() -> Result<u16, String> {
+impl Default for ProcessManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Find an available port that's not already reserved in the processes map
+fn find_available_port(reserved_ports: &HashMap<u16, Child>) -> Result<u16, String> {
     for port in PORT_START..=PORT_END {
-        if port_scanner::local_port_available(port) {
+        // Check if port is not already reserved and is available on the system
+        if !reserved_ports.contains_key(&port) && port_scanner::local_port_available(port) {
             return Ok(port);
         }
     }
@@ -58,15 +66,19 @@ async fn wait_for_server(port: u16) -> Result<(), String> {
     Err("Server failed to start within 30 seconds".to_string())
 }
 
-#[tauri::command]
-pub async fn start_code_server(
+/// Internal function to start code-server
+pub async fn start_code_server_internal(
     project_path: String,
-    state: tauri::State<'_, ProcessManager>,
+    manager: &ProcessManager,
 ) -> Result<CodeServerInfo, String> {
     use tokio::process::Command;
     use std::process::Stdio;
     
-    let port = find_available_port()?;
+    // Find and reserve port atomically to prevent race conditions in parallel startup
+    let port = {
+        let processes = manager.processes.lock().await;
+        find_available_port(&processes)?
+    };
     
     println!("Starting code-server on port {} for path: {}", port, project_path);
     
@@ -86,14 +98,16 @@ pub async fn start_code_server(
     
     println!("Code-server process spawned, waiting for health check...");
     
+    // Store process immediately to reserve the port
+    {
+        let mut processes = manager.processes.lock().await;
+        processes.insert(port, child);
+    }
+    
     // Wait for server to be ready
     wait_for_server(port).await?;
     
     println!("Health check passed!");
-    
-    // Store process
-    let mut processes = state.processes.lock().await;
-    processes.insert(port, child);
     
     // URL with folder parameter so code-server opens the correct directory
     let url = format!("http://localhost:{}/?folder={}", port, project_path);
@@ -101,11 +115,19 @@ pub async fn start_code_server(
 }
 
 #[tauri::command]
-pub async fn stop_code_server(
-    port: u16,
+pub async fn start_code_server(
+    project_path: String,
     state: tauri::State<'_, ProcessManager>,
+) -> Result<CodeServerInfo, String> {
+    start_code_server_internal(project_path, &state).await
+}
+
+/// Internal function to stop code-server
+pub async fn stop_code_server_internal(
+    port: u16,
+    manager: &ProcessManager,
 ) -> Result<(), String> {
-    let mut processes = state.processes.lock().await;
+    let mut processes = manager.processes.lock().await;
     
     if let Some(mut child) = processes.remove(&port) {
         drop(processes); // Release lock before awaiting
@@ -113,6 +135,14 @@ pub async fn stop_code_server(
     }
     
     Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_code_server(
+    port: u16,
+    state: tauri::State<'_, ProcessManager>,
+) -> Result<(), String> {
+    stop_code_server_internal(port, &state).await
 }
 
 #[tauri::command]

@@ -1,5 +1,10 @@
-import { openDirectory, startCodeServer, stopCodeServer } from '$lib/api/tauri';
-import { addProject, removeProject, setActiveProject } from '$lib/stores/projects';
+import {
+  openDirectory,
+  openProject as openProjectBackend,
+  discoverWorkspaces,
+  closeProject as closeProjectBackend,
+} from '$lib/api/tauri';
+import { addProject, removeProject, setActiveProject, activeWorkspace } from '$lib/stores/projects';
 import type { Project } from '$lib/types/project';
 
 export async function openNewProject(): Promise<void> {
@@ -13,26 +18,34 @@ export async function openNewProject(): Promise<void> {
       return; // User cancelled
     }
 
-    const name = path.split('/').pop() || 'Project';
-    const id = crypto.randomUUID();
+    console.log('Opening project:', path);
 
-    console.log('Starting code-server for:', path);
+    // Open the project and get handle
+    const handle = await openProjectBackend(path);
 
-    // Start code-server (may take a few seconds)
-    const info = await startCodeServer(path);
+    console.log('Project opened with handle:', handle);
 
-    console.log('Code-server started:', info);
+    // Discover workspaces (now includes code-server URLs)
+    const workspaces = await discoverWorkspaces(handle);
+
+    console.log('Discovered workspaces with code-servers:', workspaces);
 
     const project: Project = {
-      id,
-      name,
+      handle,
       path,
-      port: info.port,
-      url: info.url,
+      workspaces,
     };
 
     addProject(project);
-    setActiveProject(id);
+    setActiveProject(handle);
+
+    // Auto-select first workspace (main workspace)
+    if (workspaces.length > 0) {
+      activeWorkspace.set({
+        projectHandle: handle,
+        workspacePath: workspaces[0].path,
+      });
+    }
 
     console.log('Project added to store:', project);
   } catch (error) {
@@ -43,11 +56,11 @@ export async function openNewProject(): Promise<void> {
 
 export async function closeProject(project: Project): Promise<void> {
   try {
-    await stopCodeServer(project.port);
-    removeProject(project.id);
+    await closeProjectBackend(project.handle);
+    removeProject(project.handle);
   } catch (error) {
     console.error('Failed to close project:', error);
     // Remove from UI anyway
-    removeProject(project.id);
+    removeProject(project.handle);
   }
 }

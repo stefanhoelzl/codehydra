@@ -1,35 +1,33 @@
 <script lang="ts">
-  import { projects, activeProjectId } from '$lib/stores/projects';
+  import { projects, activeWorkspace } from '$lib/stores/projects';
   import { tick } from 'svelte';
 
-  // Store iframe references
+  // Store iframe references by workspace path
   const iframeElements = new Map<string, HTMLIFrameElement>();
 
   // Focus the active iframe whenever it changes
   $: {
-    if ($activeProjectId) {
-      focusActiveIframe($activeProjectId);
+    if ($activeWorkspace) {
+      focusActiveIframe($activeWorkspace.workspacePath);
     }
   }
 
-  async function focusActiveIframe(projectId: string) {
-    // Wait for DOM update
+  async function focusActiveIframe(workspacePath: string) {
     await tick();
-    const iframe = iframeElements.get(projectId);
+    const iframe = iframeElements.get(workspacePath);
     if (iframe) {
-      // Small delay to ensure iframe is fully rendered and visible
       setTimeout(() => {
         iframe.focus();
       }, 100);
     }
   }
 
-  function handleIframeElement(node: HTMLIFrameElement, projectId: string) {
-    iframeElements.set(projectId, node);
+  function handleIframeElement(node: HTMLIFrameElement, workspacePath: string) {
+    iframeElements.set(workspacePath, node);
 
     return {
       destroy() {
-        iframeElements.delete(projectId);
+        iframeElements.delete(workspacePath);
       },
     };
   }
@@ -42,14 +40,17 @@
       <p>Open a project to get started</p>
     </div>
   {:else}
-    {#each $projects as project (project.id)}
-      <iframe
-        use:handleIframeElement={project.id}
-        src={project.url}
-        title={project.name}
-        class="workspace-iframe"
-        class:hidden={$activeProjectId !== project.id}
-      ></iframe>
+    <!-- Show iframes for all workspaces -->
+    {#each $projects as project (project.handle)}
+      {#each project.workspaces as workspace (workspace.path)}
+        <iframe
+          use:handleIframeElement={workspace.path}
+          src={workspace.url}
+          title="{workspace.name} - {workspace.branch || 'detached'}"
+          class="workspace-iframe"
+          class:hidden={$activeWorkspace?.workspacePath !== workspace.path}
+        ></iframe>
+      {/each}
     {/each}
   {/if}
 </div>
@@ -57,7 +58,7 @@
 <style>
   .workspace-view {
     flex: 1;
-    height: 100vh;
+    height: 100%;
     background: var(--vscode-editor-background, #1e1e1e);
     position: relative;
   }
