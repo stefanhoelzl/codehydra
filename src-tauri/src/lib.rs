@@ -9,6 +9,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::window::Color;
+use tauri::Theme;
 use tauri::Manager;
 use tokio::sync::RwLock;
 use workspace_provider::{ProjectHandle, ToTauriResult, Workspace, WorkspaceError, WorkspaceProvider};
@@ -47,6 +49,17 @@ impl AppState {
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+/// Show the main window - called by frontend when ready
+#[tauri::command]
+async fn show_window(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
+    window.show().map_err(|e| e.to_string())?;
+    window.maximize().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -214,9 +227,23 @@ pub fn run() {
             cleanup_all_servers,
             open_project,
             discover_workspaces,
-            close_project
+            close_project,
+            show_window
         ])
-        .setup(|_app| {
+        .setup(|app| {
+            // Configure window appearance for dark theme
+            // Background color #1e1e1e = RGB(30, 30, 30)
+            let window = app.get_webview_window("main").expect("main window not found");
+            
+            // Set dark background color for window and webview
+            window.set_background_color(Some(Color(30, 30, 30, 255)))?;
+            
+            // Set dark theme for window decorations (title bar)
+            window.set_theme(Some(Theme::Dark))?;
+            
+            // Window starts hidden (visible: false in tauri.conf.json)
+            // Frontend will call show_window command when ready
+            
             // Register cleanup handler for Ctrl+C
             tauri::async_runtime::spawn(async move {
                 tokio::signal::ctrl_c().await.ok();

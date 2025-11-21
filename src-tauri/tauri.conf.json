@@ -13,7 +13,8 @@
     "windows": [
       {
         "title": "chime",
-        "maximized": true
+        "maximized": true,
+        "visible": false
       }
     ],
     "security": {

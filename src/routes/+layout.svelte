@@ -1,5 +1,12 @@
 <script lang="ts">
   import '@vscode-elements/elements/dist/bundled.js';
+  import { onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
+
+  onMount(() => {
+    // Show window after frontend is ready (avoids white flash)
+    invoke('show_window');
+  });
 </script>
 
 <slot />
