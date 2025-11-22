@@ -1,4 +1,4 @@
-//! Error types for code-server operations.
+//! Error types for code-server and project store operations.
 
 use thiserror::Error;
 
@@ -58,6 +58,16 @@ pub enum CodeServerError {
     // Extension errors
     #[error("Failed to install extension {extension}: {reason}")]
     ExtensionInstallFailed { extension: String, reason: String },
+}
+
+/// Error types for project store operations
+#[derive(Debug, Error)]
+pub enum ProjectStoreError {
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Failed to serialize/deserialize project config: {0}")]
+    SerializationError(#[from] serde_json::Error),
 }
 
 #[cfg(test)]
@@ -198,5 +208,47 @@ mod tests {
         let error = CodeServerError::UnsupportedPlatform;
         let debug = format!("{:?}", error);
         assert!(debug.contains("UnsupportedPlatform"));
+    }
+
+    // ProjectStoreError tests
+    #[test]
+    fn test_project_store_error_display_io() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let error = ProjectStoreError::IoError(io_error);
+        let display = format!("{}", error);
+        assert!(display.contains("IO error"));
+    }
+
+    #[test]
+    fn test_project_store_error_display_serialization() {
+        // Create a JSON parse error
+        let json_error = serde_json::from_str::<serde_json::Value>("invalid json{")
+            .expect_err("Expected JSON parse error");
+        let error = ProjectStoreError::SerializationError(json_error);
+        let display = format!("{}", error);
+        assert!(display.contains("serialize/deserialize"));
+    }
+
+    #[test]
+    fn test_project_store_error_is_debug() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+        let error = ProjectStoreError::IoError(io_error);
+        let debug = format!("{:?}", error);
+        assert!(debug.contains("IoError"));
+    }
+
+    #[test]
+    fn test_project_store_error_from_io() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let error: ProjectStoreError = io_error.into();
+        assert!(matches!(error, ProjectStoreError::IoError(_)));
+    }
+
+    #[test]
+    fn test_project_store_error_from_serde() {
+        let json_error = serde_json::from_str::<serde_json::Value>("not json")
+            .expect_err("Expected JSON parse error");
+        let error: ProjectStoreError = json_error.into();
+        assert!(matches!(error, ProjectStoreError::SerializationError(_)));
     }
 }

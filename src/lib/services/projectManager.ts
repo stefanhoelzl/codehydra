@@ -3,9 +3,17 @@ import {
   openProject as openProjectBackend,
   discoverWorkspaces,
   closeProject as closeProjectBackend,
+  loadPersistedProjects,
 } from '$lib/api/tauri';
-import { addProject, removeProject, setActiveProject, activeWorkspace } from '$lib/stores/projects';
-import type { Project } from '$lib/types/project';
+import {
+  addProject,
+  removeProject,
+  setActiveProject,
+  activeWorkspace,
+  projects,
+} from '$lib/stores/projects';
+import type { Project, ProjectHandle } from '$lib/types/project';
+import { get } from 'svelte/store';
 
 export async function openNewProject(): Promise<void> {
   try {
@@ -62,5 +70,57 @@ export async function closeProject(project: Project): Promise<void> {
     console.error('Failed to close project:', error);
     // Remove from UI anyway
     removeProject(project.handle);
+  }
+}
+
+/**
+ * Open a project by path (used for restoring persisted projects)
+ */
+async function openProjectByPath(path: string): Promise<ProjectHandle> {
+  const handle = await openProjectBackend(path);
+  const workspaces = await discoverWorkspaces(handle);
+
+  const project: Project = { handle, path, workspaces };
+  addProject(project);
+
+  return handle;
+}
+
+/**
+ * Restore all persisted projects from disk.
+ * Called on app startup to restore previously opened projects.
+ */
+export async function restorePersistedProjects(): Promise<void> {
+  try {
+    const paths = await loadPersistedProjects();
+
+    let firstHandle: ProjectHandle | null = null;
+
+    for (const path of paths) {
+      try {
+        const handle = await openProjectByPath(path);
+        if (!firstHandle) {
+          firstHandle = handle;
+        }
+      } catch (error) {
+        console.warn(`Failed to restore project at ${path}:`, error);
+      }
+    }
+
+    // Auto-select first project and its first workspace
+    if (firstHandle) {
+      setActiveProject(firstHandle);
+
+      const allProjects = get(projects);
+      const firstProject = allProjects.find((p) => p.handle === firstHandle);
+      if (firstProject && firstProject.workspaces.length > 0) {
+        activeWorkspace.set({
+          projectHandle: firstHandle,
+          workspacePath: firstProject.workspaces[0].path,
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load persisted projects:', error);
   }
 }

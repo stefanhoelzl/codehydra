@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod git_worktree_provider;
 pub mod platform;
+pub mod project_store;
 pub mod runtime_versions;
 pub mod setup;
 pub mod test_utils;
@@ -15,21 +16,26 @@ use bootstrapper::{
 };
 use code_server::CodeServerManager;
 use config::CodeServerConfig;
-use setup::SetupEvent;
 use git_worktree_provider::GitWorktreeProvider;
+use platform::paths::normalize_path;
+use project_store::ProjectStore;
 use serde::Serialize;
+use setup::SetupEvent;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::window::Color;
 use tauri::{Emitter, Manager, Theme};
 use tokio::sync::RwLock;
-use workspace_provider::{ProjectHandle, ToTauriResult, Workspace, WorkspaceError, WorkspaceProvider};
+use workspace_provider::{
+    ProjectHandle, ToTauriResult, Workspace, WorkspaceError, WorkspaceProvider,
+};
 
 /// Application state managing projects and code servers
 pub struct AppState {
     projects: Arc<RwLock<HashMap<ProjectHandle, ProjectContext>>>,
     code_server_manager: Arc<CodeServerManager>,
+    project_store: Arc<ProjectStore>,
 }
 
 pub struct ProjectContext {
@@ -47,10 +53,11 @@ pub struct WorkspaceInfo {
 }
 
 impl AppState {
-    pub fn new(code_server_manager: Arc<CodeServerManager>) -> Self {
+    pub fn new(code_server_manager: Arc<CodeServerManager>, project_store: Arc<ProjectStore>) -> Self {
         Self {
             projects: Arc::new(RwLock::new(HashMap::new())),
             code_server_manager,
+            project_store,
         }
     }
 }
@@ -105,10 +112,23 @@ async fn open_directory(app: tauri::AppHandle) -> Result<Option<String>, String>
 
 /// Internal implementation for opening a project
 pub async fn open_project_impl(state: &AppState, path: String) -> Result<String, String> {
-    let path_buf = PathBuf::from(path);
+    let path_buf = PathBuf::from(&path);
+
+    // Normalize path to resolve symlinks and get canonical path
+    let normalized_path = normalize_path(&path_buf).to_tauri()?;
+
+    // Check if already open - return existing handle
+    {
+        let projects = state.projects.read().await;
+        for (handle, ctx) in projects.iter() {
+            if ctx.provider.project_root() == normalized_path {
+                return Ok(handle.to_string());
+            }
+        }
+    }
 
     // Async new() to avoid blocking
-    let provider = GitWorktreeProvider::new(path_buf.clone())
+    let provider = GitWorktreeProvider::new(normalized_path.clone())
         .await
         .to_tauri()?;
 
@@ -121,6 +141,11 @@ pub async fn open_project_impl(state: &AppState, path: String) -> Result<String,
     let mut projects = state.projects.write().await;
     projects.insert(handle, context);
     drop(projects); // Release lock
+
+    // Persist to disk (non-fatal if fails)
+    if let Err(e) = state.project_store.save_project(&normalized_path).await {
+        eprintln!("Failed to persist project: {}", e);
+    }
 
     Ok(handle.to_string())
 }
@@ -246,6 +271,18 @@ async fn is_code_server_running(state: tauri::State<'_, AppState>) -> Result<boo
     Ok(state.code_server_manager.is_running().await)
 }
 
+/// Load all persisted project paths from disk
+#[tauri::command]
+async fn load_persisted_projects(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let paths = state.project_store.load_all_projects().await.to_tauri()?;
+    Ok(paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect())
+}
+
 /// Check if the runtime (Bun, code-server, extensions) is ready.
 #[tauri::command]
 async fn check_runtime_ready() -> Result<bool, String> {
@@ -289,7 +326,8 @@ pub fn run() {
     let config = CodeServerConfig::new(env!("CARGO_PKG_VERSION"))
         .expect("Failed to create CodeServerConfig");
     let code_server_manager = Arc::new(CodeServerManager::new(config));
-    let app_state = AppState::new(code_server_manager.clone());
+    let project_store = Arc::new(ProjectStore::new());
+    let app_state = AppState::new(code_server_manager.clone(), project_store);
 
     // Clone for cleanup handler
     let cleanup_manager = code_server_manager.clone();
@@ -310,7 +348,8 @@ pub fn run() {
             ensure_code_server_running,
             get_workspace_url,
             stop_code_server,
-            is_code_server_running
+            is_code_server_running,
+            load_persisted_projects
         ])
         .setup(|app| {
             // Configure window appearance for dark theme

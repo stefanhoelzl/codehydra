@@ -101,4 +101,7 @@ pub trait WorkspaceProvider: Send + Sync {
 
     /// Discover all workspaces in this project
     async fn discover(&self) -> Result<Vec<Self::Workspace>, WorkspaceError>;
+
+    /// Get the project root path
+    fn project_root(&self) -> &Path;
 }

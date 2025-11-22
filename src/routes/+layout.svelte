@@ -4,6 +4,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import SetupModal from '$lib/components/SetupModal.svelte';
   import { checkRuntimeReady } from '$lib/api/tauri';
+  import { restorePersistedProjects } from '$lib/services/projectManager';
   import type { Snippet } from 'svelte';
 
   interface Props {
@@ -30,6 +31,9 @@
     } finally {
       isChecking = false;
     }
+
+    // Load persisted projects ALWAYS (regardless of setup state)
+    await restorePersistedProjects();
 
     // Show window after frontend is ready (avoids white flash)
     invoke('show_window');

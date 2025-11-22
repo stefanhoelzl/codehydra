@@ -1,5 +1,6 @@
 use chime_lib::code_server::CodeServerManager;
 use chime_lib::config::CodeServerConfig;
+use chime_lib::project_store::ProjectStore;
 use chime_lib::workspace_provider::ProjectHandle;
 use chime_lib::{close_project_impl, discover_workspaces_impl, open_project_impl, AppState};
 use git2::{Repository, Signature};
@@ -84,7 +85,8 @@ fn test_config() -> CodeServerConfig {
 fn create_test_app_state() -> Arc<AppState> {
     let config = test_config();
     let manager = Arc::new(CodeServerManager::new(config));
-    Arc::new(AppState::new(manager))
+    let project_store = Arc::new(ProjectStore::new());
+    Arc::new(AppState::new(manager, project_store))
 }
 
 #[tokio::test]
@@ -172,6 +174,46 @@ async fn test_reopen_project_after_closing() {
     // Old handle should be invalid
     let result = discover_workspaces_impl(&state, handle1).await;
     assert!(result.is_err());
+}
+
+// Tests for duplicate project detection
+#[tokio::test]
+async fn test_open_same_project_twice_returns_same_handle() {
+    let test_repo = TestRepo::new().unwrap();
+    let state = create_test_app_state();
+
+    let handle1 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+    let handle2 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+
+    // Same path should return same handle (no duplicate)
+    assert_eq!(handle1, handle2);
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_open_project_via_symlink_returns_same_handle() {
+    let test_repo = TestRepo::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    // Create symlink to the project
+    let symlink_path = temp.path().join("symlink-project");
+    std::os::unix::fs::symlink(test_repo.path(), &symlink_path).unwrap();
+
+    let state = create_test_app_state();
+
+    let handle1 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+    let handle2 = open_project_impl(&state, symlink_path.to_string_lossy().to_string())
+        .await
+        .unwrap();
+
+    // Both should resolve to same handle due to path normalization
+    assert_eq!(handle1, handle2);
 }
 
 // Tests below are for the CodeServerManager and CodeServerInstance

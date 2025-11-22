@@ -46,6 +46,10 @@ pub struct GitWorktreeProvider {
 impl WorkspaceProvider for GitWorktreeProvider {
     type Workspace = GitWorktree;
 
+    fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
     /// Create and validate a new provider
     async fn new(project_root: PathBuf) -> Result<Self, WorkspaceError> {
         // Validate path is absolute
@@ -210,6 +214,16 @@ mod tests {
     use tempfile::TempDir;
 
     // Phase 3: Unit Tests - Constructor (5 tests)
+
+    #[tokio::test]
+    async fn test_project_root_returns_correct_path() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        assert_eq!(provider.project_root(), test_repo.path());
+    }
 
     #[tokio::test]
     async fn test_new_valid_repository() {

@@ -4,6 +4,24 @@
 //! - Path encoding for use in URLs (percent-encoding)
 //! - Path normalization (canonicalization)
 //! - Data directory helpers for debug/release modes
+//!
+//! ## Directory Structure
+//!
+//! ```text
+//! <data-root>/                    # get_data_root_dir()
+//! ├── 0.1.0/                      # get_data_version_dir("0.1.0")
+//! │   ├── node/
+//! │   ├── node_modules/
+//! │   ├── extensions/
+//! │   └── user-data/
+//! ├── 0.2.0/                      # Another version
+//! │   └── ...
+//! └── projects/                   # get_data_projects_dir() - SHARED across versions
+//!     ├── chime-a1b2c3d4/
+//!     │   └── config.json
+//!     └── my-app-f8e9d0c1/
+//!         └── config.json
+//! ```
 
 use crate::error::CodeServerError;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
@@ -58,26 +76,22 @@ pub fn normalize_path(path: &Path) -> Result<PathBuf, CodeServerError> {
         .map_err(|e| CodeServerError::InvalidPath(format!("{}: {}", path.display(), e)))
 }
 
-/// Get the data directory for the app.
+/// Get the root data directory for the app.
 ///
-/// In debug builds, uses a local `app-data/<version>` directory relative to
+/// In debug builds, uses a local `app-data` directory relative to
 /// the current working directory. In release builds, uses the platform-specific
 /// user data directory.
 ///
-/// # Arguments
-///
-/// * `app_version` - The application version string (e.g., "0.1.0")
-///
 /// # Returns
 ///
-/// The path to the versioned data directory.
+/// The path to the root data directory (e.g., `~/.local/share/chime` or `./app-data`).
 ///
 /// # Note
 ///
 /// This function does not create the directory; callers should ensure
 /// it exists before use.
-pub fn get_data_dir(app_version: &str) -> PathBuf {
-    let base = if cfg!(debug_assertions) {
+pub fn get_data_root_dir() -> PathBuf {
+    if cfg!(debug_assertions) {
         // Development: use local directory relative to project root
         // current_dir() in Tauri dev mode is src-tauri/, so we go up one level
         std::env::current_dir()
@@ -90,8 +104,44 @@ pub fn get_data_dir(app_version: &str) -> PathBuf {
         // Production: use platform-specific user data directory
         // This matches the directories that Tauri uses
         get_platform_data_dir()
-    };
-    base.join(app_version)
+    }
+}
+
+/// Get the versioned data directory for the app.
+///
+/// This is where version-specific runtime files are stored (Node.js, extensions, etc.).
+///
+/// # Arguments
+///
+/// * `app_version` - The application version string (e.g., "0.1.0")
+///
+/// # Returns
+///
+/// The path to the versioned data directory (e.g., `<root>/0.1.0/`).
+///
+/// # Note
+///
+/// This function does not create the directory; callers should ensure
+/// it exists before use.
+pub fn get_data_version_dir(app_version: &str) -> PathBuf {
+    get_data_root_dir().join(app_version)
+}
+
+/// Get the projects directory for persisted project data.
+///
+/// This directory is shared across all app versions, so projects persist
+/// through updates.
+///
+/// # Returns
+///
+/// The path to the projects directory (e.g., `<root>/projects/`).
+///
+/// # Note
+///
+/// This function does not create the directory; callers should ensure
+/// it exists before use.
+pub fn get_data_projects_dir() -> PathBuf {
+    get_data_root_dir().join("projects")
 }
 
 /// Get the platform-specific user data directory.
@@ -235,22 +285,75 @@ mod tests {
     }
 
     #[test]
-    fn test_get_data_dir_includes_version() {
+    fn test_get_data_root_dir_not_empty() {
+        let root = get_data_root_dir();
+        assert!(!root.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_get_data_root_dir_debug_mode() {
+        // In debug mode (which is how tests run), should use app-data
+        let root = get_data_root_dir();
+        let path_str = root.to_string_lossy();
+
+        // Debug builds use app-data directory
+        if cfg!(debug_assertions) {
+            assert!(
+                path_str.contains("app-data"),
+                "Debug build should use app-data directory: {}",
+                path_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_data_version_dir_includes_version() {
         let version = "1.2.3";
-        let data_dir = get_data_dir(version);
+        let dir = get_data_version_dir(version);
         assert!(
-            data_dir.to_string_lossy().contains(version),
-            "Data dir should include version"
+            dir.to_string_lossy().contains(version),
+            "Version dir should include version"
+        );
+        assert!(
+            dir.starts_with(get_data_root_dir()),
+            "Version dir should be under root dir"
         );
     }
 
     #[test]
-    fn test_get_data_dir_debug_mode() {
+    fn test_get_data_version_dir_debug_mode() {
         // In debug mode (which is how tests run), should use app-data
-        let data_dir = get_data_dir("0.1.0");
+        let data_dir = get_data_version_dir("0.1.0");
         let path_str = data_dir.to_string_lossy();
 
         // Debug builds use app-data directory
+        if cfg!(debug_assertions) {
+            assert!(
+                path_str.contains("app-data"),
+                "Debug build should use app-data directory: {}",
+                path_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_data_projects_dir() {
+        let dir = get_data_projects_dir();
+        assert!(
+            dir.ends_with("projects"),
+            "Projects dir should end with 'projects'"
+        );
+        assert!(
+            dir.starts_with(get_data_root_dir()),
+            "Projects dir should be under root dir"
+        );
+    }
+
+    #[test]
+    fn test_get_data_projects_dir_debug_mode() {
+        let dir = get_data_projects_dir();
+        let path_str = dir.to_string_lossy();
+
         if cfg!(debug_assertions) {
             assert!(
                 path_str.contains("app-data"),

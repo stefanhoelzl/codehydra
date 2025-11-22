@@ -27,7 +27,7 @@
 //! ```
 
 use crate::error::CodeServerError;
-use crate::platform::{paths::get_data_dir, Platform};
+use crate::platform::{paths::get_data_version_dir, Platform};
 use std::path::PathBuf;
 
 /// Starting port for code-server instances.
@@ -82,7 +82,7 @@ impl CodeServerConfig {
     /// ```
     pub fn new(app_version: &str) -> Result<Self, CodeServerError> {
         let platform = Platform::current().ok_or(CodeServerError::UnsupportedPlatform)?;
-        let runtime_dir = get_data_dir(app_version);
+        let runtime_dir = get_data_version_dir(app_version);
         let node_dir = runtime_dir.join("node");
 
         // On Windows, binaries are directly in the node folder
@@ -269,9 +269,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_data_dir_debug_mode() {
+    fn test_get_data_version_dir_debug_mode() {
         // This test runs in debug mode, so should use app-data
-        let data_dir = get_data_dir("0.1.0");
+        let data_dir = get_data_version_dir("0.1.0");
         let path_str = data_dir.to_string_lossy();
 
         if cfg!(debug_assertions) {

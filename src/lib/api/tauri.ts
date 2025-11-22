@@ -58,6 +58,14 @@ export async function checkRuntimeReady(): Promise<boolean> {
 }
 
 /**
+ * Load all persisted project paths from disk.
+ * Returns paths that still exist on disk.
+ */
+export async function loadPersistedProjects(): Promise<string[]> {
+  return invoke<string[]>('load_persisted_projects');
+}
+
+/**
  * Start the runtime setup process.
  * This downloads Bun, installs code-server, and installs extensions.
  * Listen to 'setup-progress' events for progress updates.
