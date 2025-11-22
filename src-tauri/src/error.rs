@@ -1,39 +1,6 @@
-use serde::Serialize;
+//! Error types for code-server operations.
+
 use thiserror::Error;
-
-/// Progress events emitted during runtime setup.
-///
-/// These events are serialized and sent to the frontend via Tauri's event system.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum SetupEvent {
-    /// A setup step has started.
-    StepStarted { step: SetupStep },
-    /// Progress update for a step.
-    Progress {
-        step: SetupStep,
-        percent: u8,
-        message: Option<String>,
-    },
-    /// A setup step completed successfully.
-    StepCompleted { step: SetupStep },
-    /// A setup step failed.
-    StepFailed { step: SetupStep, error: String },
-    /// All setup steps completed successfully.
-    SetupComplete,
-}
-
-/// Setup steps for runtime initialization.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum SetupStep {
-    /// Downloading and extracting Node.js runtime.
-    Node,
-    /// Installing code-server via npm.
-    CodeServer,
-    /// Installing required extensions.
-    Extensions,
-}
 
 /// Error types for code-server operations
 #[derive(Debug, Error)]

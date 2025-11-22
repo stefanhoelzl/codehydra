@@ -5,6 +5,7 @@ pub mod error;
 pub mod git_worktree_provider;
 pub mod platform;
 pub mod runtime_versions;
+pub mod setup;
 pub mod test_utils;
 pub mod workspace_provider;
 
@@ -14,7 +15,7 @@ use bootstrapper::{
 };
 use code_server::CodeServerManager;
 use config::CodeServerConfig;
-use error::SetupEvent;
+use setup::SetupEvent;
 use git_worktree_provider::GitWorktreeProvider;
 use serde::Serialize;
 use std::collections::HashMap;

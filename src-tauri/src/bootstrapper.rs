@@ -21,7 +21,8 @@
 //! Production implementations use real system calls, while tests can use mocks.
 
 use crate::config::CodeServerConfig;
-use crate::error::{CodeServerError, SetupEvent, SetupStep};
+use crate::error::CodeServerError;
+use crate::setup::{SetupEvent, StepState, StepsBuilder};
 use crate::platform::{prepare_binary, Platform};
 use crate::runtime_versions::{get_required_extensions, CODE_SERVER_VERSION};
 use async_trait::async_trait;
@@ -688,18 +689,16 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         let extension = platform.node_archive_extension();
 
         // Download the archive
-        self.emit(SetupEvent::Progress {
-            step: SetupStep::Node, // Keep using Bun step for UI compatibility
-            percent: 10,
-            message: Some("Downloading Node.js runtime...".to_string()),
+        self.emit(SetupEvent::Update {
+            message: "Downloading Node.js runtime...".into(),
+            steps: StepsBuilder::new().node(StepState::InProgress).build(),
         });
 
         let archive_data = download_and_verify(&self.http_client, &url, checksum).await?;
 
-        self.emit(SetupEvent::Progress {
-            step: SetupStep::Node,
-            percent: 70,
-            message: Some("Extracting Node.js...".to_string()),
+        self.emit(SetupEvent::Update {
+            message: "Extracting Node.js...".into(),
+            steps: StepsBuilder::new().node(StepState::InProgress).build(),
         });
 
         // Extract the archive
@@ -726,12 +725,6 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         // Prepare the node binary (set executable permissions, remove quarantine)
         prepare_binary(&self.config.node_binary_path)?;
 
-        self.emit(SetupEvent::Progress {
-            step: SetupStep::Node,
-            percent: 100,
-            message: Some("Node.js ready".to_string()),
-        });
-
         Ok(())
     }
 
@@ -743,10 +736,12 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
     ///
     /// Returns `CodeServerError::ExtensionInstallFailed` if installation fails.
     pub fn install_code_server(&self) -> Result<(), CodeServerError> {
-        self.emit(SetupEvent::Progress {
-            step: SetupStep::CodeServer,
-            percent: 10,
-            message: Some("Installing code-server...".to_string()),
+        self.emit(SetupEvent::Update {
+            message: "Installing code-server...".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .code_server(StepState::InProgress)
+                .build(),
         });
 
         // First, create a package.json if it doesn't exist
@@ -777,12 +772,6 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             });
         }
 
-        self.emit(SetupEvent::Progress {
-            step: SetupStep::CodeServer,
-            percent: 100,
-            message: Some("code-server installed".to_string()),
-        });
-
         Ok(())
     }
 
@@ -811,7 +800,6 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
     /// This is a hard failure - all extensions must be installed successfully.
     pub fn install_extensions(&self) -> Result<(), CodeServerError> {
         let extensions = get_required_extensions();
-        let total = extensions.len();
 
         // Create extensions directory if it doesn't exist
         if !self.file_system.exists(&self.config.extensions_dir) {
@@ -820,12 +808,14 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 .map_err(CodeServerError::PermissionError)?;
         }
 
-        for (i, (extension_id, version)) in extensions.iter().enumerate() {
-            let progress = ((i as f32 / total as f32) * 90.0) as u8 + 10;
-            self.emit(SetupEvent::Progress {
-                step: SetupStep::Extensions,
-                percent: progress,
-                message: Some(format!("Installing {}...", extension_id)),
+        for (extension_id, version) in extensions.iter() {
+            self.emit(SetupEvent::Update {
+                message: format!("Installing {}...", extension_id),
+                steps: StepsBuilder::new()
+                    .node(StepState::Completed)
+                    .code_server(StepState::Completed)
+                    .extensions(StepState::InProgress)
+                    .build(),
             });
 
             let args = self.extension_install_args(extension_id, version);
@@ -848,12 +838,6 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 });
             }
         }
-
-        self.emit(SetupEvent::Progress {
-            step: SetupStep::Extensions,
-            percent: 100,
-            message: Some("All extensions installed".to_string()),
-        });
 
         Ok(())
     }
@@ -880,69 +864,42 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         }
 
         // Step 1: Download Node.js
-        self.emit(SetupEvent::StepStarted {
-            step: SetupStep::Node, // Keep Bun step name for UI compatibility
-        });
-
-        match self.download_node().await {
-            Ok(()) => {
-                self.emit(SetupEvent::StepCompleted {
-                    step: SetupStep::Node,
-                });
-            }
-            Err(e) => {
-                self.emit(SetupEvent::StepFailed {
-                    step: SetupStep::Node,
-                    error: e.to_string(),
-                });
-                return Err(e);
-            }
+        if let Err(e) = self.download_node().await {
+            self.emit(SetupEvent::Failed {
+                error: e.to_string(),
+            });
+            return Err(e);
         }
 
         // Step 2: Install code-server
-        self.emit(SetupEvent::StepStarted {
-            step: SetupStep::CodeServer,
-        });
-
-        match self.install_code_server() {
-            Ok(()) => {
-                self.emit(SetupEvent::StepCompleted {
-                    step: SetupStep::CodeServer,
-                });
-            }
-            Err(e) => {
-                self.emit(SetupEvent::StepFailed {
-                    step: SetupStep::CodeServer,
-                    error: e.to_string(),
-                });
-                return Err(e);
-            }
+        if let Err(e) = self.install_code_server() {
+            self.emit(SetupEvent::Failed {
+                error: e.to_string(),
+            });
+            return Err(e);
         }
 
         // Step 3: Install extensions
-        self.emit(SetupEvent::StepStarted {
-            step: SetupStep::Extensions,
-        });
-
-        match self.install_extensions() {
-            Ok(()) => {
-                self.emit(SetupEvent::StepCompleted {
-                    step: SetupStep::Extensions,
-                });
-            }
-            Err(e) => {
-                self.emit(SetupEvent::StepFailed {
-                    step: SetupStep::Extensions,
-                    error: e.to_string(),
-                });
-                return Err(e);
-            }
+        if let Err(e) = self.install_extensions() {
+            self.emit(SetupEvent::Failed {
+                error: e.to_string(),
+            });
+            return Err(e);
         }
 
         // Step 4: Write default settings
         self.write_default_settings()?;
 
-        self.emit(SetupEvent::SetupComplete);
+        // Emit final success state
+        self.emit(SetupEvent::Update {
+            message: "Setup complete!".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .code_server(StepState::Completed)
+                .extensions(StepState::Completed)
+                .build(),
+        });
+        self.emit(SetupEvent::Complete);
         Ok(())
     }
 }
@@ -1251,44 +1208,6 @@ mod tests {
         let first = &bindings[0];
         assert!(first.get("key").is_some());
         assert!(first.get("command").is_some());
-    }
-
-    #[test]
-    fn test_setup_step_serialization() {
-        let step = SetupStep::Node;
-        let json = serde_json::to_string(&step).unwrap();
-        assert_eq!(json, r#""node""#);
-
-        let step = SetupStep::CodeServer;
-        let json = serde_json::to_string(&step).unwrap();
-        assert_eq!(json, r#""codeServer""#);
-
-        let step = SetupStep::Extensions;
-        let json = serde_json::to_string(&step).unwrap();
-        assert_eq!(json, r#""extensions""#);
-    }
-
-    #[test]
-    fn test_setup_event_serialization() {
-        let event = SetupEvent::StepStarted {
-            step: SetupStep::Node,
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains(r#""type":"stepStarted""#));
-        assert!(json.contains(r#""step":"node""#));
-
-        let event = SetupEvent::Progress {
-            step: SetupStep::CodeServer,
-            percent: 50,
-            message: Some("Downloading...".to_string()),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains(r#""type":"progress""#));
-        assert!(json.contains(r#""percent":50"#));
-
-        let event = SetupEvent::SetupComplete;
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains(r#""type":"setupComplete""#));
     }
 
     // Integration test with real filesystem (using temp directory)

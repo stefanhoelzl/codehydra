@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { listenSetupProgress, setupRuntime } from '$lib/api/tauri';
-  import type { SetupEvent, SetupStep, StepState } from '$lib/types/setup';
-  import { STEP_LABELS, STEP_CAPTIONS } from '$lib/types/setup';
+  import type { SetupEvent, StepStatus, StepState } from '$lib/types/setup';
 
   interface Props {
     /** Whether the setup modal is visible. */
@@ -13,26 +12,10 @@
 
   let { visible = true, onComplete = () => {} }: Props = $props();
 
-  // Setup steps in order
-  const steps: SetupStep[] = ['node', 'codeServer', 'extensions'];
-
-  // State for each step
-  let stepStates = $state<Record<SetupStep, StepState>>({
-    node: 'pending',
-    codeServer: 'pending',
-    extensions: 'pending',
-  });
-
-  // Current progress percentage (0-100)
-  let progress = $state(0);
-
-  // Current status message
+  // UI state - mirrors what backend sends
+  let steps = $state<StepStatus[]>([]);
   let statusMessage = $state('Initializing...');
-
-  // Error message if setup failed
   let errorMessage = $state<string | null>(null);
-
-  // Whether setup is in progress
   let isRunning = $state(false);
 
   // Unlisten function for cleanup
@@ -57,41 +40,26 @@
     return `step-${state}`;
   }
 
-  // Handle setup events
+  // Handle setup events from backend
   function handleEvent(event: SetupEvent) {
     switch (event.type) {
-      case 'stepStarted':
-        stepStates[event.step] = 'inProgress';
-        progress = 0;
-        statusMessage = STEP_CAPTIONS[event.step];
+      case 'update':
+        statusMessage = event.message;
+        steps = event.steps;
         break;
 
-      case 'progress':
-        progress = event.percent;
-        if (event.message) {
-          statusMessage = event.message;
-        }
-        break;
-
-      case 'stepCompleted':
-        stepStates[event.step] = 'completed';
-        progress = 100;
-        break;
-
-      case 'stepFailed':
-        stepStates[event.step] = 'failed';
-        errorMessage = event.error;
-        statusMessage = 'Setup failed!';
+      case 'complete':
         isRunning = false;
-        break;
-
-      case 'setupComplete':
-        isRunning = false;
-        statusMessage = 'Setup complete!';
         // Call onComplete callback after a brief delay to show success state
         setTimeout(() => {
           onComplete();
         }, 500);
+        break;
+
+      case 'failed':
+        errorMessage = event.error;
+        statusMessage = 'Setup failed!';
+        isRunning = false;
         break;
     }
   }
@@ -101,12 +69,7 @@
     // Reset state
     errorMessage = null;
     isRunning = true;
-    stepStates = {
-      node: 'pending',
-      codeServer: 'pending',
-      extensions: 'pending',
-    };
-    progress = 0;
+    steps = [];
     statusMessage = 'Starting setup...';
 
     try {
@@ -148,16 +111,18 @@
       <div class="status">
         <p class="caption">{statusMessage}</p>
 
-        <div class="progress-bar-container">
-          <div class="progress-bar" style="width: {progress}%"></div>
-        </div>
+        {#if isRunning}
+          <div class="progress-bar-container">
+            <div class="progress-bar"></div>
+          </div>
+        {/if}
       </div>
 
       <div class="steps">
         {#each steps as step}
-          <div class="step {getStepClass(stepStates[step])}">
-            <span class="step-icon">{getStepIcon(stepStates[step])}</span>
-            <span class="step-label">{STEP_LABELS[step]}</span>
+          <div class="step {getStepClass(step.state)}">
+            <span class="step-icon">{getStepIcon(step.state)}</span>
+            <span class="step-label">{step.label}</span>
           </div>
         {/each}
       </div>
@@ -223,8 +188,18 @@
 
   .progress-bar {
     height: 100%;
+    width: 30%;
     background: var(--vscode-progressBar-foreground, #0078d4);
-    transition: width 0.3s ease-out;
+    animation: indeterminate 1.5s ease-in-out infinite;
+  }
+
+  @keyframes indeterminate {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(333%);
+    }
   }
 
   .steps {
