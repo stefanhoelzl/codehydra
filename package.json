@@ -28,7 +28,8 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@vscode-elements/elements": "^2.3.1",
-    "@vscode/codicons": "^0.0.42"
+    "@vscode/codicons": "^0.0.42",
+    "code-server": "4.106.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

@@ -1,12 +1,59 @@
-use tokio::sync::Mutex;
-use std::collections::HashMap;
-use tokio::process::Child;
-use serde::Serialize;
-use std::time::Duration;
+//! Code-server instance management
+//!
+//! Manages a single global code-server instance that serves all workspaces.
 
-const CODE_SERVER_BINARY: &str = "/var/home/stefan/Development/repos/chime/.temp/code-server-4.106.0-linux-amd64/bin/code-server";
-const PORT_START: u16 = 7000;
-const PORT_END: u16 = 7100;
+use crate::config::CodeServerConfig;
+use crate::error::CodeServerError;
+use crate::platform::paths::encode_path_for_url;
+use serde::Serialize;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::process::Child;
+use tokio::sync::RwLock;
+
+const HEALTH_CHECK_ATTEMPTS: u32 = 300;
+const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub enum InstanceState {
+    Stopped,
+    Starting,
+    Running { child: Child },
+    Stopping,
+    Failed { error: String },
+}
+
+pub struct CodeServerInstance {
+    port: u16,
+    state: InstanceState,
+}
+
+impl CodeServerInstance {
+    pub fn url_for_folder(&self, folder_path: &Path) -> String {
+        let path_str = if cfg!(windows) {
+            let s = folder_path.to_string_lossy();
+            if s.chars().nth(1) == Some(':') {
+                format!("/{}", s.replace('\\', "/"))
+            } else {
+                s.replace('\\', "/")
+            }
+        } else {
+            folder_path.to_string_lossy().to_string()
+        };
+        let encoded = encode_path_for_url(Path::new(&path_str));
+        format!("http://localhost:{}/?folder={}", self.port, encoded)
+    }
+
+    pub fn is_running(&self) -> bool {
+        matches!(self.state, InstanceState::Running { .. })
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
 
 #[derive(Serialize, Clone)]
 pub struct CodeServerInfo {
@@ -14,163 +61,307 @@ pub struct CodeServerInfo {
     pub url: String,
 }
 
-pub struct ProcessManager {
-    processes: Mutex<HashMap<u16, Child>>,
+pub struct CodeServerManager {
+    config: Arc<CodeServerConfig>,
+    instance: RwLock<Option<CodeServerInstance>>,
 }
 
-impl ProcessManager {
-    pub fn new() -> Self {
+impl CodeServerManager {
+    pub fn new(config: CodeServerConfig) -> Self {
         Self {
-            processes: Mutex::new(HashMap::new()),
+            config: Arc::new(config),
+            instance: RwLock::new(None),
         }
     }
 
-    /// Get the number of running code-server processes (for testing)
-    pub async fn process_count(&self) -> usize {
-        let processes = self.processes.lock().await;
-        processes.len()
-    }
-}
+    pub async fn ensure_running(&self) -> Result<u16, CodeServerError> {
+        let mut instance = self.instance.write().await;
 
-impl Default for ProcessManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Find an available port that's not already reserved in the processes map
-fn find_available_port(reserved_ports: &HashMap<u16, Child>) -> Result<u16, String> {
-    for port in PORT_START..=PORT_END {
-        // Check if port is not already reserved and is available on the system
-        if !reserved_ports.contains_key(&port) && port_scanner::local_port_available(port) {
-            return Ok(port);
+        // Check if already running
+        if let Some(inst) = instance.as_ref() {
+            if inst.is_running() {
+                return Ok(inst.port);
+            }
         }
-    }
-    Err("No available ports in range 7000-7100".to_string())
-}
 
-async fn wait_for_server(port: u16) -> Result<(), String> {
-    let url = format!("http://localhost:{}/healthz", port);
-    
-    // Poll every 100ms for faster startup (300 attempts = 30 seconds max)
-    for i in 0..300 {
-        match reqwest::get(&url).await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    println!("Health check succeeded on attempt {} (~{}ms)", i + 1, i * 100);
-                    return Ok(());
+        // Find available port
+        let port = self.find_available_port()?;
+
+        // Transition to Starting
+        *instance = Some(CodeServerInstance {
+            port,
+            state: InstanceState::Starting,
+        });
+
+        // Build command
+        let child = self.spawn_code_server(port).await?;
+
+        // Wait for health check
+        drop(instance); // Release lock during health check
+        self.wait_for_ready(port).await?;
+
+        // Transition to Running
+        let mut instance = self.instance.write().await;
+        if let Some(inst) = instance.as_mut() {
+            inst.state = InstanceState::Running { child };
+        }
+
+        Ok(port)
+    }
+
+    async fn spawn_code_server(&self, port: u16) -> Result<Child, CodeServerError> {
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        let node_path = &self.config.node_binary_path;
+        let code_server_entry = self.config.code_server_entry_path();
+        let user_data_dir = &self.config.user_data_dir;
+        let extensions_dir = &self.config.extensions_dir;
+
+        // Run: node <code-server/out/node/entry.js> <args>
+        let child = Command::new(node_path)
+            .arg(&code_server_entry)
+            .arg("--bind-addr")
+            .arg(format!("127.0.0.1:{}", port))
+            .arg("--auth")
+            .arg("none")
+            .arg("--user-data-dir")
+            .arg(user_data_dir)
+            .arg("--extensions-dir")
+            .arg(extensions_dir)
+            .arg("--disable-telemetry")
+            .arg("--disable-update-check")
+            .arg("--disable-workspace-trust")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(CodeServerError::SpawnFailed)?;
+
+        Ok(child)
+    }
+
+    pub async fn stop(&self) -> Result<(), CodeServerError> {
+        let mut instance = self.instance.write().await;
+
+        if let Some(mut inst) = instance.take() {
+            if let InstanceState::Running { mut child } = inst.state {
+                inst.state = InstanceState::Stopping;
+
+                // Try graceful shutdown
+                let timeout =
+                    tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, child.wait()).await;
+
+                if timeout.is_err() {
+                    child
+                        .kill()
+                        .await
+                        .map_err(|e| CodeServerError::ProcessKillFailed(e.to_string()))?;
+                    child
+                        .wait()
+                        .await
+                        .map_err(|e| CodeServerError::ProcessKillFailed(e.to_string()))?;
                 }
-            },
-            Err(e) => {
-                if i == 0 || i % 50 == 0 {
-                    eprintln!("Health check attempt {}: {}", i + 1, e);
-                }
-            },
+            }
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        Ok(())
     }
-    Err("Server failed to start within 30 seconds".to_string())
+
+    pub async fn url_for_folder(&self, folder_path: &Path) -> Option<String> {
+        let instance = self.instance.read().await;
+        instance
+            .as_ref()
+            .filter(|i| i.is_running())
+            .map(|i| i.url_for_folder(folder_path))
+    }
+
+    pub async fn is_running(&self) -> bool {
+        let instance = self.instance.read().await;
+        instance.as_ref().is_some_and(|i| i.is_running())
+    }
+
+    pub async fn port(&self) -> Option<u16> {
+        let instance = self.instance.read().await;
+        instance.as_ref().filter(|i| i.is_running()).map(|i| i.port)
+    }
+
+    fn find_available_port(&self) -> Result<u16, CodeServerError> {
+        let start = self.config.port_start;
+        for port in start..=start + 100 {
+            if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                return Ok(port);
+            }
+        }
+        Err(CodeServerError::NoAvailablePorts { start })
+    }
+
+    async fn wait_for_ready(&self, port: u16) -> Result<(), CodeServerError> {
+        let url = format!("http://127.0.0.1:{}/healthz", port);
+
+        for _ in 0..HEALTH_CHECK_ATTEMPTS {
+            if reqwest::get(&url).await.is_ok() {
+                return Ok(());
+            }
+            tokio::time::sleep(HEALTH_CHECK_INTERVAL).await;
+        }
+
+        Err(CodeServerError::HealthCheckFailed {
+            attempts: HEALTH_CHECK_ATTEMPTS,
+        })
+    }
 }
 
-/// Internal function to start code-server
+// ============================================================================
+// Internal Helper Functions (used by lib.rs)
+// ============================================================================
+
+/// Internal function to start code-server for a workspace path.
+///
+/// This is used by lib.rs for workspace discovery.
 pub async fn start_code_server_internal(
-    project_path: String,
-    manager: &ProcessManager,
-) -> Result<CodeServerInfo, String> {
-    use tokio::process::Command;
-    use std::process::Stdio;
-    
-    // Find and reserve port atomically to prevent race conditions in parallel startup
-    let port = {
-        let processes = manager.processes.lock().await;
-        find_available_port(&processes)?
-    };
-    
-    println!("Starting code-server on port {} for path: {}", port, project_path);
-    
-    let child = Command::new(CODE_SERVER_BINARY)
-        .env("VSCODE_PROXY_URI", "")
-        .arg("--bind-addr").arg(format!("127.0.0.1:{}", port))
-        .arg("--auth").arg("none")
-        .arg("--disable-telemetry")
-        .arg("--disable-update-check")
-        .arg("--disable-workspace-trust")
-        .arg(&project_path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("Failed to spawn code-server: {}", e))?;
-    
-    println!("Code-server process spawned, waiting for health check...");
-    
-    // Store process immediately to reserve the port
-    {
-        let mut processes = manager.processes.lock().await;
-        processes.insert(port, child);
-    }
-    
-    // Wait for server to be ready
-    wait_for_server(port).await?;
-    
-    println!("Health check passed!");
-    
-    // URL with folder parameter so code-server opens the correct directory
-    let url = format!("http://localhost:{}/?folder={}", port, project_path);
+    workspace_path: String,
+    manager: &CodeServerManager,
+) -> Result<CodeServerInfo, CodeServerError> {
+    let port = manager.ensure_running().await?;
+    let url = manager
+        .url_for_folder(Path::new(&workspace_path))
+        .await
+        .ok_or(CodeServerError::InstanceNotRunning)?;
     Ok(CodeServerInfo { port, url })
 }
 
-#[tauri::command]
-pub async fn start_code_server(
-    project_path: String,
-    state: tauri::State<'_, ProcessManager>,
-) -> Result<CodeServerInfo, String> {
-    start_code_server_internal(project_path, &state).await
-}
-
-/// Internal function to stop code-server
+/// Internal function to stop code-server.
 pub async fn stop_code_server_internal(
-    port: u16,
-    manager: &ProcessManager,
-) -> Result<(), String> {
-    let mut processes = manager.processes.lock().await;
-    
-    if let Some(mut child) = processes.remove(&port) {
-        drop(processes); // Release lock before awaiting
-        let _ = child.kill().await;
-        // Wait for the process to actually terminate
-        let _ = child.wait().await;
+    manager: &CodeServerManager,
+) -> Result<(), CodeServerError> {
+    manager.stop().await
+}
+
+/// Internal function to cleanup (stop) the server.
+pub async fn cleanup_all_servers_internal(
+    manager: &CodeServerManager,
+) -> Result<(), CodeServerError> {
+    manager.stop().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn test_config() -> CodeServerConfig {
+        CodeServerConfig {
+            runtime_dir: PathBuf::from("/tmp/test-runtime"),
+            node_dir: PathBuf::from("/tmp/test-runtime/node"),
+            node_binary_path: PathBuf::from("/tmp/test-runtime/node/bin/node"),
+            extensions_dir: PathBuf::from("/tmp/test-runtime/extensions"),
+            user_data_dir: PathBuf::from("/tmp/test-runtime/user-data"),
+            port_start: 50000,
+        }
     }
-    
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn stop_code_server(
-    port: u16,
-    state: tauri::State<'_, ProcessManager>,
-) -> Result<(), String> {
-    stop_code_server_internal(port, &state).await
-}
+    #[test]
+    fn test_url_for_folder_simple_path() {
+        let instance = CodeServerInstance {
+            port: 50000,
+            state: InstanceState::Stopped,
+        };
 
-/// Internal function to cleanup all servers
-pub async fn cleanup_all_servers_internal(manager: &ProcessManager) -> Result<(), String> {
-    let mut processes = manager.processes.lock().await;
-    let children: Vec<Child> = processes.drain().map(|(_, child)| child).collect();
-    drop(processes); // Release lock before awaiting
-    
-    for mut child in children {
-        let _ = child.kill().await;
-        // Wait for the process to actually terminate
-        let _ = child.wait().await;
+        let url = instance.url_for_folder(Path::new("/home/user/project"));
+        assert_eq!(url, "http://localhost:50000/?folder=/home/user/project");
     }
-    
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn cleanup_all_servers(
-    state: tauri::State<'_, ProcessManager>,
-) -> Result<(), String> {
-    cleanup_all_servers_internal(&state).await
+    #[test]
+    fn test_url_for_folder_with_spaces() {
+        let instance = CodeServerInstance {
+            port: 50000,
+            state: InstanceState::Stopped,
+        };
+
+        let url = instance.url_for_folder(Path::new("/home/user/my project"));
+        assert_eq!(url, "http://localhost:50000/?folder=/home/user/my%20project");
+    }
+
+    #[test]
+    fn test_url_for_folder_with_special_chars() {
+        let instance = CodeServerInstance {
+            port: 50000,
+            state: InstanceState::Stopped,
+        };
+
+        let url = instance.url_for_folder(Path::new("/home/user/project#test"));
+        assert!(url.contains("%23"), "Hash should be encoded");
+    }
+
+    #[test]
+    fn test_instance_is_running() {
+        let stopped = CodeServerInstance {
+            port: 50000,
+            state: InstanceState::Stopped,
+        };
+        assert!(!stopped.is_running());
+
+        let starting = CodeServerInstance {
+            port: 50000,
+            state: InstanceState::Starting,
+        };
+        assert!(!starting.is_running());
+
+        let failed = CodeServerInstance {
+            port: 50000,
+            state: InstanceState::Failed {
+                error: "test".to_string(),
+            },
+        };
+        assert!(!failed.is_running());
+    }
+
+    #[test]
+    fn test_instance_port() {
+        let instance = CodeServerInstance {
+            port: 50123,
+            state: InstanceState::Stopped,
+        };
+        assert_eq!(instance.port(), 50123);
+    }
+
+    #[test]
+    fn test_manager_new() {
+        let config = test_config();
+        let manager = CodeServerManager::new(config);
+        assert!(manager.config.port_start == 50000);
+    }
+
+    #[tokio::test]
+    async fn test_manager_is_running_when_no_instance() {
+        let config = test_config();
+        let manager = CodeServerManager::new(config);
+        assert!(!manager.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn test_manager_port_when_no_instance() {
+        let config = test_config();
+        let manager = CodeServerManager::new(config);
+        assert!(manager.port().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_manager_url_for_folder_when_not_running() {
+        let config = test_config();
+        let manager = CodeServerManager::new(config);
+        let url = manager.url_for_folder(Path::new("/test")).await;
+        assert!(url.is_none());
+    }
+
+    #[test]
+    fn test_find_available_port_success() {
+        let config = test_config();
+        let manager = CodeServerManager::new(config);
+        let port = manager.find_available_port();
+        assert!(port.is_ok());
+        let port = port.unwrap();
+        assert!(port >= 50000 && port <= 50100);
+    }
 }
