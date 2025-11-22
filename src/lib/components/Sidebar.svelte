@@ -54,7 +54,7 @@
         </div>
 
         <!-- Additional worktrees only (exclude main) -->
-        {#each additionalWorktrees(project) as workspace}
+        {#each additionalWorktrees(project) as workspace (workspace.path)}
           <div
             class="workspace-item"
             class:active={$activeWorkspace?.projectHandle === project.handle &&

@@ -976,15 +976,15 @@ When user switches between workspaces:
 
 ```svelte
 <script>
-  let workspaces = [...];  // List of workspace paths
+  let workspaces = ['path/to/workspace1', 'path/to/workspace2'];
   let activeWorkspace = workspaces[0];
-  
+
   function switchWorkspace(path) {
     activeWorkspace = path;
   }
 </script>
 
-{#each workspaces as workspace}
+{#each workspaces as workspace (workspace)}
   <iframe
     src="http://localhost:{port}/?folder={encodeURIComponent(workspace)}"
     class:hidden={workspace !== activeWorkspace}

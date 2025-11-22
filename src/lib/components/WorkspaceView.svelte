@@ -2,9 +2,10 @@
   import { projects, activeWorkspace } from '$lib/stores/projects';
   import { ensureCodeServerRunning, getWorkspaceUrl } from '$lib/api/tauri';
   import { tick } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
 
   // Store iframe references by workspace path
-  const iframeElements = new Map<string, HTMLIFrameElement>();
+  const iframeElements = new SvelteMap<string, HTMLIFrameElement>();
 
   // Track workspace URLs (may need to be fetched dynamically)
   let workspaceUrls = $state<Map<string, string>>(new Map());

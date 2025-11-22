@@ -119,7 +119,7 @@
       </div>
 
       <div class="steps">
-        {#each steps as step}
+        {#each steps as step (step.label)}
           <div class="step {getStepClass(step.state)}">
             <span class="step-icon">{getStepIcon(step.state)}</span>
             <span class="step-label">{step.label}</span>
