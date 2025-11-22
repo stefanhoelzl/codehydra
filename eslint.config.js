@@ -32,6 +32,33 @@ export default [
     },
   },
   {
+    // Disallow eslint-disable comments and TypeScript directive comments
+    rules: {
+      // Catch TS directive comments in regular comments
+      'no-warning-comments': [
+        'error',
+        {
+          terms: ['@ts-ignore', '@ts-expect-error', '@ts-nocheck'],
+          location: 'anywhere',
+        },
+      ],
+      // Strictly forbid all TypeScript directive comments
+      '@typescript-eslint/ban-ts-comment': [
+        'error',
+        {
+          'ts-expect-error': true,
+          'ts-ignore': true,
+          'ts-nocheck': true,
+          'ts-check': false,
+        },
+      ],
+    },
+    linterOptions: {
+      reportUnusedDisableDirectives: 'error',
+      noInlineConfig: true,
+    },
+  },
+  {
     // Additional ignores not in .gitignore
     ignores: ['src-tauri/'],
   },
