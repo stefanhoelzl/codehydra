@@ -9,6 +9,7 @@ import type {
   WorkspaceStatus,
 } from '$lib/types/project';
 import type { SetupEvent } from '$lib/types/setup';
+import type { AggregatedAgentStatus } from '$lib/types/agentStatus';
 
 export async function openDirectory(): Promise<string | null> {
   return await invoke<string | null>('open_directory');
@@ -162,4 +163,20 @@ export async function startCodeServer(projectPath: string): Promise<CodeServerIn
  */
 export async function cleanupAllServers(): Promise<void> {
   return await stopCodeServer();
+}
+
+// --- Agent Status API ---
+
+/**
+ * Get current agent status for a workspace.
+ */
+export async function getAgentStatus(workspacePath: string): Promise<AggregatedAgentStatus> {
+  return await invoke<AggregatedAgentStatus>('get_agent_status', { workspacePath });
+}
+
+/**
+ * Get all workspace agent statuses.
+ */
+export async function getAllAgentStatuses(): Promise<Record<string, AggregatedAgentStatus>> {
+  return await invoke<Record<string, AggregatedAgentStatus>>('get_all_agent_statuses');
 }

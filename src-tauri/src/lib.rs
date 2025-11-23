@@ -1,3 +1,6 @@
+pub mod agent_status;
+pub mod agent_status_manager;
+pub mod agent_status_provider;
 pub mod bootstrapper;
 pub mod code_server;
 pub mod config;
@@ -10,6 +13,8 @@ pub mod setup;
 pub mod test_utils;
 pub mod workspace_provider;
 
+use agent_status::AggregatedAgentStatus;
+use agent_status_manager::AgentStatusManager;
 use bootstrapper::{
     ArchiveExtractorImpl, EventEmitter, NoOpEventEmitter, ReqwestHttpClient, RuntimeBootstrapper,
     StdFileSystem, StdProcessSpawner,
@@ -26,7 +31,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::window::Color;
 use tauri::{Emitter, Manager, Theme};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use workspace_provider::{
     BranchInfo, ProjectHandle, RemovalResult, ToTauriResult, Workspace, WorkspaceError,
     WorkspaceProvider,
@@ -37,6 +42,7 @@ pub struct AppState {
     projects: Arc<RwLock<HashMap<ProjectHandle, ProjectContext>>>,
     code_server_manager: Arc<CodeServerManager>,
     project_store: Arc<ProjectStore>,
+    agent_status_manager: Arc<AgentStatusManager>,
 }
 
 pub struct ProjectContext {
@@ -62,11 +68,16 @@ pub struct WorkspaceStatus {
 }
 
 impl AppState {
-    pub fn new(code_server_manager: Arc<CodeServerManager>, project_store: Arc<ProjectStore>) -> Self {
+    pub fn new(
+        code_server_manager: Arc<CodeServerManager>,
+        project_store: Arc<ProjectStore>,
+        agent_status_manager: Arc<AgentStatusManager>,
+    ) -> Self {
         Self {
             projects: Arc::new(RwLock::new(HashMap::new())),
             code_server_manager,
             project_store,
+            agent_status_manager,
         }
     }
 }
@@ -468,6 +479,28 @@ async fn load_persisted_projects(
         .collect())
 }
 
+/// Get current agent status for a workspace
+#[tauri::command]
+async fn get_agent_status(
+    state: tauri::State<'_, AppState>,
+    workspace_path: String,
+) -> Result<AggregatedAgentStatus, String> {
+    let path = PathBuf::from(&workspace_path);
+    Ok(state.agent_status_manager.get_status(&path).await)
+}
+
+/// Get all workspace agent statuses
+#[tauri::command]
+async fn get_all_agent_statuses(
+    state: tauri::State<'_, AppState>,
+) -> Result<HashMap<String, AggregatedAgentStatus>, String> {
+    let statuses = state.agent_status_manager.get_all_statuses().await;
+    Ok(statuses
+        .into_iter()
+        .map(|(k, v)| (k.to_string_lossy().to_string(), v))
+        .collect())
+}
+
 /// Check if the runtime (Bun, code-server, extensions) is ready.
 #[tauri::command]
 async fn check_runtime_ready() -> Result<bool, String> {
@@ -512,10 +545,16 @@ pub fn run() {
         .expect("Failed to create CodeServerConfig");
     let code_server_manager = Arc::new(CodeServerManager::new(config));
     let project_store = Arc::new(ProjectStore::new());
-    let app_state = AppState::new(code_server_manager.clone(), project_store);
+    let agent_status_manager = Arc::new(AgentStatusManager::new());
+    let app_state = AppState::new(
+        code_server_manager.clone(),
+        project_store,
+        agent_status_manager.clone(),
+    );
 
-    // Clone for cleanup handler
+    // Clone for cleanup handlers
     let cleanup_manager = code_server_manager.clone();
+    let cleanup_status_manager = agent_status_manager.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -539,9 +578,11 @@ pub fn run() {
             get_workspace_url,
             stop_code_server,
             is_code_server_running,
-            load_persisted_projects
+            load_persisted_projects,
+            get_agent_status,
+            get_all_agent_statuses
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // Configure window appearance for dark theme
             // Background color #1e1e1e = RGB(30, 30, 30)
             let window = app.get_webview_window("main").expect("main window not found");
@@ -555,11 +596,38 @@ pub fn run() {
             // Window starts hidden (visible: false in tauri.conf.json)
             // Frontend will call show_window command when ready
 
+            // Set up event forwarding from AgentStatusManager to frontend
+            let app_handle = app.handle().clone();
+            let status_manager = agent_status_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut rx = status_manager.subscribe();
+                loop {
+                    match rx.recv().await {
+                        Ok(event) => {
+                            if let Err(e) = app_handle.emit("agent-status-changed", &event) {
+                                eprintln!("Failed to emit agent status event: {}", e);
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            eprintln!("Agent status event listener lagged by {} events", n);
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            eprintln!("Agent status event channel closed");
+                            break;
+                        }
+                    }
+                }
+            });
+
             // Register cleanup handler for Ctrl+C
+            let ctrl_c_code_server = cleanup_manager.clone();
+            let ctrl_c_status_manager = cleanup_status_manager.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::signal::ctrl_c().await.ok();
-                println!("Ctrl+C received - cleaning up code-servers...");
-                let _ = cleanup_manager.stop().await;
+                println!("Ctrl+C received - cleaning up...");
+                ctrl_c_status_manager.shutdown().await;
+                let _ = ctrl_c_code_server.stop().await;
             });
             Ok(())
         })
@@ -568,9 +636,10 @@ pub fn run() {
         .run(|app_handle, event| {
             // Handle app exit event
             if let tauri::RunEvent::Exit = event {
-                println!("App exiting - cleaning up code-servers...");
+                println!("App exiting - cleaning up...");
                 let app_state: tauri::State<AppState> = app_handle.state();
                 tauri::async_runtime::block_on(async {
+                    app_state.agent_status_manager.shutdown().await;
                     let _ = app_state.code_server_manager.stop().await;
                 });
             }

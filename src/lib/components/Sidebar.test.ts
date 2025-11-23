@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { get } from 'svelte/store';
 import Sidebar from './Sidebar.svelte';
 import { projects, activeWorkspace } from '$lib/stores/projects';
+import { agentStatuses } from '$lib/stores/agentStatus';
 import type { Project, Workspace, BranchInfo } from '$lib/types/project';
+import type { AggregatedAgentStatus } from '$lib/types/agentStatus';
 
 // Mock the projectManager service
 vi.mock('$lib/services/projectManager', () => ({
@@ -78,6 +80,7 @@ describe('Sidebar', () => {
     // Reset stores to initial state
     projects.set([]);
     activeWorkspace.set(null);
+    agentStatuses.set(new Map());
 
     // Default mock implementations
     mockListBranches.mockResolvedValue(createMockBranches());
@@ -675,6 +678,85 @@ describe('Sidebar', () => {
       expect(mockCloseProject).toHaveBeenCalled();
       // Should NOT call removeWorkspace
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // Agent Status Indicator Tests
+  // ============================================================
+  describe('Agent status indicator', () => {
+    it('displays status indicator for main project workspace', () => {
+      const project = createMockProject([{ name: 'main', path: '/path/to/main', branch: 'main' }]);
+      projects.set([project]);
+
+      render(Sidebar);
+
+      // The project-item (main workspace) should have a status indicator
+      const projectItem = screen.getByText('project').closest('.project-item');
+      expect(projectItem).toBeInTheDocument();
+
+      // Find status indicator within project-item
+      const statusIndicator = projectItem?.querySelector('.status-indicator');
+      expect(statusIndicator).toBeInTheDocument();
+    });
+
+    it('displays status indicator for additional workspaces', () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feature' },
+      ]);
+      projects.set([project]);
+
+      render(Sidebar);
+
+      // The workspace-item (additional workspace) should have a status indicator
+      const workspaceItem = screen.getByText('feature').closest('.workspace-item');
+      expect(workspaceItem).toBeInTheDocument();
+
+      // Find status indicator within workspace-item
+      const statusIndicator = workspaceItem?.querySelector('.status-indicator');
+      expect(statusIndicator).toBeInTheDocument();
+    });
+
+    it('shows correct status color based on agent status', () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feature' },
+      ]);
+      projects.set([project]);
+
+      // Set different statuses for each workspace
+      const statuses = new Map<string, AggregatedAgentStatus>();
+      statuses.set('/path/to/main', { type: 'allIdle', count: 1 });
+      statuses.set('/path/to/feature', { type: 'allBusy', count: 2 });
+      agentStatuses.set(statuses);
+
+      render(Sidebar);
+
+      // Main workspace should have green indicator (allIdle)
+      const projectItem = screen.getByText('project').closest('.project-item');
+      const mainIndicator = projectItem?.querySelector('.status-indicator');
+      expect(mainIndicator).toHaveClass('green');
+
+      // Feature workspace should have red indicator (allBusy)
+      const workspaceItem = screen.getByText('feature').closest('.workspace-item');
+      const featureIndicator = workspaceItem?.querySelector('.status-indicator');
+      expect(featureIndicator).toHaveClass('red');
+    });
+
+    it('shows grey indicator when no agents are running', () => {
+      const project = createMockProject([{ name: 'main', path: '/path/to/main', branch: 'main' }]);
+      projects.set([project]);
+
+      // No status set means no agents
+      agentStatuses.set(new Map());
+
+      render(Sidebar);
+
+      // Should have grey indicator (noAgents)
+      const projectItem = screen.getByText('project').closest('.project-item');
+      const statusIndicator = projectItem?.querySelector('.status-indicator');
+      expect(statusIndicator).toHaveClass('grey');
     });
   });
 });

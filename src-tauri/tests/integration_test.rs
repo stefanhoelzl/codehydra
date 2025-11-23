@@ -1,3 +1,4 @@
+use chime_lib::agent_status_manager::AgentStatusManager;
 use chime_lib::code_server::CodeServerManager;
 use chime_lib::config::CodeServerConfig;
 use chime_lib::project_store::ProjectStore;
@@ -86,7 +87,8 @@ fn create_test_app_state() -> Arc<AppState> {
     let config = test_config();
     let manager = Arc::new(CodeServerManager::new(config));
     let project_store = Arc::new(ProjectStore::new());
-    Arc::new(AppState::new(manager, project_store))
+    let agent_status_manager = Arc::new(AgentStatusManager::new());
+    Arc::new(AppState::new(manager, project_store, agent_status_manager))
 }
 
 #[tokio::test]

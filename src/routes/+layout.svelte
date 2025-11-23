@@ -1,10 +1,11 @@
 <script lang="ts">
   import '@vscode-elements/elements/dist/bundled.js';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import SetupModal from '$lib/components/SetupModal.svelte';
   import { checkRuntimeReady } from '$lib/api/tauri';
   import { restorePersistedProjects } from '$lib/services/projectManager';
+  import { initAgentStatusListener, loadInitialStatuses } from '$lib/stores/agentStatus';
   import type { Snippet } from 'svelte';
 
   interface Props {
@@ -18,6 +19,9 @@
 
   // Whether the runtime needs setup
   let needsSetup = $state(false);
+
+  // Agent status listener cleanup function
+  let unlistenAgentStatus: (() => void) | null = null;
 
   onMount(async () => {
     try {
@@ -35,8 +39,22 @@
     // Load persisted projects ALWAYS (regardless of setup state)
     await restorePersistedProjects();
 
+    // Load initial agent statuses AFTER projects are restored
+    await loadInitialStatuses();
+
+    // Start listening for agent status updates
+    unlistenAgentStatus = await initAgentStatusListener();
+
     // Show window after frontend is ready (avoids white flash)
     invoke('show_window');
+  });
+
+  onDestroy(() => {
+    // Clean up the agent status event listener to prevent memory leaks
+    if (unlistenAgentStatus) {
+      unlistenAgentStatus();
+      unlistenAgentStatus = null;
+    }
   });
 
   function handleSetupComplete() {

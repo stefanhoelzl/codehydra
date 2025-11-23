@@ -39,6 +39,7 @@ zip = "6.0.0"
 tar = "0.4.44"
 flate2 = "1.1.5"
 xz2 = "0.1.7"
+tokio-util = "0.7.17"
 
 [dev-dependencies]
 mockall = "0.13.1"

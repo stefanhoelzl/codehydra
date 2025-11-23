@@ -4,6 +4,9 @@
   import type { Project, Workspace } from '$lib/types/project';
   import CreateWorkspaceDialog from './CreateWorkspaceDialog.svelte';
   import RemoveWorkspaceDialog from './RemoveWorkspaceDialog.svelte';
+  import AgentStatusIndicator from './AgentStatusIndicator.svelte';
+  import { agentStatuses } from '$lib/stores/agentStatus';
+  import { createNoAgentsStatus } from '$lib/types/agentStatus';
 
   // Create dialog state
   let createDialogProject = $state<Project | null>(null);
@@ -98,6 +101,9 @@
           >
             <vscode-icon name="close"></vscode-icon>
           </button>
+          <AgentStatusIndicator
+            status={$agentStatuses.get(mainWorkspace(project).path) ?? createNoAgentsStatus()}
+          />
         </div>
 
         {#each additionalWorktrees(project) as workspace (workspace.path)}
@@ -127,6 +133,9 @@
             >
               <vscode-icon name="close"></vscode-icon>
             </button>
+            <AgentStatusIndicator
+              status={$agentStatuses.get(workspace.path) ?? createNoAgentsStatus()}
+            />
           </div>
         {/each}
       </div>
