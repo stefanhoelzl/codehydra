@@ -44,3 +44,31 @@ export function addWorkspaceToProject(handle: ProjectHandle, workspace: Workspac
     )
   );
 }
+
+/**
+ * Remove a workspace from a project in the store.
+ * If the removed workspace was active, switches to the main workspace.
+ */
+export function removeWorkspaceFromProject(handle: ProjectHandle, workspacePath: string): void {
+  projects.update((p) =>
+    p.map((proj) =>
+      proj.handle === handle
+        ? { ...proj, workspaces: proj.workspaces.filter((w) => w.path !== workspacePath) }
+        : proj
+    )
+  );
+
+  // If the removed workspace was active, switch to main workspace
+  const current = get(activeWorkspace);
+  if (current && current.projectHandle === handle && current.workspacePath === workspacePath) {
+    const allProjects = get(projects);
+    const project = allProjects.find((p) => p.handle === handle);
+    if (project && project.workspaces.length > 0) {
+      // Main workspace is always first
+      activeWorkspace.set({
+        projectHandle: handle,
+        workspacePath: project.workspaces[0].path,
+      });
+    }
+  }
+}

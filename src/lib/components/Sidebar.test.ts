@@ -13,6 +13,8 @@ vi.mock('$lib/services/projectManager', () => ({
   listBranches: vi.fn(),
   fetchBranches: vi.fn(),
   createNewWorkspace: vi.fn(),
+  checkWorkspaceStatus: vi.fn(),
+  removeWorkspace: vi.fn(),
 }));
 
 import * as projectManager from '$lib/services/projectManager';
@@ -20,6 +22,9 @@ import * as projectManager from '$lib/services/projectManager';
 const mockListBranches = vi.mocked(projectManager.listBranches);
 const mockFetchBranches = vi.mocked(projectManager.fetchBranches);
 const mockCreateNewWorkspace = vi.mocked(projectManager.createNewWorkspace);
+const mockCheckWorkspaceStatus = vi.mocked(projectManager.checkWorkspaceStatus);
+const mockRemoveWorkspace = vi.mocked(projectManager.removeWorkspace);
+const mockCloseProject = vi.mocked(projectManager.closeProject);
 
 // ============================================================
 // Test Constants
@@ -77,6 +82,14 @@ describe('Sidebar', () => {
     // Default mock implementations
     mockListBranches.mockResolvedValue(createMockBranches());
     mockFetchBranches.mockResolvedValue(undefined);
+    mockCheckWorkspaceStatus.mockResolvedValue({
+      hasUncommittedChanges: false,
+      isMainWorktree: false,
+    });
+    mockRemoveWorkspace.mockResolvedValue({
+      worktreeRemoved: true,
+      branchDeleted: false,
+    });
   });
 
   afterEach(() => {
@@ -414,6 +427,254 @@ describe('Sidebar', () => {
         const featureWorkspace = screen.getByText('feature').closest('[role="button"]');
         expect(featureWorkspace).toHaveClass('active');
       });
+    });
+  });
+
+  // ============================================================
+  // Workspace Hover Behavior Tests
+  // ============================================================
+  describe('Workspace hover behavior', () => {
+    it('shows branch name by default', () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feat-123' },
+      ]);
+      projects.set([project]);
+
+      render(Sidebar);
+
+      // Branch name should be visible
+      expect(screen.getByText('(feat-123)')).toBeInTheDocument();
+    });
+
+    it('does not show close button for main workspace (project item)', () => {
+      const project = createMockProject([{ name: 'main', path: '/path/to/main', branch: 'main' }]);
+      projects.set([project]);
+
+      render(Sidebar);
+
+      // Project close button should exist (closes project from sidebar)
+      const closeButtons = screen.getAllByTitle('Close Project');
+      expect(closeButtons).toHaveLength(1);
+
+      // But there should be no "Remove Workspace" button for main worktree
+      expect(screen.queryByTitle('Remove Workspace')).not.toBeInTheDocument();
+    });
+
+    it('shows close button on additional workspace items', () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feature' },
+      ]);
+      projects.set([project]);
+
+      render(Sidebar);
+
+      // Should have a "Remove Workspace" button for the additional workspace
+      expect(screen.getByTitle('Remove Workspace')).toBeInTheDocument();
+    });
+  });
+
+  // ============================================================
+  // Workspace Removal Integration Tests
+  // ============================================================
+  describe('Workspace removal integration', () => {
+    it('opens RemoveWorkspaceDialog when close button clicked', async () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feature' },
+      ]);
+      projects.set([project]);
+      activeWorkspace.set({
+        projectHandle: TEST_PROJECT_HANDLE,
+        workspacePath: '/path/to/main',
+      });
+
+      const user = userEvent.setup();
+      render(Sidebar);
+
+      // Click the remove workspace button
+      const removeButton = screen.getByTitle('Remove Workspace');
+      await user.click(removeButton);
+
+      // Dialog should open
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('Remove Workspace')).toBeInTheDocument();
+      });
+    });
+
+    it('closes dialog and removes workspace from list after removal', async () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feature' },
+      ]);
+      projects.set([project]);
+      activeWorkspace.set({
+        projectHandle: TEST_PROJECT_HANDLE,
+        workspacePath: '/path/to/main',
+      });
+
+      // Mock removeWorkspace to update the store
+      mockRemoveWorkspace.mockImplementation(async () => {
+        projects.update((p) =>
+          p.map((proj) =>
+            proj.handle === TEST_PROJECT_HANDLE
+              ? {
+                  ...proj,
+                  workspaces: proj.workspaces.filter((w) => w.path !== '/path/to/feature'),
+                }
+              : proj
+          )
+        );
+        return { worktreeRemoved: true, branchDeleted: false };
+      });
+
+      const user = userEvent.setup();
+      render(Sidebar);
+
+      // Verify workspace is present
+      expect(screen.getByText('feature')).toBeInTheDocument();
+
+      // Open the remove dialog
+      const removeButton = screen.getByTitle('Remove Workspace');
+      await user.click(removeButton);
+
+      // Wait for dialog and status to load
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(screen.queryByText('Checking workspace status...')).not.toBeInTheDocument();
+      });
+
+      // Click "Keep Branch" to remove
+      const keepBranchBtn = screen.getByRole('button', { name: 'Keep Branch' });
+      await user.click(keepBranchBtn);
+
+      // Workspace should disappear from sidebar
+      await waitFor(() => {
+        expect(screen.queryByText('feature')).not.toBeInTheDocument();
+      });
+
+      // Dialog should close
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('switches active workspace to main if removed workspace was active', async () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feature' },
+      ]);
+      projects.set([project]);
+      // Set feature workspace as active
+      activeWorkspace.set({
+        projectHandle: TEST_PROJECT_HANDLE,
+        workspacePath: '/path/to/feature',
+      });
+
+      // Mock removeWorkspace to update both stores
+      mockRemoveWorkspace.mockImplementation(async () => {
+        projects.update((p) =>
+          p.map((proj) =>
+            proj.handle === TEST_PROJECT_HANDLE
+              ? {
+                  ...proj,
+                  workspaces: proj.workspaces.filter((w) => w.path !== '/path/to/feature'),
+                }
+              : proj
+          )
+        );
+        // This simulates what removeWorkspaceFromProject does
+        activeWorkspace.set({
+          projectHandle: TEST_PROJECT_HANDLE,
+          workspacePath: '/path/to/main',
+        });
+        return { worktreeRemoved: true, branchDeleted: false };
+      });
+
+      const user = userEvent.setup();
+      render(Sidebar);
+
+      // Verify feature workspace is active
+      const featureItem = screen.getByText('feature').closest('[role="button"]');
+      expect(featureItem).toHaveClass('active');
+
+      // Open the remove dialog
+      const removeButton = screen.getByTitle('Remove Workspace');
+      await user.click(removeButton);
+
+      await waitFor(() => {
+        expect(screen.queryByText('Checking workspace status...')).not.toBeInTheDocument();
+      });
+
+      // Click "Delete" to remove workspace and branch
+      const deleteBtn = screen.getByRole('button', { name: 'Delete' });
+      await user.click(deleteBtn);
+
+      // Main workspace should now be active
+      await waitFor(() => {
+        const currentActive = get(activeWorkspace);
+        expect(currentActive?.workspacePath).toBe('/path/to/main');
+      });
+    });
+  });
+
+  // ============================================================
+  // Main Worktree Close Button Safety Tests
+  // ============================================================
+  describe('Main worktree close button safety', () => {
+    it('project close button only removes from sidebar without any git operations', async () => {
+      const project = createMockProject([{ name: 'main', path: '/path/to/main', branch: 'main' }]);
+      projects.set([project]);
+
+      const user = userEvent.setup();
+      render(Sidebar);
+
+      // Click the project close button
+      const closeButton = screen.getByTitle('Close Project');
+      await user.click(closeButton);
+
+      // closeProject should be called (not removeWorkspace)
+      expect(mockCloseProject).toHaveBeenCalledWith(project);
+      expect(mockRemoveWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('project close button does not open RemoveWorkspaceDialog', async () => {
+      const project = createMockProject([{ name: 'main', path: '/path/to/main', branch: 'main' }]);
+      projects.set([project]);
+
+      const user = userEvent.setup();
+      render(Sidebar);
+
+      // Click the project close button
+      const closeButton = screen.getByTitle('Close Project');
+      await user.click(closeButton);
+
+      // No dialog should appear
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('project close button calls closeProject not removeWorkspace', async () => {
+      const project = createMockProject([
+        { name: 'main', path: '/path/to/main', branch: 'main' },
+        { name: 'feature', path: '/path/to/feature', branch: 'feature' },
+      ]);
+      projects.set([project]);
+
+      const user = userEvent.setup();
+      render(Sidebar);
+
+      // Click the project close button (not the workspace remove button)
+      const closeButton = screen.getByTitle('Close Project');
+      await user.click(closeButton);
+
+      // Should call closeProject
+      expect(mockCloseProject).toHaveBeenCalled();
+      // Should NOT call removeWorkspace
+      expect(mockRemoveWorkspace).not.toHaveBeenCalled();
     });
   });
 });

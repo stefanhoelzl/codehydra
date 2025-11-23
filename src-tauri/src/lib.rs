@@ -28,7 +28,8 @@ use tauri::window::Color;
 use tauri::{Emitter, Manager, Theme};
 use tokio::sync::RwLock;
 use workspace_provider::{
-    BranchInfo, ProjectHandle, ToTauriResult, Workspace, WorkspaceError, WorkspaceProvider,
+    BranchInfo, ProjectHandle, RemovalResult, ToTauriResult, Workspace, WorkspaceError,
+    WorkspaceProvider,
 };
 
 /// Application state managing projects and code servers
@@ -50,6 +51,14 @@ pub struct WorkspaceInfo {
     pub branch: Option<String>,
     pub port: u16,
     pub url: String,
+}
+
+/// Status of a workspace (for removal dialog)
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceStatus {
+    pub has_uncommitted_changes: bool,
+    pub is_main_worktree: bool,
 }
 
 impl AppState {
@@ -337,6 +346,80 @@ async fn fetch_branches(state: tauri::State<'_, AppState>, handle: String) -> Re
     fetch_branches_impl(&state, handle).await
 }
 
+/// Internal implementation for checking workspace status
+pub async fn check_workspace_status_impl(
+    state: &AppState,
+    handle: String,
+    workspace_path: String,
+) -> Result<WorkspaceStatus, String> {
+    let handle: ProjectHandle = handle.parse().to_tauri()?;
+
+    let projects = state.projects.read().await;
+    let context = projects
+        .get(&handle)
+        .ok_or(WorkspaceError::ProjectNotFound)
+        .to_tauri()?;
+
+    let provider = context.provider.clone();
+    drop(projects);
+
+    let workspace_path = PathBuf::from(&workspace_path);
+    let is_main_worktree = provider.is_main_worktree(&workspace_path);
+    let has_uncommitted_changes = provider
+        .has_uncommitted_changes(&workspace_path)
+        .await
+        .to_tauri()?;
+
+    Ok(WorkspaceStatus {
+        has_uncommitted_changes,
+        is_main_worktree,
+    })
+}
+
+#[tauri::command]
+async fn check_workspace_status(
+    state: tauri::State<'_, AppState>,
+    handle: String,
+    workspace_path: String,
+) -> Result<WorkspaceStatus, String> {
+    check_workspace_status_impl(&state, handle, workspace_path).await
+}
+
+/// Internal implementation for removing a workspace
+pub async fn remove_workspace_impl(
+    state: &AppState,
+    handle: String,
+    workspace_path: String,
+    delete_branch: bool,
+) -> Result<RemovalResult, String> {
+    let handle: ProjectHandle = handle.parse().to_tauri()?;
+
+    let projects = state.projects.read().await;
+    let context = projects
+        .get(&handle)
+        .ok_or(WorkspaceError::ProjectNotFound)
+        .to_tauri()?;
+
+    let provider = context.provider.clone();
+    drop(projects);
+
+    let workspace_path = PathBuf::from(&workspace_path);
+    provider
+        .remove_workspace(&workspace_path, delete_branch)
+        .await
+        .to_tauri()
+}
+
+#[tauri::command]
+async fn remove_workspace(
+    state: tauri::State<'_, AppState>,
+    handle: String,
+    workspace_path: String,
+    delete_branch: bool,
+) -> Result<RemovalResult, String> {
+    remove_workspace_impl(&state, handle, workspace_path, delete_branch).await
+}
+
 /// Ensure the code-server is running and return its port
 #[tauri::command]
 async fn ensure_code_server_running(state: tauri::State<'_, AppState>) -> Result<u16, String> {
@@ -447,6 +530,8 @@ pub fn run() {
             list_branches,
             create_workspace,
             fetch_branches,
+            check_workspace_status,
+            remove_workspace,
             show_window,
             check_runtime_ready,
             setup_runtime,

@@ -2,8 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { projects, activeWorkspace, activeProjectHandle } from '$lib/stores/projects';
-import { restorePersistedProjects, createNewWorkspace } from './projectManager';
-import type { Workspace } from '$lib/types/project';
+import {
+  restorePersistedProjects,
+  createNewWorkspace,
+  checkWorkspaceStatus,
+  removeWorkspace,
+} from './projectManager';
+import type { Workspace, RemovalResult, WorkspaceStatus } from '$lib/types/project';
 
 // Get the mocked invoke function
 const mockInvoke = vi.mocked(invoke);
@@ -285,6 +290,289 @@ describe('projectManager', () => {
       // Assert: New workspace should STILL be active
       const active = get(activeWorkspace);
       expect(active?.workspacePath).toBe('/project/.worktrees/feature-y');
+    });
+  });
+
+  describe('checkWorkspaceStatus', () => {
+    it('returns status from backend API', async () => {
+      const expectedStatus: WorkspaceStatus = {
+        hasUncommittedChanges: true,
+        isMainWorktree: false,
+      };
+
+      mockInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'check_workspace_status') {
+          return expectedStatus;
+        }
+        return null;
+      });
+
+      const result = await checkWorkspaceStatus('proj-1', '/path/to/workspace');
+
+      expect(mockInvoke).toHaveBeenCalledWith('check_workspace_status', {
+        handle: 'proj-1',
+        workspacePath: '/path/to/workspace',
+      });
+      expect(result).toEqual(expectedStatus);
+    });
+
+    it('propagates backend errors', async () => {
+      mockInvoke.mockRejectedValue(new Error('Backend error'));
+
+      await expect(checkWorkspaceStatus('proj-1', '/path/to/workspace')).rejects.toThrow(
+        'Backend error'
+      );
+    });
+  });
+
+  describe('removeWorkspace', () => {
+    it('calls backend API with correct parameters for keep branch', async () => {
+      const mainWorkspace: Workspace = {
+        name: 'main',
+        path: '/project/main',
+        branch: 'main',
+        port: 3000,
+        url: 'http://localhost:3000',
+      };
+      const featureWorkspace: Workspace = {
+        name: 'feature',
+        path: '/project/feature',
+        branch: 'feature',
+        port: 3001,
+        url: 'http://localhost:3001',
+      };
+
+      projects.set([
+        {
+          handle: 'proj-1',
+          path: '/project',
+          workspaces: [mainWorkspace, featureWorkspace],
+        },
+      ]);
+
+      const expectedResult: RemovalResult = {
+        worktreeRemoved: true,
+        branchDeleted: false,
+      };
+
+      mockInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'remove_workspace') {
+          return expectedResult;
+        }
+        return null;
+      });
+
+      const result = await removeWorkspace('proj-1', '/project/feature', false);
+
+      expect(mockInvoke).toHaveBeenCalledWith('remove_workspace', {
+        handle: 'proj-1',
+        workspacePath: '/project/feature',
+        deleteBranch: false,
+      });
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('calls backend API with correct parameters for delete branch', async () => {
+      const mainWorkspace: Workspace = {
+        name: 'main',
+        path: '/project/main',
+        branch: 'main',
+        port: 3000,
+        url: 'http://localhost:3000',
+      };
+      const featureWorkspace: Workspace = {
+        name: 'feature',
+        path: '/project/feature',
+        branch: 'feature',
+        port: 3001,
+        url: 'http://localhost:3001',
+      };
+
+      projects.set([
+        {
+          handle: 'proj-1',
+          path: '/project',
+          workspaces: [mainWorkspace, featureWorkspace],
+        },
+      ]);
+
+      const expectedResult: RemovalResult = {
+        worktreeRemoved: true,
+        branchDeleted: true,
+      };
+
+      mockInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'remove_workspace') {
+          return expectedResult;
+        }
+        return null;
+      });
+
+      const result = await removeWorkspace('proj-1', '/project/feature', true);
+
+      expect(mockInvoke).toHaveBeenCalledWith('remove_workspace', {
+        handle: 'proj-1',
+        workspacePath: '/project/feature',
+        deleteBranch: true,
+      });
+      expect(result).toEqual(expectedResult);
+      expect(result.branchDeleted).toBe(true);
+    });
+
+    it('removes workspace from store after successful API call', async () => {
+      const mainWorkspace: Workspace = {
+        name: 'main',
+        path: '/project/main',
+        branch: 'main',
+        port: 3000,
+        url: 'http://localhost:3000',
+      };
+      const featureWorkspace: Workspace = {
+        name: 'feature',
+        path: '/project/feature',
+        branch: 'feature',
+        port: 3001,
+        url: 'http://localhost:3001',
+      };
+
+      projects.set([
+        {
+          handle: 'proj-1',
+          path: '/project',
+          workspaces: [mainWorkspace, featureWorkspace],
+        },
+      ]);
+
+      mockInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'remove_workspace') {
+          return { worktreeRemoved: true, branchDeleted: false };
+        }
+        return null;
+      });
+
+      await removeWorkspace('proj-1', '/project/feature', false);
+
+      const allProjects = get(projects);
+      const project = allProjects.find((p) => p.handle === 'proj-1');
+      expect(project?.workspaces).toHaveLength(1);
+      expect(project?.workspaces[0].path).toBe('/project/main');
+    });
+
+    it('switches to main workspace if removed workspace was active', async () => {
+      const mainWorkspace: Workspace = {
+        name: 'main',
+        path: '/project/main',
+        branch: 'main',
+        port: 3000,
+        url: 'http://localhost:3000',
+      };
+      const featureWorkspace: Workspace = {
+        name: 'feature',
+        path: '/project/feature',
+        branch: 'feature',
+        port: 3001,
+        url: 'http://localhost:3001',
+      };
+
+      projects.set([
+        {
+          handle: 'proj-1',
+          path: '/project',
+          workspaces: [mainWorkspace, featureWorkspace],
+        },
+      ]);
+      activeWorkspace.set({
+        projectHandle: 'proj-1',
+        workspacePath: '/project/feature',
+      });
+
+      mockInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'remove_workspace') {
+          return { worktreeRemoved: true, branchDeleted: false };
+        }
+        return null;
+      });
+
+      await removeWorkspace('proj-1', '/project/feature', false);
+
+      const active = get(activeWorkspace);
+      expect(active?.workspacePath).toBe('/project/main');
+    });
+
+    it('throws error and does not update store if API call fails', async () => {
+      const mainWorkspace: Workspace = {
+        name: 'main',
+        path: '/project/main',
+        branch: 'main',
+        port: 3000,
+        url: 'http://localhost:3000',
+      };
+      const featureWorkspace: Workspace = {
+        name: 'feature',
+        path: '/project/feature',
+        branch: 'feature',
+        port: 3001,
+        url: 'http://localhost:3001',
+      };
+
+      projects.set([
+        {
+          handle: 'proj-1',
+          path: '/project',
+          workspaces: [mainWorkspace, featureWorkspace],
+        },
+      ]);
+
+      mockInvoke.mockRejectedValue(new Error('Backend error'));
+
+      await expect(removeWorkspace('proj-1', '/project/feature', false)).rejects.toThrow(
+        'Backend error'
+      );
+
+      // Store should not be updated
+      const allProjects = get(projects);
+      const project = allProjects.find((p) => p.handle === 'proj-1');
+      expect(project?.workspaces).toHaveLength(2);
+    });
+
+    it('returns RemovalResult from backend', async () => {
+      const mainWorkspace: Workspace = {
+        name: 'main',
+        path: '/project/main',
+        branch: 'main',
+        port: 3000,
+        url: 'http://localhost:3000',
+      };
+      const featureWorkspace: Workspace = {
+        name: 'feature',
+        path: '/project/feature',
+        branch: 'feature',
+        port: 3001,
+        url: 'http://localhost:3001',
+      };
+
+      projects.set([
+        {
+          handle: 'proj-1',
+          path: '/project',
+          workspaces: [mainWorkspace, featureWorkspace],
+        },
+      ]);
+
+      const expectedResult: RemovalResult = {
+        worktreeRemoved: true,
+        branchDeleted: false,
+      };
+
+      mockInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'remove_workspace') {
+          return expectedResult;
+        }
+        return null;
+      });
+
+      const result = await removeWorkspace('proj-1', '/project/feature', false);
+      expect(result).toEqual(expectedResult);
     });
   });
 });

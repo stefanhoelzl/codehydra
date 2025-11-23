@@ -45,6 +45,18 @@ pub enum WorkspaceError {
 
     #[error("Worktree creation failed: {0}")]
     WorktreeCreationFailed(String),
+
+    #[error("Cannot remove main worktree")]
+    CannotRemoveMainWorktree,
+
+    #[error("Workspace not found: {0}")]
+    WorkspaceNotFound(PathBuf),
+
+    #[error("Worktree removal failed: {0}")]
+    WorktreeRemovalFailed(String),
+
+    #[error("Branch deletion failed: {0}")]
+    BranchDeletionFailed(String),
 }
 
 /// Information about a git branch
@@ -53,6 +65,14 @@ pub enum WorkspaceError {
 pub struct BranchInfo {
     pub name: String,
     pub is_remote: bool,
+}
+
+/// Result of a workspace removal operation
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemovalResult {
+    pub worktree_removed: bool,
+    pub branch_deleted: bool,
 }
 
 /// Extension trait for converting Result to Tauri-compatible Result

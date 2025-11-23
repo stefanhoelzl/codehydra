@@ -1,6 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { BranchInfo, CodeServerInfo, ProjectHandle, Workspace } from '$lib/types/project';
+import type {
+  BranchInfo,
+  CodeServerInfo,
+  ProjectHandle,
+  RemovalResult,
+  Workspace,
+  WorkspaceStatus,
+} from '$lib/types/project';
 import type { SetupEvent } from '$lib/types/setup';
 
 export async function openDirectory(): Promise<string | null> {
@@ -108,6 +115,30 @@ export function listenSetupProgress(callback: (event: SetupEvent) => void): Prom
   return listen<SetupEvent>('setup-progress', (event) => {
     callback(event.payload);
   });
+}
+
+/**
+ * Check workspace status (uncommitted changes, is main worktree).
+ */
+export async function checkWorkspaceStatus(
+  handle: ProjectHandle,
+  workspacePath: string
+): Promise<WorkspaceStatus> {
+  return await invoke<WorkspaceStatus>('check_workspace_status', { handle, workspacePath });
+}
+
+/**
+ * Remove a workspace (git worktree).
+ * @param handle - Project handle
+ * @param workspacePath - Path to the workspace to remove
+ * @param deleteBranch - If true, also deletes the associated branch
+ */
+export async function removeWorkspace(
+  handle: ProjectHandle,
+  workspacePath: string,
+  deleteBranch: boolean
+): Promise<RemovalResult> {
+  return await invoke<RemovalResult>('remove_workspace', { handle, workspacePath, deleteBranch });
 }
 
 // --- Deprecated functions for backward compatibility ---

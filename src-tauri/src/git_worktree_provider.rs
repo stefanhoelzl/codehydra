@@ -1,9 +1,9 @@
 use crate::platform::paths::get_project_workspaces_dir;
 use crate::workspace_provider::{
-    BranchInfo, Workspace, WorkspaceError, WorkspaceProvider, DISCOVER_TIMEOUT_SECS,
+    BranchInfo, RemovalResult, Workspace, WorkspaceError, WorkspaceProvider, DISCOVER_TIMEOUT_SECS,
 };
 use async_trait::async_trait;
-use git2::{BranchType, ErrorCode, Repository, WorktreeAddOptions};
+use git2::{BranchType, ErrorCode, Repository, StatusOptions, WorktreeAddOptions};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -241,6 +241,179 @@ impl GitWorktreeProvider {
         .await
         .map_err(|_| WorkspaceError::TaskCancelled)?
     }
+
+    /// Check if a workspace has uncommitted changes (modified, staged, or untracked files).
+    ///
+    /// # Arguments
+    /// * `workspace_path` - Path to the workspace (worktree) to check
+    ///
+    /// # Returns
+    /// `true` if there are any uncommitted changes, `false` otherwise.
+    pub async fn has_uncommitted_changes(
+        &self,
+        workspace_path: &Path,
+    ) -> Result<bool, WorkspaceError> {
+        let workspace_path = workspace_path.to_path_buf();
+
+        // Add timeout to prevent hanging on large repos
+        let future = tokio::task::spawn_blocking(move || {
+            has_uncommitted_changes_blocking(&workspace_path)
+        });
+
+        tokio::time::timeout(Duration::from_secs(DISCOVER_TIMEOUT_SECS), future)
+            .await
+            .map_err(|_| WorkspaceError::Timeout)?
+            .map_err(|_| WorkspaceError::TaskCancelled)?
+    }
+
+    /// Check if a workspace path is the main worktree (project root).
+    pub fn is_main_worktree(&self, workspace_path: &Path) -> bool {
+        workspace_path == self.project_root
+    }
+
+    /// Remove a workspace (git worktree).
+    ///
+    /// # Arguments
+    /// * `workspace_path` - Path to the worktree to remove
+    /// * `delete_branch` - If true, also deletes the associated branch
+    ///
+    /// # Returns
+    /// `RemovalResult` indicating what was removed
+    ///
+    /// # Note
+    /// This operation is NOT atomic. If worktree removal succeeds but branch
+    /// deletion fails, the worktree is still removed.
+    pub async fn remove_workspace(
+        &self,
+        workspace_path: &Path,
+        delete_branch: bool,
+    ) -> Result<RemovalResult, WorkspaceError> {
+        // Check if trying to remove main worktree
+        if self.is_main_worktree(workspace_path) {
+            return Err(WorkspaceError::CannotRemoveMainWorktree);
+        }
+
+        let project_root = self.project_root.clone();
+        let workspace_path = workspace_path.to_path_buf();
+
+        // Add timeout to prevent hanging
+        let future = tokio::task::spawn_blocking(move || {
+            remove_workspace_blocking(&project_root, &workspace_path, delete_branch)
+        });
+
+        tokio::time::timeout(Duration::from_secs(DISCOVER_TIMEOUT_SECS), future)
+            .await
+            .map_err(|_| WorkspaceError::Timeout)?
+            .map_err(|_| WorkspaceError::TaskCancelled)?
+    }
+}
+
+/// Blocking function to check for uncommitted changes
+fn has_uncommitted_changes_blocking(workspace_path: &Path) -> Result<bool, WorkspaceError> {
+    let repo = Repository::open(workspace_path)?;
+
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .include_ignored(false)
+        .recurse_untracked_dirs(true);
+
+    let statuses = repo.statuses(Some(&mut opts))?;
+
+    // Any status entry means there are uncommitted changes
+    Ok(!statuses.is_empty())
+}
+
+/// Blocking function to remove a workspace
+fn remove_workspace_blocking(
+    project_root: &Path,
+    workspace_path: &Path,
+    delete_branch: bool,
+) -> Result<RemovalResult, WorkspaceError> {
+    // Check if workspace path exists
+    if !workspace_path.exists() {
+        return Err(WorkspaceError::WorkspaceNotFound(workspace_path.to_path_buf()));
+    }
+
+    // Open the worktree repo to get its branch before removing
+    let wt_repo = Repository::open(workspace_path).map_err(|e| {
+        WorkspaceError::WorktreeRemovalFailed(format!("Cannot open worktree repo: {}", e))
+    })?;
+
+    // Get the branch name if we need to delete it
+    let branch_name = if delete_branch {
+        wt_repo.head().ok().and_then(|head| {
+            if head.is_branch() {
+                head.shorthand().map(String::from)
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
+
+    // Get the worktree name from the path
+    let wt_name = workspace_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| {
+            WorkspaceError::WorktreeRemovalFailed("Invalid worktree path".to_string())
+        })?
+        .to_string();
+
+    // Drop the worktree repo handle before removing the directory
+    drop(wt_repo);
+
+    // Remove the worktree directory
+    std::fs::remove_dir_all(workspace_path).map_err(|e| {
+        WorkspaceError::WorktreeRemovalFailed(format!("Failed to remove worktree directory: {}", e))
+    })?;
+
+    // Open the main repo to prune worktree metadata and optionally delete branch
+    let repo = Repository::open(project_root)?;
+
+    // Prune worktree metadata
+    // git2 doesn't have a direct prune_worktree method, so we need to:
+    // 1. Find the worktree by name
+    // 2. Call prune on it with WORKTREE_PRUNE_VALID flag to force prune
+    if let Ok(worktree) = repo.find_worktree(&wt_name) {
+        // Prune the worktree - this removes the metadata since the directory is gone
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true); // Prune even if worktree is valid (we know it's gone)
+        opts.working_tree(true); // We've already removed the working tree
+        let _ = worktree.prune(Some(&mut opts));
+    }
+
+    // Try to delete the branch if requested
+    let mut branch_deleted = false;
+    if delete_branch {
+        if let Some(ref branch_name) = branch_name {
+            match repo.find_branch(branch_name, BranchType::Local) {
+                Ok(mut branch) => {
+                    match branch.delete() {
+                        Ok(()) => {
+                            branch_deleted = true;
+                        }
+                        Err(e) => {
+                            // Branch deletion failed, but worktree was removed
+                            // Return success with branch_deleted=false
+                            // Log the error for debugging
+                            eprintln!("Warning: Failed to delete branch '{}': {}", branch_name, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Branch not found - might have been deleted elsewhere
+                    eprintln!("Warning: Branch '{}' not found: {}", branch_name, e);
+                }
+            }
+        }
+    }
+
+    Ok(RemovalResult {
+        worktree_removed: true,
+        branch_deleted,
+    })
 }
 
 /// Helper function to get the current branch (None if detached HEAD)
@@ -1104,5 +1277,448 @@ mod tests {
                 error
             );
         }
+    }
+
+    // ============================================================
+    // Tests for has_uncommitted_changes
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_clean_workspace() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Main worktree should be clean after initial commit
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(!has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_with_modified_files() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Create a modified file
+        test_repo
+            .create_modified_file(test_repo.path(), "test.txt", "modified content")
+            .unwrap();
+
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_with_staged_files() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Create a staged file
+        test_repo
+            .create_staged_file(test_repo.path(), "staged.txt", "staged content")
+            .unwrap();
+
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_with_untracked_files() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Create an untracked file
+        test_repo
+            .create_untracked_file(test_repo.path(), "untracked.txt", "untracked content")
+            .unwrap();
+
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_with_staged_and_modified() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Create a file, stage it, then modify it again
+        test_repo
+            .create_staged_file(test_repo.path(), "mixed.txt", "staged")
+            .unwrap();
+        // Modify the file again (creates both staged and unstaged changes)
+        std::fs::write(test_repo.path().join("mixed.txt"), "modified after staging").unwrap();
+
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_with_deleted_files() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Delete a tracked file
+        test_repo
+            .delete_tracked_file(test_repo.path(), "to_delete.txt")
+            .unwrap();
+
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_invalid_path() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let result = provider
+            .has_uncommitted_changes(Path::new("/nonexistent/path"))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_main_worktree() {
+        let test_repo = TestRepo::new().unwrap();
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Test on main worktree (clean)
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(!has_changes);
+
+        // Add changes to main worktree
+        test_repo
+            .create_untracked_file(test_repo.path(), "new.txt", "new file")
+            .unwrap();
+
+        let has_changes = provider
+            .has_uncommitted_changes(test_repo.path())
+            .await
+            .unwrap();
+        assert!(has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_has_uncommitted_changes_additional_worktree() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Additional worktree should be clean initially
+        let has_changes = provider.has_uncommitted_changes(&wt_path).await.unwrap();
+        assert!(!has_changes);
+
+        // Add changes to additional worktree
+        test_repo
+            .create_untracked_file(&wt_path, "feature.txt", "feature work")
+            .unwrap();
+
+        let has_changes = provider.has_uncommitted_changes(&wt_path).await.unwrap();
+        assert!(has_changes);
+    }
+
+    #[tokio::test]
+    async fn test_is_main_worktree() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Main worktree is the project root
+        assert!(provider.is_main_worktree(test_repo.path()));
+
+        // Additional worktree is not main
+        assert!(!provider.is_main_worktree(&wt_path));
+    }
+
+    // ============================================================
+    // Tests for remove_workspace
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_remove_workspace_keeps_branch() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Verify worktree exists
+        assert!(wt_path.exists());
+
+        // Remove workspace but keep branch
+        let result = provider.remove_workspace(&wt_path, false).await.unwrap();
+
+        assert!(result.worktree_removed);
+        assert!(!result.branch_deleted);
+
+        // Worktree directory should be gone
+        assert!(!wt_path.exists());
+
+        // Branch should still exist
+        let branches = provider.list_branches().await.unwrap();
+        assert!(branches.iter().any(|b| b.name == "feat" && !b.is_remote));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_deletes_branch() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Verify worktree exists
+        assert!(wt_path.exists());
+
+        // Remove workspace and delete branch
+        let result = provider.remove_workspace(&wt_path, true).await.unwrap();
+
+        assert!(result.worktree_removed);
+        assert!(result.branch_deleted);
+
+        // Worktree directory should be gone
+        assert!(!wt_path.exists());
+
+        // Branch should be deleted
+        let branches = provider.list_branches().await.unwrap();
+        assert!(!branches.iter().any(|b| b.name == "feat" && !b.is_remote));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_rejects_main_worktree() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Try to remove main worktree
+        let result = provider.remove_workspace(test_repo.path(), false).await;
+
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::CannotRemoveMainWorktree)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_nonexistent_path() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let nonexistent = PathBuf::from("/nonexistent/worktree");
+        let result = provider.remove_workspace(&nonexistent, false).await;
+
+        assert!(matches!(result, Err(WorkspaceError::WorkspaceNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_not_a_worktree() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Create a regular directory (not a worktree)
+        let not_a_worktree = test_repo.temp_dir.path().join("not-a-worktree");
+        std::fs::create_dir_all(&not_a_worktree).unwrap();
+
+        let result = provider.remove_workspace(&not_a_worktree, false).await;
+
+        // Should fail because it's not a git repo
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::WorktreeRemovalFailed(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_with_uncommitted_changes() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Add uncommitted changes
+        test_repo
+            .create_untracked_file(&wt_path, "uncommitted.txt", "uncommitted")
+            .unwrap();
+
+        // Should still be able to remove (with warning shown in UI)
+        let result = provider.remove_workspace(&wt_path, true).await.unwrap();
+
+        assert!(result.worktree_removed);
+        assert!(!wt_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_cleans_metadata() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Verify worktree appears in discover
+        let workspaces = provider.discover().await.unwrap();
+        assert_eq!(workspaces.len(), 2);
+
+        // Remove workspace
+        let _result = provider.remove_workspace(&wt_path, false).await.unwrap();
+
+        // After removal, worktree should not appear in discover
+        let workspaces = provider.discover().await.unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert!(workspaces.iter().all(|w| w.name() != "feature"));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_not_found_in_discover_after_removal() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Remove workspace
+        let _result = provider.remove_workspace(&wt_path, true).await.unwrap();
+
+        // Discover should not find the removed workspace
+        let workspaces = provider.discover().await.unwrap();
+        assert!(!workspaces.iter().any(|w| w.path() == wt_path));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_idempotent_already_removed() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Remove workspace first time
+        let _result = provider.remove_workspace(&wt_path, false).await.unwrap();
+
+        // Try to remove again - should fail with WorkspaceNotFound
+        let result = provider.remove_workspace(&wt_path, false).await;
+        assert!(matches!(result, Err(WorkspaceError::WorkspaceNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_concurrent_removal_attempts() {
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        let provider = Arc::new(
+            GitWorktreeProvider::new(test_repo.path().to_path_buf())
+                .await
+                .unwrap(),
+        );
+
+        let p1 = provider.clone();
+        let p2 = provider.clone();
+        let path1 = wt_path.clone();
+        let path2 = wt_path.clone();
+
+        // Launch two concurrent remove_workspace calls
+        let (result1, result2) = tokio::join!(
+            async move { p1.remove_workspace(&path1, false).await },
+            async move { p2.remove_workspace(&path2, false).await }
+        );
+
+        // One should succeed, one should fail
+        let successes = [result1.is_ok(), result2.is_ok()]
+            .iter()
+            .filter(|&&x| x)
+            .count();
+
+        // At least one should succeed, and at most one (due to race)
+        assert!(successes >= 1);
+
+        // The workspace should be removed
+        assert!(!wt_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_branch_deletion_fails_worktree_still_removed() {
+        // This tests that if branch deletion fails, the worktree is still removed
+        // We can simulate this by creating a worktree with a detached HEAD (no branch)
+        let test_repo = TestRepo::new().unwrap();
+        let wt_path = test_repo.create_worktree("feature", "feat").unwrap();
+
+        // Detach HEAD in the worktree
+        {
+            let wt_repo = Repository::open(&wt_path).unwrap();
+            let commit_id = wt_repo.head().unwrap().peel_to_commit().unwrap().id();
+            wt_repo.set_head_detached(commit_id).unwrap();
+        }
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Remove workspace with delete_branch=true (but HEAD is detached, so no branch to delete)
+        let result = provider.remove_workspace(&wt_path, true).await.unwrap();
+
+        // Worktree should be removed
+        assert!(result.worktree_removed);
+        // Branch should not be deleted (no branch associated with detached HEAD)
+        assert!(!result.branch_deleted);
+
+        // Worktree directory should be gone
+        assert!(!wt_path.exists());
     }
 }

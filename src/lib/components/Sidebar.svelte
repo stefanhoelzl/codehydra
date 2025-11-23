@@ -3,10 +3,15 @@
   import { openNewProject, closeProject } from '$lib/services/projectManager';
   import type { Project, Workspace } from '$lib/types/project';
   import CreateWorkspaceDialog from './CreateWorkspaceDialog.svelte';
+  import RemoveWorkspaceDialog from './RemoveWorkspaceDialog.svelte';
 
-  // Dialog state
-  let dialogProject = $state<Project | null>(null);
-  let triggerButtonRef = $state<HTMLElement | null>(null);
+  // Create dialog state
+  let createDialogProject = $state<Project | null>(null);
+  let createTriggerRef = $state<HTMLElement | null>(null);
+
+  // Remove dialog state
+  let removeDialogData = $state<{ project: Project; workspace: Workspace } | null>(null);
+  let removeTriggerRef = $state<HTMLElement | null>(null);
 
   function mainWorkspace(project: Project): Workspace {
     return project.workspaces[0];
@@ -30,17 +35,31 @@
 
   function openCreateDialog(event: Event, project: Project) {
     event.stopPropagation();
-    triggerButtonRef = event.currentTarget as HTMLElement;
-    dialogProject = project;
+    createTriggerRef = event.currentTarget as HTMLElement;
+    createDialogProject = project;
   }
 
-  function handleDialogClose() {
-    dialogProject = null;
+  function handleCreateDialogClose() {
+    createDialogProject = null;
   }
 
   function handleWorkspaceCreated(workspace: Workspace) {
     console.log('Workspace created:', workspace.name);
-    dialogProject = null;
+    createDialogProject = null;
+  }
+
+  function openRemoveDialog(event: Event, project: Project, workspace: Workspace) {
+    event.stopPropagation();
+    removeTriggerRef = event.currentTarget as HTMLElement;
+    removeDialogData = { project, workspace };
+  }
+
+  function handleRemoveDialogClose() {
+    removeDialogData = null;
+  }
+
+  function handleWorkspaceRemoved() {
+    removeDialogData = null;
   }
 </script>
 
@@ -100,6 +119,14 @@
                 <span class="detached">(detached)</span>
               {/if}
             </span>
+            <button
+              type="button"
+              class="icon-btn close-btn"
+              onclick={(e: Event) => openRemoveDialog(e, project, workspace)}
+              title="Remove Workspace"
+            >
+              <vscode-icon name="close"></vscode-icon>
+            </button>
           </div>
         {/each}
       </div>
@@ -111,12 +138,22 @@
   </vscode-button>
 </aside>
 
-{#if dialogProject}
+{#if createDialogProject}
   <CreateWorkspaceDialog
-    project={dialogProject}
-    onClose={handleDialogClose}
+    project={createDialogProject}
+    onClose={handleCreateDialogClose}
     onCreated={handleWorkspaceCreated}
-    triggerElement={triggerButtonRef}
+    triggerElement={createTriggerRef}
+  />
+{/if}
+
+{#if removeDialogData}
+  <RemoveWorkspaceDialog
+    project={removeDialogData.project}
+    workspace={removeDialogData.workspace}
+    onClose={handleRemoveDialogClose}
+    onRemoved={handleWorkspaceRemoved}
+    triggerElement={removeTriggerRef}
   />
 {/if}
 
@@ -228,7 +265,10 @@
 
   .project-item:hover .icon-btn,
   .project-item:focus-within .icon-btn,
-  .project-item.active .icon-btn {
+  .project-item.active .icon-btn,
+  .workspace-item:hover .icon-btn,
+  .workspace-item:focus-within .icon-btn,
+  .workspace-item.active .icon-btn {
     opacity: 1;
   }
 

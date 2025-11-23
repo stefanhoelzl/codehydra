@@ -24,3 +24,13 @@ export interface BranchInfo {
   name: string;
   isRemote: boolean;
 }
+
+export interface WorkspaceStatus {
+  hasUncommittedChanges: boolean;
+  isMainWorktree: boolean;
+}
+
+export interface RemovalResult {
+  worktreeRemoved: boolean;
+  branchDeleted: boolean;
+}

@@ -7,6 +7,8 @@ import {
   listBranches as listBranchesApi,
   createWorkspace as createWorkspaceApi,
   fetchBranches as fetchBranchesApi,
+  checkWorkspaceStatus as checkWorkspaceStatusApi,
+  removeWorkspace as removeWorkspaceApi,
 } from '$lib/api/tauri';
 import {
   addProject,
@@ -15,8 +17,16 @@ import {
   activeWorkspace,
   projects,
   addWorkspaceToProject,
+  removeWorkspaceFromProject,
 } from '$lib/stores/projects';
-import type { BranchInfo, Project, ProjectHandle, Workspace } from '$lib/types/project';
+import type {
+  BranchInfo,
+  Project,
+  ProjectHandle,
+  RemovalResult,
+  Workspace,
+  WorkspaceStatus,
+} from '$lib/types/project';
 import { get } from 'svelte/store';
 
 export async function openNewProject(): Promise<void> {
@@ -192,6 +202,39 @@ export async function createNewWorkspace(
     return workspace;
   } catch (error) {
     console.error('Failed to create workspace:', error);
+    throw error;
+  }
+}
+
+/**
+ * Check workspace status (uncommitted changes, is main worktree).
+ */
+export async function checkWorkspaceStatus(
+  handle: ProjectHandle,
+  workspacePath: string
+): Promise<WorkspaceStatus> {
+  return await checkWorkspaceStatusApi(handle, workspacePath);
+}
+
+/**
+ * Remove a workspace from a project.
+ * - Calls backend to remove worktree (and optionally branch)
+ * - Updates store on success
+ */
+export async function removeWorkspace(
+  handle: ProjectHandle,
+  workspacePath: string,
+  deleteBranch: boolean
+): Promise<RemovalResult> {
+  try {
+    const result = await removeWorkspaceApi(handle, workspacePath, deleteBranch);
+
+    // Update store after successful removal
+    removeWorkspaceFromProject(handle, workspacePath);
+
+    return result;
+  } catch (error) {
+    console.error('Failed to remove workspace:', error);
     throw error;
   }
 }
