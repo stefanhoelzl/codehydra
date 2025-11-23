@@ -2,6 +2,11 @@
   import { projects, activeWorkspace } from '$lib/stores/projects';
   import { openNewProject, closeProject } from '$lib/services/projectManager';
   import type { Project, Workspace } from '$lib/types/project';
+  import CreateWorkspaceDialog from './CreateWorkspaceDialog.svelte';
+
+  // Dialog state
+  let dialogProject = $state<Project | null>(null);
+  let triggerButtonRef = $state<HTMLElement | null>(null);
 
   function mainWorkspace(project: Project): Workspace {
     return project.workspaces[0];
@@ -22,6 +27,21 @@
     event.stopPropagation();
     closeProject(project);
   }
+
+  function openCreateDialog(event: Event, project: Project) {
+    event.stopPropagation();
+    triggerButtonRef = event.currentTarget as HTMLElement;
+    dialogProject = project;
+  }
+
+  function handleDialogClose() {
+    dialogProject = null;
+  }
+
+  function handleWorkspaceCreated(workspace: Workspace) {
+    console.log('Workspace created:', workspace.name);
+    dialogProject = null;
+  }
 </script>
 
 <aside class="sidebar">
@@ -32,35 +52,42 @@
   <div class="projects-list">
     {#each $projects as project (project.handle)}
       <div class="project-group">
-        <!-- Project name - clickable, shows main workspace -->
         <div
           class="project-item"
           class:active={$activeWorkspace?.projectHandle === project.handle &&
             $activeWorkspace?.workspacePath === mainWorkspace(project).path}
-          on:click={() => selectWorkspace(project, mainWorkspace(project))}
-          on:keydown={(e) => e.key === 'Enter' && selectWorkspace(project, mainWorkspace(project))}
+          onclick={() => selectWorkspace(project, mainWorkspace(project))}
+          onkeydown={(e) => e.key === 'Enter' && selectWorkspace(project, mainWorkspace(project))}
           role="button"
           tabindex="0"
         >
           <vscode-icon name="folder" class="icon"></vscode-icon>
           <span class="name">{project.path.split('/').pop()}</span>
-          <vscode-icon
-            name="close"
-            class="close-btn"
-            on:click={(e: Event) => handleCloseProject(e, project)}
-            role="button"
-            tabindex="-1"
-          ></vscode-icon>
+          <button
+            type="button"
+            class="icon-btn add-btn"
+            onclick={(e: Event) => openCreateDialog(e, project)}
+            title="Create Workspace"
+          >
+            <vscode-icon name="add"></vscode-icon>
+          </button>
+          <button
+            type="button"
+            class="icon-btn close-btn"
+            onclick={(e: Event) => handleCloseProject(e, project)}
+            title="Close Project"
+          >
+            <vscode-icon name="close"></vscode-icon>
+          </button>
         </div>
 
-        <!-- Additional worktrees only (exclude main) -->
         {#each additionalWorktrees(project) as workspace (workspace.path)}
           <div
             class="workspace-item"
             class:active={$activeWorkspace?.projectHandle === project.handle &&
               $activeWorkspace?.workspacePath === workspace.path}
-            on:click={() => selectWorkspace(project, workspace)}
-            on:keydown={(e) => e.key === 'Enter' && selectWorkspace(project, workspace)}
+            onclick={() => selectWorkspace(project, workspace)}
+            onkeydown={(e) => e.key === 'Enter' && selectWorkspace(project, workspace)}
             role="button"
             tabindex="0"
           >
@@ -79,10 +106,19 @@
     {/each}
   </div>
 
-  <vscode-button class="open-btn" on:click={openNewProject} role="button" tabindex="0">
+  <vscode-button class="open-btn" onclick={openNewProject} role="button" tabindex="0">
     Open Project
   </vscode-button>
 </aside>
+
+{#if dialogProject}
+  <CreateWorkspaceDialog
+    project={dialogProject}
+    onClose={handleDialogClose}
+    onCreated={handleWorkspaceCreated}
+    triggerElement={triggerButtonRef}
+  />
+{/if}
 
 <style>
   .sidebar {
@@ -176,15 +212,28 @@
     color: var(--vscode-editorWarning-foreground, #cca700);
   }
 
-  .close-btn {
+  .icon-btn {
     flex-shrink: 0;
+    background: transparent;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
     opacity: 0;
     transition: opacity 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
   }
 
-  .project-item:hover .close-btn,
-  .project-item.active .close-btn {
+  .project-item:hover .icon-btn,
+  .project-item:focus-within .icon-btn,
+  .project-item.active .icon-btn {
     opacity: 1;
+  }
+
+  .add-btn:hover {
+    color: var(--vscode-textLink-foreground, #3794ff);
   }
 
   .close-btn:hover {

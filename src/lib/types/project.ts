@@ -19,3 +19,8 @@ export interface CodeServerInfo {
   port: number;
   url: string;
 }
+
+export interface BranchInfo {
+  name: string;
+  isRemote: boolean;
+}

@@ -144,6 +144,40 @@ pub fn get_data_projects_dir() -> PathBuf {
     get_data_root_dir().join("projects")
 }
 
+/// Get the workspaces directory for a project.
+///
+/// This is where git worktrees for the project are stored.
+///
+/// # Arguments
+///
+/// * `project_path` - The path to the project root
+///
+/// # Returns
+///
+/// The path to the workspaces directory:
+/// `<app-data>/projects/<project-name>-<8-char-hash>/workspaces/`
+///
+/// # Note
+///
+/// This function does not create the directory; callers should ensure
+/// it exists before use.
+pub fn get_project_workspaces_dir(project_path: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+
+    let name = project_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "project".to_string());
+
+    let mut hasher = Sha256::new();
+    hasher.update(project_path.to_string_lossy().as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+
+    get_data_projects_dir()
+        .join(format!("{}-{}", name, &hash[..8]))
+        .join("workspaces")
+}
+
 /// Get the platform-specific user data directory.
 ///
 /// - Linux: `~/.local/share/chime`

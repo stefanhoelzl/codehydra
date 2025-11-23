@@ -4,6 +4,9 @@ import {
   discoverWorkspaces,
   closeProject as closeProjectBackend,
   loadPersistedProjects,
+  listBranches as listBranchesApi,
+  createWorkspace as createWorkspaceApi,
+  fetchBranches as fetchBranchesApi,
 } from '$lib/api/tauri';
 import {
   addProject,
@@ -11,8 +14,9 @@ import {
   setActiveProject,
   activeWorkspace,
   projects,
+  addWorkspaceToProject,
 } from '$lib/stores/projects';
-import type { Project, ProjectHandle } from '$lib/types/project';
+import type { BranchInfo, Project, ProjectHandle, Workspace } from '$lib/types/project';
 import { get } from 'svelte/store';
 
 export async function openNewProject(): Promise<void> {
@@ -122,5 +126,47 @@ export async function restorePersistedProjects(): Promise<void> {
     }
   } catch (error) {
     console.error('Failed to load persisted projects:', error);
+  }
+}
+
+/**
+ * List all branches (local and remote) for a project.
+ */
+export async function listBranches(handle: ProjectHandle): Promise<BranchInfo[]> {
+  return await listBranchesApi(handle);
+}
+
+/**
+ * Fetch branches from all remotes for a project.
+ */
+export async function fetchBranches(handle: ProjectHandle): Promise<void> {
+  return await fetchBranchesApi(handle);
+}
+
+/**
+ * Create a new workspace (git worktree) for a project.
+ * Also adds the workspace to the store and sets it as active.
+ */
+export async function createNewWorkspace(
+  handle: ProjectHandle,
+  name: string,
+  baseBranch: string
+): Promise<Workspace> {
+  try {
+    const workspace = await createWorkspaceApi(handle, name, baseBranch);
+
+    // Add to store
+    addWorkspaceToProject(handle, workspace);
+
+    // Set as active
+    activeWorkspace.set({
+      projectHandle: handle,
+      workspacePath: workspace.path,
+    });
+
+    return workspace;
+  } catch (error) {
+    console.error('Failed to create workspace:', error);
+    throw error;
   }
 }

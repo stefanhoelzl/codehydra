@@ -1,6 +1,9 @@
-use crate::workspace_provider::{Workspace, WorkspaceError, WorkspaceProvider, DISCOVER_TIMEOUT_SECS};
+use crate::platform::paths::get_project_workspaces_dir;
+use crate::workspace_provider::{
+    BranchInfo, Workspace, WorkspaceError, WorkspaceProvider, DISCOVER_TIMEOUT_SECS,
+};
 use async_trait::async_trait;
-use git2::{ErrorCode, Repository};
+use git2::{BranchType, ErrorCode, Repository, WorktreeAddOptions};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -90,6 +93,153 @@ impl WorkspaceProvider for GitWorktreeProvider {
             .await
             .map_err(|_| WorkspaceError::Timeout)?
             .map_err(|_| WorkspaceError::TaskCancelled)?
+    }
+}
+
+impl GitWorktreeProvider {
+    /// List all branches (local and remote) in the repository.
+    ///
+    /// Remote branches skip `*/HEAD` refs.
+    pub async fn list_branches(&self) -> Result<Vec<BranchInfo>, WorkspaceError> {
+        let project_root = self.project_root.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let repo = Repository::open(&project_root)?;
+            let mut branches = Vec::new();
+
+            // Local branches
+            for branch_result in repo.branches(Some(BranchType::Local))? {
+                let (branch, _) = branch_result?;
+                if let Some(name) = branch.name()? {
+                    branches.push(BranchInfo {
+                        name: name.to_string(),
+                        is_remote: false,
+                    });
+                }
+            }
+
+            // Remote branches (skip */HEAD refs)
+            for branch_result in repo.branches(Some(BranchType::Remote))? {
+                let (branch, _) = branch_result?;
+                if let Some(name) = branch.name()? {
+                    if !name.ends_with("/HEAD") {
+                        branches.push(BranchInfo {
+                            name: name.to_string(),
+                            is_remote: true,
+                        });
+                    }
+                }
+            }
+
+            Ok(branches)
+        })
+        .await
+        .map_err(|_| WorkspaceError::TaskCancelled)?
+    }
+
+    /// Create a new workspace (git worktree) with a new branch based on the given branch.
+    ///
+    /// The workspace is created at:
+    /// `<app-data>/projects/<project-name>-<hash>/workspaces/<name>/`
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name for the new workspace and branch
+    /// * `base_branch` - The branch to base the new branch on (local or remote)
+    ///
+    /// # Returns
+    ///
+    /// The created `GitWorktree` on success.
+    pub async fn create_workspace(
+        &self,
+        name: &str,
+        base_branch: &str,
+    ) -> Result<GitWorktree, WorkspaceError> {
+        let project_root = self.project_root.clone();
+        let name = name.to_string();
+        let base_branch = base_branch.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let repo = Repository::open(&project_root)?;
+
+            // Build worktree path
+            let worktree_path = get_project_workspaces_dir(&project_root).join(&name);
+
+            // Check if path already exists
+            if worktree_path.exists() {
+                return Err(WorkspaceError::WorkspaceAlreadyExists(worktree_path));
+            }
+
+            // Find base branch (try local first, then remote)
+            let base_ref = repo
+                .find_branch(&base_branch, BranchType::Local)
+                .or_else(|_| repo.find_branch(&base_branch, BranchType::Remote))
+                .map_err(|_| WorkspaceError::BranchNotFound(base_branch.clone()))?;
+
+            let commit = base_ref.get().peel_to_commit()?;
+
+            // Create new local branch
+            let new_branch = repo.branch(&name, &commit, false).map_err(|e| {
+                if e.code() == ErrorCode::Exists {
+                    WorkspaceError::WorkspaceAlreadyExists(worktree_path.clone())
+                } else {
+                    WorkspaceError::GitError(e)
+                }
+            })?;
+
+            // Create parent directories
+            if let Some(parent) = worktree_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            // Create worktree - if this fails, clean up the orphan branch
+            let mut opts = WorktreeAddOptions::new();
+            let branch_ref = new_branch.into_reference();
+            opts.reference(Some(&branch_ref));
+
+            match repo.worktree(&name, &worktree_path, Some(&opts)) {
+                Ok(_) => Ok(GitWorktree {
+                    name: name.clone(),
+                    path: worktree_path,
+                    branch: Some(name),
+                }),
+                Err(e) => {
+                    // Rollback: delete orphan branch (best effort)
+                    if let Ok(mut branch) = repo.find_branch(&name, BranchType::Local) {
+                        let _ = branch.delete();
+                    }
+                    // Remove any partial directory (best effort)
+                    let _ = std::fs::remove_dir_all(&worktree_path);
+
+                    Err(WorkspaceError::WorktreeCreationFailed(e.to_string()))
+                }
+            }
+        })
+        .await
+        .map_err(|_| WorkspaceError::TaskCancelled)?
+    }
+
+    /// Fetch branches from all remotes.
+    ///
+    /// This is a best-effort operation - if one remote fails, others are still tried.
+    pub async fn fetch_branches(&self) -> Result<(), WorkspaceError> {
+        let project_root = self.project_root.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let repo = Repository::open(&project_root)?;
+
+            // Fetch all remotes
+            for remote_name in repo.remotes()?.iter().flatten() {
+                if let Ok(mut remote) = repo.find_remote(remote_name) {
+                    // Best effort - don't fail if one remote fails
+                    let _ = remote.fetch(&[] as &[&str], None, None);
+                }
+            }
+
+            Ok(())
+        })
+        .await
+        .map_err(|_| WorkspaceError::TaskCancelled)?
     }
 }
 
@@ -550,5 +700,409 @@ mod tests {
             .unwrap();
         assert!(detached.branch().is_none());
         assert!(detached.is_detached());
+    }
+
+    // ============================================================
+    // Tests for list_branches, create_workspace, fetch_branches
+    // ============================================================
+
+    // list_branches tests
+
+    #[tokio::test]
+    async fn test_list_branches_returns_local_branches() {
+        let test_repo = TestRepo::new().unwrap();
+        test_repo.create_branch("feature-1").unwrap();
+        test_repo.create_branch("feature-2").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let branches = provider.list_branches().await.unwrap();
+
+        // Should have at least main/master + the 2 feature branches
+        assert!(branches.len() >= 3);
+
+        let local_branches: Vec<_> = branches.iter().filter(|b| !b.is_remote).collect();
+        assert!(local_branches.iter().any(|b| b.name == "feature-1"));
+        assert!(local_branches.iter().any(|b| b.name == "feature-2"));
+    }
+
+    #[tokio::test]
+    async fn test_list_branches_handles_no_remotes() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let branches = provider.list_branches().await.unwrap();
+
+        // Should return local branches only, no error
+        let remote_branches: Vec<_> = branches.iter().filter(|b| b.is_remote).collect();
+        assert!(remote_branches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_branches_empty_repository() {
+        let temp = TempDir::new().unwrap();
+        let _repo = Repository::init(temp.path()).unwrap();
+
+        let provider = GitWorktreeProvider::new(temp.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let branches = provider.list_branches().await.unwrap();
+
+        // Empty repo has no branches
+        assert!(branches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_branch_info_partial_eq() {
+        let branch1 = BranchInfo {
+            name: "main".to_string(),
+            is_remote: false,
+        };
+        let branch2 = BranchInfo {
+            name: "main".to_string(),
+            is_remote: false,
+        };
+        let branch3 = BranchInfo {
+            name: "main".to_string(),
+            is_remote: true,
+        };
+
+        assert_eq!(branch1, branch2);
+        assert_ne!(branch1, branch3);
+    }
+
+    // create_workspace tests
+
+    #[tokio::test]
+    async fn test_create_workspace_success() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Get the main branch name
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote)
+            .map(|b| b.name.as_str())
+            .unwrap_or("main");
+
+        let workspace = provider
+            .create_workspace("new-feature", main_branch)
+            .await
+            .unwrap();
+
+        assert_eq!(workspace.name(), "new-feature");
+        assert_eq!(workspace.branch(), Some("new-feature"));
+        assert!(workspace.path().exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_with_nonexistent_base_branch() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let result = provider
+            .create_workspace("new-feature", "nonexistent-branch")
+            .await;
+
+        assert!(matches!(result, Err(WorkspaceError::BranchNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_name_collision_with_branch() {
+        let test_repo = TestRepo::new().unwrap();
+        test_repo.create_branch("existing-branch").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Get the main branch name for base
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote && (b.name == "main" || b.name == "master"))
+            .map(|b| b.name.as_str())
+            .unwrap_or("main");
+
+        // Try to create workspace with name that matches existing branch
+        let result = provider
+            .create_workspace("existing-branch", main_branch)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::WorkspaceAlreadyExists(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_local_branch_priority_over_remote() {
+        let test_repo = TestRepo::new().unwrap();
+        // Create a local branch - should be used preferentially over any remote with same name
+        test_repo.create_branch("develop").unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let workspace = provider
+            .create_workspace("work-on-develop", "develop")
+            .await
+            .unwrap();
+
+        assert_eq!(workspace.name(), "work-on-develop");
+        assert!(workspace.path().exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_sets_correct_commit() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Get the main branch name and its commit
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote)
+            .map(|b| b.name.as_str())
+            .unwrap_or("main");
+
+        let main_repo = Repository::open(test_repo.path()).unwrap();
+        let main_commit = main_repo
+            .find_branch(main_branch, BranchType::Local)
+            .unwrap()
+            .get()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+
+        let workspace = provider
+            .create_workspace("new-feature", main_branch)
+            .await
+            .unwrap();
+
+        // Verify the worktree HEAD matches base branch commit
+        let wt_repo = Repository::open(workspace.path()).unwrap();
+        let wt_commit = wt_repo.head().unwrap().peel_to_commit().unwrap().id();
+
+        assert_eq!(wt_commit, main_commit);
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_path_already_exists() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Get the main branch name
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote)
+            .map(|b| b.name.as_str())
+            .unwrap_or("main");
+
+        // Manually create the directory where workspace would go
+        let workspace_path = get_project_workspaces_dir(test_repo.path()).join("pre-existing");
+        std::fs::create_dir_all(&workspace_path).unwrap();
+
+        let result = provider
+            .create_workspace("pre-existing", main_branch)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::WorkspaceAlreadyExists(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_name_empty_string() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote)
+            .map(|b| b.name.as_str())
+            .unwrap_or("main");
+
+        // Empty name should fail (git doesn't allow empty branch names)
+        let result = provider.create_workspace("", main_branch).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_name_with_slashes_fails() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote)
+            .map(|b| b.name.as_str())
+            .unwrap_or("main");
+
+        // Names with slashes fail because git's worktree storage uses the name as directory
+        // The frontend validates names to prevent slashes that would cause directory issues
+        let result = provider
+            .create_workspace("feature/auth/oauth", main_branch)
+            .await;
+
+        // This should fail with WorktreeCreationFailed due to nested directory issue
+        assert!(
+            matches!(result, Err(WorkspaceError::WorktreeCreationFailed(_))),
+            "Expected WorktreeCreationFailed, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_valid_name_with_hyphens() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote)
+            .map(|b| b.name.as_str())
+            .unwrap_or("main");
+
+        // Names with hyphens and underscores are valid
+        let workspace = provider
+            .create_workspace("feature-auth-oauth", main_branch)
+            .await
+            .unwrap();
+
+        assert_eq!(workspace.name(), "feature-auth-oauth");
+        assert_eq!(workspace.branch(), Some("feature-auth-oauth"));
+        assert!(workspace.path().exists());
+    }
+
+    // fetch_branches tests
+
+    #[tokio::test]
+    async fn test_fetch_branches_no_remotes_succeeds() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Should succeed even with no remotes (best effort)
+        let result = provider.fetch_branches().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_branches_returns_ok_on_unreachable_remote() {
+        let test_repo = TestRepo::new().unwrap();
+
+        // Add an unreachable remote
+        let repo = Repository::open(test_repo.path()).unwrap();
+        repo.remote("fake-remote", "https://invalid.example.com/repo.git")
+            .unwrap();
+
+        let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Should return Ok (best effort - ignores failures)
+        let result = provider.fetch_branches().await;
+        assert!(result.is_ok());
+    }
+
+    // Concurrent creation test
+    #[tokio::test]
+    async fn test_create_workspace_concurrent_same_name() {
+        let test_repo = TestRepo::new().unwrap();
+
+        let provider = Arc::new(
+            GitWorktreeProvider::new(test_repo.path().to_path_buf())
+                .await
+                .unwrap(),
+        );
+
+        let branches = provider.list_branches().await.unwrap();
+        let main_branch = branches
+            .iter()
+            .find(|b| !b.is_remote)
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| "main".to_string());
+
+        // Launch two concurrent create_workspace calls with same name
+        let p1 = provider.clone();
+        let p2 = provider.clone();
+        let branch1 = main_branch.clone();
+        let branch2 = main_branch;
+
+        let (result1, result2) = tokio::join!(
+            async move { p1.create_workspace("concurrent-ws", &branch1).await },
+            async move { p2.create_workspace("concurrent-ws", &branch2).await }
+        );
+
+        // One should succeed, one should fail
+        let successes = [result1.is_ok(), result2.is_ok()]
+            .iter()
+            .filter(|&&x| x)
+            .count();
+        let failures = [result1.is_err(), result2.is_err()]
+            .iter()
+            .filter(|&&x| x)
+            .count();
+
+        // Due to race conditions, we might get both failing or one of each
+        // The key is that we don't get both succeeding
+        assert!(successes <= 1, "Both concurrent creations succeeded!");
+
+        // At least one should have an error
+        if failures > 0 {
+            // Check that the error is the expected type
+            let error = if result1.is_err() {
+                result1.unwrap_err()
+            } else {
+                result2.unwrap_err()
+            };
+            assert!(
+                matches!(
+                    error,
+                    WorkspaceError::WorkspaceAlreadyExists(_)
+                        | WorkspaceError::WorktreeCreationFailed(_)
+                        | WorkspaceError::GitError(_)
+                ),
+                "Unexpected error type: {:?}",
+                error
+            );
+        }
     }
 }

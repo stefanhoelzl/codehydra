@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { CodeServerInfo, ProjectHandle, Workspace } from '$lib/types/project';
+import type { BranchInfo, CodeServerInfo, ProjectHandle, Workspace } from '$lib/types/project';
 import type { SetupEvent } from '$lib/types/setup';
 
 export async function openDirectory(): Promise<string | null> {
@@ -47,6 +47,31 @@ export async function discoverWorkspaces(handle: ProjectHandle): Promise<Workspa
 
 export async function closeProject(handle: ProjectHandle): Promise<void> {
   await invoke('close_project', { handle });
+}
+
+/**
+ * List all branches (local and remote) for a project.
+ */
+export async function listBranches(handle: ProjectHandle): Promise<BranchInfo[]> {
+  return await invoke<BranchInfo[]>('list_branches', { handle });
+}
+
+/**
+ * Create a new workspace (git worktree) for a project.
+ */
+export async function createWorkspace(
+  handle: ProjectHandle,
+  name: string,
+  baseBranch: string
+): Promise<Workspace> {
+  return await invoke<Workspace>('create_workspace', { handle, name, baseBranch });
+}
+
+/**
+ * Fetch branches from all remotes for a project.
+ */
+export async function fetchBranches(handle: ProjectHandle): Promise<void> {
+  return await invoke('fetch_branches', { handle });
 }
 
 /**

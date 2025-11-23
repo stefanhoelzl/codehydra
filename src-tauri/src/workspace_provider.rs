@@ -36,6 +36,23 @@ pub enum WorkspaceError {
 
     #[error("Operation timed out")]
     Timeout,
+
+    #[error("Branch not found: {0}")]
+    BranchNotFound(String),
+
+    #[error("Workspace already exists at: {0}")]
+    WorkspaceAlreadyExists(PathBuf),
+
+    #[error("Worktree creation failed: {0}")]
+    WorktreeCreationFailed(String),
+}
+
+/// Information about a git branch
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_remote: bool,
 }
 
 /// Extension trait for converting Result to Tauri-compatible Result

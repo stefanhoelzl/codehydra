@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Project, ProjectHandle } from '$lib/types/project';
+import type { Project, ProjectHandle, Workspace } from '$lib/types/project';
 
 export interface ActiveWorkspaceId {
   projectHandle: ProjectHandle;
@@ -35,4 +35,12 @@ export function setActiveProject(handle: ProjectHandle): void {
 
 export function setActiveWorkspace(projectHandle: ProjectHandle, workspacePath: string): void {
   activeWorkspace.set({ projectHandle, workspacePath });
+}
+
+export function addWorkspaceToProject(handle: ProjectHandle, workspace: Workspace): void {
+  projects.update((p) =>
+    p.map((proj) =>
+      proj.handle === handle ? { ...proj, workspaces: [...proj.workspaces, workspace] } : proj
+    )
+  );
 }

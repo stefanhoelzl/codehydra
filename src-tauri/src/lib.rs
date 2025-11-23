@@ -28,7 +28,7 @@ use tauri::window::Color;
 use tauri::{Emitter, Manager, Theme};
 use tokio::sync::RwLock;
 use workspace_provider::{
-    ProjectHandle, ToTauriResult, Workspace, WorkspaceError, WorkspaceProvider,
+    BranchInfo, ProjectHandle, ToTauriResult, Workspace, WorkspaceError, WorkspaceProvider,
 };
 
 /// Application state managing projects and code servers
@@ -235,6 +235,108 @@ async fn close_project(state: tauri::State<'_, AppState>, handle: String) -> Res
     close_project_impl(&state, handle).await
 }
 
+/// Internal implementation for listing branches
+pub async fn list_branches_impl(
+    state: &AppState,
+    handle: String,
+) -> Result<Vec<BranchInfo>, String> {
+    let handle: ProjectHandle = handle.parse().to_tauri()?;
+
+    let projects = state.projects.read().await;
+    let context = projects
+        .get(&handle)
+        .ok_or(WorkspaceError::ProjectNotFound)
+        .to_tauri()?;
+
+    let provider = context.provider.clone();
+    drop(projects);
+
+    provider.list_branches().await.to_tauri()
+}
+
+#[tauri::command]
+async fn list_branches(
+    state: tauri::State<'_, AppState>,
+    handle: String,
+) -> Result<Vec<BranchInfo>, String> {
+    list_branches_impl(&state, handle).await
+}
+
+/// Internal implementation for creating a workspace
+pub async fn create_workspace_impl(
+    state: &AppState,
+    handle: String,
+    name: String,
+    base_branch: String,
+) -> Result<WorkspaceInfo, String> {
+    let handle: ProjectHandle = handle.parse().to_tauri()?;
+
+    let projects = state.projects.read().await;
+    let context = projects
+        .get(&handle)
+        .ok_or(WorkspaceError::ProjectNotFound)
+        .to_tauri()?;
+
+    let provider = context.provider.clone();
+    drop(projects);
+
+    let workspace = provider
+        .create_workspace(&name, &base_branch)
+        .await
+        .to_tauri()?;
+
+    // Build WorkspaceInfo with code-server URL
+    let port = state
+        .code_server_manager
+        .ensure_running()
+        .await
+        .map_err(|e| e.to_string())?;
+    let url = format!(
+        "http://localhost:{}/?folder={}",
+        port,
+        crate::platform::paths::encode_path_for_url(workspace.path())
+    );
+
+    Ok(WorkspaceInfo {
+        name: workspace.name().to_string(),
+        path: workspace.path().to_string_lossy().to_string(),
+        branch: workspace.branch().map(String::from),
+        port,
+        url,
+    })
+}
+
+#[tauri::command]
+async fn create_workspace(
+    state: tauri::State<'_, AppState>,
+    handle: String,
+    name: String,
+    base_branch: String,
+) -> Result<WorkspaceInfo, String> {
+    create_workspace_impl(&state, handle, name, base_branch).await
+}
+
+/// Internal implementation for fetching branches
+pub async fn fetch_branches_impl(state: &AppState, handle: String) -> Result<(), String> {
+    let handle: ProjectHandle = handle.parse().to_tauri()?;
+
+    let projects = state.projects.read().await;
+    let context = projects
+        .get(&handle)
+        .ok_or(WorkspaceError::ProjectNotFound)
+        .to_tauri()?;
+
+    let provider = context.provider.clone();
+    drop(projects);
+
+    provider.fetch_branches().await.to_tauri()
+}
+
+#[tauri::command]
+async fn fetch_branches(state: tauri::State<'_, AppState>, handle: String) -> Result<(), String> {
+    fetch_branches_impl(&state, handle).await
+}
+
 /// Ensure the code-server is running and return its port
 #[tauri::command]
 async fn ensure_code_server_running(state: tauri::State<'_, AppState>) -> Result<u16, String> {
@@ -342,6 +444,9 @@ pub fn run() {
             open_project,
             discover_workspaces,
             close_project,
+            list_branches,
+            create_workspace,
+            fetch_branches,
             show_window,
             check_runtime_ready,
             setup_runtime,
