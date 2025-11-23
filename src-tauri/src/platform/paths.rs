@@ -144,6 +144,44 @@ pub fn get_data_projects_dir() -> PathBuf {
     get_data_root_dir().join("projects")
 }
 
+/// Sanitize a workspace name for use as a directory name.
+///
+/// Git branch names can contain `/` (e.g., `feature/auth`), but using such names
+/// directly as directory names causes issues because `/` is a path separator.
+/// This function converts problematic characters to filesystem-safe alternatives.
+///
+/// # Conversions
+///
+/// - `/` → `%` (slash would create nested directories; `%` is invalid in git branch names)
+///
+/// # Example
+///
+/// ```
+/// use chime_lib::platform::paths::sanitize_workspace_name_for_path;
+///
+/// assert_eq!(sanitize_workspace_name_for_path("feature/auth"), "feature%auth");
+/// assert_eq!(sanitize_workspace_name_for_path("simple-name"), "simple-name");
+/// ```
+pub fn sanitize_workspace_name_for_path(name: &str) -> String {
+    name.replace('/', "%")
+}
+
+/// Convert a sanitized directory name back to the original workspace/branch name.
+///
+/// This reverses the transformation done by [`sanitize_workspace_name_for_path`].
+///
+/// # Example
+///
+/// ```
+/// use chime_lib::platform::paths::unsanitize_workspace_name_from_path;
+///
+/// assert_eq!(unsanitize_workspace_name_from_path("feature%auth"), "feature/auth");
+/// assert_eq!(unsanitize_workspace_name_from_path("simple-name"), "simple-name");
+/// ```
+pub fn unsanitize_workspace_name_from_path(sanitized: &str) -> String {
+    sanitized.replace('%', "/")
+}
+
 /// Get the workspaces directory for a project.
 ///
 /// This is where git worktrees for the project are stored.
@@ -394,6 +432,55 @@ mod tests {
                 "Debug build should use app-data directory: {}",
                 path_str
             );
+        }
+    }
+
+    #[test]
+    fn test_sanitize_workspace_name_replaces_slashes() {
+        assert_eq!(sanitize_workspace_name_for_path("feature/auth"), "feature%auth");
+        assert_eq!(
+            sanitize_workspace_name_for_path("feature/auth/oauth"),
+            "feature%auth%oauth"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_workspace_name_preserves_other_chars() {
+        assert_eq!(sanitize_workspace_name_for_path("simple-name"), "simple-name");
+        assert_eq!(sanitize_workspace_name_for_path("with_underscore"), "with_underscore");
+        assert_eq!(sanitize_workspace_name_for_path("with.dot"), "with.dot");
+    }
+
+    #[test]
+    fn test_unsanitize_workspace_name_restores_slashes() {
+        assert_eq!(unsanitize_workspace_name_from_path("feature%auth"), "feature/auth");
+        assert_eq!(
+            unsanitize_workspace_name_from_path("feature%auth%oauth"),
+            "feature/auth/oauth"
+        );
+    }
+
+    #[test]
+    fn test_unsanitize_workspace_name_preserves_other_chars() {
+        assert_eq!(unsanitize_workspace_name_from_path("simple-name"), "simple-name");
+        assert_eq!(unsanitize_workspace_name_from_path("with_underscore"), "with_underscore");
+        assert_eq!(unsanitize_workspace_name_from_path("with.dot"), "with.dot");
+    }
+
+    #[test]
+    fn test_sanitize_unsanitize_roundtrip() {
+        let names = vec![
+            "feature/auth",
+            "feature/auth/oauth",
+            "simple-name",
+            "bugfix/issue-123",
+            "release/v1.0.0",
+        ];
+
+        for name in names {
+            let sanitized = sanitize_workspace_name_for_path(name);
+            let restored = unsanitize_workspace_name_from_path(&sanitized);
+            assert_eq!(restored, name, "Roundtrip failed for: {}", name);
         }
     }
 }

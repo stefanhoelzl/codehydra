@@ -1,4 +1,6 @@
-use crate::platform::paths::get_project_workspaces_dir;
+use crate::platform::paths::{
+    get_project_workspaces_dir, sanitize_workspace_name_for_path, unsanitize_workspace_name_from_path,
+};
 use crate::workspace_provider::{
     BranchInfo, RemovalResult, Workspace, WorkspaceError, WorkspaceProvider, DISCOVER_TIMEOUT_SECS,
 };
@@ -162,8 +164,11 @@ impl GitWorktreeProvider {
         tokio::task::spawn_blocking(move || {
             let repo = Repository::open(&project_root)?;
 
-            // Build worktree path
-            let worktree_path = get_project_workspaces_dir(&project_root).join(&name);
+            // Sanitize name for filesystem (e.g., "feature/auth" -> "feature%auth")
+            let sanitized_name = sanitize_workspace_name_for_path(&name);
+
+            // Build worktree path using sanitized name
+            let worktree_path = get_project_workspaces_dir(&project_root).join(&sanitized_name);
 
             // Check if path already exists
             if worktree_path.exists() {
@@ -193,11 +198,12 @@ impl GitWorktreeProvider {
             }
 
             // Create worktree - if this fails, clean up the orphan branch
+            // Use sanitized_name for git worktree storage (avoids nested dirs in .git/worktrees/)
             let mut opts = WorktreeAddOptions::new();
             let branch_ref = new_branch.into_reference();
             opts.reference(Some(&branch_ref));
 
-            match repo.worktree(&name, &worktree_path, Some(&opts)) {
+            match repo.worktree(&sanitized_name, &worktree_path, Some(&opts)) {
                 Ok(_) => Ok(GitWorktree {
                     name: name.clone(),
                     path: worktree_path,
@@ -469,13 +475,15 @@ fn process_worktree(
         .map_err(|_| WorkspaceError::InvalidWorkspace("Cannot open worktree repo".to_string()))?;
     let branch = get_current_branch(&wt_repo);
 
-    let name = wt_path
+    // Get sanitized name from filesystem, then unsanitize for display
+    // (e.g., "feature%auth" -> "feature/auth")
+    let sanitized_name = wt_path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| {
             WorkspaceError::InvalidWorkspace(format!("Invalid worktree path: {:?}", wt_path))
-        })?
-        .to_string();
+        })?;
+    let name = unsanitize_workspace_name_from_path(sanitized_name);
 
     Ok(GitWorktree {
         name,
@@ -1128,7 +1136,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_workspace_name_with_slashes_fails() {
+    async fn test_create_workspace_name_with_slashes_succeeds() {
         let test_repo = TestRepo::new().unwrap();
 
         let provider = GitWorktreeProvider::new(test_repo.path().to_path_buf())
@@ -1142,17 +1150,24 @@ mod tests {
             .map(|b| b.name.as_str())
             .unwrap_or("main");
 
-        // Names with slashes fail because git's worktree storage uses the name as directory
-        // The frontend validates names to prevent slashes that would cause directory issues
+        // Names with slashes are supported - slashes are sanitized to % for filesystem
+        // but the branch name keeps the original slash
         let result = provider
             .create_workspace("feature/auth/oauth", main_branch)
             .await;
 
-        // This should fail with WorktreeCreationFailed due to nested directory issue
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let workspace = result.unwrap();
+        // Name should preserve the original slash for display
+        assert_eq!(workspace.name(), "feature/auth/oauth");
+        // Branch should have the slash
+        assert_eq!(workspace.branch(), Some("feature/auth/oauth"));
+        // Path should use sanitized name (% instead of /)
         assert!(
-            matches!(result, Err(WorkspaceError::WorktreeCreationFailed(_))),
-            "Expected WorktreeCreationFailed, got {:?}",
-            result
+            workspace.path().to_string_lossy().contains("feature%auth%oauth"),
+            "Path should contain sanitized name: {:?}",
+            workspace.path()
         );
     }
 
