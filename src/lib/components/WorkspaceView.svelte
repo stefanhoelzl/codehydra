@@ -20,7 +20,15 @@
   $effect(() => {
     const active = $activeWorkspace;
     if (active) {
-      ensureWorkspaceReady(active.workspacePath);
+      // Find the workspace to check if it already has a URL from the backend
+      const project = $projects.find((p) => p.handle === active.projectHandle);
+      const workspace = project?.workspaces.find((w) => w.path === active.workspacePath);
+
+      // Only call ensureWorkspaceReady if the workspace doesn't already have a URL
+      // New workspaces created via createWorkspace already come with a URL from the backend
+      if (!workspace?.url && !workspaceUrls.has(active.workspacePath)) {
+        ensureWorkspaceReady(active.workspacePath);
+      }
     }
   });
 

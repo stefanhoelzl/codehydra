@@ -93,9 +93,13 @@ async function openProjectByPath(path: string): Promise<ProjectHandle> {
 /**
  * Restore all persisted projects from disk.
  * Called on app startup to restore previously opened projects.
+ * Preserves existing activeWorkspace if one is already set.
  */
 export async function restorePersistedProjects(): Promise<void> {
   try {
+    // Check if there's already an active workspace before restoration
+    const existingActiveWorkspace = get(activeWorkspace);
+
     const paths = await loadPersistedProjects();
 
     let firstHandle: ProjectHandle | null = null;
@@ -111,7 +115,28 @@ export async function restorePersistedProjects(): Promise<void> {
       }
     }
 
-    // Auto-select first project and its first workspace
+    // Only auto-select if no workspace was active before restoration
+    // This preserves the user's selection during hot reloads
+    if (existingActiveWorkspace) {
+      // Verify the active workspace still exists in the restored projects
+      const allProjects = get(projects);
+      const activeProject = allProjects.find((p) =>
+        p.workspaces.some((w) => w.path === existingActiveWorkspace.workspacePath)
+      );
+
+      if (activeProject) {
+        // Update the handle in case it changed during re-open
+        activeWorkspace.set({
+          projectHandle: activeProject.handle,
+          workspacePath: existingActiveWorkspace.workspacePath,
+        });
+        setActiveProject(activeProject.handle);
+        return;
+      }
+      // If the active workspace no longer exists, fall through to default selection
+    }
+
+    // Auto-select first project and its first workspace (only when no active workspace)
     if (firstHandle) {
       setActiveProject(firstHandle);
 
