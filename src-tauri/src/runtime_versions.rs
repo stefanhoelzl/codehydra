@@ -22,11 +22,11 @@ pub const CODE_SERVER_VERSION: &str = "4.106.2";
 /// use chime_lib::runtime_versions::get_required_extensions;
 ///
 /// let extensions = get_required_extensions();
-/// assert!(extensions.contains_key("Anthropic.claude-code"));
+/// assert!(extensions.contains_key("sst-dev.opencode"));
 /// ```
 pub fn get_required_extensions() -> HashMap<&'static str, &'static str> {
     let mut extensions = HashMap::new();
-    extensions.insert("Anthropic.claude-code", "2.0.50");
+    extensions.insert("sst-dev.opencode", "0.0.12");
     // Add more extensions here in the future
     extensions
 }
@@ -69,11 +69,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_required_extensions_contains_claude() {
+    fn test_get_required_extensions_contains_opencode() {
         let extensions = get_required_extensions();
         assert!(
-            extensions.contains_key("Anthropic.claude-code"),
-            "Extensions should include Claude Code"
+            extensions.contains_key("sst-dev.opencode"),
+            "Extensions should include OpenCode"
         );
     }
 

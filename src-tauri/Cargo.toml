@@ -26,7 +26,7 @@ tauri-plugin-dialog = "2.4.2"
 tokio = { version = "1.48.0", features = ["full"] }
 uuid = { version = "1.18.1", features = ["v4", "serde"] }
 port_scanner = "0.1.5"
-reqwest = { version = "0.12.24", features = ["blocking", "rustls-tls", "stream"] }
+reqwest = { version = "0.12.24", features = ["blocking", "rustls-tls", "stream", "json"] }
 git2 = "0.20.2"
 async-trait = "0.1.89"
 thiserror = "2.0.17"
@@ -40,6 +40,8 @@ tar = "0.4.44"
 flate2 = "1.1.5"
 xz2 = "0.1.7"
 tokio-util = "0.7.17"
+listeners = "<0.3"
+reqwest-eventsource = "0.6.0"
 
 [dev-dependencies]
 mockall = "0.13.1"

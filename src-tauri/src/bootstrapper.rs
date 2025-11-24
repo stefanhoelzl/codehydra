@@ -528,12 +528,7 @@ pub const DEFAULT_SETTINGS: &str = r#"{
 }"#;
 
 /// Default keybindings for code-server.
-pub const DEFAULT_KEYBINDINGS: &str = r#"[
-  {
-    "key": "alt+c",
-    "command": "claude-vscode.focus"
-  }
-]"#;
+pub const DEFAULT_KEYBINDINGS: &str = r#"[]"#;
 
 // ============================================================================
 // RuntimeBootstrapper
@@ -611,20 +606,23 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return false;
         }
 
-        // Check if Claude extension is installed
+        // Check if required extensions are installed
         // Extensions are installed as <id>-<version>-<platform> (lowercase)
-        // e.g., anthropic.claude-code-2.0.50-linux-x64
-        // We check if any directory starting with "anthropic.claude-code" exists
         if let Ok(entries) = std::fs::read_dir(&self.config.extensions_dir) {
-            let has_claude = entries.filter_map(|e| e.ok()).any(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .to_lowercase()
-                    .starts_with("anthropic.claude-code")
-            });
-            if !has_claude {
-                return false;
+            let installed_extensions: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .map(|entry| entry.file_name().to_string_lossy().to_lowercase())
+                .collect();
+
+            let required = get_required_extensions();
+            for (id, _) in required {
+                let id_lower = id.to_lowercase();
+                let found = installed_extensions
+                    .iter()
+                    .any(|name| name.starts_with(&id_lower));
+                if !found {
+                    return false;
+                }
             }
         } else {
             return false;
@@ -1014,19 +1012,32 @@ mod tests {
 
     #[test]
     fn test_is_ready_returns_true_when_complete() {
+        let temp = tempdir().unwrap();
+        let test_config = CodeServerConfig {
+            runtime_dir: temp.path().to_path_buf(),
+            node_dir: temp.path().join("node"),
+            node_binary_path: temp.path().join("node").join("bin").join("node"),
+            extensions_dir: temp.path().join("extensions"),
+            user_data_dir: temp.path().join("user-data"),
+            port_start: 50000,
+        };
+
+        // Create extensions directory and dummy extension to satisfy read_dir check
+        std::fs::create_dir_all(&test_config.extensions_dir).unwrap();
+        std::fs::create_dir(test_config.extensions_dir.join("sst-dev.opencode-0.0.12")).unwrap();
+
         let mut mock_fs = MockFileSystem::new();
 
-        // All paths exist
+        // All paths exist (node binary, code-server dir)
         mock_fs.expect_exists().returning(|_| true);
 
-        let config = CodeServerConfig::new("0.1.0").unwrap();
         let mock_http = MockHttpClient::new();
         let mock_extractor = MockArchiveExtractor::new();
         let mock_emitter = MockEventEmitter::new();
         let mock_spawner = MockProcessSpawner::new();
 
         let bootstrapper = RuntimeBootstrapper::with_deps(
-            config,
+            test_config,
             mock_http,
             mock_fs,
             mock_extractor,
@@ -1068,8 +1079,7 @@ mod tests {
         let keybindings_path = test_config.keybindings_json_path();
         assert!(keybindings_path.exists());
         let keybindings_content = std::fs::read_to_string(&keybindings_path).unwrap();
-        assert!(keybindings_content.contains("alt+c"));
-        assert!(keybindings_content.contains("claude-vscode.focus"));
+        assert_eq!(keybindings_content, "[]");
     }
 
     #[test]
@@ -1203,11 +1213,7 @@ mod tests {
         let arr = parsed.unwrap();
         assert!(arr.is_array());
         let bindings = arr.as_array().unwrap();
-        assert!(!bindings.is_empty());
-
-        let first = &bindings[0];
-        assert!(first.get("key").is_some());
-        assert!(first.get("command").is_some());
+        assert!(bindings.is_empty());
     }
 
     // Integration test with real filesystem (using temp directory)
@@ -1320,13 +1326,13 @@ mod tests {
             mock_spawner,
         );
 
-        let args = bootstrapper.extension_install_args("Anthropic.claude-code", "2.0.50");
+        let args = bootstrapper.extension_install_args("sst-dev.opencode", "0.0.12");
 
         // Verify the command format: node <entry.js> --install-extension <ext>@<version> --extensions-dir <dir>
         // args[0] is the code-server entry.js path
         assert!(args[0].ends_with("entry.js"), "First arg should be code-server entry.js path");
         assert_eq!(args[1], "--install-extension");
-        assert_eq!(args[2], "Anthropic.claude-code@2.0.50");
+        assert_eq!(args[2], "sst-dev.opencode@0.0.12");
         assert_eq!(args[3], "--extensions-dir");
         assert_eq!(args[4], temp.path().join("extensions").to_string_lossy());
     }

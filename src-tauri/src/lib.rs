@@ -6,6 +6,7 @@ pub mod code_server;
 pub mod config;
 pub mod error;
 pub mod git_worktree_provider;
+pub mod opencode;
 pub mod platform;
 pub mod project_store;
 pub mod runtime_versions;
@@ -220,6 +221,18 @@ pub async fn discover_workspaces_impl(
             }
         })
         .collect();
+
+    // Initialize agent status monitoring for each discovered workspace
+    let agent_manager = state.agent_status_manager.clone();
+    for workspace in &workspaces {
+        if let Err(e) = agent_manager.init_workspace(workspace.path()).await {
+            eprintln!(
+                "Failed to initialize agent status for workspace {:?}: {}",
+                workspace.path(),
+                e
+            );
+        }
+    }
 
     Ok(workspace_infos)
 }
@@ -546,6 +559,7 @@ pub fn run() {
     let code_server_manager = Arc::new(CodeServerManager::new(config));
     let project_store = Arc::new(ProjectStore::new());
     let agent_status_manager = Arc::new(AgentStatusManager::new());
+
     let app_state = AppState::new(
         code_server_manager.clone(),
         project_store,
@@ -583,6 +597,25 @@ pub fn run() {
             get_all_agent_statuses
         ])
         .setup(move |app| {
+            // Initialize OpenCode integration
+            let opencode_discovery =
+                Arc::new(crate::opencode::discovery::OpenCodeDiscoveryService::new());
+            let discovery_clone = opencode_discovery.clone();
+            tauri::async_runtime::spawn(async move {
+                discovery_clone.run_loop().await;
+            });
+
+            let opencode_factory = Box::new(
+                crate::opencode::provider::OpenCodeProviderFactory::new(opencode_discovery),
+            );
+
+            // Register factory synchronously to avoid race conditions
+            // where init_workspace is called before the factory is registered
+            let asm = agent_status_manager.clone();
+            tauri::async_runtime::block_on(async move {
+                asm.register_factory(opencode_factory).await;
+            });
+
             // Configure window appearance for dark theme
             // Background color #1e1e1e = RGB(30, 30, 30)
             let window = app.get_webview_window("main").expect("main window not found");

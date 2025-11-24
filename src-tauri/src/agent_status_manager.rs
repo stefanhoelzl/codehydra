@@ -96,6 +96,8 @@ impl AgentStatusManager {
         &self,
         workspace_path: &Path,
     ) -> Result<WorkspaceInitResult, AgentStatusError> {
+        eprintln!("DEBUG: init_workspace called for {:?}", workspace_path);
+        
         // Validate path is valid UTF-8 early to ensure consistent frontend/backend representation
         path_to_string(workspace_path).map_err(|e| AgentStatusError::Internal {
             message: format!("Invalid workspace path: {}", e),
@@ -106,6 +108,7 @@ impl AgentStatusManager {
         {
             let workspaces = self.workspaces.read().await;
             if workspaces.contains_key(workspace_path) {
+                eprintln!("DEBUG: Workspace {:?} already initialized", workspace_path);
                 return Ok(WorkspaceInitResult {
                     started: 0,
                     failed: 0,
@@ -114,13 +117,19 @@ impl AgentStatusManager {
         }
 
         let factories = self.factories.read().await;
+        eprintln!("DEBUG: {} factories registered", factories.len());
         let mut all_providers: Vec<Box<dyn AgentStatusProvider>> = Vec::new();
 
         for factory in factories.iter() {
+            eprintln!("DEBUG: Checking factory {} for workspace {:?}", factory.factory_id(), workspace_path);
             // supports_workspace is now async
             if factory.supports_workspace(workspace_path).await {
+                eprintln!("DEBUG: Factory {} supports workspace {:?}", factory.factory_id(), workspace_path);
                 match factory.create_providers(workspace_path).await {
-                    Ok(providers) => all_providers.extend(providers),
+                    Ok(providers) => {
+                        eprintln!("DEBUG: Factory {} created {} providers", factory.factory_id(), providers.len());
+                        all_providers.extend(providers);
+                    }
                     Err(e) => eprintln!(
                         "Factory {} failed for {:?}: {}",
                         factory.factory_id(),
@@ -128,6 +137,8 @@ impl AgentStatusManager {
                         e
                     ),
                 }
+            } else {
+                eprintln!("DEBUG: Factory {} does NOT support workspace {:?}", factory.factory_id(), workspace_path);
             }
         }
         drop(factories);
@@ -143,6 +154,7 @@ impl AgentStatusManager {
         let mut task_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         for provider in all_providers {
+            eprintln!("DEBUG: Starting provider {} for workspace {:?}", provider.provider_id(), workspace_path);
             if let Err(e) = provider.start().await {
                 eprintln!(
                     "Failed to start provider {}: {}",
@@ -153,6 +165,7 @@ impl AgentStatusManager {
                 // Don't add failed providers to the list
                 continue;
             }
+            eprintln!("DEBUG: Provider {} started successfully", provider.provider_id());
             started += 1;
 
             // Subscribe to status changes from this provider
