@@ -1,17 +1,17 @@
 <!-- src/lib/components/AgentStatusIndicator.svelte -->
 <script lang="ts">
-  import type { AggregatedAgentStatus } from '$lib/types/agentStatus';
-  import { getStatusColor, getStatusTooltip } from '$lib/types/agentStatus';
+  import type { AgentStatusCounts } from '$lib/types/agentStatus';
+  import { getStatusColorFromCounts, getTooltipFromCounts } from '$lib/types/agentStatus';
 
   interface Props {
-    status: AggregatedAgentStatus;
+    counts: AgentStatusCounts;
     size?: 'small' | 'medium';
   }
 
-  let { status, size = 'small' }: Props = $props();
+  let { counts, size = 'small' }: Props = $props();
 
-  const color = $derived(getStatusColor(status));
-  const tooltip = $derived(getStatusTooltip(status));
+  const color = $derived(getStatusColorFromCounts(counts));
+  const tooltip = $derived(getTooltipFromCounts(counts));
 </script>
 
 <div
@@ -38,12 +38,12 @@
   }
 
   .status-indicator.small {
-    width: 3px;
+    width: 6px;
     height: 16px;
   }
 
   .status-indicator.medium {
-    width: 4px;
+    width: 8px;
     height: 24px;
   }
 

@@ -1,14 +1,22 @@
 use crate::agent_status::AgentStatusCounts;
 use crate::agent_status_provider::{AgentStatusError, AgentStatusProvider, AgentStatusProviderFactory};
 use crate::opencode::{discovery::OpenCodeDiscoveryService, client::DefaultClientFactory, ClientFactory};
-use crate::opencode::types::{SessionStatus, SessionStatusMap, SessionStatusEventProperties};
+use crate::opencode::types::{SessionStatus, SessionStatusEventProperties};
 use async_trait::async_trait;
 use futures::StreamExt;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{broadcast, Mutex};
+use std::time::Duration;
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::task::JoinHandle;
+
+/// Events from per-port monitor tasks
+enum PortUpdate {
+    Status { port: u16, counts: AgentStatusCounts },
+    Disconnected { port: u16 },
+}
 
 #[derive(Debug)]
 pub struct OpenCodeProvider {
@@ -18,7 +26,7 @@ pub struct OpenCodeProvider {
     status_sender: broadcast::Sender<AgentStatusCounts>,
     current_counts: Arc<RwLock<AgentStatusCounts>>,
     active: Arc<AtomicBool>,
-    task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    task_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl OpenCodeProvider {
@@ -55,21 +63,106 @@ impl OpenCodeProvider {
         }
     }
 
-    /// Update counts from session status map
-    /// Each session can be idle, busy, or retrying
-    /// 
-    /// IMPORTANT: When connected to OpenCode but no sessions are active/busy,
-    /// we report 1 idle to show a green indicator (connected state).
-    /// This distinguishes "connected but idle" from "not connected" (grey).
-    fn update_counts_from_status(
-        status_map: &SessionStatusMap,
-        counts: &Arc<RwLock<AgentStatusCounts>>,
+    /// Aggregate counts from all active ports
+    fn aggregate_counts(port_counts: &HashMap<u16, AgentStatusCounts>) -> AgentStatusCounts {
+        port_counts.values().fold(AgentStatusCounts::default(), |acc, c| {
+            AgentStatusCounts::new(acc.idle + c.idle, acc.busy + c.busy)
+        })
+    }
+
+    /// Emit aggregated counts to sender and update current_counts
+    async fn emit_aggregate(
+        port_counts: &HashMap<u16, AgentStatusCounts>,
+        current_counts: &RwLock<AgentStatusCounts>,
         sender: &broadcast::Sender<AgentStatusCounts>,
     ) {
+        let total = Self::aggregate_counts(port_counts);
+        {
+            let mut guard = current_counts.write().await;
+            *guard = total;
+        }
+        let _ = sender.send(total);
+    }
+
+    /// Spawn a monitor task for a single port
+    fn spawn_port_monitor(
+        port: u16,
+        client_factory: Arc<dyn ClientFactory>,
+        tx: mpsc::Sender<PortUpdate>,
+        active_flag: Arc<AtomicBool>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            if !active_flag.load(Ordering::Relaxed) {
+                return;
+            }
+
+            let client = client_factory.create_client(port);
+            let mut session_statuses: HashMap<String, SessionStatus> = HashMap::new();
+
+            // Send initial connected state
+            let counts = Self::counts_from_sessions(&session_statuses);
+            let _ = tx.send(PortUpdate::Status { port, counts }).await;
+
+            // Subscribe to events
+            if let Ok(mut stream) = client.subscribe_events().await {
+                while let Some(result) = stream.next().await {
+                    if !active_flag.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    match result {
+                        Ok(event) => {
+                            let mut changed = false;
+
+                            if event.event_type == "session.status" {
+                                if let Ok(props) = serde_json::from_value::<SessionStatusEventProperties>(
+                                    event.properties.clone(),
+                                ) {
+                                    session_statuses.insert(props.session_id, props.status);
+                                    changed = true;
+                                }
+                            } else if event.event_type == "session.idle" {
+                                if let Some(session_id) =
+                                    event.properties.get("sessionID").and_then(|v| v.as_str())
+                                {
+                                    session_statuses.insert(session_id.to_string(), SessionStatus::Idle);
+                                    changed = true;
+                                }
+                            } else if event.event_type == "session.deleted" {
+                                if let Some(session_id) =
+                                    event.properties.get("sessionID").and_then(|v| v.as_str())
+                                {
+                                    session_statuses.remove(session_id);
+                                    changed = true;
+                                }
+                            }
+
+                            if changed {
+                                let counts = Self::counts_from_sessions(&session_statuses);
+                                if tx.send(PortUpdate::Status { port, counts }).await.is_err() {
+                                    return; // Channel closed
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            break; // Connection lost
+                        }
+                    }
+                }
+            }
+
+            // Connection lost - notify main loop
+            let _ = tx.send(PortUpdate::Disconnected { port }).await;
+        })
+    }
+
+    /// Calculate counts from session status map
+    /// IMPORTANT: When connected but no sessions, report 1 idle (green indicator)
+    fn counts_from_sessions(session_statuses: &HashMap<String, SessionStatus>) -> AgentStatusCounts {
         let mut idle = 0u32;
         let mut busy = 0u32;
-        
-        for status in status_map.values() {
+
+        for status in session_statuses.values() {
             if status.is_busy() {
                 busy += 1;
             } else {
@@ -77,102 +170,107 @@ impl OpenCodeProvider {
             }
         }
 
-        // If we're connected to OpenCode but have no sessions tracked,
-        // report as "1 idle" to show green (connected) instead of grey (not connected)
+        // If connected but no sessions, show as "1 idle" (green)
         if idle == 0 && busy == 0 {
             idle = 1;
         }
 
-        let new_counts = AgentStatusCounts::new(idle, busy);
-        {
-            let mut guard = counts.write().unwrap();
-            *guard = new_counts;
-        }
-        let _ = sender.send(new_counts);
+        AgentStatusCounts::new(idle, busy)
     }
 
+    /// Main monitor loop with channel-based multi-instance aggregation
     async fn run_monitor(
         workspace_path: PathBuf,
         discovery: Arc<OpenCodeDiscoveryService>,
         client_factory: Arc<dyn ClientFactory>,
-        counts: Arc<RwLock<AgentStatusCounts>>,
+        current_counts: Arc<RwLock<AgentStatusCounts>>,
         sender: broadcast::Sender<AgentStatusCounts>,
         active_flag: Arc<AtomicBool>,
     ) {
+        let (tx, mut rx) = mpsc::channel::<PortUpdate>(64);
+        let mut port_counts: HashMap<u16, AgentStatusCounts> = HashMap::new();
+        let mut port_tasks: HashMap<u16, JoinHandle<()>> = HashMap::new();
+
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+
         loop {
-            if !active_flag.load(Ordering::Relaxed) {
-                break;
-            }
-
-            // 1. Discovery - look up the workspace path directly
-            // OpenCode reports its actual working directory (including worktree paths)
-            let port = loop {
-                if !active_flag.load(Ordering::Relaxed) {
-                    return;
-                }
-                if let Some(p) = discovery.get_port(&workspace_path).await {
-                    break p;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            };
-
-            // 2. Connect
-            let client = client_factory.create_client(port);
-
-            // 3. Initial state - connected but no known session statuses yet
-            // We'll track session statuses from SSE events
-            let mut session_statuses: HashMap<String, SessionStatus> = HashMap::new();
-            
-            // Mark as connected (idle) initially
-            Self::update_counts_from_status(&session_statuses, &counts, &sender);
-
-            // 4. Event Stream
-            if let Ok(mut stream) = client.subscribe_events().await {
-                while let Some(result) = stream.next().await {
+            tokio::select! {
+                _ = interval.tick() => {
                     if !active_flag.load(Ordering::Relaxed) {
-                        return;
+                        break;
                     }
-                    
-                    match result {
-                        Ok(event) => {
-                            // Handle session.status events - update our local tracking
-                            if event.event_type == "session.status" {
-                                if let Ok(props) = serde_json::from_value::<SessionStatusEventProperties>(event.properties.clone()) {
-                                    session_statuses.insert(props.session_id, props.status);
-                                    Self::update_counts_from_status(&session_statuses, &counts, &sender);
-                                }
-                            }
-                            // Handle session.idle events - mark session as idle
-                            else if event.event_type == "session.idle" {
-                                if let Some(session_id) = event.properties.get("sessionID").and_then(|v| v.as_str()) {
-                                    session_statuses.insert(session_id.to_string(), SessionStatus::Idle);
-                                    Self::update_counts_from_status(&session_statuses, &counts, &sender);
-                                }
-                            }
-                            // Handle session.deleted events - remove from tracking
-                            else if event.event_type == "session.deleted" {
-                                if let Some(session_id) = event.properties.get("sessionID").and_then(|v| v.as_str()) {
-                                    session_statuses.remove(session_id);
-                                    Self::update_counts_from_status(&session_statuses, &counts, &sender);
-                                }
-                            }
+
+                    // Get current ports from discovery
+                    let current_ports: BTreeSet<u16> = discovery
+                        .get_ports(&workspace_path)
+                        .await
+                        .into_iter()
+                        .collect();
+
+                    let mut changed = false;
+
+                    // Remove obsolete port tasks
+                    let to_remove: Vec<_> = port_tasks
+                        .keys()
+                        .filter(|p| !current_ports.contains(p))
+                        .copied()
+                        .collect();
+
+                    for port in to_remove {
+                        if let Some(h) = port_tasks.remove(&port) {
+                            h.abort();
                         }
-                        Err(_) => {
-                            break; 
+                        port_counts.remove(&port);
+                        changed = true;
+                    }
+
+                    // Add new port tasks
+                    for port in current_ports {
+                        if !port_tasks.contains_key(&port) {
+                            let handle = Self::spawn_port_monitor(
+                                port,
+                                client_factory.clone(),
+                                tx.clone(),
+                                active_flag.clone(),
+                            );
+                            port_tasks.insert(port, handle);
+                            port_counts.insert(port, AgentStatusCounts::default());
+                            changed = true;
                         }
+                    }
+
+                    // Emit aggregate after discovery update if ports changed
+                    if changed {
+                        Self::emit_aggregate(&port_counts, &current_counts, &sender).await;
                     }
                 }
-            }
 
-            // Connection lost - reset to disconnected state
-            {
-                let mut guard = counts.write().unwrap();
-                *guard = AgentStatusCounts::default();
-                let _ = sender.send(AgentStatusCounts::default());
+                Some(update) = rx.recv() => {
+                    match update {
+                        PortUpdate::Status { port, counts } => {
+                            port_counts.insert(port, counts);
+                        }
+                        PortUpdate::Disconnected { port } => {
+                            // Mark as disconnected but keep entry so aggregate updates
+                            port_counts.insert(port, AgentStatusCounts::default());
+                        }
+                    }
+                    Self::emit_aggregate(&port_counts, &current_counts, &sender).await;
+                }
             }
-            
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
+
+        // Cleanup all tasks
+        for (_, h) in port_tasks {
+            h.abort();
+        }
+
+        // Reset to disconnected state
+        {
+            let mut guard = current_counts.write().await;
+            *guard = AgentStatusCounts::default();
+        }
+        let _ = sender.send(AgentStatusCounts::default());
     }
 }
 
@@ -191,7 +289,12 @@ impl AgentStatusProvider for OpenCodeProvider {
     }
 
     fn current_status(&self) -> AgentStatusCounts {
-        self.current_counts.read().unwrap().clone()
+        // Use try_read to avoid blocking. If lock is held, return default.
+        // This is acceptable since the status is updated frequently.
+        match self.current_counts.try_read() {
+            Ok(guard) => *guard,
+            Err(_) => AgentStatusCounts::default(),
+        }
     }
 
     fn subscribe(&self) -> broadcast::Receiver<AgentStatusCounts> {
@@ -421,6 +524,121 @@ mod tests {
         }
         
         assert!(found_busy, "Did not receive busy status update");
+        provider.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_provider_aggregates_multiple_instances() {
+        // Setup: Two OpenCode instances for the same workspace
+        let mut mock_scanner = MockPortScanner::new();
+        let mut mock_probe = MockInstanceProbe::new();
+        let mut mock_tree = MockProcessTree::new();
+
+        mock_tree.expect_refresh().returning(|| {});
+        mock_tree.expect_get_descendant_pids().returning(|_| {
+            let mut descendants = HashSet::new();
+            descendants.insert(1001);
+            descendants.insert(1002);
+            descendants
+        });
+
+        mock_scanner.expect_get_active_listeners().returning(|| {
+            Ok(vec![
+                PortInfo { port: 3000, pid: 1001 },
+                PortInfo { port: 3001, pid: 1002 },
+            ])
+        });
+
+        // Both ports return the SAME workspace path
+        mock_probe
+            .expect_probe()
+            .returning(|_| Box::pin(async { Ok(PathBuf::from("/same/workspace")) }));
+
+        let discovery = Arc::new(OpenCodeDiscoveryService::new_with_deps(
+            Box::new(mock_scanner),
+            Box::new(mock_probe),
+            Arc::new(mock_tree),
+        ));
+
+        discovery.set_code_server_pid(Some(CODE_SERVER_PID)).await;
+        discovery.scan_and_update().await.unwrap();
+
+        // Verify both ports are discovered
+        let ports = discovery.get_ports(Path::new("/same/workspace")).await;
+        assert_eq!(ports.len(), 2);
+
+        // Create mock factory that creates clients for both ports
+        let mut mock_factory = MockClientFactory::new();
+        
+        // Port 3000: sends idle event
+        mock_factory
+            .expect_create_client()
+            .with(mockall::predicate::eq(3000))
+            .returning(|_| {
+                let mut client = MockOpenCodeClient::new();
+                client.expect_subscribe_events().returning(|| {
+                    Box::pin(async {
+                        // Connected but no sessions - will report 1 idle
+                        Ok(Box::pin(stream::pending())
+                            as BoxStream<'static, Result<crate::opencode::types::Event, crate::opencode::OpenCodeError>>)
+                    })
+                });
+                Box::new(client)
+            });
+
+        // Port 3001: sends busy event
+        mock_factory
+            .expect_create_client()
+            .with(mockall::predicate::eq(3001))
+            .returning(|_| {
+                let mut client = MockOpenCodeClient::new();
+                client.expect_subscribe_events().returning(|| {
+                    Box::pin(async {
+                        let event = crate::opencode::types::Event {
+                            event_type: "session.status".to_string(),
+                            properties: serde_json::json!({
+                                "sessionID": "456",
+                                "status": { "type": "busy" }
+                            }),
+                        };
+                        let s = stream::iter(vec![Ok(event)]).chain(stream::pending());
+                        Ok(Box::pin(s)
+                            as BoxStream<'static, Result<crate::opencode::types::Event, crate::opencode::OpenCodeError>>)
+                    })
+                });
+                Box::new(client)
+            });
+
+        let provider = OpenCodeProvider::new_with_factory(
+            PathBuf::from("/same/workspace"),
+            discovery,
+            Arc::new(mock_factory),
+        );
+
+        let mut rx = provider.subscribe();
+        provider.start().await.unwrap();
+
+        // Wait for aggregated status (should be mixed: 1 idle from port 3000, 1 busy from port 3001)
+        let mut found_aggregated = false;
+        let timeout = tokio::time::sleep(std::time::Duration::from_secs(3));
+        tokio::pin!(timeout);
+
+        loop {
+            tokio::select! {
+                Ok(status) = rx.recv() => {
+                    // Looking for aggregated status with at least 1 idle and 1 busy
+                    if status.idle >= 1 && status.busy >= 1 {
+                        found_aggregated = true;
+                        break;
+                    }
+                }
+                _ = &mut timeout => {
+                    break;
+                }
+            }
+        }
+
+        assert!(found_aggregated, "Did not receive aggregated status with both idle and busy");
         provider.stop().await.unwrap();
     }
 }

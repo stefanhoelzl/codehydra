@@ -2,7 +2,7 @@ use crate::opencode::{
     InstanceProbe, OpenCodeError, PortInfo, PortScanner, ProcessTree, SysinfoProcessTree,
 };
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -61,7 +61,9 @@ impl InstanceProbe for DefaultInstanceProbe {
 }
 
 pub struct OpenCodeDiscoveryService {
-    active_instances: Arc<RwLock<HashMap<PathBuf, u16>>>,
+    // Maps workspace path to set of ports serving that path.
+    // Uses BTreeSet for deterministic ordering (aids debugging and testing).
+    active_instances: Arc<RwLock<HashMap<PathBuf, BTreeSet<u16>>>>,
     // Reverse map: Port -> Path. Used to track which ports we are currently monitoring
     // so we can detect when they disappear.
     known_ports: Arc<RwLock<HashMap<u16, PathBuf>>>,
@@ -124,31 +126,41 @@ impl OpenCodeDiscoveryService {
         *self.code_server_pid.read().await
     }
 
-    pub async fn get_port(&self, path: &Path) -> Option<u16> {
+    /// Get all ports serving a workspace path.
+    /// Returns an empty Vec if no instances are found.
+    pub async fn get_ports(&self, path: &Path) -> Vec<u16> {
         let map = self.active_instances.read().await;
         
         // Try exact match first
-        if let Some(port) = map.get(path).copied() {
-            return Some(port);
+        if let Some(ports) = map.get(path) {
+            return ports.iter().copied().collect();
         }
         
         // Try canonicalized path match (handles symlinks)
-        if let Ok(canonical) = path.canonicalize() {
-            if let Some(port) = map.get(&canonical).copied() {
-                return Some(port);
-            }
-            
-            // Also try matching against canonicalized keys
-            for (stored_path, port) in map.iter() {
-                if let Ok(stored_canonical) = stored_path.canonicalize() {
-                    if stored_canonical == canonical {
-                        return Some(*port);
-                    }
-                }
+        let canonical = match path.canonicalize() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        
+        if let Some(ports) = map.get(&canonical) {
+            return ports.iter().copied().collect();
+        }
+        
+        // Check canonicalized keys - O(n) but rare path
+        for (stored_path, ports) in map.iter() {
+            if stored_path.canonicalize().ok() == Some(canonical.clone()) {
+                return ports.iter().copied().collect();
             }
         }
         
-        None
+        Vec::new()
+    }
+
+    /// Get a single port for a workspace path (for backward compatibility).
+    /// Returns the first port if multiple are available.
+    pub async fn get_port(&self, path: &Path) -> Option<u16> {
+        let ports = self.get_ports(path).await;
+        ports.into_iter().next()
     }
 
     pub async fn run_loop(self: Arc<Self>) {
@@ -213,7 +225,14 @@ impl OpenCodeDiscoveryService {
 
         for port in removed_known_ports {
             if let Some(path) = known_ports_guard.remove(&port) {
-                active_instances_guard.remove(&path);
+                // Remove this port from the path's port set
+                if let Some(ports) = active_instances_guard.get_mut(&path) {
+                    ports.remove(&port);
+                    // If no more ports for this path, remove the path entry
+                    if ports.is_empty() {
+                        active_instances_guard.remove(&path);
+                    }
+                }
             }
         }
 
@@ -267,11 +286,11 @@ impl OpenCodeDiscoveryService {
                     let mut known = self.known_ports.write().await;
                     let mut active = self.active_instances.write().await;
 
-                    // Check if this path is already served by another port (stale?)
-                    // If so, we overwrite it (assuming new one is correct)
-                    if let Some(old_port) = active.insert(path.clone(), info.port) {
-                        known.remove(&old_port);
-                    }
+                    // Add port to the path's port set (supports multiple instances per path)
+                    active
+                        .entry(path.clone())
+                        .or_insert_with(BTreeSet::new)
+                        .insert(info.port);
                     known.insert(info.port, path);
                 }
                 Err(_) => {
@@ -823,5 +842,176 @@ mod tests {
         // Scan 3: Back
         service.scan_and_update().await.unwrap();
         assert_eq!(service.get_port(Path::new("/foo/bar")).await, Some(3000));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_instances_same_workspace() {
+        // Two OpenCode instances for the SAME workspace path
+        let mut mock_scanner = MockPortScanner::new();
+        let mut mock_probe = MockInstanceProbe::new();
+        let mut mock_tree = MockProcessTree::new();
+
+        mock_tree.expect_refresh().returning(|| {});
+        mock_tree.expect_get_descendant_pids().returning(|_| {
+            let mut descendants = HashSet::new();
+            descendants.insert(1001);
+            descendants.insert(1002);
+            descendants
+        });
+
+        // Scanner returns both ports
+        mock_scanner.expect_get_active_listeners().returning(|| {
+            Ok(vec![
+                PortInfo { port: 3000, pid: 1001 },
+                PortInfo { port: 3001, pid: 1002 },
+            ])
+        });
+
+        // Both ports return the SAME workspace path
+        mock_probe
+            .expect_probe()
+            .returning(|_| Box::pin(async { Ok(PathBuf::from("/same/workspace")) }));
+
+        let service = OpenCodeDiscoveryService::new_with_deps(
+            Box::new(mock_scanner),
+            Box::new(mock_probe),
+            Arc::new(mock_tree),
+        );
+
+        service.set_code_server_pid(Some(CODE_SERVER_PID)).await;
+        service.scan_and_update().await.unwrap();
+
+        // Should return BOTH ports
+        let ports = service.get_ports(Path::new("/same/workspace")).await;
+        assert_eq!(ports.len(), 2);
+        assert!(ports.contains(&3000));
+        assert!(ports.contains(&3001));
+
+        // get_port should return the first port (from BTreeSet, so lowest)
+        assert_eq!(
+            service.get_port(Path::new("/same/workspace")).await,
+            Some(3000)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_instance_removal_preserves_others() {
+        // Start with two instances, remove one, verify other remains
+        let mut mock_scanner = MockPortScanner::new();
+        let mut mock_probe = MockInstanceProbe::new();
+        let mut mock_tree = MockProcessTree::new();
+
+        mock_tree.expect_refresh().returning(|| {});
+        mock_tree.expect_get_descendant_pids().returning(|_| {
+            let mut descendants = HashSet::new();
+            descendants.insert(1001);
+            descendants.insert(1002);
+            descendants
+        });
+
+        let mut seq = mockall::Sequence::new();
+
+        // Scan 1: Both instances
+        mock_scanner
+            .expect_get_active_listeners()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|| {
+                Ok(vec![
+                    PortInfo { port: 3000, pid: 1001 },
+                    PortInfo { port: 3001, pid: 1002 },
+                ])
+            });
+
+        // Scan 2: Only one instance (port 3001 gone)
+        mock_scanner
+            .expect_get_active_listeners()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|| Ok(vec![PortInfo { port: 3000, pid: 1001 }]));
+
+        // Both ports return the same workspace path
+        mock_probe
+            .expect_probe()
+            .returning(|_| Box::pin(async { Ok(PathBuf::from("/same/workspace")) }));
+
+        let service = OpenCodeDiscoveryService::new_with_deps(
+            Box::new(mock_scanner),
+            Box::new(mock_probe),
+            Arc::new(mock_tree),
+        );
+
+        service.set_code_server_pid(Some(CODE_SERVER_PID)).await;
+
+        // Scan 1: Both instances
+        service.scan_and_update().await.unwrap();
+        let ports = service.get_ports(Path::new("/same/workspace")).await;
+        assert_eq!(ports.len(), 2);
+
+        // Scan 2: One instance removed
+        service.scan_and_update().await.unwrap();
+        let ports = service.get_ports(Path::new("/same/workspace")).await;
+        assert_eq!(ports.len(), 1);
+        assert!(ports.contains(&3000));
+    }
+
+    #[tokio::test]
+    async fn test_all_ports_for_workspace_removed() {
+        // Both ports for a workspace disappear - workspace entry should be cleaned up
+        let mut mock_scanner = MockPortScanner::new();
+        let mut mock_probe = MockInstanceProbe::new();
+        let mut mock_tree = MockProcessTree::new();
+
+        mock_tree.expect_refresh().returning(|| {});
+        mock_tree.expect_get_descendant_pids().returning(|_| {
+            let mut descendants = HashSet::new();
+            descendants.insert(1001);
+            descendants.insert(1002);
+            descendants
+        });
+
+        let mut seq = mockall::Sequence::new();
+
+        // Scan 1: Both instances
+        mock_scanner
+            .expect_get_active_listeners()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|| {
+                Ok(vec![
+                    PortInfo { port: 3000, pid: 1001 },
+                    PortInfo { port: 3001, pid: 1002 },
+                ])
+            });
+
+        // Scan 2: All gone
+        mock_scanner
+            .expect_get_active_listeners()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|| Ok(vec![]));
+
+        // Both ports return the same workspace path
+        mock_probe
+            .expect_probe()
+            .returning(|_| Box::pin(async { Ok(PathBuf::from("/same/workspace")) }));
+
+        let service = OpenCodeDiscoveryService::new_with_deps(
+            Box::new(mock_scanner),
+            Box::new(mock_probe),
+            Arc::new(mock_tree),
+        );
+
+        service.set_code_server_pid(Some(CODE_SERVER_PID)).await;
+
+        // Scan 1: Both instances
+        service.scan_and_update().await.unwrap();
+        let ports = service.get_ports(Path::new("/same/workspace")).await;
+        assert_eq!(ports.len(), 2);
+
+        // Scan 2: All gone
+        service.scan_and_update().await.unwrap();
+        let ports = service.get_ports(Path::new("/same/workspace")).await;
+        assert!(ports.is_empty());
     }
 }

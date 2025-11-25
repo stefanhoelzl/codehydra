@@ -1,0 +1,121 @@
+// src/lib/services/agentNotifications.ts
+
+import type { AgentStatusCounts } from '$lib/types/agentStatus';
+
+/**
+ * Service responsible for audio notifications when agent status changes.
+ * Extracted from store to separate concerns and improve testability.
+ */
+export class AgentNotificationService {
+  private previousCounts = new Map<string, AgentStatusCounts>();
+  private enabled = true;
+
+  /**
+   * Handle a status change event and play chime if appropriate.
+   */
+  handleStatusChange(workspacePath: string, counts: AgentStatusCounts): void {
+    const prev = this.previousCounts.get(workspacePath);
+
+    // Play chime when busy count decreases (agent finished work)
+    if (this.enabled && prev && counts.busy < prev.busy) {
+      playChimeSound();
+    }
+
+    this.previousCounts.set(workspacePath, { ...counts });
+  }
+
+  /**
+   * Enable or disable chime notifications.
+   */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+  }
+
+  /**
+   * Check if notifications are enabled.
+   */
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /**
+   * Clean up tracking for a removed workspace.
+   */
+  removeWorkspace(workspacePath: string): void {
+    this.previousCounts.delete(workspacePath);
+  }
+
+  /**
+   * Reset all state (useful for testing).
+   */
+  reset(): void {
+    this.previousCounts.clear();
+  }
+}
+
+// Audio context singleton
+let audioContext: AudioContext | null = null;
+
+function getAudioContext(): AudioContext {
+  if (!audioContext) {
+    audioContext = new AudioContext();
+  }
+  return audioContext;
+}
+
+/**
+ * Reset audio context (for testing).
+ */
+export function resetAudioContext(): void {
+  audioContext = null;
+}
+
+/**
+ * Play a chime sound using Web Audio API.
+ * Triad chime: A5 -> C#6 -> E6 (A major triad) - fuller, musical resolution
+ */
+export function playChimeSound(): void {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // First tone: A5 (880Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.frequency.value = 880;
+    osc1.type = 'sine';
+    gain1.gain.setValueAtTime(0.25, now);
+    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.15);
+
+    // Second tone: C#6 (1109Hz)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.frequency.value = 1109;
+    osc2.type = 'sine';
+    gain2.gain.setValueAtTime(0.25, now + 0.1);
+    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.1);
+    osc2.stop(now + 0.25);
+
+    // Third tone: E6 (1319Hz)
+    const osc3 = ctx.createOscillator();
+    const gain3 = ctx.createGain();
+    osc3.frequency.value = 1319;
+    osc3.type = 'sine';
+    gain3.gain.setValueAtTime(0.25, now + 0.2);
+    gain3.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+    osc3.connect(gain3);
+    gain3.connect(ctx.destination);
+    osc3.start(now + 0.2);
+    osc3.stop(now + 0.4);
+  } catch (e) {
+    // Audio not supported or blocked - silently ignore
+    console.debug('Could not play chime:', e);
+  }
+}

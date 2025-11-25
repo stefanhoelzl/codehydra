@@ -4,13 +4,18 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import {
   agentStatuses,
+  agentCounts,
   getWorkspaceStatus,
+  getWorkspaceCounts,
   updateWorkspaceStatus,
+  updateWorkspaceCounts,
   removeWorkspaceStatus,
   clearAllStatuses,
   updateMultipleStatuses,
   createWorkspaceStatusDerived,
+  createWorkspaceCountsDerived,
   initAgentStatusListener,
+  resetNotificationService,
 } from './agentStatus';
 import type { AggregatedAgentStatus } from '$lib/types/agentStatus';
 import { listen } from '@tauri-apps/api/event';
@@ -28,6 +33,7 @@ describe('agentStatus store', () => {
   beforeEach(() => {
     // Reset store before each test
     clearAllStatuses();
+    resetNotificationService();
   });
 
   // === Initial State Tests ===
@@ -253,6 +259,115 @@ describe('agentStatus store', () => {
 
       const statuses = get(agentStatuses);
       expect(statuses.get('/test')).toEqual({ type: 'allIdle', count: 2 });
+    });
+
+    it('updates counts store when receiving event', async () => {
+      let eventCallback: ((event: { payload: unknown }) => void) | null = null;
+      vi.mocked(listen).mockImplementationOnce(async (_event, callback) => {
+        eventCallback = callback as (event: { payload: unknown }) => void;
+        return () => {};
+      });
+
+      await initAgentStatusListener();
+
+      // Simulate event
+      eventCallback!({
+        payload: {
+          workspacePath: '/test',
+          status: { type: 'mixed', idle: 1, busy: 2 },
+          counts: { idle: 1, busy: 2 },
+        },
+      });
+
+      const counts = get(agentCounts);
+      expect(counts.get('/test')).toEqual({ idle: 1, busy: 2 });
+    });
+  });
+
+  // === agentCounts Store Tests ===
+
+  describe('agentCounts store', () => {
+    it('starts with empty map', () => {
+      const counts = get(agentCounts);
+      expect(counts.size).toBe(0);
+    });
+
+    it('stores raw counts', () => {
+      updateWorkspaceCounts('/test', { idle: 2, busy: 1 });
+      const counts = get(agentCounts).get('/test');
+      expect(counts).toEqual({ idle: 2, busy: 1 });
+    });
+
+    it('creates new Map reference on update (Svelte reactivity)', () => {
+      const before = get(agentCounts);
+      updateWorkspaceCounts('/test', { idle: 1, busy: 0 });
+      const after = get(agentCounts);
+      expect(before).not.toBe(after);
+    });
+  });
+
+  // === getWorkspaceCounts Tests ===
+
+  describe('getWorkspaceCounts', () => {
+    it('returns empty counts for unknown workspace', () => {
+      const counts = getWorkspaceCounts('/unknown/path');
+      expect(counts).toEqual({ idle: 0, busy: 0 });
+    });
+
+    it('returns correct counts for known workspace', () => {
+      updateWorkspaceCounts('/test/path', { idle: 3, busy: 2 });
+      const counts = getWorkspaceCounts('/test/path');
+      expect(counts).toEqual({ idle: 3, busy: 2 });
+    });
+  });
+
+  // === createWorkspaceCountsDerived Tests ===
+
+  describe('createWorkspaceCountsDerived', () => {
+    it('returns empty counts for unknown workspace', () => {
+      const derived = createWorkspaceCountsDerived('/unknown');
+      expect(get(derived)).toEqual({ idle: 0, busy: 0 });
+    });
+
+    it('returns current counts for known workspace', () => {
+      updateWorkspaceCounts('/workspace1', { idle: 5, busy: 3 });
+      const derived = createWorkspaceCountsDerived('/workspace1');
+      expect(get(derived)).toEqual({ idle: 5, busy: 3 });
+    });
+
+    it('updates reactively when counts change', () => {
+      const derived = createWorkspaceCountsDerived('/workspace1');
+      expect(get(derived)).toEqual({ idle: 0, busy: 0 });
+
+      updateWorkspaceCounts('/workspace1', { idle: 2, busy: 4 });
+      expect(get(derived)).toEqual({ idle: 2, busy: 4 });
+    });
+
+    it('returns empty counts when workspace is removed', () => {
+      const path = '/workspace1';
+      updateWorkspaceStatus(path, { type: 'allIdle', count: 2 });
+      updateWorkspaceCounts(path, { idle: 2, busy: 0 });
+
+      const derived = createWorkspaceCountsDerived(path);
+      expect(get(derived)).toEqual({ idle: 2, busy: 0 });
+
+      removeWorkspaceStatus(path);
+      expect(get(derived)).toEqual({ idle: 0, busy: 0 });
+    });
+  });
+
+  // === clearAllStatuses clears counts too ===
+
+  describe('clearAllStatuses clears counts', () => {
+    it('clears both statuses and counts', () => {
+      updateWorkspaceStatus('/ws1', { type: 'allIdle', count: 1 });
+      updateWorkspaceCounts('/ws1', { idle: 1, busy: 0 });
+      expect(get(agentStatuses).size).toBe(1);
+      expect(get(agentCounts).size).toBe(1);
+
+      clearAllStatuses();
+      expect(get(agentStatuses).size).toBe(0);
+      expect(get(agentCounts).size).toBe(0);
     });
   });
 });

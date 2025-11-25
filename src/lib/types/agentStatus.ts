@@ -68,3 +68,26 @@ export function getTotalAgents(status: AggregatedAgentStatus): number {
 export function createNoAgentsStatus(): AggregatedAgentStatus {
   return { type: 'noAgents' };
 }
+
+/** Derive status color from counts */
+export function getStatusColorFromCounts(counts: AgentStatusCounts): StatusIndicatorColor {
+  const { idle, busy } = counts;
+  if (idle === 0 && busy === 0) return 'grey';
+  if (busy === 0) return 'green';
+  if (idle === 0) return 'red';
+  return 'mixed';
+}
+
+/** Derive tooltip from counts */
+export function getTooltipFromCounts(counts: AgentStatusCounts): string {
+  const { idle, busy } = counts;
+  if (idle === 0 && busy === 0) return 'No agents running';
+  if (busy === 0) return `${idle} agent${idle > 1 ? 's' : ''} idle`;
+  if (idle === 0) return `${busy} agent${busy > 1 ? 's' : ''} busy`;
+  return `${idle} idle, ${busy} busy`;
+}
+
+/** Create default empty counts */
+export function createEmptyCounts(): AgentStatusCounts {
+  return { idle: 0, busy: 0 };
+}

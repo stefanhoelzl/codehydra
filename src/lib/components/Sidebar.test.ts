@@ -4,9 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { get } from 'svelte/store';
 import Sidebar from './Sidebar.svelte';
 import { projects, activeWorkspace } from '$lib/stores/projects';
-import { agentStatuses } from '$lib/stores/agentStatus';
+import { agentCounts } from '$lib/stores/agentStatus';
 import type { Project, Workspace, BranchInfo } from '$lib/types/project';
-import type { AggregatedAgentStatus } from '$lib/types/agentStatus';
+import type { AgentStatusCounts } from '$lib/types/agentStatus';
 
 // Mock the projectManager service
 vi.mock('$lib/services/projectManager', () => ({
@@ -80,7 +80,7 @@ describe('Sidebar', () => {
     // Reset stores to initial state
     projects.set([]);
     activeWorkspace.set(null);
-    agentStatuses.set(new Map());
+    agentCounts.set(new Map());
 
     // Default mock implementations
     mockListBranches.mockResolvedValue(createMockBranches());
@@ -725,20 +725,20 @@ describe('Sidebar', () => {
       ]);
       projects.set([project]);
 
-      // Set different statuses for each workspace
-      const statuses = new Map<string, AggregatedAgentStatus>();
-      statuses.set('/path/to/main', { type: 'allIdle', count: 1 });
-      statuses.set('/path/to/feature', { type: 'allBusy', count: 2 });
-      agentStatuses.set(statuses);
+      // Set different counts for each workspace
+      const counts = new Map<string, AgentStatusCounts>();
+      counts.set('/path/to/main', { idle: 1, busy: 0 });
+      counts.set('/path/to/feature', { idle: 0, busy: 2 });
+      agentCounts.set(counts);
 
       render(Sidebar);
 
-      // Main workspace should have green indicator (allIdle)
+      // Main workspace should have green indicator (all idle)
       const projectItem = screen.getByText('project').closest('.project-item');
       const mainIndicator = projectItem?.querySelector('.status-indicator');
       expect(mainIndicator).toHaveClass('green');
 
-      // Feature workspace should have red indicator (allBusy)
+      // Feature workspace should have red indicator (all busy)
       const workspaceItem = screen.getByText('feature').closest('.workspace-item');
       const featureIndicator = workspaceItem?.querySelector('.status-indicator');
       expect(featureIndicator).toHaveClass('red');
@@ -748,8 +748,23 @@ describe('Sidebar', () => {
       const project = createMockProject([{ name: 'main', path: '/path/to/main', branch: 'main' }]);
       projects.set([project]);
 
+      // No counts set means no agents
+      agentCounts.set(new Map());
+
+      render(Sidebar);
+
+      // Should have grey indicator (no agents)
+      const projectItem = screen.getByText('project').closest('.project-item');
+      const statusIndicator = projectItem?.querySelector('.status-indicator');
+      expect(statusIndicator).toHaveClass('grey');
+    });
+
+    it('shows grey indicator when no agents are running', () => {
+      const project = createMockProject([{ name: 'main', path: '/path/to/main', branch: 'main' }]);
+      projects.set([project]);
+
       // No status set means no agents
-      agentStatuses.set(new Map());
+      agentCounts.set(new Map());
 
       render(Sidebar);
 

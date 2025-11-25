@@ -5,8 +5,8 @@
   import CreateWorkspaceDialog from './CreateWorkspaceDialog.svelte';
   import RemoveWorkspaceDialog from './RemoveWorkspaceDialog.svelte';
   import AgentStatusIndicator from './AgentStatusIndicator.svelte';
-  import { agentStatuses } from '$lib/stores/agentStatus';
-  import { createNoAgentsStatus } from '$lib/types/agentStatus';
+  import { agentCounts } from '$lib/stores/agentStatus';
+  import { createEmptyCounts } from '$lib/types/agentStatus';
 
   // Create dialog state
   let createDialogProject = $state<Project | null>(null);
@@ -102,7 +102,7 @@
             <vscode-icon name="close"></vscode-icon>
           </button>
           <AgentStatusIndicator
-            status={$agentStatuses.get(mainWorkspace(project).path) ?? createNoAgentsStatus()}
+            counts={$agentCounts.get(mainWorkspace(project).path) ?? createEmptyCounts()}
           />
         </div>
 
@@ -134,7 +134,7 @@
               <vscode-icon name="close"></vscode-icon>
             </button>
             <AgentStatusIndicator
-              status={$agentStatuses.get(workspace.path) ?? createNoAgentsStatus()}
+              counts={$agentCounts.get(workspace.path) ?? createEmptyCounts()}
             />
           </div>
         {/each}
