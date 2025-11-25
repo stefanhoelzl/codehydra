@@ -529,6 +529,50 @@ pub const DEFAULT_SETTINGS: &str = r#"{
 /// Default keybindings for code-server.
 pub const DEFAULT_KEYBINDINGS: &str = r#"[]"#;
 
+/// Chime extension package.json - defines the extension metadata.
+pub const CHIME_EXTENSION_PACKAGE_JSON: &str = r#"{
+  "name": "chime",
+  "displayName": "Chime",
+  "description": "Chime integration for VS Code",
+  "version": "0.0.1",
+  "publisher": "chime",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {}
+}"#;
+
+/// Chime extension JavaScript code - auto-opens OpenCode on startup.
+pub const CHIME_EXTENSION_JS: &str = r#"const vscode = require('vscode');
+
+async function activate(context) {
+  // Wait a bit for other extensions to load
+  setTimeout(async () => {
+    try {
+      // Close both sidebars
+      await vscode.commands.executeCommand('workbench.action.closeSidebar');
+      await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+      
+      // Open OpenCode terminal
+      await vscode.commands.executeCommand('opencode.openTerminal');
+      
+      // Close empty editor groups created by the terminal opening "beside"
+      await vscode.commands.executeCommand('workbench.action.closeEditorsInOtherGroups');
+    } catch (err) {
+      console.error('Chime extension error:', err);
+    }
+  }, 1000);
+}
+
+function deactivate() {}
+
+module.exports = { activate, deactivate };
+"#;
+
 // ============================================================================
 // RuntimeBootstrapper
 // ============================================================================
@@ -657,6 +701,79 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         if !self.file_system.exists(&keybindings_path) {
             self.file_system
                 .write(&keybindings_path, DEFAULT_KEYBINDINGS.as_bytes())
+                .map_err(CodeServerError::PermissionError)?;
+        }
+
+        Ok(())
+    }
+
+    /// The directory name for the Chime extension following VS Code convention.
+    /// Format: publisher.name-version-platform
+    const CHIME_EXTENSION_DIR_NAME: &'static str = "chime.chime-0.0.1-universal";
+
+    /// Install the built-in Chime extension for VS Code integration.
+    ///
+    /// Creates the extension directory, writes package.json and extension.js,
+    /// and registers the extension in extensions.json so code-server recognizes it.
+    /// This must be called BEFORE install_extensions() so code-server appends to
+    /// the extensions.json rather than overwriting it.
+    pub fn install_chime_extension(&self) -> Result<(), CodeServerError> {
+        // Create extensions directory if it doesn't exist
+        if !self.file_system.exists(&self.config.extensions_dir) {
+            self.file_system
+                .create_dir_all(&self.config.extensions_dir)
+                .map_err(CodeServerError::PermissionError)?;
+        }
+
+        // Use proper VS Code extension directory naming: publisher.name-version-platform
+        let chime_ext_dir = self
+            .config
+            .extensions_dir
+            .join(Self::CHIME_EXTENSION_DIR_NAME);
+
+        // Create extension directory if it doesn't exist
+        if !self.file_system.exists(&chime_ext_dir) {
+            self.file_system
+                .create_dir_all(&chime_ext_dir)
+                .map_err(CodeServerError::PermissionError)?;
+        }
+
+        // Write package.json
+        let package_json_path = chime_ext_dir.join("package.json");
+        if !self.file_system.exists(&package_json_path) {
+            self.file_system
+                .write(&package_json_path, CHIME_EXTENSION_PACKAGE_JSON.as_bytes())
+                .map_err(CodeServerError::PermissionError)?;
+        }
+
+        // Write extension.js
+        let extension_js_path = chime_ext_dir.join("extension.js");
+        if !self.file_system.exists(&extension_js_path) {
+            self.file_system
+                .write(&extension_js_path, CHIME_EXTENSION_JS.as_bytes())
+                .map_err(CodeServerError::PermissionError)?;
+        }
+
+        // Write extensions.json with Chime extension entry
+        // This must be done before code-server installs other extensions
+        // so it appends to this file rather than creating a new one
+        let extensions_json_path = self.config.extensions_dir.join("extensions.json");
+        if !self.file_system.exists(&extensions_json_path) {
+            let chime_ext_path = self.config.extensions_dir.join(Self::CHIME_EXTENSION_DIR_NAME);
+            let chime_ext_path_str = chime_ext_path.to_string_lossy();
+            let extensions_json = format!(
+                r#"[{{"identifier":{{"id":"chime.chime"}},"version":"0.0.1","location":{{"$mid":1,"fsPath":"{}","external":"file://{}","path":"{}","scheme":"file"}},"relativeLocation":"{}","metadata":{{"installedTimestamp":{},"pinned":true,"source":"local","targetPlatform":"universal","updated":false,"private":true,"isPreReleaseVersion":false,"hasPreReleaseVersion":false}}}}]"#,
+                chime_ext_path_str,
+                chime_ext_path_str,
+                chime_ext_path_str,
+                Self::CHIME_EXTENSION_DIR_NAME,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            );
+            self.file_system
+                .write(&extensions_json_path, extensions_json.as_bytes())
                 .map_err(CodeServerError::PermissionError)?;
         }
 
@@ -876,7 +993,10 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Err(e);
         }
 
-        // Step 3: Install extensions
+        // Step 3: Install Chime extension first (writes extensions.json)
+        self.install_chime_extension()?;
+
+        // Step 4: Install marketplace extensions (code-server appends to extensions.json)
         if let Err(e) = self.install_extensions() {
             self.emit(SetupEvent::Failed {
                 error: e.to_string(),
@@ -884,7 +1004,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Err(e);
         }
 
-        // Step 4: Write default settings
+        // Step 5: Write default settings
         self.write_default_settings()?;
 
         // Emit final success state
@@ -1614,5 +1734,279 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "output");
         assert_eq!(result.stderr, "error");
+    }
+
+    // ============================================================================
+    // Chime Extension Tests
+    // ============================================================================
+
+    #[test]
+    fn test_chime_extension_package_json_is_valid() {
+        // Verify CHIME_EXTENSION_PACKAGE_JSON is valid JSON
+        let parsed: serde_json::Result<serde_json::Value> =
+            serde_json::from_str(CHIME_EXTENSION_PACKAGE_JSON);
+        assert!(
+            parsed.is_ok(),
+            "CHIME_EXTENSION_PACKAGE_JSON should be valid JSON"
+        );
+
+        let obj = parsed.unwrap();
+        assert!(obj.is_object());
+        assert_eq!(obj.get("name").unwrap(), "chime");
+        assert_eq!(obj.get("displayName").unwrap(), "Chime");
+        assert_eq!(obj.get("main").unwrap(), "./extension.js");
+        assert!(obj.get("activationEvents").is_some());
+
+        // Verify activationEvents contains onStartupFinished
+        let activation_events = obj.get("activationEvents").unwrap().as_array().unwrap();
+        assert!(activation_events
+            .iter()
+            .any(|v| v.as_str() == Some("onStartupFinished")));
+    }
+
+    #[test]
+    fn test_chime_extension_js_contains_required_code() {
+        // Verify CHIME_EXTENSION_JS contains all required components
+        assert!(
+            CHIME_EXTENSION_JS.contains("async function activate"),
+            "Should contain async activate function"
+        );
+        assert!(
+            CHIME_EXTENSION_JS.contains("function deactivate"),
+            "Should contain deactivate function"
+        );
+        assert!(
+            CHIME_EXTENSION_JS.contains("opencode.openTerminal"),
+            "Should contain opencode.openTerminal command"
+        );
+        assert!(
+            CHIME_EXTENSION_JS.contains("workbench.action.closeSidebar"),
+            "Should contain closeSidebar command"
+        );
+        assert!(
+            CHIME_EXTENSION_JS.contains("workbench.action.closeAuxiliaryBar"),
+            "Should contain closeAuxiliaryBar command for secondary sidebar"
+        );
+        assert!(
+            CHIME_EXTENSION_JS.contains("workbench.action.closeEditorsInOtherGroups"),
+            "Should contain closeEditorsInOtherGroups command to close empty splits"
+        );
+        assert!(
+            CHIME_EXTENSION_JS.contains("module.exports"),
+            "Should export module"
+        );
+        assert!(
+            CHIME_EXTENSION_JS.contains("require('vscode')"),
+            "Should require vscode module"
+        );
+    }
+
+    #[test]
+    fn test_install_chime_extension_creates_directory_and_files() {
+        let temp = tempdir().unwrap();
+        let test_config = CodeServerConfig {
+            runtime_dir: temp.path().to_path_buf(),
+            node_dir: temp.path().join("node"),
+            node_binary_path: temp.path().join("node").join("bin").join("node"),
+            extensions_dir: temp.path().join("extensions"),
+            user_data_dir: temp.path().join("user-data"),
+            port_start: 50000,
+        };
+
+        let mock_http = MockHttpClient::new();
+        let mut mock_fs = MockFileSystem::new();
+        let mock_extractor = MockArchiveExtractor::new();
+        let mock_emitter = MockEventEmitter::new();
+        let mock_spawner = MockProcessSpawner::new();
+
+        // Track which paths are checked and created
+        mock_fs
+            .expect_exists()
+            .returning(|_| false); // Nothing exists initially
+
+        mock_fs
+            .expect_create_dir_all()
+            .times(1)
+            .returning(|_| Ok(()));
+
+        mock_fs
+            .expect_write()
+            .times(2) // package.json and extension.js
+            .returning(|_, _| Ok(()));
+
+        let bootstrapper = RuntimeBootstrapper::with_deps(
+            test_config,
+            mock_http,
+            mock_fs,
+            mock_extractor,
+            mock_emitter,
+            mock_spawner,
+        );
+
+        let result = bootstrapper.install_chime_extension();
+        assert!(result.is_ok(), "Should successfully install Chime extension");
+    }
+
+    #[test]
+    fn test_install_chime_extension_skips_existing_files() {
+        let temp = tempdir().unwrap();
+        let test_config = CodeServerConfig {
+            runtime_dir: temp.path().to_path_buf(),
+            node_dir: temp.path().join("node"),
+            node_binary_path: temp.path().join("node").join("bin").join("node"),
+            extensions_dir: temp.path().join("extensions"),
+            user_data_dir: temp.path().join("user-data"),
+            port_start: 50000,
+        };
+
+        let mock_http = MockHttpClient::new();
+        let mut mock_fs = MockFileSystem::new();
+        let mock_extractor = MockArchiveExtractor::new();
+        let mock_emitter = MockEventEmitter::new();
+        let mock_spawner = MockProcessSpawner::new();
+
+        // All files already exist
+        mock_fs.expect_exists().returning(|_| true);
+
+        // Should not create directory or write files since they exist
+        mock_fs.expect_create_dir_all().times(0);
+        mock_fs.expect_write().times(0);
+
+        let bootstrapper = RuntimeBootstrapper::with_deps(
+            test_config,
+            mock_http,
+            mock_fs,
+            mock_extractor,
+            mock_emitter,
+            mock_spawner,
+        );
+
+        let result = bootstrapper.install_chime_extension();
+        assert!(result.is_ok(), "Should succeed when files already exist");
+    }
+
+    #[test]
+    fn test_install_chime_extension_handles_directory_error() {
+        let temp = tempdir().unwrap();
+        let test_config = CodeServerConfig {
+            runtime_dir: temp.path().to_path_buf(),
+            node_dir: temp.path().join("node"),
+            node_binary_path: temp.path().join("node").join("bin").join("node"),
+            extensions_dir: temp.path().join("extensions"),
+            user_data_dir: temp.path().join("user-data"),
+            port_start: 50000,
+        };
+
+        let mock_http = MockHttpClient::new();
+        let mut mock_fs = MockFileSystem::new();
+        let mock_extractor = MockArchiveExtractor::new();
+        let mock_emitter = MockEventEmitter::new();
+        let mock_spawner = MockProcessSpawner::new();
+
+        mock_fs.expect_exists().returning(|_| false);
+
+        // Simulate directory creation failure
+        mock_fs
+            .expect_create_dir_all()
+            .times(1)
+            .returning(|_| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Permission denied")));
+
+        let bootstrapper = RuntimeBootstrapper::with_deps(
+            test_config,
+            mock_http,
+            mock_fs,
+            mock_extractor,
+            mock_emitter,
+            mock_spawner,
+        );
+
+        let result = bootstrapper.install_chime_extension();
+        assert!(result.is_err(), "Should fail when directory creation fails");
+        assert!(matches!(result, Err(CodeServerError::PermissionError(_))));
+    }
+
+    #[test]
+    fn test_install_chime_extension_handles_write_error() {
+        let temp = tempdir().unwrap();
+        let test_config = CodeServerConfig {
+            runtime_dir: temp.path().to_path_buf(),
+            node_dir: temp.path().join("node"),
+            node_binary_path: temp.path().join("node").join("bin").join("node"),
+            extensions_dir: temp.path().join("extensions"),
+            user_data_dir: temp.path().join("user-data"),
+            port_start: 50000,
+        };
+
+        let mock_http = MockHttpClient::new();
+        let mut mock_fs = MockFileSystem::new();
+        let mock_extractor = MockArchiveExtractor::new();
+        let mock_emitter = MockEventEmitter::new();
+        let mock_spawner = MockProcessSpawner::new();
+
+        // Directory exists, but files don't
+        mock_fs.expect_exists().returning(|path| {
+            // Only the directory exists, not the files
+            path.ends_with("chime")
+        });
+
+        // Simulate file write failure
+        mock_fs
+            .expect_write()
+            .times(1)
+            .returning(|_, _| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Permission denied")));
+
+        let bootstrapper = RuntimeBootstrapper::with_deps(
+            test_config,
+            mock_http,
+            mock_fs,
+            mock_extractor,
+            mock_emitter,
+            mock_spawner,
+        );
+
+        let result = bootstrapper.install_chime_extension();
+        assert!(result.is_err(), "Should fail when file write fails");
+        assert!(matches!(result, Err(CodeServerError::PermissionError(_))));
+    }
+
+    #[test]
+    fn test_install_chime_extension_integration() {
+        // Integration test using real filesystem
+        let temp = tempdir().unwrap();
+        let test_config = CodeServerConfig {
+            runtime_dir: temp.path().to_path_buf(),
+            node_dir: temp.path().join("node"),
+            node_binary_path: temp.path().join("node").join("bin").join("node"),
+            extensions_dir: temp.path().join("extensions"),
+            user_data_dir: temp.path().join("user-data"),
+            port_start: 50000,
+        };
+
+        let bootstrapper = RuntimeBootstrapper::new(test_config.clone());
+
+        // First install should create files
+        let result = bootstrapper.install_chime_extension();
+        assert!(result.is_ok(), "Should successfully install Chime extension");
+
+        // Verify files were created
+        let chime_dir = test_config.extensions_dir.join("chime");
+        assert!(chime_dir.exists(), "Chime extension directory should exist");
+
+        let package_json_path = chime_dir.join("package.json");
+        assert!(package_json_path.exists(), "package.json should exist");
+        let package_json_content = std::fs::read_to_string(&package_json_path).unwrap();
+        assert_eq!(package_json_content, CHIME_EXTENSION_PACKAGE_JSON);
+
+        let extension_js_path = chime_dir.join("extension.js");
+        assert!(extension_js_path.exists(), "extension.js should exist");
+        let extension_js_content = std::fs::read_to_string(&extension_js_path).unwrap();
+        assert_eq!(extension_js_content, CHIME_EXTENSION_JS);
+
+        // Second install should not overwrite
+        std::fs::write(&package_json_path, "custom content").unwrap();
+        let result = bootstrapper.install_chime_extension();
+        assert!(result.is_ok());
+        let content_after = std::fs::read_to_string(&package_json_path).unwrap();
+        assert_eq!(content_after, "custom content", "Should not overwrite existing files");
     }
 }
