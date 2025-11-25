@@ -82,13 +82,29 @@ fn test_config() -> CodeServerConfig {
     }
 }
 
-/// Create test AppState with a mock config
-fn create_test_app_state() -> Arc<AppState> {
+/// Test context that holds the AppState and any temp directories that must outlive it
+struct TestContext {
+    state: Arc<AppState>,
+    /// Temp directory for project store - must be kept alive for the duration of the test
+    _project_store_dir: TempDir,
+}
+
+/// Create test AppState with a mock config and isolated project store
+fn create_test_app_state() -> TestContext {
     let config = test_config();
     let manager = Arc::new(CodeServerManager::new(config));
-    let project_store = Arc::new(ProjectStore::new());
+
+    // Use a temp directory for project store to avoid polluting real app-data
+    let project_store_dir = TempDir::new().expect("Failed to create temp dir for project store");
+    let project_store = Arc::new(ProjectStore::with_dir(project_store_dir.path().to_path_buf()));
+
     let agent_status_manager = Arc::new(AgentStatusManager::new());
-    Arc::new(AppState::new(manager, project_store, agent_status_manager))
+    let state = Arc::new(AppState::new(manager, project_store, agent_status_manager));
+
+    TestContext {
+        state,
+        _project_store_dir: project_store_dir,
+    }
 }
 
 #[tokio::test]
@@ -96,13 +112,13 @@ async fn test_open_multiple_projects() {
     let test_repo1 = TestRepo::new().unwrap();
     let test_repo2 = TestRepo::new().unwrap();
 
-    let state = create_test_app_state();
+    let ctx = create_test_app_state();
 
-    let handle1 = open_project_impl(&state, test_repo1.path().to_string_lossy().to_string())
+    let handle1 = open_project_impl(&ctx.state, test_repo1.path().to_string_lossy().to_string())
         .await
         .unwrap();
 
-    let handle2 = open_project_impl(&state, test_repo2.path().to_string_lossy().to_string())
+    let handle2 = open_project_impl(&ctx.state, test_repo2.path().to_string_lossy().to_string())
         .await
         .unwrap();
 
@@ -112,16 +128,16 @@ async fn test_open_multiple_projects() {
 #[tokio::test]
 async fn test_close_project_removes_from_state() {
     let test_repo = TestRepo::new().unwrap();
-    let state = create_test_app_state();
+    let ctx = create_test_app_state();
 
-    let handle = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+    let handle = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
         .await
         .unwrap();
 
-    close_project_impl(&state, handle.clone()).await.unwrap();
+    close_project_impl(&ctx.state, handle.clone()).await.unwrap();
 
     // Create a fake handle string that should be parseable but not found
-    let result = discover_workspaces_impl(&state, handle).await;
+    let result = discover_workspaces_impl(&ctx.state, handle).await;
 
     // The discover should fail because the project was closed, but since
     // we're not actually starting code-server in tests, we just verify
@@ -133,9 +149,9 @@ async fn test_close_project_removes_from_state() {
 
 #[tokio::test]
 async fn test_invalid_handle_returns_error() {
-    let state = create_test_app_state();
+    let ctx = create_test_app_state();
 
-    let result = discover_workspaces_impl(&state, "not-a-valid-uuid".to_string()).await;
+    let result = discover_workspaces_impl(&ctx.state, "not-a-valid-uuid".to_string()).await;
 
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Invalid project handle"));
@@ -143,10 +159,10 @@ async fn test_invalid_handle_returns_error() {
 
 #[tokio::test]
 async fn test_nonexistent_project_handle_returns_error() {
-    let state = create_test_app_state();
+    let ctx = create_test_app_state();
     let fake_handle = ProjectHandle::new();
 
-    let result = discover_workspaces_impl(&state, fake_handle.to_string()).await;
+    let result = discover_workspaces_impl(&ctx.state, fake_handle.to_string()).await;
 
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Project not found"));
@@ -155,18 +171,18 @@ async fn test_nonexistent_project_handle_returns_error() {
 #[tokio::test]
 async fn test_reopen_project_after_closing() {
     let test_repo = TestRepo::new().unwrap();
-    let state = create_test_app_state();
+    let ctx = create_test_app_state();
 
     // Open project first time
-    let handle1 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+    let handle1 = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
         .await
         .unwrap();
 
     // Close the project
-    close_project_impl(&state, handle1.clone()).await.unwrap();
+    close_project_impl(&ctx.state, handle1.clone()).await.unwrap();
 
     // Reopen the same project
-    let handle2 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+    let handle2 = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
         .await
         .unwrap();
 
@@ -174,7 +190,7 @@ async fn test_reopen_project_after_closing() {
     assert_ne!(handle1, handle2);
 
     // Old handle should be invalid
-    let result = discover_workspaces_impl(&state, handle1).await;
+    let result = discover_workspaces_impl(&ctx.state, handle1).await;
     assert!(result.is_err());
 }
 
@@ -182,12 +198,12 @@ async fn test_reopen_project_after_closing() {
 #[tokio::test]
 async fn test_open_same_project_twice_returns_same_handle() {
     let test_repo = TestRepo::new().unwrap();
-    let state = create_test_app_state();
+    let ctx = create_test_app_state();
 
-    let handle1 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+    let handle1 = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
         .await
         .unwrap();
-    let handle2 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+    let handle2 = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
         .await
         .unwrap();
 
@@ -205,12 +221,12 @@ async fn test_open_project_via_symlink_returns_same_handle() {
     let symlink_path = temp.path().join("symlink-project");
     std::os::unix::fs::symlink(test_repo.path(), &symlink_path).unwrap();
 
-    let state = create_test_app_state();
+    let ctx = create_test_app_state();
 
-    let handle1 = open_project_impl(&state, test_repo.path().to_string_lossy().to_string())
+    let handle1 = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
         .await
         .unwrap();
-    let handle2 = open_project_impl(&state, symlink_path.to_string_lossy().to_string())
+    let handle2 = open_project_impl(&ctx.state, symlink_path.to_string_lossy().to_string())
         .await
         .unwrap();
 

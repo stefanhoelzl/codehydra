@@ -49,7 +49,9 @@ impl ProjectStore {
     }
 
     /// Create a ProjectStore with a custom directory (for testing)
-    #[cfg(test)]
+    ///
+    /// This is available in debug builds for integration tests.
+    #[cfg(debug_assertions)]
     pub fn with_dir(projects_dir: PathBuf) -> Self {
         Self { projects_dir }
     }
