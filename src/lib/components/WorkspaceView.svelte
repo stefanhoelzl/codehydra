@@ -1,22 +1,22 @@
 <script lang="ts">
   import { projects, activeWorkspace } from '$lib/stores/projects';
   import { chimeShortcutActive } from '$lib/stores/keyboardNavigation';
+  import { agentCounts } from '$lib/stores/agentStatus';
   import { ensureCodeServerRunning, getWorkspaceUrl } from '$lib/api/tauri';
-  import { tick } from 'svelte';
+  import { tick, onDestroy } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { get } from 'svelte/store';
+  import { fade } from 'svelte/transition';
+  import { WorkspaceInitService } from '$lib/services/workspaceInit';
 
   // Store iframe references by workspace path
   const iframeElements = new SvelteMap<string, HTMLIFrameElement>();
 
   // Track workspace URLs (may need to be fetched dynamically)
-  let workspaceUrls = $state<Map<string, string>>(new Map());
+  const workspaceUrls = new SvelteMap<string, string>();
 
-  // Track loading states for workspaces
-  let loadingWorkspaces = $state<Set<string>>(new Set());
-
-  // Track errors for workspaces
-  let workspaceErrors = $state<Map<string, string>>(new Map());
+  // Workspace initialization service (manages state, errors, and timeouts)
+  const initService = new WorkspaceInitService();
 
   // Ensure code-server is running and get URL when a workspace becomes active
   $effect(() => {
@@ -26,12 +26,21 @@
       const project = $projects.find((p) => p.handle === active.projectHandle);
       const workspace = project?.workspaces.find((w) => w.path === active.workspacePath);
 
-      // Only call ensureWorkspaceReady if the workspace doesn't already have a URL
-      // New workspaces created via createWorkspace already come with a URL from the backend
-      if (!workspace?.url && !workspaceUrls.has(active.workspacePath)) {
+      // Start initialization for the workspace
+      // If workspace already has a URL from backend, skip loading phase
+      if (workspace?.url) {
+        startInitializationWithUrl(active.workspacePath, workspace.url);
+      } else if (!workspaceUrls.has(active.workspacePath)) {
+        // No URL yet - need to fetch it
         ensureWorkspaceReady(active.workspacePath);
       }
     }
+  });
+
+  // Watch agent counts to transition from 'initializing' to 'ready' when agents detected
+  $effect(() => {
+    const counts = $agentCounts;
+    initService.checkAndUpdateFromAgentCounts(counts);
   });
 
   // Focus the active iframe whenever it changes
@@ -42,15 +51,40 @@
     }
   });
 
-  async function ensureWorkspaceReady(workspacePath: string): Promise<void> {
-    // Skip if we already have a URL or are already loading
-    if (workspaceUrls.has(workspacePath) || loadingWorkspaces.has(workspacePath)) {
+  // Cleanup timeouts on component destroy
+  onDestroy(() => {
+    initService.cleanupAllTimeouts();
+  });
+
+  /**
+   * Start initialization for a workspace that already has a URL.
+   * Skips the loading phase and goes directly to initializing.
+   */
+  function startInitializationWithUrl(workspacePath: string, url: string): void {
+    // Skip if already in a state (already initialized or initializing)
+    if (initService.workspaceState.has(workspacePath)) {
       return;
     }
 
-    // Mark as loading
-    loadingWorkspaces = new Set([...loadingWorkspaces, workspacePath]);
-    workspaceErrors = new Map([...workspaceErrors].filter(([k]) => k !== workspacePath));
+    // Store the URL
+    workspaceUrls.set(workspacePath, url);
+
+    // Start initialization (checks for agents, sets up timeout)
+    const currentCounts = get(agentCounts).get(workspacePath);
+    initService.startInitialization(workspacePath, currentCounts);
+  }
+
+  /**
+   * Fetch URL and start initialization for a workspace without a URL.
+   */
+  async function ensureWorkspaceReady(workspacePath: string): Promise<void> {
+    // Skip if we already have a URL or are already in a state
+    if (workspaceUrls.has(workspacePath) || initService.workspaceState.has(workspacePath)) {
+      return;
+    }
+
+    // Set to loading state
+    initService.setLoading(workspacePath);
 
     try {
       // Ensure code-server is running first
@@ -60,21 +94,17 @@
       const url = await getWorkspaceUrl(workspacePath);
 
       if (url) {
-        workspaceUrls = new Map([...workspaceUrls, [workspacePath, url]]);
+        workspaceUrls.set(workspacePath, url);
+
+        // Start initialization (checks for agents, sets up timeout)
+        const currentCounts = get(agentCounts).get(workspacePath);
+        initService.startInitialization(workspacePath, currentCounts);
       } else {
-        workspaceErrors = new Map([
-          ...workspaceErrors,
-          [workspacePath, 'Failed to get workspace URL'],
-        ]);
+        initService.setError(workspacePath, 'Failed to get workspace URL');
       }
     } catch (error) {
       console.error('Failed to start code-server for workspace:', workspacePath, error);
-      workspaceErrors = new Map([
-        ...workspaceErrors,
-        [workspacePath, error instanceof Error ? error.message : String(error)],
-      ]);
-    } finally {
-      loadingWorkspaces = new Set([...loadingWorkspaces].filter((p) => p !== workspacePath));
+      initService.setError(workspacePath, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -107,6 +137,16 @@
     // Prefer dynamically fetched URL, fall back to workspace.url from discovery
     return workspaceUrls.get(workspacePath) ?? fallbackUrl ?? null;
   }
+
+  /**
+   * Cleanup workspace state when it's removed.
+   * This should be called when a workspace is deleted.
+   */
+  export function cleanupWorkspace(workspacePath: string): void {
+    initService.cleanupWorkspace(workspacePath);
+    workspaceUrls.delete(workspacePath);
+    iframeElements.delete(workspacePath);
+  }
 </script>
 
 <div class="workspace-view">
@@ -120,29 +160,42 @@
     {#each $projects as project (project.handle)}
       {#each project.workspaces as workspace (workspace.path)}
         {@const isActive = $activeWorkspace?.workspacePath === workspace.path}
-        {@const isLoading = loadingWorkspaces.has(workspace.path)}
-        {@const error = workspaceErrors.get(workspace.path)}
+        {@const state = initService.workspaceState.get(workspace.path)}
+        {@const error = initService.workspaceErrors.get(workspace.path)}
         {@const url = getWorkspaceUrlForPath(workspace.path, workspace.url)}
 
-        {#if isActive && isLoading}
-          <div class="loading-state">
-            <vscode-icon name="loading" size="48"></vscode-icon>
+        {#if isActive && state === 'loading'}
+          <div class="loading-state" aria-live="polite">
+            <span class="spinner-large" role="progressbar" aria-label="Loading"></span>
             <p>Starting code-server...</p>
           </div>
-        {:else if isActive && error}
-          <div class="error-state">
+        {:else if isActive && state === 'error'}
+          <div class="error-state" aria-live="assertive">
             <vscode-icon name="error" size="48"></vscode-icon>
             <p>Failed to start code-server</p>
             <p class="error-message">{error}</p>
           </div>
         {:else if url}
-          <iframe
-            use:handleIframeElement={workspace.path}
-            src={url}
-            title="{workspace.name} - {workspace.branch || 'detached'}"
-            class="workspace-iframe"
-            class:hidden={!isActive}
-          ></iframe>
+          <!-- Container for iframe and overlay -->
+          <div class="iframe-container" class:hidden={!isActive}>
+            <iframe
+              use:handleIframeElement={workspace.path}
+              src={url}
+              title="{workspace.name} - {workspace.branch || 'detached'}"
+              class="workspace-iframe"
+            ></iframe>
+            <!-- Initializing overlay - covers iframe while VSCode loads -->
+            {#if isActive && state === 'initializing'}
+              <div
+                class="initializing-overlay"
+                transition:fade={{ duration: 150 }}
+                aria-live="polite"
+              >
+                <span class="spinner-large" role="progressbar" aria-label="Initializing"></span>
+                <p>Initializing workspace...</p>
+              </div>
+            {/if}
+          </div>
         {/if}
       {/each}
     {/each}
@@ -158,22 +211,63 @@
     overflow: hidden;
   }
 
-  .workspace-iframe {
+  .iframe-container {
     width: 100%;
     height: 100%;
-    border: none;
     position: absolute;
     top: 0;
     left: 0;
-    /* Use visibility instead of display to preserve iframe state */
-    visibility: visible;
   }
 
-  .workspace-iframe.hidden {
+  .iframe-container.hidden {
     /* Keep iframe alive but hidden - preserves VSCode state (tabs, terminals, etc.) */
     visibility: hidden;
     /* Move off-screen to prevent any potential rendering issues */
     pointer-events: none;
+  }
+
+  .workspace-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+
+  .initializing-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    color: var(--vscode-descriptionForeground, #ababab);
+    background: var(--vscode-editor-background, #1e1e1e);
+  }
+
+  .initializing-overlay p {
+    margin: 0;
+    font-size: 14px;
+  }
+
+  /* Large spinner for loading states */
+  .spinner-large {
+    display: inline-block;
+    width: 48px;
+    height: 48px;
+    border: 3px solid transparent;
+    border-top-color: var(--vscode-progressBar-background, #0e70c0);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .empty-state,
