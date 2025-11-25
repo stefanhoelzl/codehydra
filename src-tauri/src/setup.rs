@@ -61,6 +61,7 @@ pub enum StepState {
 pub struct StepsBuilder {
     node: StepState,
     code_server: StepState,
+    opencode: StepState,
     extensions: StepState,
 }
 
@@ -82,6 +83,12 @@ impl StepsBuilder {
         self
     }
 
+    /// Set the opencode step state.
+    pub fn opencode(mut self, state: StepState) -> Self {
+        self.opencode = state;
+        self
+    }
+
     /// Set the extensions step state.
     pub fn extensions(mut self, state: StepState) -> Self {
         self.extensions = state;
@@ -100,6 +107,10 @@ impl StepsBuilder {
                 state: self.code_server,
             },
             StepStatus {
+                label: "OpenCode".into(),
+                state: self.opencode,
+            },
+            StepStatus {
                 label: "Extensions".into(),
                 state: self.extensions,
             },
@@ -114,10 +125,11 @@ mod tests {
     #[test]
     fn test_steps_builder_defaults_to_pending() {
         let steps = StepsBuilder::new().build();
-        assert_eq!(steps.len(), 3);
+        assert_eq!(steps.len(), 4);
         assert_eq!(steps[0].state, StepState::Pending);
         assert_eq!(steps[1].state, StepState::Pending);
         assert_eq!(steps[2].state, StepState::Pending);
+        assert_eq!(steps[3].state, StepState::Pending);
     }
 
     #[test]
@@ -125,15 +137,18 @@ mod tests {
         let steps = StepsBuilder::new()
             .node(StepState::Completed)
             .code_server(StepState::InProgress)
-            .extensions(StepState::Pending)
+            .opencode(StepState::Pending)
+            .extensions(StepState::Failed)
             .build();
 
         assert_eq!(steps[0].label, "Node.js runtime");
         assert_eq!(steps[0].state, StepState::Completed);
         assert_eq!(steps[1].label, "code-server");
         assert_eq!(steps[1].state, StepState::InProgress);
-        assert_eq!(steps[2].label, "Extensions");
+        assert_eq!(steps[2].label, "OpenCode");
         assert_eq!(steps[2].state, StepState::Pending);
+        assert_eq!(steps[3].label, "Extensions");
+        assert_eq!(steps[3].state, StepState::Failed);
     }
 
     #[test]
@@ -144,6 +159,7 @@ mod tests {
         assert_eq!(steps[0].state, StepState::InProgress);
         assert_eq!(steps[1].state, StepState::Pending);
         assert_eq!(steps[2].state, StepState::Pending);
+        assert_eq!(steps[3].state, StepState::Pending);
     }
 
     #[test]

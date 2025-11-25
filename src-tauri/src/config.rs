@@ -148,6 +148,23 @@ impl CodeServerConfig {
             .join("node")
             .join("entry.js")
     }
+
+    /// Get the path to the node_modules/.bin directory.
+    /// This is added to PATH when spawning code-server so it can find opencode.
+    pub fn node_modules_bin_dir(&self) -> PathBuf {
+        self.node_modules_dir().join(".bin")
+    }
+
+    /// Get the path to the opencode binary.
+    /// Used to check if opencode is installed.
+    pub fn opencode_binary_path(&self) -> PathBuf {
+        let binary_name = if cfg!(windows) {
+            "opencode.cmd"
+        } else {
+            "opencode"
+        };
+        self.node_modules_bin_dir().join(binary_name)
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +282,21 @@ mod tests {
         assert!(config
             .keybindings_json_path()
             .starts_with(config.user_settings_dir()));
+
+        // Test node_modules_bin_dir
+        assert!(config.node_modules_bin_dir().ends_with(".bin"));
+        assert!(config
+            .node_modules_bin_dir()
+            .starts_with(config.node_modules_dir()));
+
+        // Test opencode_binary_path
+        #[cfg(windows)]
+        assert!(config.opencode_binary_path().ends_with("opencode.cmd"));
+        #[cfg(not(windows))]
+        assert!(config.opencode_binary_path().ends_with("opencode"));
+        assert!(config
+            .opencode_binary_path()
+            .starts_with(config.node_modules_bin_dir()));
     }
 
     #[test]

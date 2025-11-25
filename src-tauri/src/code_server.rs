@@ -118,6 +118,15 @@ impl CodeServerManager {
         let user_data_dir = &self.config.user_data_dir;
         let extensions_dir = &self.config.extensions_dir;
 
+        // Build PATH with node_modules/.bin so code-server can find opencode
+        let node_modules_bin = self.config.node_modules_bin_dir();
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let new_path = if cfg!(windows) {
+            format!("{};{}", node_modules_bin.display(), current_path)
+        } else {
+            format!("{}:{}", node_modules_bin.display(), current_path)
+        };
+
         // Run: node <code-server/out/node/entry.js> <args>
         let child = Command::new(node_path)
             .arg(&code_server_entry)
@@ -132,6 +141,7 @@ impl CodeServerManager {
             .arg("--disable-telemetry")
             .arg("--disable-update-check")
             .arg("--disable-workspace-trust")
+            .env("PATH", new_path)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)

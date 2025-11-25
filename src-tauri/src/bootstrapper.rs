@@ -34,6 +34,9 @@ use std::time::Duration;
 /// Default timeout for code-server installation (5 minutes).
 const CODE_SERVER_INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Default timeout for opencode installation (5 minutes).
+const OPENCODE_INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Default timeout for extension installation (2 minutes per extension).
 const EXTENSION_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -649,6 +652,11 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return false;
         }
 
+        // Check if opencode is installed
+        if !self.file_system.exists(&self.config.opencode_binary_path()) {
+            return false;
+        }
+
         // Check if required extensions are installed
         // Extensions are installed as <id>-<version>-<platform> (lowercase)
         if let Ok(entries) = std::fs::read_dir(&self.config.extensions_dir) {
@@ -904,6 +912,61 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         ]
     }
 
+    /// Install opencode via npm install.
+    ///
+    /// Runs: `node <npm-cli.js> install --prefix <runtime-dir> opencode-ai`
+    ///
+    /// # Errors
+    ///
+    /// Returns `CodeServerError::ExtensionInstallFailed` if installation fails.
+    pub fn install_opencode(&self) -> Result<(), CodeServerError> {
+        self.emit(SetupEvent::Update {
+            message: "Installing OpenCode...".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .code_server(StepState::Completed)
+                .opencode(StepState::InProgress)
+                .build(),
+        });
+
+        let args = self.opencode_install_args();
+
+        // Run node directly with the npm CLI script to ensure we use our Node.js
+        let result = self.process_spawner.spawn_and_wait(
+            &self.config.node_binary_path,
+            &args,
+            &self.config.runtime_dir,
+            OPENCODE_INSTALL_TIMEOUT,
+        )?;
+
+        if result.exit_code != 0 {
+            return Err(CodeServerError::ExtensionInstallFailed {
+                extension: "opencode".to_string(),
+                reason: format!(
+                    "npm install failed with exit code {}. stderr: {}",
+                    result.exit_code, result.stderr
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Build the command arguments for installing opencode.
+    ///
+    /// Returns args for: `node <npm-cli.js> install --prefix <dir> opencode-ai`
+    ///
+    /// This is a helper method exposed for testing.
+    pub fn opencode_install_args(&self) -> Vec<String> {
+        vec![
+            self.config.npm_cli_path().to_string_lossy().to_string(),
+            "install".to_string(),
+            "--prefix".to_string(),
+            self.config.runtime_dir.to_string_lossy().to_string(),
+            "opencode-ai".to_string(),
+        ]
+    }
+
     /// Install all required extensions.
     ///
     /// Runs: `npx code-server --install-extension <ext>@<version> --extensions-dir <dir>`
@@ -928,6 +991,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 steps: StepsBuilder::new()
                     .node(StepState::Completed)
                     .code_server(StepState::Completed)
+                    .opencode(StepState::Completed)
                     .extensions(StepState::InProgress)
                     .build(),
             });
@@ -993,10 +1057,18 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Err(e);
         }
 
-        // Step 3: Install Chime extension first (writes extensions.json)
+        // Step 3: Install opencode
+        if let Err(e) = self.install_opencode() {
+            self.emit(SetupEvent::Failed {
+                error: e.to_string(),
+            });
+            return Err(e);
+        }
+
+        // Step 4: Install Chime extension first (writes extensions.json)
         self.install_chime_extension()?;
 
-        // Step 4: Install marketplace extensions (code-server appends to extensions.json)
+        // Step 5: Install marketplace extensions (code-server appends to extensions.json)
         if let Err(e) = self.install_extensions() {
             self.emit(SetupEvent::Failed {
                 error: e.to_string(),
@@ -1004,7 +1076,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Err(e);
         }
 
-        // Step 5: Write default settings
+        // Step 6: Write default settings
         self.write_default_settings()?;
 
         // Emit final success state
@@ -1013,6 +1085,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             steps: StepsBuilder::new()
                 .node(StepState::Completed)
                 .code_server(StepState::Completed)
+                .opencode(StepState::Completed)
                 .extensions(StepState::Completed)
                 .build(),
         });
@@ -1824,14 +1897,16 @@ mod tests {
             .expect_exists()
             .returning(|_| false); // Nothing exists initially
 
+        // Called twice: once for extensions dir, once for extension subdir
         mock_fs
             .expect_create_dir_all()
-            .times(1)
+            .times(2)
             .returning(|_| Ok(()));
 
+        // 3 writes: package.json, extension.js, extensions.json
         mock_fs
             .expect_write()
-            .times(2) // package.json and extension.js
+            .times(3)
             .returning(|_, _| Ok(()));
 
         let bootstrapper = RuntimeBootstrapper::with_deps(
@@ -1943,10 +2018,12 @@ mod tests {
         let mock_emitter = MockEventEmitter::new();
         let mock_spawner = MockProcessSpawner::new();
 
-        // Directory exists, but files don't
+        // Directories exist, but files don't
         mock_fs.expect_exists().returning(|path| {
-            // Only the directory exists, not the files
-            path.ends_with("chime")
+            // Only the directories exist, not the files
+            let path_str = path.to_string_lossy();
+            path_str.ends_with("extensions") || path_str.contains("chime.chime-0.0.1-universal")
+                && !path_str.ends_with(".json") && !path_str.ends_with(".js")
         });
 
         // Simulate file write failure
@@ -1988,8 +2065,10 @@ mod tests {
         let result = bootstrapper.install_chime_extension();
         assert!(result.is_ok(), "Should successfully install Chime extension");
 
-        // Verify files were created
-        let chime_dir = test_config.extensions_dir.join("chime");
+        // Verify files were created (using the correct directory name)
+        let chime_dir = test_config
+            .extensions_dir
+            .join("chime.chime-0.0.1-universal");
         assert!(chime_dir.exists(), "Chime extension directory should exist");
 
         let package_json_path = chime_dir.join("package.json");
@@ -2002,11 +2081,21 @@ mod tests {
         let extension_js_content = std::fs::read_to_string(&extension_js_path).unwrap();
         assert_eq!(extension_js_content, CHIME_EXTENSION_JS);
 
+        // Verify extensions.json was created
+        let extensions_json_path = test_config.extensions_dir.join("extensions.json");
+        assert!(
+            extensions_json_path.exists(),
+            "extensions.json should exist"
+        );
+
         // Second install should not overwrite
         std::fs::write(&package_json_path, "custom content").unwrap();
         let result = bootstrapper.install_chime_extension();
         assert!(result.is_ok());
         let content_after = std::fs::read_to_string(&package_json_path).unwrap();
-        assert_eq!(content_after, "custom content", "Should not overwrite existing files");
+        assert_eq!(
+            content_after, "custom content",
+            "Should not overwrite existing files"
+        );
     }
 }
