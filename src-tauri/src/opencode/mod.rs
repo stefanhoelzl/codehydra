@@ -5,7 +5,9 @@ pub mod types;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::RwLock;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -24,11 +26,100 @@ pub enum OpenCodeError {
     Json(#[from] serde_json::Error),
 }
 
+/// Information about a listening port and its associated process
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortInfo {
+    pub port: u16,
+    pub pid: u32,
+}
+
 /// Trait for port scanning (mockable)
 #[cfg_attr(test, mockall::automock)]
 pub trait PortScanner: Send + Sync {
-    /// Get all listening ports and their associated process names
-    fn get_active_listeners(&self) -> Result<Vec<(u16, String)>, OpenCodeError>;
+    /// Get all listening ports and their associated process IDs
+    fn get_active_listeners(&self) -> Result<Vec<PortInfo>, OpenCodeError>;
+}
+
+/// Trait for process tree operations (mockable for testing)
+#[cfg_attr(test, mockall::automock)]
+pub trait ProcessTree: Send + Sync {
+    /// Check if `pid` is a descendant of `ancestor_pid`
+    fn is_descendant_of(&self, pid: u32, ancestor_pid: u32) -> bool;
+
+    /// Refresh the process tree (call before ancestry checks)
+    fn refresh(&self);
+
+    /// Get all descendant PIDs of an ancestor (pre-computed for efficiency)
+    fn get_descendant_pids(&self, ancestor_pid: u32) -> HashSet<u32>;
+}
+
+/// Implementation of ProcessTree using sysinfo crate
+pub struct SysinfoProcessTree {
+    system: RwLock<sysinfo::System>,
+}
+
+impl SysinfoProcessTree {
+    pub fn new() -> Self {
+        Self {
+            system: RwLock::new(sysinfo::System::new()),
+        }
+    }
+}
+
+impl Default for SysinfoProcessTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProcessTree for SysinfoProcessTree {
+    fn refresh(&self) {
+        // Note: sysinfo refresh can take 50-200ms on systems with many processes
+        // Caller should use spawn_blocking to avoid blocking async runtime
+        let mut sys = self.system.write().unwrap();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    }
+
+    fn get_descendant_pids(&self, ancestor_pid: u32) -> HashSet<u32> {
+        let sys = self.system.read().unwrap();
+        let ancestor = sysinfo::Pid::from_u32(ancestor_pid);
+        let mut descendants = HashSet::new();
+
+        // Pre-compute all descendants in one pass (O(n) instead of O(n*d))
+        for (pid, _process) in sys.processes() {
+            let mut current = *pid;
+            while let Some(proc) = sys.process(current) {
+                if let Some(parent) = proc.parent() {
+                    if parent == ancestor {
+                        descendants.insert(pid.as_u32());
+                        break;
+                    }
+                    current = parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        descendants
+    }
+
+    fn is_descendant_of(&self, pid: u32, ancestor_pid: u32) -> bool {
+        let sys = self.system.read().unwrap();
+        let mut current = sysinfo::Pid::from_u32(pid);
+        let ancestor = sysinfo::Pid::from_u32(ancestor_pid);
+
+        while let Some(process) = sys.process(current) {
+            if let Some(parent) = process.parent() {
+                if parent == ancestor {
+                    return true;
+                }
+                current = parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
 }
 
 /// Trait for probing a port to see if it's an OpenCode instance (mockable)

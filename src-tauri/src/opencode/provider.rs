@@ -270,26 +270,46 @@ mod tests {
     use crate::opencode::{MockClientFactory, MockOpenCodeClient, MockPortScanner, MockInstanceProbe};
     use crate::opencode::discovery::OpenCodeDiscoveryService;
     use crate::opencode::types::SessionStatus;
+    use crate::opencode::{MockProcessTree, PortInfo};
     use futures::stream::{self, BoxStream};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+
+    const CODE_SERVER_PID: u32 = 1000;
+    const OPENCODE_PID: u32 = 1001;
+
+    fn create_mock_process_tree() -> MockProcessTree {
+        let mut mock_tree = MockProcessTree::new();
+        mock_tree.expect_refresh().returning(|| {});
+        mock_tree.expect_get_descendant_pids().returning(|_| {
+            let mut descendants = HashSet::new();
+            descendants.insert(OPENCODE_PID);
+            descendants
+        });
+        mock_tree
+    }
 
     #[tokio::test]
     async fn test_provider_connects_when_port_discovered() {
         let mut mock_scanner = MockPortScanner::new();
         let mut mock_probe = MockInstanceProbe::new();
-        
-        mock_scanner.expect_get_active_listeners()
-            .returning(|| Ok(vec![(3000, "node".to_string())]));
-        
-        mock_probe.expect_probe()
+        let mock_tree = create_mock_process_tree();
+
+        mock_scanner
+            .expect_get_active_listeners()
+            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+
+        mock_probe
+            .expect_probe()
             .with(mockall::predicate::eq(3000))
             .returning(|_| Box::pin(async { Ok(PathBuf::from("/foo")) }));
-            
+
         let discovery = Arc::new(OpenCodeDiscoveryService::new_with_deps(
             Box::new(mock_scanner),
             Box::new(mock_probe),
+            Arc::new(mock_tree),
         ));
-        
+
+        discovery.set_code_server_pid(Some(CODE_SERVER_PID)).await;
         discovery.scan_and_update().await.unwrap();
 
         let mut mock_factory = MockClientFactory::new();
@@ -322,14 +342,20 @@ mod tests {
     async fn test_live_status_updates() {
         let mut mock_scanner = MockPortScanner::new();
         let mut mock_probe = MockInstanceProbe::new();
-        mock_scanner.expect_get_active_listeners()
-            .returning(|| Ok(vec![(3000, "node".to_string())]));
-        mock_probe.expect_probe()
+        let mock_tree = create_mock_process_tree();
+
+        mock_scanner
+            .expect_get_active_listeners()
+            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+        mock_probe
+            .expect_probe()
             .returning(|_| Box::pin(async { Ok(PathBuf::from("/foo")) }));
         let discovery = Arc::new(OpenCodeDiscoveryService::new_with_deps(
             Box::new(mock_scanner),
             Box::new(mock_probe),
+            Arc::new(mock_tree),
         ));
+        discovery.set_code_server_pid(Some(CODE_SERVER_PID)).await;
         discovery.scan_and_update().await.unwrap();
 
         let mut mock_factory = MockClientFactory::new();

@@ -186,6 +186,15 @@ impl CodeServerManager {
         instance.as_ref().filter(|i| i.is_running()).map(|i| i.port)
     }
 
+    /// Get the PID of the running code-server process
+    pub async fn pid(&self) -> Option<u32> {
+        let instance = self.instance.read().await;
+        instance.as_ref().and_then(|i| match &i.state {
+            InstanceState::Running { child } => child.id(),
+            _ => None,
+        })
+    }
+
     fn find_available_port(&self) -> Result<u16, CodeServerError> {
         let start = self.config.port_start;
         for port in start..=start + 100 {

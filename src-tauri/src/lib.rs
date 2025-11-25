@@ -601,6 +601,18 @@ pub fn run() {
             let opencode_discovery =
                 Arc::new(crate::opencode::discovery::OpenCodeDiscoveryService::new());
             let discovery_clone = opencode_discovery.clone();
+
+            // Wire up code-server PID to discovery service
+            let discovery_pid_monitor = opencode_discovery.clone();
+            let code_server_for_pid = code_server_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let pid = code_server_for_pid.pid().await;
+                    discovery_pid_monitor.set_code_server_pid(pid).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                }
+            });
+
             tauri::async_runtime::spawn(async move {
                 discovery_clone.run_loop().await;
             });
