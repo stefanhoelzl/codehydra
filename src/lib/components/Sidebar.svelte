@@ -7,6 +7,14 @@
   import AgentStatusIndicator from './AgentStatusIndicator.svelte';
   import { agentCounts } from '$lib/stores/agentStatus';
   import { createEmptyCounts } from '$lib/types/agentStatus';
+  import {
+    chimeShortcutActive,
+    getWorkspaceIndex,
+    modalOpen,
+    createDialogRequest,
+    removeDialogRequest,
+  } from '$lib/stores/keyboardNavigation';
+  import { getDisplayKeyForIndex } from '$lib/config/keybindings';
 
   // Create dialog state
   let createDialogProject = $state<Project | null>(null);
@@ -15,6 +23,49 @@
   // Remove dialog state
   let removeDialogData = $state<{ project: Project; workspace: Workspace } | null>(null);
   let removeTriggerRef = $state<HTMLElement | null>(null);
+
+  // Helper to get display key for a workspace path
+  function getWorkspaceDisplayKey(workspacePath: string): string | null {
+    const index = getWorkspaceIndex(workspacePath);
+    return index !== null ? getDisplayKeyForIndex(index) : null;
+  }
+
+  // Watch for keyboard shortcut requests to open dialogs
+  $effect(() => {
+    const requestedHandle = $createDialogRequest;
+    if (requestedHandle) {
+      const project = $projects.find((p) => p.handle === requestedHandle);
+      if (project) {
+        createDialogProject = project;
+        createTriggerRef = null; // No trigger element for keyboard shortcut
+        // Deactivate shortcut mode when opening dialog
+        chimeShortcutActive.set(false);
+      }
+      // Clear the request
+      createDialogRequest.set(null);
+    }
+  });
+
+  $effect(() => {
+    const request = $removeDialogRequest;
+    if (request) {
+      const project = $projects.find((p) => p.handle === request.projectHandle);
+      const workspace = project?.workspaces.find((w) => w.path === request.workspacePath);
+      if (project && workspace) {
+        removeDialogData = { project, workspace };
+        removeTriggerRef = null; // No trigger element for keyboard shortcut
+        // Deactivate shortcut mode when opening dialog
+        chimeShortcutActive.set(false);
+      }
+      // Clear the request
+      removeDialogRequest.set(null);
+    }
+  });
+
+  // Update modalOpen when dialogs open/close
+  $effect(() => {
+    modalOpen.set(createDialogProject !== null || removeDialogData !== null);
+  });
 
   function mainWorkspace(project: Project): Workspace {
     return project.workspaces[0];
@@ -73,16 +124,25 @@
 
   <div class="projects-list">
     {#each $projects as project (project.handle)}
+      {@const mainWs = mainWorkspace(project)}
+      {@const mainDisplayKey = getWorkspaceDisplayKey(mainWs.path)}
       <div class="project-group">
         <div
           class="project-item"
           class:active={$activeWorkspace?.projectHandle === project.handle &&
-            $activeWorkspace?.workspacePath === mainWorkspace(project).path}
-          onclick={() => selectWorkspace(project, mainWorkspace(project))}
-          onkeydown={(e) => e.key === 'Enter' && selectWorkspace(project, mainWorkspace(project))}
+            $activeWorkspace?.workspacePath === mainWs.path}
+          aria-current={$activeWorkspace?.projectHandle === project.handle &&
+          $activeWorkspace?.workspacePath === mainWs.path
+            ? 'true'
+            : undefined}
+          onclick={() => selectWorkspace(project, mainWs)}
+          onkeydown={(e) => e.key === 'Enter' && selectWorkspace(project, mainWs)}
           role="button"
           tabindex="0"
         >
+          {#if $chimeShortcutActive && mainDisplayKey}
+            <span class="shortcut-key">{mainDisplayKey}</span>
+          {/if}
           <vscode-icon name="folder" class="icon"></vscode-icon>
           <span class="name">{project.path.split('/').pop()}</span>
           <button
@@ -107,15 +167,23 @@
         </div>
 
         {#each additionalWorktrees(project) as workspace (workspace.path)}
+          {@const displayKey = getWorkspaceDisplayKey(workspace.path)}
           <div
             class="workspace-item"
             class:active={$activeWorkspace?.projectHandle === project.handle &&
               $activeWorkspace?.workspacePath === workspace.path}
+            aria-current={$activeWorkspace?.projectHandle === project.handle &&
+            $activeWorkspace?.workspacePath === workspace.path
+              ? 'true'
+              : undefined}
             onclick={() => selectWorkspace(project, workspace)}
             onkeydown={(e) => e.key === 'Enter' && selectWorkspace(project, workspace)}
             role="button"
             tabindex="0"
           >
+            {#if $chimeShortcutActive && displayKey}
+              <span class="shortcut-key">{displayKey}</span>
+            {/if}
             <vscode-icon name="git-branch" class="icon"></vscode-icon>
             <span class="name">{workspace.name}</span>
             <span class="branch">
@@ -292,5 +360,20 @@
   .open-btn {
     margin: 12px;
     width: calc(100% - 24px);
+  }
+
+  .shortcut-key {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--vscode-badge-background, #4d4d4d);
+    color: var(--vscode-badge-foreground, #ffffff);
+    border-radius: 3px;
+    margin-right: 2px;
   }
 </style>

@@ -27,10 +27,7 @@ pub fn node_checksum(platform: Platform) -> &'static str {
 pub fn node_download_url(platform: Platform) -> String {
     let archive_name = platform.node_archive_name(NODE_VERSION);
     let extension = platform.node_archive_extension();
-    format!(
-        "https://nodejs.org/dist/v{}/{}{}",
-        NODE_VERSION, archive_name, extension
-    )
+    format!("https://nodejs.org/dist/v{NODE_VERSION}/{archive_name}{extension}")
 }
 
 #[cfg(test)]
@@ -61,17 +58,11 @@ mod tests {
             let url = node_download_url(platform);
             assert!(
                 url.contains(expected_arch),
-                "URL for {:?} should contain {}: {}",
-                platform,
-                expected_arch,
-                url
+                "URL for {platform:?} should contain {expected_arch}: {url}"
             );
             assert!(
                 url.ends_with(expected_ext),
-                "URL for {:?} should end with {}: {}",
-                platform,
-                expected_ext,
-                url
+                "URL for {platform:?} should end with {expected_ext}: {url}"
             );
         }
     }
@@ -88,20 +79,21 @@ mod tests {
 
         for platform in platforms {
             let checksum = node_checksum(platform);
-            assert!(!checksum.is_empty(), "Checksum for {:?} should not be empty", platform);
+            assert!(!checksum.is_empty(), "Checksum for {platform:?} should not be empty");
         }
     }
 
+    // Compile-time assertion that NODE_VERSION is not empty
+    const _: () = assert!(!NODE_VERSION.is_empty());
+
     #[test]
     fn test_node_version_is_valid() {
-        assert!(!NODE_VERSION.is_empty());
         let parts: Vec<&str> = NODE_VERSION.split('.').collect();
-        assert_eq!(parts.len(), 3, "Version should have 3 parts: {}", NODE_VERSION);
+        assert_eq!(parts.len(), 3, "Version should have 3 parts: {NODE_VERSION}");
         for part in parts {
             assert!(
                 part.parse::<u32>().is_ok(),
-                "Version part '{}' should be a number",
-                part
+                "Version part '{part}' should be a number"
             );
         }
     }

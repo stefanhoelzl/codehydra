@@ -1,8 +1,10 @@
 <script lang="ts">
   import { projects, activeWorkspace } from '$lib/stores/projects';
+  import { chimeShortcutActive } from '$lib/stores/keyboardNavigation';
   import { ensureCodeServerRunning, getWorkspaceUrl } from '$lib/api/tauri';
   import { tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
+  import { get } from 'svelte/store';
 
   // Store iframe references by workspace path
   const iframeElements = new SvelteMap<string, HTMLIFrameElement>();
@@ -78,6 +80,11 @@
 
   async function focusActiveIframe(workspacePath: string) {
     await tick();
+    // Don't focus iframe if keyboard shortcut mode is active
+    // The layout will handle focusing the iframe when shortcut mode deactivates
+    if (get(chimeShortcutActive)) {
+      return;
+    }
     const iframe = iframeElements.get(workspacePath);
     if (iframe) {
       setTimeout(() => {

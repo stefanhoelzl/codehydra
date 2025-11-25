@@ -86,7 +86,7 @@ impl ProcessTree for SysinfoProcessTree {
         let mut descendants = HashSet::new();
 
         // Pre-compute all descendants in one pass (O(n) instead of O(n*d))
-        for (pid, _process) in sys.processes() {
+        for pid in sys.processes().keys() {
             let mut current = *pid;
             while let Some(proc) = sys.process(current) {
                 if let Some(parent) = proc.parent() {

@@ -13,7 +13,7 @@ impl DefaultOpenCodeClient {
     pub fn new(port: u16) -> Self {
         Self {
             // Use localhost to support IPv4/IPv6
-            base_url: format!("http://localhost:{}", port),
+            base_url: format!("http://localhost:{port}"),
             client: reqwest::Client::new(),
         }
     }

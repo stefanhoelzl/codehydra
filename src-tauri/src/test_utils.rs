@@ -55,7 +55,7 @@ impl TestRepo {
         self.create_branch(branch)?;
 
         // Create worktree in a subdirectory of temp_dir to avoid conflicts
-        let worktree_path = self.temp_dir.path().join(format!("worktrees/{}", name));
+        let worktree_path = self.temp_dir.path().join(format!("worktrees/{name}"));
         std::fs::create_dir_all(worktree_path.parent().unwrap())?;
 
         // Create worktree and checkout the branch

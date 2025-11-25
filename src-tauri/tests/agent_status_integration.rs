@@ -297,7 +297,7 @@ async fn test_shutdown_cleans_up_all_workspaces() {
     // Initialize several workspaces
     for i in 0..5 {
         manager
-            .init_workspace(&PathBuf::from(format!("/workspace{}", i)))
+            .init_workspace(&PathBuf::from(format!("/workspace{i}")))
             .await
             .unwrap();
     }
@@ -321,7 +321,7 @@ async fn test_no_deadlock_under_concurrent_access() {
     // Initialize several workspaces
     for i in 0..5 {
         manager
-            .init_workspace(&PathBuf::from(format!("/workspace{}", i)))
+            .init_workspace(&PathBuf::from(format!("/workspace{i}")))
             .await
             .unwrap();
     }

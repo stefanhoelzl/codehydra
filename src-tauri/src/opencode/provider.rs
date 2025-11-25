@@ -226,14 +226,14 @@ impl OpenCodeProvider {
 
                     // Add new port tasks
                     for port in current_ports {
-                        if !port_tasks.contains_key(&port) {
+                        if let std::collections::hash_map::Entry::Vacant(e) = port_tasks.entry(port) {
                             let handle = Self::spawn_port_monitor(
                                 port,
                                 client_factory.clone(),
                                 tx.clone(),
                                 active_flag.clone(),
                             );
-                            port_tasks.insert(port, handle);
+                            e.insert(handle);
                             port_counts.insert(port, AgentStatusCounts::default());
                             changed = true;
                         }

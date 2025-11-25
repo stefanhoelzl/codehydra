@@ -39,12 +39,11 @@ mod tests {
     fn test_node_version_is_valid_semver() {
         // Version should be in semver format (x.y.z)
         let parts: Vec<&str> = NODE_VERSION.split('.').collect();
-        assert_eq!(parts.len(), 3, "NODE_VERSION should have 3 parts: {}", NODE_VERSION);
+        assert_eq!(parts.len(), 3, "NODE_VERSION should have 3 parts: {NODE_VERSION}");
         for part in parts {
             assert!(
                 part.parse::<u32>().is_ok(),
-                "NODE_VERSION part '{}' should be a number",
-                part
+                "NODE_VERSION part '{part}' should be a number"
             );
         }
     }
@@ -56,14 +55,12 @@ mod tests {
         assert_eq!(
             parts.len(),
             3,
-            "CODE_SERVER_VERSION should have 3 parts: {}",
-            CODE_SERVER_VERSION
+            "CODE_SERVER_VERSION should have 3 parts: {CODE_SERVER_VERSION}"
         );
         for part in parts {
             assert!(
                 part.parse::<u32>().is_ok(),
-                "CODE_SERVER_VERSION part '{}' should be a number",
-                part
+                "CODE_SERVER_VERSION part '{part}' should be a number"
             );
         }
     }
@@ -84,15 +81,13 @@ mod tests {
             // Extension ID should have format "Publisher.name"
             assert!(
                 extension_id.contains('.'),
-                "Extension ID '{}' should have format 'Publisher.name'",
-                extension_id
+                "Extension ID '{extension_id}' should have format 'Publisher.name'"
             );
 
             // Version should not be empty
             assert!(
                 !version.is_empty(),
-                "Version for '{}' should not be empty",
-                extension_id
+                "Version for '{extension_id}' should not be empty"
             );
         }
     }

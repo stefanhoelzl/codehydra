@@ -82,7 +82,7 @@ mod tests {
             source: reqwest::blocking::get("http://[::1]:0/invalid")
                 .expect_err("Expected error for invalid URL"),
         };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Failed to download Bun"));
     }
 
@@ -93,7 +93,7 @@ mod tests {
             expected: "abc123".to_string(),
             actual: "def456".to_string(),
         };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(
             display,
             "Checksum mismatch for bun-linux-x64.zip: expected abc123, got def456"
@@ -104,7 +104,7 @@ mod tests {
     fn test_error_display_extraction_failed() {
         let error = CodeServerError::ExtractionFailed("Invalid ZIP header".to_string());
         assert_eq!(
-            format!("{}", error),
+            format!("{error}"),
             "Failed to extract archive: Invalid ZIP header"
         );
     }
@@ -112,28 +112,28 @@ mod tests {
     #[test]
     fn test_error_display_unsupported_platform() {
         let error = CodeServerError::UnsupportedPlatform;
-        assert_eq!(format!("{}", error), "Unsupported platform");
+        assert_eq!(format!("{error}"), "Unsupported platform");
     }
 
     #[test]
     fn test_error_display_permission_error() {
         let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
         let error = CodeServerError::PermissionError(io_error);
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Permission error"));
     }
 
     #[test]
     fn test_error_display_invalid_path() {
         let error = CodeServerError::InvalidPath("/invalid/path".to_string());
-        assert_eq!(format!("{}", error), "Invalid path: /invalid/path");
+        assert_eq!(format!("{error}"), "Invalid path: /invalid/path");
     }
 
     #[test]
     fn test_error_display_no_available_ports() {
         let error = CodeServerError::NoAvailablePorts { start: 50000 };
         assert_eq!(
-            format!("{}", error),
+            format!("{error}"),
             "No available ports starting from 50000"
         );
     }
@@ -142,7 +142,7 @@ mod tests {
     fn test_error_display_spawn_failed() {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "binary not found");
         let error = CodeServerError::SpawnFailed(io_error);
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("Failed to spawn process"));
     }
 
@@ -150,7 +150,7 @@ mod tests {
     fn test_error_display_health_check_failed() {
         let error = CodeServerError::HealthCheckFailed { attempts: 300 };
         assert_eq!(
-            format!("{}", error),
+            format!("{error}"),
             "Health check failed after 300 attempts"
         );
     }
@@ -159,13 +159,13 @@ mod tests {
     fn test_error_display_process_terminated() {
         let error = CodeServerError::ProcessTerminated { code: Some(1) };
         assert_eq!(
-            format!("{}", error),
+            format!("{error}"),
             "Process terminated unexpectedly with code Some(1)"
         );
 
         let error_none = CodeServerError::ProcessTerminated { code: None };
         assert_eq!(
-            format!("{}", error_none),
+            format!("{error_none}"),
             "Process terminated unexpectedly with code None"
         );
     }
@@ -174,7 +174,7 @@ mod tests {
     fn test_error_display_process_kill_failed() {
         let error = CodeServerError::ProcessKillFailed("ESRCH: No such process".to_string());
         assert_eq!(
-            format!("{}", error),
+            format!("{error}"),
             "Failed to kill process: ESRCH: No such process"
         );
     }
@@ -182,13 +182,13 @@ mod tests {
     #[test]
     fn test_error_display_instance_not_running() {
         let error = CodeServerError::InstanceNotRunning;
-        assert_eq!(format!("{}", error), "Instance not running");
+        assert_eq!(format!("{error}"), "Instance not running");
     }
 
     #[test]
     fn test_error_display_invalid_state_transition() {
         let error = CodeServerError::InvalidStateTransition;
-        assert_eq!(format!("{}", error), "Invalid state transition");
+        assert_eq!(format!("{error}"), "Invalid state transition");
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod tests {
             reason: "Network timeout".to_string(),
         };
         assert_eq!(
-            format!("{}", error),
+            format!("{error}"),
             "Failed to install extension Anthropic.claude-code: Network timeout"
         );
     }
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_error_is_debug() {
         let error = CodeServerError::UnsupportedPlatform;
-        let debug = format!("{:?}", error);
+        let debug = format!("{error:?}");
         assert!(debug.contains("UnsupportedPlatform"));
     }
 
@@ -215,7 +215,7 @@ mod tests {
     fn test_project_store_error_display_io() {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let error = ProjectStoreError::IoError(io_error);
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("IO error"));
     }
 
@@ -225,7 +225,7 @@ mod tests {
         let json_error = serde_json::from_str::<serde_json::Value>("invalid json{")
             .expect_err("Expected JSON parse error");
         let error = ProjectStoreError::SerializationError(json_error);
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("serialize/deserialize"));
     }
 
@@ -233,7 +233,7 @@ mod tests {
     fn test_project_store_error_is_debug() {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
         let error = ProjectStoreError::IoError(io_error);
-        let debug = format!("{:?}", error);
+        let debug = format!("{error:?}");
         assert!(debug.contains("IoError"));
     }
 

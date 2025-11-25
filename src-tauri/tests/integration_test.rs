@@ -56,7 +56,7 @@ impl TestRepo {
     ) -> Result<PathBuf, Box<dyn std::error::Error>> {
         self.create_branch(branch)?;
 
-        let worktree_path = self.temp_dir.path().join(format!("worktrees/{}", name));
+        let worktree_path = self.temp_dir.path().join(format!("worktrees/{name}"));
         std::fs::create_dir_all(worktree_path.parent().unwrap())?;
 
         let branch_ref = self.repo.find_branch(branch, git2::BranchType::Local)?;

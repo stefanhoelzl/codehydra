@@ -40,11 +40,11 @@ impl Platform {
     /// This matches the naming convention used by Node.js releases.
     pub fn node_archive_name(&self, version: &str) -> String {
         match self {
-            Self::LinuxX64 => format!("node-v{}-linux-x64", version),
-            Self::LinuxArm64 => format!("node-v{}-linux-arm64", version),
-            Self::MacOSX64 => format!("node-v{}-darwin-x64", version),
-            Self::MacOSArm64 => format!("node-v{}-darwin-arm64", version),
-            Self::WindowsX64 => format!("node-v{}-win-x64", version),
+            Self::LinuxX64 => format!("node-v{version}-linux-x64"),
+            Self::LinuxArm64 => format!("node-v{version}-linux-arm64"),
+            Self::MacOSX64 => format!("node-v{version}-darwin-x64"),
+            Self::MacOSArm64 => format!("node-v{version}-darwin-arm64"),
+            Self::WindowsX64 => format!("node-v{version}-win-x64"),
         }
     }
 
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn test_platform_debug() {
         let platform = Platform::LinuxX64;
-        let debug = format!("{:?}", platform);
+        let debug = format!("{platform:?}");
         assert!(debug.contains("LinuxX64"));
     }
 }

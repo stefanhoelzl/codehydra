@@ -122,7 +122,7 @@ impl CodeServerManager {
         let child = Command::new(node_path)
             .arg(&code_server_entry)
             .arg("--bind-addr")
-            .arg(format!("127.0.0.1:{}", port))
+            .arg(format!("127.0.0.1:{port}"))
             .arg("--auth")
             .arg("none")
             .arg("--user-data-dir")
@@ -206,7 +206,7 @@ impl CodeServerManager {
     }
 
     async fn wait_for_ready(&self, port: u16) -> Result<(), CodeServerError> {
-        let url = format!("http://127.0.0.1:{}/healthz", port);
+        let url = format!("http://127.0.0.1:{port}/healthz");
 
         for _ in 0..HEALTH_CHECK_ATTEMPTS {
             if reqwest::get(&url).await.is_ok() {
@@ -371,6 +371,6 @@ mod tests {
         let port = manager.find_available_port();
         assert!(port.is_ok());
         let port = port.unwrap();
-        assert!(port >= 50000 && port <= 50100);
+        assert!((50000..=50100).contains(&port));
     }
 }

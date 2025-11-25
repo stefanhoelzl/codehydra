@@ -342,7 +342,7 @@ fn remove_workspace_blocking(
 
     // Open the worktree repo to get its branch before removing
     let wt_repo = Repository::open(workspace_path).map_err(|e| {
-        WorkspaceError::WorktreeRemovalFailed(format!("Cannot open worktree repo: {}", e))
+        WorkspaceError::WorktreeRemovalFailed(format!("Cannot open worktree repo: {e}"))
     })?;
 
     // Get the branch name if we need to delete it
@@ -372,7 +372,7 @@ fn remove_workspace_blocking(
 
     // Remove the worktree directory
     std::fs::remove_dir_all(workspace_path).map_err(|e| {
-        WorkspaceError::WorktreeRemovalFailed(format!("Failed to remove worktree directory: {}", e))
+        WorkspaceError::WorktreeRemovalFailed(format!("Failed to remove worktree directory: {e}"))
     })?;
 
     // Open the main repo to prune worktree metadata and optionally delete branch
@@ -404,13 +404,13 @@ fn remove_workspace_blocking(
                             // Branch deletion failed, but worktree was removed
                             // Return success with branch_deleted=false
                             // Log the error for debugging
-                            eprintln!("Warning: Failed to delete branch '{}': {}", branch_name, e);
+                            eprintln!("Warning: Failed to delete branch '{branch_name}': {e}");
                         }
                     }
                 }
                 Err(e) => {
                     // Branch not found - might have been deleted elsewhere
-                    eprintln!("Warning: Branch '{}' not found: {}", branch_name, e);
+                    eprintln!("Warning: Branch '{branch_name}' not found: {e}");
                 }
             }
         }
@@ -452,7 +452,7 @@ fn process_worktree(
     let wt_path = PathBuf::from(gitdir_content.trim())
         .parent()
         .ok_or_else(|| {
-            WorkspaceError::InvalidWorkspace(format!("Invalid gitdir for worktree: {}", wt_name))
+            WorkspaceError::InvalidWorkspace(format!("Invalid gitdir for worktree: {wt_name}"))
         })?
         .to_path_buf();
 
@@ -481,7 +481,7 @@ fn process_worktree(
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| {
-            WorkspaceError::InvalidWorkspace(format!("Invalid worktree path: {:?}", wt_path))
+            WorkspaceError::InvalidWorkspace(format!("Invalid worktree path: {wt_path:?}"))
         })?;
     let name = unsanitize_workspace_name_from_path(sanitized_name);
 
@@ -748,7 +748,7 @@ mod tests {
 
         for i in 0..10 {
             test_repo
-                .create_worktree(&format!("worktree-{}", i), &format!("branch-{}", i))
+                .create_worktree(&format!("worktree-{i}"), &format!("branch-{i}"))
                 .unwrap();
         }
 
@@ -1156,7 +1156,7 @@ mod tests {
             .create_workspace("feature/auth/oauth", main_branch)
             .await;
 
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+        assert!(result.is_ok(), "Expected Ok, got {result:?}");
 
         let workspace = result.unwrap();
         // Name should preserve the original slash for display
@@ -1288,8 +1288,7 @@ mod tests {
                         | WorkspaceError::WorktreeCreationFailed(_)
                         | WorkspaceError::GitError(_)
                 ),
-                "Unexpected error type: {:?}",
-                error
+                "Unexpected error type: {error:?}"
             );
         }
     }

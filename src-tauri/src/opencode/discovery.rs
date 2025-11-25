@@ -12,7 +12,7 @@ pub struct DefaultPortScanner;
 impl PortScanner for DefaultPortScanner {
     fn get_active_listeners(&self) -> Result<Vec<PortInfo>, OpenCodeError> {
         let list = listeners::get_all().map_err(|e| {
-            OpenCodeError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            OpenCodeError::Io(std::io::Error::other(e.to_string()))
         })?;
         Ok(list
             .into_iter()
@@ -39,11 +39,17 @@ impl DefaultInstanceProbe {
     }
 }
 
+impl Default for DefaultInstanceProbe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl InstanceProbe for DefaultInstanceProbe {
     async fn probe(&self, port: u16) -> Result<PathBuf, OpenCodeError> {
         // Use localhost to allow system resolver to handle IPv4/IPv6
-        let url = format!("http://localhost:{}/path", port);
+        let url = format!("http://localhost:{port}/path");
         let resp = self.client.get(&url).send().await?;
         let data: crate::opencode::types::PathResponse = resp.json().await?;
         
@@ -76,6 +82,12 @@ pub struct OpenCodeDiscoveryService {
     process_tree: Arc<dyn ProcessTree>,
     scanner: Box<dyn PortScanner>,
     probe: Box<dyn InstanceProbe>,
+}
+
+impl Default for OpenCodeDiscoveryService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OpenCodeDiscoveryService {
@@ -166,7 +178,7 @@ impl OpenCodeDiscoveryService {
     pub async fn run_loop(self: Arc<Self>) {
         loop {
             if let Err(e) = self.scan_and_update().await {
-                eprintln!("OpenCode discovery error: {}", e);
+                eprintln!("OpenCode discovery error: {e}");
             }
             // Changed from 2 seconds to 1 second for faster feedback
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -188,7 +200,7 @@ impl OpenCodeDiscoveryService {
             process_tree.refresh();
         })
         .await
-        .map_err(|e| OpenCodeError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        .map_err(|e| OpenCodeError::Io(std::io::Error::other(e)))?;
 
         // 3. Pre-compute descendant PIDs of code-server (O(n) once, not O(n*d) per port)
         let descendant_pids = self.process_tree.get_descendant_pids(code_server_pid);

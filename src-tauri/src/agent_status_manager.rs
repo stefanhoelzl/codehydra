@@ -96,11 +96,11 @@ impl AgentStatusManager {
         &self,
         workspace_path: &Path,
     ) -> Result<WorkspaceInitResult, AgentStatusError> {
-        eprintln!("DEBUG: init_workspace called for {:?}", workspace_path);
+        eprintln!("DEBUG: init_workspace called for {workspace_path:?}");
         
         // Validate path is valid UTF-8 early to ensure consistent frontend/backend representation
         path_to_string(workspace_path).map_err(|e| AgentStatusError::Internal {
-            message: format!("Invalid workspace path: {}", e),
+            message: format!("Invalid workspace path: {e}"),
             source: Some(Box::new(e)),
         })?;
 
@@ -108,7 +108,7 @@ impl AgentStatusManager {
         {
             let workspaces = self.workspaces.read().await;
             if workspaces.contains_key(workspace_path) {
-                eprintln!("DEBUG: Workspace {:?} already initialized", workspace_path);
+                eprintln!("DEBUG: Workspace {workspace_path:?} already initialized");
                 return Ok(WorkspaceInitResult {
                     started: 0,
                     failed: 0,
@@ -196,7 +196,7 @@ impl AgentStatusManager {
             for result in results {
                 if let Err(e) = result {
                     if e.is_panic() {
-                        eprintln!("Subscription task panicked during cleanup: {:?}", e);
+                        eprintln!("Subscription task panicked during cleanup: {e:?}");
                     }
                 }
             }
@@ -244,7 +244,7 @@ impl AgentStatusManager {
             for result in results {
                 if let Err(e) = result {
                     if e.is_panic() {
-                        eprintln!("Subscription task panicked during cleanup: {:?}", e);
+                        eprintln!("Subscription task panicked during cleanup: {e:?}");
                     }
                 }
             }
@@ -285,7 +285,7 @@ impl AgentStatusManager {
             for result in results {
                 if let Err(e) = result {
                     if e.is_panic() {
-                        eprintln!("Subscription task panicked during shutdown: {:?}", e);
+                        eprintln!("Subscription task panicked during shutdown: {e:?}");
                     }
                 }
             }
@@ -409,7 +409,7 @@ impl AgentStatusManager {
                             }
                             Err(broadcast::error::RecvError::Lagged(n)) => {
                                 // Receiver lagged - this is recoverable, continue processing
-                                eprintln!("Agent status receiver lagged by {} messages", n);
+                                eprintln!("Agent status receiver lagged by {n} messages");
                                 continue;
                             }
                             Err(broadcast::error::RecvError::Closed) => {
@@ -764,7 +764,7 @@ mod tests {
             .map(|i| {
                 let m = manager.clone();
                 tokio::spawn(async move {
-                    m.init_workspace(&PathBuf::from(format!("/workspace{}", i)))
+                    m.init_workspace(&PathBuf::from(format!("/workspace{i}")))
                         .await
                 })
             })
@@ -998,7 +998,7 @@ mod tests {
         // Initialize several workspaces
         for i in 0..5 {
             manager
-                .init_workspace(&PathBuf::from(format!("/workspace{}", i)))
+                .init_workspace(&PathBuf::from(format!("/workspace{i}")))
                 .await
                 .unwrap();
         }

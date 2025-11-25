@@ -69,7 +69,7 @@ impl ProjectStore {
         let mut hasher = Sha256::new();
         hasher.update(path.to_string_lossy().as_bytes());
         let hash = hasher.finalize();
-        let hash_hex = format!("{:x}", hash);
+        let hash_hex = format!("{hash:x}");
 
         format!("{}-{}", name, &hash_hex[..8])
     }
@@ -372,7 +372,7 @@ mod tests {
         let mut handles = Vec::new();
 
         for i in 0..10 {
-            let project_path = temp.path().join(format!("project-{}", i));
+            let project_path = temp.path().join(format!("project-{i}"));
             std::fs::create_dir(&project_path).unwrap();
 
             let store_clone = store.clone();

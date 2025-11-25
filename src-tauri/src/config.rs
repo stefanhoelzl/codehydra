@@ -193,8 +193,7 @@ mod tests {
         let runtime_str = config.runtime_dir.to_string_lossy();
         assert!(
             runtime_str.contains(version),
-            "runtime_dir should include version: {}",
-            runtime_str
+            "runtime_dir should include version: {runtime_str}"
         );
     }
 
@@ -251,7 +250,7 @@ mod tests {
 
         // Test code_server_dir
         assert!(config.code_server_dir().ends_with("code-server"));
-        assert!(config.code_server_dir().starts_with(&config.node_modules_dir()));
+        assert!(config.code_server_dir().starts_with(config.node_modules_dir()));
 
         // Test user_settings_dir
         assert!(config.user_settings_dir().ends_with("User"));
@@ -259,13 +258,13 @@ mod tests {
 
         // Test settings_json_path
         assert!(config.settings_json_path().ends_with("settings.json"));
-        assert!(config.settings_json_path().starts_with(&config.user_settings_dir()));
+        assert!(config.settings_json_path().starts_with(config.user_settings_dir()));
 
         // Test keybindings_json_path
         assert!(config.keybindings_json_path().ends_with("keybindings.json"));
         assert!(config
             .keybindings_json_path()
-            .starts_with(&config.user_settings_dir()));
+            .starts_with(config.user_settings_dir()));
     }
 
     #[test]
@@ -277,8 +276,7 @@ mod tests {
         if cfg!(debug_assertions) {
             assert!(
                 path_str.contains("app-data"),
-                "Debug build should use app-data directory: {}",
-                path_str
+                "Debug build should use app-data directory: {path_str}"
             );
         }
     }
@@ -299,7 +297,7 @@ mod tests {
     #[test]
     fn test_config_debug_format() {
         let config = CodeServerConfig::new("0.1.0").expect("Should create config");
-        let debug = format!("{:?}", config);
+        let debug = format!("{config:?}");
 
         assert!(debug.contains("CodeServerConfig"));
         assert!(debug.contains("runtime_dir"));

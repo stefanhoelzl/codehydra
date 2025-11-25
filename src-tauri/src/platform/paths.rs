@@ -372,8 +372,7 @@ mod tests {
         if cfg!(debug_assertions) {
             assert!(
                 path_str.contains("app-data"),
-                "Debug build should use app-data directory: {}",
-                path_str
+                "Debug build should use app-data directory: {path_str}"
             );
         }
     }
@@ -402,8 +401,7 @@ mod tests {
         if cfg!(debug_assertions) {
             assert!(
                 path_str.contains("app-data"),
-                "Debug build should use app-data directory: {}",
-                path_str
+                "Debug build should use app-data directory: {path_str}"
             );
         }
     }
@@ -429,8 +427,7 @@ mod tests {
         if cfg!(debug_assertions) {
             assert!(
                 path_str.contains("app-data"),
-                "Debug build should use app-data directory: {}",
-                path_str
+                "Debug build should use app-data directory: {path_str}"
             );
         }
     }
@@ -480,7 +477,7 @@ mod tests {
         for name in names {
             let sanitized = sanitize_workspace_name_for_path(name);
             let restored = unsanitize_workspace_name_from_path(&sanitized);
-            assert_eq!(restored, name, "Roundtrip failed for: {}", name);
+            assert_eq!(restored, name, "Roundtrip failed for: {name}");
         }
     }
 }

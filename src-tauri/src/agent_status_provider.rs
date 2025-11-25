@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_error_internal_with_source() {
-        let source = std::io::Error::new(std::io::ErrorKind::Other, "io error");
+        let source = std::io::Error::other("io error");
         let err = AgentStatusError::internal_with_source("internal failure", source);
         assert!(err.to_string().contains("internal failure"));
         assert!(std::error::Error::source(&err).is_some());

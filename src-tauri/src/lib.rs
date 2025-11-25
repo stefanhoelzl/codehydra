@@ -97,7 +97,7 @@ impl TauriEventEmitter {
 impl EventEmitter for TauriEventEmitter {
     fn emit(&self, event: SetupEvent) {
         if let Err(e) = self.app.emit("setup-progress", &event) {
-            eprintln!("Failed to emit setup event: {}", e);
+            eprintln!("Failed to emit setup event: {e}");
         }
     }
 }
@@ -105,7 +105,7 @@ impl EventEmitter for TauriEventEmitter {
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+    format!("Hello, {name}! You've been greeted from Rust!")
 }
 
 /// Show the main window - called by frontend when ready
@@ -165,7 +165,7 @@ pub async fn open_project_impl(state: &AppState, path: String) -> Result<String,
 
     // Persist to disk (non-fatal if fails)
     if let Err(e) = state.project_store.save_project(&normalized_path).await {
-        eprintln!("Failed to persist project: {}", e);
+        eprintln!("Failed to persist project: {e}");
     }
 
     Ok(handle.to_string())
@@ -554,6 +554,10 @@ async fn setup_runtime(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Force X11 backend for global shortcuts to work on Wayland via XWayland
+    // This is safe to set unconditionally - ignored on native X11, required on Wayland
+    std::env::set_var("GDK_BACKEND", "x11");
+
     let config = CodeServerConfig::new(env!("CARGO_PKG_VERSION"))
         .expect("Failed to create CodeServerConfig");
     let code_server_manager = Arc::new(CodeServerManager::new(config));
@@ -597,6 +601,139 @@ pub fn run() {
             get_all_agent_statuses
         ])
         .setup(move |app| {
+            // Set up global shortcuts for Chime keyboard navigation
+            // Alt+X activates shortcut mode (must hold both Alt and X)
+            // Alt+{ActionKey} performs actions while active
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::{
+                    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
+                };
+
+                // Activation shortcut - handles both press and release
+                let activation_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::KeyX);
+
+                // Action shortcuts - only fire on press
+                let action_shortcuts: Vec<(Shortcut, &'static str)> = vec![
+                    // Navigation
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::ArrowUp),
+                        "chime-action-up",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::ArrowDown),
+                        "chime-action-down",
+                    ),
+                    // Workspace actions
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Enter),
+                        "chime-action-create",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Delete),
+                        "chime-action-remove",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Backspace),
+                        "chime-action-remove",
+                    ),
+                    // Jump to workspace (1-9, 0 for 10th)
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit1),
+                        "chime-action-jump-1",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit2),
+                        "chime-action-jump-2",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit3),
+                        "chime-action-jump-3",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit4),
+                        "chime-action-jump-4",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit5),
+                        "chime-action-jump-5",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit6),
+                        "chime-action-jump-6",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit7),
+                        "chime-action-jump-7",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit8),
+                        "chime-action-jump-8",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit9),
+                        "chime-action-jump-9",
+                    ),
+                    (
+                        Shortcut::new(Some(Modifiers::ALT), Code::Digit0),
+                        "chime-action-jump-0",
+                    ),
+                ];
+
+                // Clone for the handler closure
+                let action_shortcuts_for_handler = action_shortcuts.clone();
+                let activation_shortcut_for_handler = activation_shortcut;
+                let app_handle = app.handle().clone();
+
+                // Register plugin with handler
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |_app, shortcut, event| {
+                            // Handle activation shortcut (Alt+X) - both press and release
+                            if shortcut == &activation_shortcut_for_handler {
+                                match event.state() {
+                                    ShortcutState::Pressed => {
+                                        let _ = app_handle.emit("chime-shortcut-activated", ());
+                                    }
+                                    ShortcutState::Released => {
+                                        let _ = app_handle.emit("chime-shortcut-deactivated", ());
+                                    }
+                                }
+                                return;
+                            }
+
+                            // Handle action shortcuts - only on press
+                            if event.state() != ShortcutState::Pressed {
+                                return;
+                            }
+
+                            // Find matching shortcut and emit event
+                            for (s, event_name) in &action_shortcuts_for_handler {
+                                if shortcut == s {
+                                    let _ = app_handle.emit(event_name, ());
+                                    break;
+                                }
+                            }
+                        })
+                        .build(),
+                )?;
+
+                // Combine all shortcuts for registration
+                let all_shortcuts: Vec<(Shortcut, &'static str)> = std::iter::once((
+                    activation_shortcut,
+                    "chime-shortcut-activated/deactivated",
+                ))
+                .chain(action_shortcuts)
+                .collect();
+
+                // Register all shortcuts (ignore registration failures for now)
+                for (shortcut, event_name) in &all_shortcuts {
+                    if let Err(e) = app.global_shortcut().register(*shortcut) {
+                        eprintln!("[Chime] Failed to register shortcut for {event_name}: {e:?}");
+                    }
+                }
+            }
+
             // Initialize OpenCode integration
             let opencode_discovery =
                 Arc::new(crate::opencode::discovery::OpenCodeDiscoveryService::new());
@@ -650,11 +787,11 @@ pub fn run() {
                     match rx.recv().await {
                         Ok(event) => {
                             if let Err(e) = app_handle.emit("agent-status-changed", &event) {
-                                eprintln!("Failed to emit agent status event: {}", e);
+                                eprintln!("Failed to emit agent status event: {e}");
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
-                            eprintln!("Agent status event listener lagged by {} events", n);
+                            eprintln!("Agent status event listener lagged by {n} events");
                             continue;
                         }
                         Err(broadcast::error::RecvError::Closed) => {

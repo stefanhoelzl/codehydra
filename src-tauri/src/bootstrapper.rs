@@ -271,8 +271,7 @@ impl ArchiveExtractor for ArchiveExtractorImpl {
             ".tar.gz" => self.extract_tar_gz(archive_data, dest_dir, archive_name),
             ".tar.xz" => self.extract_tar_xz(archive_data, dest_dir, archive_name),
             _ => Err(CodeServerError::ExtractionFailed(format!(
-                "Unsupported archive format: {}",
-                extension
+                "Unsupported archive format: {extension}"
             ))),
         }
     }
@@ -301,26 +300,26 @@ impl ArchiveExtractorImpl {
 
             if file.is_dir() {
                 std::fs::create_dir_all(&outpath)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to create directory: {}", e)))?;
+                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to create directory: {e}")))?;
             } else {
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         std::fs::create_dir_all(parent).map_err(|e| {
-                            CodeServerError::ExtractionFailed(format!("Failed to create parent directory: {}", e))
+                            CodeServerError::ExtractionFailed(format!("Failed to create parent directory: {e}"))
                         })?;
                     }
                 }
 
                 let mut outfile = std::fs::File::create(&outpath)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to create file: {}", e)))?;
+                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to create file: {e}")))?;
 
                 let mut buffer = Vec::new();
                 file.read_to_end(&mut buffer)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to read from archive: {}", e)))?;
+                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to read from archive: {e}")))?;
 
                 outfile
                     .write_all(&buffer)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to write file: {}", e)))?;
+                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to write file: {e}")))?;
             }
         }
 
@@ -342,7 +341,7 @@ impl ArchiveExtractorImpl {
 
         archive
             .unpack(dest_dir)
-            .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to extract tar.gz: {}", e)))?;
+            .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to extract tar.gz: {e}")))?;
 
         Ok(dest_dir.join(archive_name))
     }
@@ -361,7 +360,7 @@ impl ArchiveExtractorImpl {
 
         archive
             .unpack(dest_dir)
-            .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to extract tar.xz: {}", e)))?;
+            .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to extract tar.xz: {e}")))?;
 
         Ok(dest_dir.join(archive_name))
     }
@@ -460,7 +459,7 @@ impl ProcessSpawner for StdProcessSpawner {
                         let _ = child.kill();
                         return Err(CodeServerError::ExtensionInstallFailed {
                             extension: "process".to_string(),
-                            reason: format!("Timed out after {:?}", timeout),
+                            reason: format!("Timed out after {timeout:?}"),
                         });
                     }
                     // Sleep briefly before polling again
@@ -717,7 +716,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                     .map_err(CodeServerError::PermissionError)?;
             }
             std::fs::rename(&extracted_dir, target_node_dir)
-                .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to rename directory: {}", e)))?;
+                .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to rename directory: {e}")))?;
         }
 
         // Prepare the node binary (set executable permissions, remove quarantine)
@@ -808,7 +807,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
 
         for (extension_id, version) in extensions.iter() {
             self.emit(SetupEvent::Update {
-                message: format!("Installing {}...", extension_id),
+                message: format!("Installing {extension_id}..."),
                 steps: StepsBuilder::new()
                     .node(StepState::Completed)
                     .code_server(StepState::Completed)
@@ -922,11 +921,11 @@ mod tests {
                 .compression_method(zip::CompressionMethod::Stored);
 
             // Add a directory entry (like node-v24.11.1-win-x64/)
-            let dir_name = format!("{}/", archive_name);
+            let dir_name = format!("{archive_name}/");
             zip.add_directory(&dir_name, options).unwrap();
 
             // Add a binary file inside (e.g., node.exe for Windows)
-            let file_path = format!("{}/node.exe", archive_name);
+            let file_path = format!("{archive_name}/node.exe");
             zip.start_file(&file_path, options).unwrap();
             zip.write_all(binary_content).unwrap();
 

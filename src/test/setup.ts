@@ -6,6 +6,47 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 
+// Mock @tauri-apps/plugin-global-shortcut
+type ShortcutCallback = () => void;
+const registeredShortcuts = new Map<string, ShortcutCallback>();
+
+vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
+  register: vi.fn(async (shortcut: string, callback: ShortcutCallback) => {
+    registeredShortcuts.set(shortcut, callback);
+  }),
+  unregister: vi.fn(async (shortcut: string) => {
+    registeredShortcuts.delete(shortcut);
+  }),
+  isRegistered: vi.fn(async (shortcut: string) => {
+    return registeredShortcuts.has(shortcut);
+  }),
+}));
+
+// Helper to simulate global shortcut press in tests
+export function simulateGlobalShortcut(shortcut: string): void {
+  const callback = registeredShortcuts.get(shortcut);
+  if (callback) callback();
+}
+
+export function clearRegisteredShortcuts(): void {
+  registeredShortcuts.clear();
+}
+
+// Mock Element.animate for happy-dom (not supported)
+if (!Element.prototype.animate) {
+  Element.prototype.animate = function () {
+    return {
+      finished: Promise.resolve(),
+      onfinish: null,
+      cancel: () => {},
+      play: () => {},
+      pause: () => {},
+      finish: () => {},
+      reverse: () => {},
+    } as unknown as Animation;
+  };
+}
+
 // Mock vscode-elements web components
 // These are custom elements that need to be registered for happy-dom
 class MockVSCodeElement extends HTMLElement {

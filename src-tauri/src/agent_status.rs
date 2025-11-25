@@ -121,7 +121,7 @@ pub fn path_to_string(path: &std::path::Path) -> Result<String, std::io::Error> 
     path.to_str().map(String::from).ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Path contains non-UTF8 characters: {:?}", path),
+            format!("Path contains non-UTF8 characters: {path:?}"),
         )
     })
 }
@@ -379,18 +379,12 @@ mod tests {
     }
 
     // === Constants Tests ===
+    // Using const assertions to validate at compile time
 
-    #[test]
-    fn test_channel_capacity_reasonable() {
-        assert!(STATUS_EVENT_CHANNEL_CAPACITY >= 10);
-        assert!(STATUS_EVENT_CHANNEL_CAPACITY <= 1000);
-    }
-
-    #[test]
-    fn test_debounce_reasonable() {
-        assert!(STATUS_DEBOUNCE_MS >= 10);
-        assert!(STATUS_DEBOUNCE_MS <= 500);
-    }
+    const _: () = assert!(STATUS_EVENT_CHANNEL_CAPACITY >= 10);
+    const _: () = assert!(STATUS_EVENT_CHANNEL_CAPACITY <= 1000);
+    const _: () = assert!(STATUS_DEBOUNCE_MS >= 10);
+    const _: () = assert!(STATUS_DEBOUNCE_MS <= 500);
 
     // === Path Conversion Tests ===
 
