@@ -81,6 +81,11 @@ impl AppState {
             agent_status_manager,
         }
     }
+
+    /// Get the agent status manager (exposed for testing)
+    pub fn agent_status_manager(&self) -> &Arc<AgentStatusManager> {
+        &self.agent_status_manager
+    }
 }
 
 /// Tauri-specific EventEmitter that uses app.emit() to send events to the frontend.
@@ -317,6 +322,19 @@ pub async fn create_workspace_impl(
         .create_workspace(&name, &base_branch)
         .await
         .to_tauri()?;
+
+    // Initialize agent status monitoring for the new workspace
+    if let Err(e) = state
+        .agent_status_manager
+        .init_workspace(workspace.path())
+        .await
+    {
+        eprintln!(
+            "Failed to initialize agent status for workspace {:?}: {}",
+            workspace.path(),
+            e
+        );
+    }
 
     // Build WorkspaceInfo with code-server URL
     let port = state

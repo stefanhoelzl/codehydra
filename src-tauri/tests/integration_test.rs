@@ -234,6 +234,67 @@ async fn test_open_project_via_symlink_returns_same_handle() {
     assert_eq!(handle1, handle2);
 }
 
+/// Test that verifies create_workspace_impl initializes agent status monitoring.
+///
+/// When a workspace is created, the agent status manager should be initialized
+/// for that workspace so the status indicator works correctly.
+#[tokio::test]
+async fn test_create_workspace_initializes_agent_status() {
+    use chime_lib::create_workspace_impl;
+
+    let test_repo = TestRepo::new().unwrap();
+
+    // Create a branch to use as base
+    test_repo.create_branch("feature-branch").unwrap();
+
+    let ctx = create_test_app_state();
+
+    // Open the project first (required for create_workspace_impl)
+    let handle = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
+        .await
+        .unwrap();
+
+    // Verify agent status manager starts with 0 workspaces
+    let initial_count = ctx.state.agent_status_manager().workspace_count().await;
+    assert_eq!(
+        initial_count, 0,
+        "Should start with no workspaces in agent status manager"
+    );
+
+    // Create a new workspace via create_workspace_impl
+    // This will fail at the code-server step (which is fine for this test),
+    // but the agent status should still be initialized because that happens
+    // before the code-server call.
+    let result = create_workspace_impl(
+        &ctx.state,
+        handle.clone(),
+        "test-workspace".to_string(),
+        "feature-branch".to_string(),
+    )
+    .await;
+
+    // The call will fail because code-server isn't available in tests,
+    // but that's OK - we're testing that init_workspace was called BEFORE
+    // the code-server step.
+    // Note: If this starts passing, it means the test environment changed.
+    assert!(
+        result.is_err(),
+        "Expected code-server failure in test environment"
+    );
+
+    // The agent status manager should have the workspace initialized
+    // even though the overall create_workspace_impl call failed at the
+    // code-server step. This is because init_workspace is called BEFORE
+    // ensure_running().
+    let workspace_count = ctx.state.agent_status_manager().workspace_count().await;
+
+    assert!(
+        workspace_count >= 1,
+        "Agent status should be initialized for newly created workspace. \
+         Expected workspace_count >= 1, got {workspace_count}."
+    );
+}
+
 // Tests below are for the CodeServerManager and CodeServerInstance
 // These don't require actual code-server to be running
 
