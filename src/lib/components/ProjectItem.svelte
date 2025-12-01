@@ -13,7 +13,7 @@
     setActiveProject(project.handle);
   }
 
-  function handleClose(e: MouseEvent) {
+  function handleClose(e: Event) {
     e.stopPropagation();
     closeProject(project);
   }
@@ -22,14 +22,27 @@
 <div
   class="project-item"
   class:active
-  on:click={handleClick}
-  on:keydown={(e) => e.key === 'Enter' && handleClick()}
+  onclick={handleClick}
+  onkeydown={(e: KeyboardEvent) => {
+    if (e.key === 'Enter') handleClick();
+  }}
   role="button"
   tabindex="0"
 >
   <vscode-icon name="folder" class="icon"></vscode-icon>
   <span class="name">{projectName}</span>
-  <vscode-icon name="close" class="close-btn" on:click={handleClose} role="button" tabindex="-1"
+  <vscode-icon
+    name="close"
+    class="close-btn"
+    onclick={handleClose}
+    onkeydown={(e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        handleClose(e);
+        e.preventDefault();
+      }
+    }}
+    role="button"
+    tabindex="-1"
   ></vscode-icon>
 </div>
 

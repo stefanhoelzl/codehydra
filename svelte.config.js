@@ -8,6 +8,9 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
   preprocess: vitePreprocess(),
+  onwarn: (warning) => {
+    throw new Error(`Svelte warning: ${warning.message}`);
+  },
   kit: {
     adapter: adapter({
       fallback: 'index.html',

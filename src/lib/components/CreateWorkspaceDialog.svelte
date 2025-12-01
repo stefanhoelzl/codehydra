@@ -355,9 +355,11 @@
     bind:this={dialogRef}
     class="modal-content"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
     role="dialog"
     aria-modal="true"
     aria-labelledby="dialog-title"
+    tabindex="0"
   >
     <h2 id="dialog-title">Create Workspace</h2>
 

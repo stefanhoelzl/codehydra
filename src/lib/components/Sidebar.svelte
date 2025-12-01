@@ -210,7 +210,18 @@
     {/each}
   </div>
 
-  <vscode-button class="open-btn" onclick={openNewProject} role="button" tabindex="0">
+  <vscode-button
+    class="open-btn"
+    onclick={openNewProject}
+    onkeydown={(e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        openNewProject();
+        e.preventDefault();
+      }
+    }}
+    role="button"
+    tabindex="0"
+  >
     Open Project
   </vscode-button>
 </aside>
