@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 pub struct DefaultPortScanner;
 
@@ -175,13 +176,18 @@ impl OpenCodeDiscoveryService {
         ports.into_iter().next()
     }
 
-    pub async fn run_loop(self: Arc<Self>) {
+    pub async fn run_loop(self: Arc<Self>, cancel_token: Arc<CancellationToken>) {
         loop {
-            if let Err(e) = self.scan_and_update().await {
-                eprintln!("OpenCode discovery error: {e}");
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    break;
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+                    if let Err(e) = self.scan_and_update().await {
+                        eprintln!("OpenCode discovery error: {e}");
+                    }
+                }
             }
-            // Changed from 2 seconds to 1 second for faster feedback
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
 

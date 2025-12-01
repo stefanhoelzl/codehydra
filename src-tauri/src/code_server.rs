@@ -5,22 +5,23 @@
 use crate::config::CodeServerConfig;
 use crate::error::CodeServerError;
 use crate::platform::paths::encode_path_for_url;
+use crate::platform::process::spawn_code_server_with_env;
+use process_wrap::tokio::TokioChildWrapper;
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::process::Child;
+use sysinfo::{Pid, ProcessRefreshKind, System};
 use tokio::sync::RwLock;
 
 const HEALTH_CHECK_ATTEMPTS: u32 = 300;
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(100);
-const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum InstanceState {
     Stopped,
     Starting,
-    Running { child: Child },
+    Running { child: Box<dyn TokioChildWrapper> },
     Stopping,
     Failed { error: String },
 }
@@ -109,14 +110,8 @@ impl CodeServerManager {
         Ok(port)
     }
 
-    async fn spawn_code_server(&self, port: u16) -> Result<Child, CodeServerError> {
-        use std::process::Stdio;
-        use tokio::process::Command;
-
+    async fn spawn_code_server(&self, port: u16) -> Result<Box<dyn TokioChildWrapper>, CodeServerError> {
         let node_path = &self.config.node_binary_path;
-        let code_server_entry = self.config.code_server_entry_path();
-        let user_data_dir = &self.config.user_data_dir;
-        let extensions_dir = &self.config.extensions_dir;
 
         // Build PATH with node_modules/.bin so code-server can find opencode
         let node_modules_bin = self.config.node_modules_bin_dir();
@@ -127,55 +122,116 @@ impl CodeServerManager {
             format!("{}:{}", node_modules_bin.display(), current_path)
         };
 
-        // Run: node <code-server/out/node/entry.js> <args>
-        let child = Command::new(node_path)
-            .arg(&code_server_entry)
-            .arg("--bind-addr")
-            .arg(format!("127.0.0.1:{port}"))
-            .arg("--auth")
-            .arg("none")
-            .arg("--user-data-dir")
-            .arg(user_data_dir)
-            .arg("--extensions-dir")
-            .arg(extensions_dir)
-            .arg("--disable-telemetry")
-            .arg("--disable-update-check")
-            .arg("--disable-workspace-trust")
-            .env("PATH", new_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(CodeServerError::SpawnFailed)?;
+        // Prepare arguments for code-server as owned strings
+        let code_server_entry = self.config.code_server_entry_path().to_string_lossy().into_owned();
+        let bind_addr = format!("127.0.0.1:{}", port);
+        let user_data_dir = self.config.user_data_dir.to_string_lossy().into_owned();
+        let extensions_dir = self.config.extensions_dir.to_string_lossy().into_owned();
 
-        Ok(child)
+        let args = vec![
+            code_server_entry.as_str(),
+            "--bind-addr",
+            &bind_addr,
+            "--auth",
+            "none",
+            "--user-data-dir",
+            &user_data_dir,
+            "--extensions-dir",
+            &extensions_dir,
+            "--disable-telemetry",
+            "--disable-update-check",
+            "--disable-workspace-trust",
+        ];
+
+        // Use platform-independent process spawning with process groups
+        spawn_code_server_with_env(node_path, &args, &self.config.runtime_dir, &[("PATH", &new_path)]).await
     }
 
     pub async fn stop(&self) -> Result<(), CodeServerError> {
         let mut instance = self.instance.write().await;
 
         if let Some(mut inst) = instance.take() {
-            if let InstanceState::Running { mut child } = inst.state {
+            if let InstanceState::Running { child } = inst.state {
                 inst.state = InstanceState::Stopping;
 
-                // Try graceful shutdown
-                let timeout =
-                    tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, child.wait()).await;
+                // Get the PID before dropping the child
+                let main_pid = child.id();
 
-                if timeout.is_err() {
-                    child
-                        .kill()
-                        .await
-                        .map_err(|e| CodeServerError::ProcessKillFailed(e.to_string()))?;
-                    child
-                        .wait()
-                        .await
-                        .map_err(|e| CodeServerError::ProcessKillFailed(e.to_string()))?;
+                // Drop the child - this should kill the process group via process-wrap
+                drop(child);
+
+                // Aggressively kill any remaining child processes
+                if let Some(pid) = main_pid {
+                    Self::kill_descendant_processes(pid as usize);
                 }
+
+                // Kill any remaining node processes from previous runs
+                Self::kill_all_remaining_node_processes();
+            } else {
+                eprintln!("Code server stop: instance not in Running state");
             }
+        } else {
+            eprintln!("Code server stop: no instance found");
         }
 
         Ok(())
+    }
+
+    /// Recursively kill all descendant processes of the given PID
+    fn kill_descendant_processes(parent_pid: usize) {
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::everything(),
+        );
+
+        let mut to_kill = vec![parent_pid];
+        let mut killed = std::collections::HashSet::new();
+
+        while let Some(pid) = to_kill.pop() {
+            if killed.contains(&pid) {
+                continue;
+            }
+
+            // Find all child processes
+            for (child_pid, process) in system.processes() {
+                if let Some(ppid) = process.parent() {
+                    if ppid.as_u32() as usize == pid {
+                        to_kill.push(child_pid.as_u32() as usize);
+                    }
+                }
+            }
+
+            // Kill this process if it's still running
+            if let Some(process) = system.process(Pid::from_u32(pid as u32)) {
+                if process.kill() {
+                    killed.insert(pid);
+                }
+            }
+        }
+    }
+
+    /// Kill all remaining node processes (more aggressive cleanup)
+    fn kill_all_remaining_node_processes() {
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::everything(),
+        );
+
+        for (_pid, process) in system.processes() {
+            let name = process.name();
+            let name_str = name.to_string_lossy();
+
+            if name_str.contains("node") {
+                let _ = process.kill(); // Kill any remaining node processes
+            }
+        }
+
+        // Give processes a moment to actually terminate
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     pub async fn url_for_folder(&self, folder_path: &Path) -> Option<String> {

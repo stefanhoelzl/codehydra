@@ -18,20 +18,26 @@ use std::path::Path;
 ///
 /// # Arguments
 ///
-/// * `bun_path` - Path to the Bun binary
-/// * `args` - Command line arguments to pass to Bun
+/// * `binary_path` - Path to the binary to run
+/// * `args` - Command line arguments
 /// * `cwd` - Working directory for the process
+/// * `env_vars` - Environment variables to set as (key, value) pairs
 ///
 /// # Errors
 ///
 /// Returns `CodeServerError::SpawnFailed` if the process cannot be started.
-pub async fn spawn_code_server(
-    bun_path: &Path,
+pub async fn spawn_code_server_with_env(
+    binary_path: &Path,
     args: &[&str],
     cwd: &Path,
+    env_vars: &[(&str, &str)],
 ) -> Result<Box<dyn TokioChildWrapper>, CodeServerError> {
-    let mut command = TokioCommandWrap::with_new(bun_path, |cmd| {
+    let mut command = TokioCommandWrap::with_new(binary_path, |cmd| {
         cmd.args(args).current_dir(cwd);
+        // Set environment variables
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
     });
 
     // Set up process group/job object for proper cleanup
@@ -48,6 +54,28 @@ pub async fn spawn_code_server(
     }
 
     command.spawn().map_err(CodeServerError::SpawnFailed)
+}
+
+/// Spawn code-server in its own process group/job object.
+///
+/// This ensures that when the parent process terminates, all child processes
+/// (including any processes spawned by code-server) are also terminated.
+///
+/// # Arguments
+///
+/// * `binary_path` - Path to the binary to run
+/// * `args` - Command line arguments
+/// * `cwd` - Working directory for the process
+///
+/// # Errors
+///
+/// Returns `CodeServerError::SpawnFailed` if the process cannot be started.
+pub async fn spawn_code_server(
+    binary_path: &Path,
+    args: &[&str],
+    cwd: &Path,
+) -> Result<Box<dyn TokioChildWrapper>, CodeServerError> {
+    spawn_code_server_with_env(binary_path, args, cwd, &[]).await
 }
 
 /// Set executable permissions on a file (Unix only).

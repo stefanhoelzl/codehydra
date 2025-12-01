@@ -280,17 +280,11 @@ impl AgentStatusManager {
             // Cancel all subscription tasks first
             workspace_state.cancel_token.cancel();
 
-            // Wait for all tasks to complete before stopping providers
-            let results = join_all(workspace_state.task_handles).await;
-            for result in results {
-                if let Err(e) = result {
-                    if e.is_panic() {
-                        eprintln!("Subscription task panicked during shutdown: {e:?}");
-                    }
-                }
-            }
+            // Don't wait for tasks to complete - they've been cancelled and will exit
+            // Just drop the handles to allow them to be cleaned up by the runtime
+            drop(workspace_state.task_handles);
 
-            // Then stop all providers
+            // Stop all providers
             for provider in workspace_state.providers {
                 if let Err(e) = provider.stop().await {
                     eprintln!(

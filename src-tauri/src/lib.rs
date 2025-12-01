@@ -582,15 +582,15 @@ pub fn run() {
     let project_store = Arc::new(ProjectStore::new());
     let agent_status_manager = Arc::new(AgentStatusManager::new());
 
+    // Create global shutdown token for background tasks
+    let shutdown_token = Arc::new(tokio_util::sync::CancellationToken::new());
+    let shutdown_token_for_setup = shutdown_token.clone();
+
     let app_state = AppState::new(
         code_server_manager.clone(),
         project_store,
         agent_status_manager.clone(),
     );
-
-    // Clone for cleanup handlers
-    let cleanup_manager = code_server_manager.clone();
-    let cleanup_status_manager = agent_status_manager.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -619,6 +619,7 @@ pub fn run() {
             get_all_agent_statuses
         ])
         .setup(move |app| {
+            let shutdown_token = shutdown_token_for_setup;
             // Set up global shortcuts for Chime keyboard navigation
             // Alt+X activates shortcut mode (must hold both Alt and X)
             // Alt+{ActionKey} performs actions while active
@@ -760,16 +761,24 @@ pub fn run() {
             // Wire up code-server PID to discovery service
             let discovery_pid_monitor = opencode_discovery.clone();
             let code_server_for_pid = code_server_manager.clone();
+            let pid_monitor_token = shutdown_token.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let pid = code_server_for_pid.pid().await;
-                    discovery_pid_monitor.set_code_server_pid(pid).await;
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    tokio::select! {
+                        _ = pid_monitor_token.cancelled() => {
+                            break;
+                        }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {
+                            let pid = code_server_for_pid.pid().await;
+                            discovery_pid_monitor.set_code_server_pid(pid).await;
+                        }
+                    }
                 }
             });
 
+            let discovery_token = shutdown_token.clone();
             tauri::async_runtime::spawn(async move {
-                discovery_clone.run_loop().await;
+                discovery_clone.run_loop(discovery_token).await;
             });
 
             let opencode_factory = Box::new(
@@ -799,33 +808,42 @@ pub fn run() {
             // Set up event forwarding from AgentStatusManager to frontend
             let app_handle = app.handle().clone();
             let status_manager = agent_status_manager.clone();
+            let event_forward_token = shutdown_token.clone();
             tauri::async_runtime::spawn(async move {
                 let mut rx = status_manager.subscribe();
                 loop {
-                    match rx.recv().await {
-                        Ok(event) => {
-                            if let Err(e) = app_handle.emit("agent-status-changed", &event) {
-                                eprintln!("Failed to emit agent status event: {e}");
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(n)) => {
-                            eprintln!("Agent status event listener lagged by {n} events");
-                            continue;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            eprintln!("Agent status event channel closed");
+                    tokio::select! {
+                        _ = event_forward_token.cancelled() => {
                             break;
+                        }
+                        result = rx.recv() => {
+                            match result {
+                                Ok(event) => {
+                                    if let Err(e) = app_handle.emit("agent-status-changed", &event) {
+                                        eprintln!("Failed to emit agent status event: {e}");
+                                    }
+                                }
+                                Err(broadcast::error::RecvError::Lagged(n)) => {
+                                    eprintln!("Agent status event listener lagged by {n} events");
+                                    continue;
+                                }
+                                Err(broadcast::error::RecvError::Closed) => {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
             });
 
             // Register cleanup handler for Ctrl+C
-            let ctrl_c_code_server = cleanup_manager.clone();
-            let ctrl_c_status_manager = cleanup_status_manager.clone();
+            let ctrl_c_code_server = code_server_manager.clone();
+            let ctrl_c_status_manager = agent_status_manager.clone();
+            let ctrl_c_token = shutdown_token.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::signal::ctrl_c().await.ok();
                 println!("Ctrl+C received - cleaning up...");
+                ctrl_c_token.cancel(); // Cancel background tasks
                 ctrl_c_status_manager.shutdown().await;
                 let _ = ctrl_c_code_server.stop().await;
             });
@@ -833,15 +851,35 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(move |app_handle, event| {
             // Handle app exit event
             if let tauri::RunEvent::Exit = event {
                 println!("App exiting - cleaning up...");
+                let shutdown_token_clone = shutdown_token.clone();
+
+                // Cancel background tasks immediately
+                shutdown_token_clone.cancel();
+
+                // Perform cleanup with timeout to avoid blocking app exit indefinitely
                 let app_state: tauri::State<AppState> = app_handle.state();
-                tauri::async_runtime::block_on(async {
-                    app_state.agent_status_manager.shutdown().await;
-                    let _ = app_state.code_server_manager.stop().await;
+                let agent_manager = app_state.agent_status_manager.clone();
+                let code_server_manager = app_state.code_server_manager.clone();
+
+                // Use block_on with timeout for critical cleanup
+                let cleanup_result = tauri::async_runtime::block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(2), // 2 second timeout for cleanup
+                        async {
+                            agent_manager.shutdown().await;
+                            let _ = code_server_manager.stop().await;
+                        }
+                    ).await
                 });
+
+                match cleanup_result {
+                    Ok(_) => println!("Cleanup completed successfully"),
+                    Err(_) => eprintln!("Cleanup timed out - forcing exit"),
+                }
             }
         });
 }
