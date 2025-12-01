@@ -79,18 +79,18 @@ pnpm rust:fmt:check
 Equivalent to:
 
 ```bash
-cd src-tauri && cargo fmt --all -- --check
+cd src-tauri && rustup run nightly rustfmt --check
 ```
 
 **Must pass.** All Rust code must follow standard formatting. Run `pnpm rust:fmt` to auto-fix.
 
-**Note:** Rustfmt requires a modern Rust toolchain installed via rustup. If rustfmt is not available, install it:
+**Note:** Rustfmt requires the nightly Rust toolchain installed via rustup. Install it with:
 
 ```bash
-rustup component add rustfmt
+rustup install nightly
 ```
 
-If rustup is not available on your system, rustfmt checks may be skipped, but they should be run before final review.
+If rustup is not available on your system, rustfmt checks cannot be run.
 
 ### 6. Complete Build
 
