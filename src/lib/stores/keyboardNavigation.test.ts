@@ -8,6 +8,7 @@ import {
   navigateDown,
   jumpToIndex,
   getWorkspaceIndex,
+  isActiveWorkspaceMain,
   resetKeyboardNavigationState,
 } from './keyboardNavigation';
 import { projects, activeWorkspace, setActiveWorkspace } from './projects';
@@ -359,6 +360,74 @@ describe('keyboardNavigation', () => {
       vi.advanceTimersByTime(100);
       navigateDown();
       expect(get(activeWorkspace)?.workspacePath).toBe('/p1/ws-3');
+    });
+  });
+
+  describe('isActiveWorkspaceMain', () => {
+    it('returns false when no active workspace', () => {
+      expect(isActiveWorkspaceMain()).toBe(false);
+    });
+
+    it('returns false when active workspace not found in projects', () => {
+      const project = createTestProject('p1', [{ name: 'main', path: '/p1/main' }]);
+      projects.set([project]);
+      setActiveWorkspace('nonexistent', '/nonexistent/main');
+
+      expect(isActiveWorkspaceMain()).toBe(false);
+    });
+
+    it('returns true for main workspace (first in project)', () => {
+      const project = createTestProject('p1', [
+        { name: 'main', path: '/p1/main' },
+        { name: 'feature', path: '/p1/feature' },
+      ]);
+      projects.set([project]);
+      setActiveWorkspace('p1', '/p1/main');
+
+      expect(isActiveWorkspaceMain()).toBe(true);
+    });
+
+    it('returns false for additional workspaces', () => {
+      const project = createTestProject('p1', [
+        { name: 'main', path: '/p1/main' },
+        { name: 'feature', path: '/p1/feature' },
+      ]);
+      projects.set([project]);
+      setActiveWorkspace('p1', '/p1/feature');
+
+      expect(isActiveWorkspaceMain()).toBe(false);
+    });
+
+    it('returns true for main workspace in multi-project setup', () => {
+      const project1 = createTestProject('p1', [{ name: 'main', path: '/p1/main' }]);
+      const project2 = createTestProject('p2', [
+        { name: 'main', path: '/p2/main' },
+        { name: 'feature', path: '/p2/feature' },
+      ]);
+      projects.set([project1, project2]);
+      setActiveWorkspace('p2', '/p2/main');
+
+      expect(isActiveWorkspaceMain()).toBe(true);
+    });
+
+    it('returns false for additional workspace in multi-project setup', () => {
+      const project1 = createTestProject('p1', [{ name: 'main', path: '/p1/main' }]);
+      const project2 = createTestProject('p2', [
+        { name: 'main', path: '/p2/main' },
+        { name: 'feature', path: '/p2/feature' },
+      ]);
+      projects.set([project1, project2]);
+      setActiveWorkspace('p2', '/p2/feature');
+
+      expect(isActiveWorkspaceMain()).toBe(false);
+    });
+
+    it('handles project with only one workspace', () => {
+      const project = createTestProject('p1', [{ name: 'main', path: '/p1/main' }]);
+      projects.set([project]);
+      setActiveWorkspace('p1', '/p1/main');
+
+      expect(isActiveWorkspaceMain()).toBe(true);
     });
   });
 

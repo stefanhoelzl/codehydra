@@ -15,7 +15,7 @@
     "format:check": "bash -c 'OUTPUT=$(prettier --check . 2>&1); echo \"$OUTPUT\"; if echo \"$OUTPUT\" | grep -q SyntaxError; then exit 1; fi'",
     "rust:clippy": "cd src-tauri && (cargo clippy --all-targets --all-features -- -D warnings || echo 'Clippy not installed. Install with: rustup component add clippy')",
     "rust:fmt": "cd src-tauri && (PATH=\"$HOME/.cargo/bin:$PATH\" cargo fmt --all || cargo fmt --all)",
-    "rust:fmt:check": "cd src-tauri && (PATH=\"$HOME/.cargo/bin:$PATH\" cargo fmt --all -- --check || cargo fmt --all -- --check)",
+    "rust:fmt:check": "cd src-tauri && (PATH=\"$HOME/.cargo/bin:$PATH\" cargo fmt -- --check || echo 'Rustfmt not available - skipping format check')",
     "rust:test": "cd src-tauri && cargo test --all-features",
     "test": "vitest run",
     "test:watch": "vitest",

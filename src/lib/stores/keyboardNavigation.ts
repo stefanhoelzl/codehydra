@@ -162,6 +162,21 @@ export function getWorkspaceIndex(workspacePath: string): number | null {
 // all Alt+{ActionKey} shortcuts and emits specific events for each action.
 
 /**
+ * Check if the active workspace is the main workspace of its project.
+ * Returns false if no active workspace.
+ */
+export function isActiveWorkspaceMain(): boolean {
+  const active = get(activeWorkspace);
+  if (!active) return false;
+
+  const allProjects = get(projects);
+  const project = allProjects.find((p) => p.handle === active.projectHandle);
+  if (!project) return false;
+
+  return project.workspaces[0]?.path === active.workspacePath;
+}
+
+/**
  * Reset keyboard navigation state.
  * Used for testing and cleanup.
  */

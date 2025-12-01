@@ -7,9 +7,9 @@
   import SetupModal from '$lib/components/SetupModal.svelte';
   import KeyboardShortcutOverlay from '$lib/components/KeyboardShortcutOverlay.svelte';
   import { checkRuntimeReady } from '$lib/api/tauri';
-  import { restorePersistedProjects } from '$lib/services/projectManager';
+  import { restorePersistedProjects, closeProject } from '$lib/services/projectManager';
   import { initAgentStatusListener, loadInitialStatuses } from '$lib/stores/agentStatus';
-  import { activeWorkspace } from '$lib/stores/projects';
+  import { activeWorkspace, projects } from '$lib/stores/projects';
   import {
     chimeShortcutActive,
     modalOpen,
@@ -18,6 +18,7 @@
     navigateUp,
     navigateDown,
     jumpToIndex,
+    isActiveWorkspaceMain,
   } from '$lib/stores/keyboardNavigation';
   import type { Snippet } from 'svelte';
 
@@ -109,7 +110,17 @@
         if (get(chimeShortcutActive) && !get(modalOpen)) {
           const active = get(activeWorkspace);
           if (active) {
-            removeDialogRequest.set(active);
+            if (isActiveWorkspaceMain()) {
+              // Close project for main workspace (same as x-button)
+              const allProjects = get(projects);
+              const project = allProjects.find((p) => p.handle === active.projectHandle);
+              if (project) {
+                closeProject(project);
+              }
+            } else {
+              // Open remove dialog for additional workspaces
+              removeDialogRequest.set(active);
+            }
           }
         }
       })
