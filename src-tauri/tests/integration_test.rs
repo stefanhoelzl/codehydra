@@ -96,7 +96,9 @@ fn create_test_app_state() -> TestContext {
 
     // Use a temp directory for project store to avoid polluting real app-data
     let project_store_dir = TempDir::new().expect("Failed to create temp dir for project store");
-    let project_store = Arc::new(ProjectStore::with_dir(project_store_dir.path().to_path_buf()));
+    let project_store = Arc::new(ProjectStore::with_dir(
+        project_store_dir.path().to_path_buf(),
+    ));
 
     let agent_status_manager = Arc::new(AgentStatusManager::new());
     let state = Arc::new(AppState::new(manager, project_store, agent_status_manager));
@@ -142,7 +144,9 @@ async fn test_close_project_removes_from_state_and_persistence() {
     let persisted_projects = ctx.state.project_store().load_all_projects().await.unwrap();
     assert!(persisted_projects.contains(&test_repo.path().to_path_buf()));
 
-    close_project_impl(&ctx.state, handle.clone()).await.unwrap();
+    close_project_impl(&ctx.state, handle.clone())
+        .await
+        .unwrap();
 
     // Verify project is removed from memory
     let result = discover_workspaces_impl(&ctx.state, handle).await;
@@ -185,7 +189,9 @@ async fn test_reopen_project_after_closing() {
         .unwrap();
 
     // Close the project
-    close_project_impl(&ctx.state, handle1.clone()).await.unwrap();
+    close_project_impl(&ctx.state, handle1.clone())
+        .await
+        .unwrap();
 
     // Reopen the same project
     let handle2 = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())

@@ -1,21 +1,30 @@
 use crate::agent_status::AgentStatusCounts;
-use crate::agent_status_provider::{AgentStatusError, AgentStatusProvider, AgentStatusProviderFactory};
-use crate::opencode::{discovery::OpenCodeDiscoveryService, client::DefaultClientFactory, ClientFactory};
+use crate::agent_status_provider::{
+    AgentStatusError, AgentStatusProvider, AgentStatusProviderFactory,
+};
 use crate::opencode::types::{SessionStatus, SessionStatusEventProperties};
+use crate::opencode::{
+    client::DefaultClientFactory, discovery::OpenCodeDiscoveryService, ClientFactory,
+};
 use async_trait::async_trait;
 use futures::StreamExt;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 /// Events from per-port monitor tasks
 enum PortUpdate {
-    Status { port: u16, counts: AgentStatusCounts },
-    Disconnected { port: u16 },
+    Status {
+        port: u16,
+        counts: AgentStatusCounts,
+    },
+    Disconnected {
+        port: u16,
+    },
 }
 
 #[derive(Debug)]
@@ -30,10 +39,7 @@ pub struct OpenCodeProvider {
 }
 
 impl OpenCodeProvider {
-    pub fn new(
-        workspace_path: PathBuf,
-        discovery_service: Arc<OpenCodeDiscoveryService>,
-    ) -> Self {
+    pub fn new(workspace_path: PathBuf, discovery_service: Arc<OpenCodeDiscoveryService>) -> Self {
         let (tx, _) = broadcast::channel(16);
         Self {
             workspace_path,
@@ -65,9 +71,11 @@ impl OpenCodeProvider {
 
     /// Aggregate counts from all active ports
     fn aggregate_counts(port_counts: &HashMap<u16, AgentStatusCounts>) -> AgentStatusCounts {
-        port_counts.values().fold(AgentStatusCounts::default(), |acc, c| {
-            AgentStatusCounts::new(acc.idle + c.idle, acc.busy + c.busy)
-        })
+        port_counts
+            .values()
+            .fold(AgentStatusCounts::default(), |acc, c| {
+                AgentStatusCounts::new(acc.idle + c.idle, acc.busy + c.busy)
+            })
     }
 
     /// Emit aggregated counts to sender and update current_counts
@@ -115,9 +123,11 @@ impl OpenCodeProvider {
                             let mut changed = false;
 
                             if event.event_type == "session.status" {
-                                if let Ok(props) = serde_json::from_value::<SessionStatusEventProperties>(
-                                    event.properties.clone(),
-                                ) {
+                                if let Ok(props) =
+                                    serde_json::from_value::<SessionStatusEventProperties>(
+                                        event.properties.clone(),
+                                    )
+                                {
                                     session_statuses.insert(props.session_id, props.status);
                                     changed = true;
                                 }
@@ -125,7 +135,8 @@ impl OpenCodeProvider {
                                 if let Some(session_id) =
                                     event.properties.get("sessionID").and_then(|v| v.as_str())
                                 {
-                                    session_statuses.insert(session_id.to_string(), SessionStatus::Idle);
+                                    session_statuses
+                                        .insert(session_id.to_string(), SessionStatus::Idle);
                                     changed = true;
                                 }
                             } else if event.event_type == "session.deleted" {
@@ -158,7 +169,9 @@ impl OpenCodeProvider {
 
     /// Calculate counts from session status map
     /// IMPORTANT: When connected but no sessions, report 1 idle (green indicator)
-    fn counts_from_sessions(session_statuses: &HashMap<String, SessionStatus>) -> AgentStatusCounts {
+    fn counts_from_sessions(
+        session_statuses: &HashMap<String, SessionStatus>,
+    ) -> AgentStatusCounts {
         let mut idle = 0u32;
         let mut busy = 0u32;
 
@@ -303,7 +316,7 @@ impl AgentStatusProvider for OpenCodeProvider {
 
     async fn start(&self) -> Result<(), AgentStatusError> {
         if self.active.swap(true, Ordering::Relaxed) {
-             return Err(AgentStatusError::AlreadyStarted);
+            return Err(AgentStatusError::AlreadyStarted);
         }
 
         let wp = self.workspace_path.clone();
@@ -323,9 +336,9 @@ impl AgentStatusProvider for OpenCodeProvider {
 
     async fn stop(&self) -> Result<(), AgentStatusError> {
         if !self.active.swap(false, Ordering::Relaxed) {
-             return Err(AgentStatusError::NotStarted);
+            return Err(AgentStatusError::NotStarted);
         }
-        
+
         let mut handle = self.task_handle.lock().await;
         if let Some(h) = handle.take() {
             h.abort();
@@ -358,7 +371,8 @@ impl AgentStatusProviderFactory for OpenCodeProviderFactory {
         &self,
         workspace_path: &Path,
     ) -> Result<Vec<Box<dyn AgentStatusProvider>>, AgentStatusError> {
-        let provider = OpenCodeProvider::new(workspace_path.to_path_buf(), self.discovery_service.clone());
+        let provider =
+            OpenCodeProvider::new(workspace_path.to_path_buf(), self.discovery_service.clone());
         Ok(vec![Box::new(provider)])
     }
 
@@ -370,9 +384,11 @@ impl AgentStatusProviderFactory for OpenCodeProviderFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::opencode::{MockClientFactory, MockOpenCodeClient, MockPortScanner, MockInstanceProbe};
     use crate::opencode::discovery::OpenCodeDiscoveryService;
     use crate::opencode::types::SessionStatus;
+    use crate::opencode::{
+        MockClientFactory, MockInstanceProbe, MockOpenCodeClient, MockPortScanner,
+    };
     use crate::opencode::{MockProcessTree, PortInfo};
     use futures::stream::{self, BoxStream};
     use std::collections::{HashMap, HashSet};
@@ -397,9 +413,12 @@ mod tests {
         let mut mock_probe = MockInstanceProbe::new();
         let mock_tree = create_mock_process_tree();
 
-        mock_scanner
-            .expect_get_active_listeners()
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+        mock_scanner.expect_get_active_listeners().returning(|| {
+            Ok(vec![PortInfo {
+                port: 3000,
+                pid: OPENCODE_PID,
+            }])
+        });
 
         mock_probe
             .expect_probe()
@@ -416,16 +435,26 @@ mod tests {
         discovery.scan_and_update().await.unwrap();
 
         let mut mock_factory = MockClientFactory::new();
-        mock_factory.expect_create_client()
+        mock_factory
+            .expect_create_client()
             .with(mockall::predicate::eq(3000))
             .returning(|_| {
                 let mut client = MockOpenCodeClient::new();
-                client.expect_get_session_status()
+                client
+                    .expect_get_session_status()
                     .returning(|| Box::pin(async { Ok(HashMap::new()) }));
-                client.expect_subscribe_events()
-                    .returning(|| Box::pin(async { 
-                        Ok(Box::pin(stream::pending()) as BoxStream<'static, Result<crate::opencode::types::Event, crate::opencode::OpenCodeError>>) 
-                    })); 
+                client.expect_subscribe_events().returning(|| {
+                    Box::pin(async {
+                        Ok(Box::pin(stream::pending())
+                            as BoxStream<
+                                'static,
+                                Result<
+                                    crate::opencode::types::Event,
+                                    crate::opencode::OpenCodeError,
+                                >,
+                            >)
+                    })
+                });
                 Box::new(client)
             });
 
@@ -447,9 +476,12 @@ mod tests {
         let mut mock_probe = MockInstanceProbe::new();
         let mock_tree = create_mock_process_tree();
 
-        mock_scanner
-            .expect_get_active_listeners()
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+        mock_scanner.expect_get_active_listeners().returning(|| {
+            Ok(vec![PortInfo {
+                port: 3000,
+                pid: OPENCODE_PID,
+            }])
+        });
         mock_probe
             .expect_probe()
             .returning(|_| Box::pin(async { Ok(PathBuf::from("/foo")) }));
@@ -462,49 +494,54 @@ mod tests {
         discovery.scan_and_update().await.unwrap();
 
         let mut mock_factory = MockClientFactory::new();
-        mock_factory.expect_create_client()
-            .returning(|_| {
-                let mut client = MockOpenCodeClient::new();
-                // Initial status: empty (no sessions)
-                client.expect_get_session_status()
-                    .times(1)
-                    .returning(|| Box::pin(async { Ok(HashMap::new()) }));
-                
-                // Event stream that sends a session.status event
-                client.expect_subscribe_events()
-                    .returning(|| Box::pin(async {
-                        let event = crate::opencode::types::Event {
-                            event_type: "session.status".to_string(),
-                            properties: serde_json::json!({
-                                "sessionID": "123",
-                                "status": { "type": "busy" }
-                            }),
-                        };
-                        let s = stream::iter(vec![Ok(event)]).chain(stream::pending());
-                        Ok(Box::pin(s) as BoxStream<'static, Result<crate::opencode::types::Event, crate::opencode::OpenCodeError>>)
-                    }));
-                    
-                // After event, status shows busy session
-                client.expect_get_session_status()
-                    .times(1)
-                    .returning(|| Box::pin(async { 
-                        let mut map = HashMap::new();
-                        map.insert("123".to_string(), SessionStatus::Busy);
-                        Ok(map)
-                    }));
-                    
-                Box::new(client)
+        mock_factory.expect_create_client().returning(|_| {
+            let mut client = MockOpenCodeClient::new();
+            // Initial status: empty (no sessions)
+            client
+                .expect_get_session_status()
+                .times(1)
+                .returning(|| Box::pin(async { Ok(HashMap::new()) }));
+
+            // Event stream that sends a session.status event
+            client.expect_subscribe_events().returning(|| {
+                Box::pin(async {
+                    let event = crate::opencode::types::Event {
+                        event_type: "session.status".to_string(),
+                        properties: serde_json::json!({
+                            "sessionID": "123",
+                            "status": { "type": "busy" }
+                        }),
+                    };
+                    let s = stream::iter(vec![Ok(event)]).chain(stream::pending());
+                    Ok(Box::pin(s)
+                        as BoxStream<
+                            'static,
+                            Result<crate::opencode::types::Event, crate::opencode::OpenCodeError>,
+                        >)
+                })
             });
+
+            // After event, status shows busy session
+            client.expect_get_session_status().times(1).returning(|| {
+                Box::pin(async {
+                    let mut map = HashMap::new();
+                    map.insert("123".to_string(), SessionStatus::Busy);
+                    Ok(map)
+                })
+            });
+
+            Box::new(client)
+        });
 
         let provider = OpenCodeProvider::new_with_factory(
             PathBuf::from("/foo"),
             discovery,
             Arc::new(mock_factory),
         );
-        
+
         let mut rx = provider.subscribe();
         provider.start().await.unwrap();
-        
+
         let mut found_busy = false;
         let timeout = tokio::time::sleep(std::time::Duration::from_secs(1));
         tokio::pin!(timeout);
@@ -522,7 +559,7 @@ mod tests {
                 }
             }
         }
-        
+
         assert!(found_busy, "Did not receive busy status update");
         provider.stop().await.unwrap();
     }
@@ -544,8 +581,14 @@ mod tests {
 
         mock_scanner.expect_get_active_listeners().returning(|| {
             Ok(vec![
-                PortInfo { port: 3000, pid: 1001 },
-                PortInfo { port: 3001, pid: 1002 },
+                PortInfo {
+                    port: 3000,
+                    pid: 1001,
+                },
+                PortInfo {
+                    port: 3001,
+                    pid: 1002,
+                },
             ])
         });
 
@@ -569,7 +612,7 @@ mod tests {
 
         // Create mock factory that creates clients for both ports
         let mut mock_factory = MockClientFactory::new();
-        
+
         // Port 3000: sends idle event
         mock_factory
             .expect_create_client()
@@ -580,7 +623,13 @@ mod tests {
                     Box::pin(async {
                         // Connected but no sessions - will report 1 idle
                         Ok(Box::pin(stream::pending())
-                            as BoxStream<'static, Result<crate::opencode::types::Event, crate::opencode::OpenCodeError>>)
+                            as BoxStream<
+                                'static,
+                                Result<
+                                    crate::opencode::types::Event,
+                                    crate::opencode::OpenCodeError,
+                                >,
+                            >)
                     })
                 });
                 Box::new(client)
@@ -603,7 +652,13 @@ mod tests {
                         };
                         let s = stream::iter(vec![Ok(event)]).chain(stream::pending());
                         Ok(Box::pin(s)
-                            as BoxStream<'static, Result<crate::opencode::types::Event, crate::opencode::OpenCodeError>>)
+                            as BoxStream<
+                                'static,
+                                Result<
+                                    crate::opencode::types::Event,
+                                    crate::opencode::OpenCodeError,
+                                >,
+                            >)
                     })
                 });
                 Box::new(client)
@@ -638,7 +693,10 @@ mod tests {
             }
         }
 
-        assert!(found_aggregated, "Did not receive aggregated status with both idle and busy");
+        assert!(
+            found_aggregated,
+            "Did not receive aggregated status with both idle and busy"
+        );
         provider.stop().await.unwrap();
     }
 }

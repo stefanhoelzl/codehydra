@@ -1,5 +1,6 @@
 use crate::platform::paths::{
-    get_project_workspaces_dir, sanitize_workspace_name_for_path, unsanitize_workspace_name_from_path,
+    get_project_workspaces_dir, sanitize_workspace_name_for_path,
+    unsanitize_workspace_name_from_path,
 };
 use crate::workspace_provider::{
     BranchInfo, RemovalResult, Workspace, WorkspaceError, WorkspaceProvider, DISCOVER_TIMEOUT_SECS,
@@ -59,9 +60,7 @@ impl WorkspaceProvider for GitWorktreeProvider {
     async fn new(project_root: PathBuf) -> Result<Self, WorkspaceError> {
         // Validate path is absolute
         if !project_root.is_absolute() {
-            return Err(WorkspaceError::InvalidPath(
-                "Path must be absolute".into(),
-            ));
+            return Err(WorkspaceError::InvalidPath("Path must be absolute".into()));
         }
 
         let root = project_root.clone();
@@ -262,9 +261,8 @@ impl GitWorktreeProvider {
         let workspace_path = workspace_path.to_path_buf();
 
         // Add timeout to prevent hanging on large repos
-        let future = tokio::task::spawn_blocking(move || {
-            has_uncommitted_changes_blocking(&workspace_path)
-        });
+        let future =
+            tokio::task::spawn_blocking(move || has_uncommitted_changes_blocking(&workspace_path));
 
         tokio::time::timeout(Duration::from_secs(DISCOVER_TIMEOUT_SECS), future)
             .await
@@ -337,7 +335,9 @@ fn remove_workspace_blocking(
 ) -> Result<RemovalResult, WorkspaceError> {
     // Check if workspace path exists
     if !workspace_path.exists() {
-        return Err(WorkspaceError::WorkspaceNotFound(workspace_path.to_path_buf()));
+        return Err(WorkspaceError::WorkspaceNotFound(
+            workspace_path.to_path_buf(),
+        ));
     }
 
     // Open the worktree repo to get its branch before removing
@@ -362,9 +362,7 @@ fn remove_workspace_blocking(
     let wt_name = workspace_path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| {
-            WorkspaceError::WorktreeRemovalFailed("Invalid worktree path".to_string())
-        })?
+        .ok_or_else(|| WorkspaceError::WorktreeRemovalFailed("Invalid worktree path".to_string()))?
         .to_string();
 
     // Drop the worktree repo handle before removing the directory
@@ -440,11 +438,7 @@ fn process_worktree(
     project_root: &Path,
 ) -> Result<GitWorktree, WorkspaceError> {
     // Read gitdir file to get actual worktree path
-    let gitdir_path = repo
-        .path()
-        .join("worktrees")
-        .join(wt_name)
-        .join("gitdir");
+    let gitdir_path = repo.path().join("worktrees").join(wt_name).join("gitdir");
 
     let gitdir_content = std::fs::read_to_string(&gitdir_path)
         .map_err(|_| WorkspaceError::InvalidWorkspace("Cannot read gitdir".to_string()))?;
@@ -569,10 +563,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let result = GitWorktreeProvider::new(temp.path().to_path_buf()).await;
 
-        assert!(matches!(
-            result,
-            Err(WorkspaceError::NotGitRepository(_))
-        ));
+        assert!(matches!(result, Err(WorkspaceError::NotGitRepository(_))));
     }
 
     #[tokio::test]
@@ -736,7 +727,7 @@ mod tests {
             .unwrap();
 
         let workspaces = provider.discover().await.unwrap();
-        
+
         // Empty repository still returns main worktree but with no branch
         assert_eq!(workspaces.len(), 1);
         assert_eq!(workspaces[0].branch(), None);
@@ -773,7 +764,10 @@ mod tests {
             .unwrap();
 
         let workspaces = provider.discover().await.unwrap();
-        let wt = workspaces.iter().find(|w| w.name() == "oauth-work").unwrap();
+        let wt = workspaces
+            .iter()
+            .find(|w| w.name() == "oauth-work")
+            .unwrap();
 
         assert_eq!(wt.branch(), Some("feature/auth/oauth"));
     }
@@ -845,8 +839,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result =
-            tokio::time::timeout(Duration::from_secs(5), provider.discover()).await;
+        let result = tokio::time::timeout(Duration::from_secs(5), provider.discover()).await;
 
         assert!(result.is_ok());
         assert!(result.unwrap().is_ok());
@@ -875,10 +868,7 @@ mod tests {
         assert!(!normal.is_detached());
         assert_eq!(normal.branch(), Some("branch-1"));
 
-        let detached = workspaces
-            .iter()
-            .find(|w| w.path() == wt_detached)
-            .unwrap();
+        let detached = workspaces.iter().find(|w| w.path() == wt_detached).unwrap();
         assert!(detached.branch().is_none());
         assert!(detached.is_detached());
     }
@@ -1105,9 +1095,7 @@ mod tests {
         let workspace_path = get_project_workspaces_dir(test_repo.path()).join("pre-existing");
         std::fs::create_dir_all(&workspace_path).unwrap();
 
-        let result = provider
-            .create_workspace("pre-existing", main_branch)
-            .await;
+        let result = provider.create_workspace("pre-existing", main_branch).await;
 
         assert!(matches!(
             result,
@@ -1165,7 +1153,10 @@ mod tests {
         assert_eq!(workspace.branch(), Some("feature/auth/oauth"));
         // Path should use sanitized name (% instead of /)
         assert!(
-            workspace.path().to_string_lossy().contains("feature%auth%oauth"),
+            workspace
+                .path()
+                .to_string_lossy()
+                .contains("feature%auth%oauth"),
             "Path should contain sanitized name: {:?}",
             workspace.path()
         );

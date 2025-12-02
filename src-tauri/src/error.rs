@@ -132,10 +132,7 @@ mod tests {
     #[test]
     fn test_error_display_no_available_ports() {
         let error = CodeServerError::NoAvailablePorts { start: 50000 };
-        assert_eq!(
-            format!("{error}"),
-            "No available ports starting from 50000"
-        );
+        assert_eq!(format!("{error}"), "No available ports starting from 50000");
     }
 
     #[test]
@@ -149,10 +146,7 @@ mod tests {
     #[test]
     fn test_error_display_health_check_failed() {
         let error = CodeServerError::HealthCheckFailed { attempts: 300 };
-        assert_eq!(
-            format!("{error}"),
-            "Health check failed after 300 attempts"
-        );
+        assert_eq!(format!("{error}"), "Health check failed after 300 attempts");
     }
 
     #[test]

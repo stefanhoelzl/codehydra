@@ -12,9 +12,8 @@ pub struct DefaultPortScanner;
 
 impl PortScanner for DefaultPortScanner {
     fn get_active_listeners(&self) -> Result<Vec<PortInfo>, OpenCodeError> {
-        let list = listeners::get_all().map_err(|e| {
-            OpenCodeError::Io(std::io::Error::other(e.to_string()))
-        })?;
+        let list = listeners::get_all()
+            .map_err(|e| OpenCodeError::Io(std::io::Error::other(e.to_string())))?;
         Ok(list
             .into_iter()
             .map(|l| PortInfo {
@@ -53,14 +52,14 @@ impl InstanceProbe for DefaultInstanceProbe {
         let url = format!("http://localhost:{port}/path");
         let resp = self.client.get(&url).send().await?;
         let data: crate::opencode::types::PathResponse = resp.json().await?;
-        
+
         let path_str = if !data.worktree.is_empty() {
             data.worktree
         } else {
             data.directory
         };
         let path = PathBuf::from(path_str);
-        
+
         // Try to canonicalize the path to handle symlinks consistently
         // If canonicalization fails (e.g., path doesn't exist), use the original
         Ok(path.canonicalize().unwrap_or(path))
@@ -143,29 +142,29 @@ impl OpenCodeDiscoveryService {
     /// Returns an empty Vec if no instances are found.
     pub async fn get_ports(&self, path: &Path) -> Vec<u16> {
         let map = self.active_instances.read().await;
-        
+
         // Try exact match first
         if let Some(ports) = map.get(path) {
             return ports.iter().copied().collect();
         }
-        
+
         // Try canonicalized path match (handles symlinks)
         let canonical = match path.canonicalize() {
             Ok(c) => c,
             Err(_) => return Vec::new(),
         };
-        
+
         if let Some(ports) = map.get(&canonical) {
             return ports.iter().copied().collect();
         }
-        
+
         // Check canonicalized keys - O(n) but rare path
         for (stored_path, ports) in map.iter() {
             if stored_path.canonicalize().ok() == Some(canonical.clone()) {
                 return ports.iter().copied().collect();
             }
         }
-        
+
         Vec::new()
     }
 
@@ -357,9 +356,12 @@ mod tests {
         let mock_tree = create_mock_process_tree();
 
         // Setup: Scanner returns port 3000 from descendant process
-        mock_scanner
-            .expect_get_active_listeners()
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+        mock_scanner.expect_get_active_listeners().returning(|| {
+            Ok(vec![PortInfo {
+                port: 3000,
+                pid: OPENCODE_PID,
+            }])
+        });
 
         // Setup: Probe confirms it's /foo/bar
         mock_probe
@@ -397,7 +399,12 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: OPENCODE_PID,
+                }])
+            });
 
         // 2. Empty (Died)
         mock_scanner
@@ -459,9 +466,12 @@ mod tests {
         let mock_tree = create_mock_process_tree();
 
         // Scanner returns port 3000 twice
-        mock_scanner
-            .expect_get_active_listeners()
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+        mock_scanner.expect_get_active_listeners().returning(|| {
+            Ok(vec![PortInfo {
+                port: 3000,
+                pid: OPENCODE_PID,
+            }])
+        });
 
         // Probe fails (not OpenCode) - should only be called ONCE
         mock_probe
@@ -508,7 +518,12 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: OPENCODE_PID,
+                }])
+            });
 
         // Scan 2: Port gone
         mock_scanner
@@ -522,7 +537,12 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: OPENCODE_PID,
+                }])
+            });
 
         // Probe called twice: first fail, then success
         let mut probe_seq = mockall::Sequence::new();
@@ -593,14 +613,24 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: 1001 }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: 1001,
+                }])
+            });
 
         // Scan 2: Port 3000 from PID 1002 (different process, OpenCode)
         mock_scanner
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: 1002 }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: 1002,
+                }])
+            });
 
         // Probe: First fails, second succeeds
         let mut probe_seq = mockall::Sequence::new();
@@ -656,8 +686,14 @@ mod tests {
         // Scanner returns two ports: one descendant, one not
         mock_scanner.expect_get_active_listeners().returning(|| {
             Ok(vec![
-                PortInfo { port: 3000, pid: 1001 }, // Descendant
-                PortInfo { port: 4000, pid: 9999 }, // Not a descendant
+                PortInfo {
+                    port: 3000,
+                    pid: 1001,
+                }, // Descendant
+                PortInfo {
+                    port: 4000,
+                    pid: 9999,
+                }, // Not a descendant
             ])
         });
 
@@ -729,14 +765,24 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: OPENCODE_PID,
+                }])
+            });
 
         // Scan 2: Same port, but code-server was restarted, so should re-probe
         mock_scanner
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: OPENCODE_PID,
+                }])
+            });
 
         // Both scans trigger probe
         mock_probe.expect_probe().times(2).returning(|_| {
@@ -779,8 +825,14 @@ mod tests {
 
         mock_scanner.expect_get_active_listeners().returning(|| {
             Ok(vec![
-                PortInfo { port: 3000, pid: 1001 },
-                PortInfo { port: 3001, pid: 1002 },
+                PortInfo {
+                    port: 3000,
+                    pid: 1001,
+                },
+                PortInfo {
+                    port: 3001,
+                    pid: 1002,
+                },
             ])
         });
 
@@ -819,7 +871,12 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: OPENCODE_PID,
+                }])
+            });
 
         // Scan 2: Stopped
         mock_scanner
@@ -833,7 +890,12 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: OPENCODE_PID }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: OPENCODE_PID,
+                }])
+            });
 
         // Probed twice (initial and restart)
         mock_probe
@@ -880,8 +942,14 @@ mod tests {
         // Scanner returns both ports
         mock_scanner.expect_get_active_listeners().returning(|| {
             Ok(vec![
-                PortInfo { port: 3000, pid: 1001 },
-                PortInfo { port: 3001, pid: 1002 },
+                PortInfo {
+                    port: 3000,
+                    pid: 1001,
+                },
+                PortInfo {
+                    port: 3001,
+                    pid: 1002,
+                },
             ])
         });
 
@@ -936,8 +1004,14 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(|| {
                 Ok(vec![
-                    PortInfo { port: 3000, pid: 1001 },
-                    PortInfo { port: 3001, pid: 1002 },
+                    PortInfo {
+                        port: 3000,
+                        pid: 1001,
+                    },
+                    PortInfo {
+                        port: 3001,
+                        pid: 1002,
+                    },
                 ])
             });
 
@@ -946,7 +1020,12 @@ mod tests {
             .expect_get_active_listeners()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|| Ok(vec![PortInfo { port: 3000, pid: 1001 }]));
+            .returning(|| {
+                Ok(vec![PortInfo {
+                    port: 3000,
+                    pid: 1001,
+                }])
+            });
 
         // Both ports return the same workspace path
         mock_probe
@@ -997,8 +1076,14 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(|| {
                 Ok(vec![
-                    PortInfo { port: 3000, pid: 1001 },
-                    PortInfo { port: 3001, pid: 1002 },
+                    PortInfo {
+                        port: 3000,
+                        pid: 1001,
+                    },
+                    PortInfo {
+                        port: 3001,
+                        pid: 1002,
+                    },
                 ])
             });
 

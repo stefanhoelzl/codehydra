@@ -162,7 +162,10 @@ mod tests {
 
         // Set executable
         let result = set_executable(&file_path);
-        assert!(result.is_ok(), "Should successfully set executable permissions");
+        assert!(
+            result.is_ok(),
+            "Should successfully set executable permissions"
+        );
 
         // Verify on Unix
         #[cfg(unix)]

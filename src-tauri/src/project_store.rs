@@ -388,7 +388,9 @@ mod tests {
         // Add an extra file to the project directory (simulating user data)
         let dir_name = ProjectStore::project_dir_name(&project_path);
         let extra_file = store.projects_dir.join(dir_name).join("user-data.txt");
-        tokio::fs::write(&extra_file, "important user data").await.unwrap();
+        tokio::fs::write(&extra_file, "important user data")
+            .await
+            .unwrap();
 
         // Verify setup
         let projects_before = store.load_all_projects().await.unwrap();

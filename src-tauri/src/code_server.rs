@@ -110,7 +110,10 @@ impl CodeServerManager {
         Ok(port)
     }
 
-    async fn spawn_code_server(&self, port: u16) -> Result<Box<dyn TokioChildWrapper>, CodeServerError> {
+    async fn spawn_code_server(
+        &self,
+        port: u16,
+    ) -> Result<Box<dyn TokioChildWrapper>, CodeServerError> {
         let node_path = &self.config.node_binary_path;
 
         // Build PATH with node_modules/.bin so code-server can find opencode
@@ -123,7 +126,11 @@ impl CodeServerManager {
         };
 
         // Prepare arguments for code-server as owned strings
-        let code_server_entry = self.config.code_server_entry_path().to_string_lossy().into_owned();
+        let code_server_entry = self
+            .config
+            .code_server_entry_path()
+            .to_string_lossy()
+            .into_owned();
         let bind_addr = format!("127.0.0.1:{port}");
         let user_data_dir = self.config.user_data_dir.to_string_lossy().into_owned();
         let extensions_dir = self.config.extensions_dir.to_string_lossy().into_owned();
@@ -144,7 +151,13 @@ impl CodeServerManager {
         ];
 
         // Use platform-independent process spawning with process groups
-        spawn_code_server_with_env(node_path, &args, &self.config.runtime_dir, &[("PATH", &new_path)]).await
+        spawn_code_server_with_env(
+            node_path,
+            &args,
+            &self.config.runtime_dir,
+            &[("PATH", &new_path)],
+        )
+        .await
     }
 
     pub async fn stop(&self) -> Result<(), CodeServerError> {
@@ -307,9 +320,7 @@ pub async fn start_code_server_internal(
 }
 
 /// Internal function to stop code-server.
-pub async fn stop_code_server_internal(
-    manager: &CodeServerManager,
-) -> Result<(), CodeServerError> {
+pub async fn stop_code_server_internal(manager: &CodeServerManager) -> Result<(), CodeServerError> {
     manager.stop().await
 }
 
@@ -355,7 +366,10 @@ mod tests {
         };
 
         let url = instance.url_for_folder(Path::new("/home/user/my project"));
-        assert_eq!(url, "http://localhost:50000/?folder=/home/user/my%20project");
+        assert_eq!(
+            url,
+            "http://localhost:50000/?folder=/home/user/my%20project"
+        );
     }
 
     #[test]

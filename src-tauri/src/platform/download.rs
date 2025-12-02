@@ -79,7 +79,10 @@ mod tests {
 
         for platform in platforms {
             let checksum = node_checksum(platform);
-            assert!(!checksum.is_empty(), "Checksum for {platform:?} should not be empty");
+            assert!(
+                !checksum.is_empty(),
+                "Checksum for {platform:?} should not be empty"
+            );
         }
     }
 
@@ -89,7 +92,11 @@ mod tests {
     #[test]
     fn test_node_version_is_valid() {
         let parts: Vec<&str> = NODE_VERSION.split('.').collect();
-        assert_eq!(parts.len(), 3, "Version should have 3 parts: {NODE_VERSION}");
+        assert_eq!(
+            parts.len(),
+            3,
+            "Version should have 3 parts: {NODE_VERSION}"
+        );
         for part in parts {
             assert!(
                 part.parse::<u32>().is_ok(),

@@ -105,9 +105,7 @@ impl AgentStatusProviderFactory for TestFactory {
 #[tokio::test]
 async fn test_full_status_flow() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     let workspace = PathBuf::from("/test/workspace");
 
@@ -131,9 +129,7 @@ async fn test_full_status_flow() {
 #[tokio::test]
 async fn test_event_emission() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     let workspace = PathBuf::from("/test/workspace");
     manager.init_workspace(&workspace).await.unwrap();
@@ -158,9 +154,7 @@ async fn test_trailing_edge_debounce_emits_final_state() {
     // rapid updates, even if the updates stop within the debounce window
 
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     let workspace = PathBuf::from("/test/debounce");
     manager.init_workspace(&workspace).await.unwrap();
@@ -184,9 +178,7 @@ async fn test_trailing_edge_debounce_emits_final_state() {
 #[tokio::test]
 async fn test_multiple_workspaces() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     let ws1 = PathBuf::from("/workspace1");
     let ws2 = PathBuf::from("/workspace2");
@@ -211,9 +203,7 @@ async fn test_multiple_workspaces() {
 #[tokio::test]
 async fn test_init_workspace_idempotent() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     let workspace = PathBuf::from("/test/idempotent");
 
@@ -237,9 +227,7 @@ async fn test_init_workspace_idempotent() {
 #[tokio::test]
 async fn test_get_status_after_remove() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     let workspace = PathBuf::from("/test/remove");
     manager.init_workspace(&workspace).await.unwrap();
@@ -257,9 +245,7 @@ async fn test_get_status_after_remove() {
 #[tokio::test]
 async fn test_concurrent_init_same_workspace() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     let workspace = PathBuf::from("/test/concurrent");
 
@@ -290,9 +276,7 @@ async fn test_concurrent_init_same_workspace() {
 #[tokio::test]
 async fn test_shutdown_cleans_up_all_workspaces() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     // Initialize several workspaces
     for i in 0..5 {
@@ -314,9 +298,7 @@ async fn test_shutdown_cleans_up_all_workspaces() {
 #[tokio::test]
 async fn test_no_deadlock_under_concurrent_access() {
     let manager = Arc::new(AgentStatusManager::new());
-    manager
-        .register_factory(Box::new(TestFactory))
-        .await;
+    manager.register_factory(Box::new(TestFactory)).await;
 
     // Initialize several workspaces
     for i in 0..5 {

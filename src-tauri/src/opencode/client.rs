@@ -36,18 +36,18 @@ impl OpenCodeClient for DefaultOpenCodeClient {
     async fn get_session_status(&self) -> Result<types::SessionStatusMap, OpenCodeError> {
         let url = format!("{}/session/status", self.base_url);
         let resp = self.client.get(&url).send().await?;
-        
+
         // The /session/status endpoint returns:
         // - [] (empty array) when no sessions are busy (all idle)
         // - A map { sessionId: status } when sessions have explicit statuses
         // We need to handle both cases
         let text = resp.text().await?;
-        
+
         // Try to parse as map first
         if let Ok(status_map) = serde_json::from_str::<types::SessionStatusMap>(&text) {
             return Ok(status_map);
         }
-        
+
         // If that fails, try as empty array (which means "all idle")
         if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&text) {
             if arr.is_empty() {
@@ -55,9 +55,11 @@ impl OpenCodeClient for DefaultOpenCodeClient {
                 return Ok(types::SessionStatusMap::new());
             }
         }
-        
+
         // If neither works, return a JSON parsing error
-        Err(OpenCodeError::Json(serde_json::from_str::<types::SessionStatusMap>(&text).unwrap_err()))
+        Err(OpenCodeError::Json(
+            serde_json::from_str::<types::SessionStatusMap>(&text).unwrap_err(),
+        ))
     }
 
     async fn subscribe_events(

@@ -99,7 +99,10 @@ mod tests {
         assert!(platform.is_linux());
         assert!(!platform.is_macos());
         assert!(!platform.is_windows());
-        assert_eq!(platform.node_archive_name("24.11.1"), "node-v24.11.1-linux-x64");
+        assert_eq!(
+            platform.node_archive_name("24.11.1"),
+            "node-v24.11.1-linux-x64"
+        );
         assert_eq!(platform.node_binary_name(), "node");
         assert_eq!(platform.node_archive_extension(), ".tar.xz");
     }
@@ -110,7 +113,10 @@ mod tests {
         assert!(platform.is_macos());
         assert!(!platform.is_linux());
         assert!(!platform.is_windows());
-        assert_eq!(platform.node_archive_name("24.11.1"), "node-v24.11.1-darwin-arm64");
+        assert_eq!(
+            platform.node_archive_name("24.11.1"),
+            "node-v24.11.1-darwin-arm64"
+        );
         assert_eq!(platform.node_binary_name(), "node");
         assert_eq!(platform.node_archive_extension(), ".tar.gz");
     }
@@ -121,7 +127,10 @@ mod tests {
         assert!(platform.is_windows());
         assert!(!platform.is_linux());
         assert!(!platform.is_macos());
-        assert_eq!(platform.node_archive_name("24.11.1"), "node-v24.11.1-win-x64");
+        assert_eq!(
+            platform.node_archive_name("24.11.1"),
+            "node-v24.11.1-win-x64"
+        );
         assert_eq!(platform.node_binary_name(), "node.exe");
         assert_eq!(platform.node_archive_extension(), ".zip");
     }

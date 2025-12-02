@@ -267,15 +267,21 @@ mod tests {
 
         // Test code_server_dir
         assert!(config.code_server_dir().ends_with("code-server"));
-        assert!(config.code_server_dir().starts_with(config.node_modules_dir()));
+        assert!(config
+            .code_server_dir()
+            .starts_with(config.node_modules_dir()));
 
         // Test user_settings_dir
         assert!(config.user_settings_dir().ends_with("User"));
-        assert!(config.user_settings_dir().starts_with(&config.user_data_dir));
+        assert!(config
+            .user_settings_dir()
+            .starts_with(&config.user_data_dir));
 
         // Test settings_json_path
         assert!(config.settings_json_path().ends_with("settings.json"));
-        assert!(config.settings_json_path().starts_with(config.user_settings_dir()));
+        assert!(config
+            .settings_json_path()
+            .starts_with(config.user_settings_dir()));
 
         // Test keybindings_json_path
         assert!(config.keybindings_json_path().ends_with("keybindings.json"));

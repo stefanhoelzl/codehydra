@@ -311,10 +311,16 @@ mod tests {
         let path = temp.path();
 
         let normalized = normalize_path(path);
-        assert!(normalized.is_ok(), "Should successfully normalize existing path");
+        assert!(
+            normalized.is_ok(),
+            "Should successfully normalize existing path"
+        );
 
         let normalized_path = normalized.unwrap();
-        assert!(normalized_path.is_absolute(), "Normalized path should be absolute");
+        assert!(
+            normalized_path.is_absolute(),
+            "Normalized path should be absolute"
+        );
     }
 
     #[test]
@@ -345,7 +351,10 @@ mod tests {
         let relative_path = subdir.join("..");
         let normalized = normalize_path(&relative_path);
 
-        assert!(normalized.is_ok(), "Should normalize path with relative components");
+        assert!(
+            normalized.is_ok(),
+            "Should normalize path with relative components"
+        );
         let normalized_path = normalized.unwrap();
 
         // The normalized path should be equivalent to temp.path() (canonicalized)
@@ -434,7 +443,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_workspace_name_replaces_slashes() {
-        assert_eq!(sanitize_workspace_name_for_path("feature/auth"), "feature%auth");
+        assert_eq!(
+            sanitize_workspace_name_for_path("feature/auth"),
+            "feature%auth"
+        );
         assert_eq!(
             sanitize_workspace_name_for_path("feature/auth/oauth"),
             "feature%auth%oauth"
@@ -443,14 +455,23 @@ mod tests {
 
     #[test]
     fn test_sanitize_workspace_name_preserves_other_chars() {
-        assert_eq!(sanitize_workspace_name_for_path("simple-name"), "simple-name");
-        assert_eq!(sanitize_workspace_name_for_path("with_underscore"), "with_underscore");
+        assert_eq!(
+            sanitize_workspace_name_for_path("simple-name"),
+            "simple-name"
+        );
+        assert_eq!(
+            sanitize_workspace_name_for_path("with_underscore"),
+            "with_underscore"
+        );
         assert_eq!(sanitize_workspace_name_for_path("with.dot"), "with.dot");
     }
 
     #[test]
     fn test_unsanitize_workspace_name_restores_slashes() {
-        assert_eq!(unsanitize_workspace_name_from_path("feature%auth"), "feature/auth");
+        assert_eq!(
+            unsanitize_workspace_name_from_path("feature%auth"),
+            "feature/auth"
+        );
         assert_eq!(
             unsanitize_workspace_name_from_path("feature%auth%oauth"),
             "feature/auth/oauth"
@@ -459,8 +480,14 @@ mod tests {
 
     #[test]
     fn test_unsanitize_workspace_name_preserves_other_chars() {
-        assert_eq!(unsanitize_workspace_name_from_path("simple-name"), "simple-name");
-        assert_eq!(unsanitize_workspace_name_from_path("with_underscore"), "with_underscore");
+        assert_eq!(
+            unsanitize_workspace_name_from_path("simple-name"),
+            "simple-name"
+        );
+        assert_eq!(
+            unsanitize_workspace_name_from_path("with_underscore"),
+            "with_underscore"
+        );
         assert_eq!(unsanitize_workspace_name_from_path("with.dot"), "with.dot");
     }
 

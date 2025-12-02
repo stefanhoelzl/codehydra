@@ -39,7 +39,11 @@ mod tests {
     fn test_node_version_is_valid_semver() {
         // Version should be in semver format (x.y.z)
         let parts: Vec<&str> = NODE_VERSION.split('.').collect();
-        assert_eq!(parts.len(), 3, "NODE_VERSION should have 3 parts: {NODE_VERSION}");
+        assert_eq!(
+            parts.len(),
+            3,
+            "NODE_VERSION should have 3 parts: {NODE_VERSION}"
+        );
         for part in parts {
             assert!(
                 part.parse::<u32>().is_ok(),

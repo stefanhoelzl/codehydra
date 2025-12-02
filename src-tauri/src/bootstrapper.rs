@@ -22,9 +22,9 @@
 
 use crate::config::CodeServerConfig;
 use crate::error::CodeServerError;
-use crate::setup::{SetupEvent, StepState, StepsBuilder};
 use crate::platform::{prepare_binary, Platform};
 use crate::runtime_versions::{get_required_extensions, CODE_SERVER_VERSION};
+use crate::setup::{SetupEvent, StepState, StepsBuilder};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read, Write};
@@ -166,15 +166,15 @@ impl Default for ReqwestHttpClient {
 #[async_trait]
 impl HttpClient for ReqwestHttpClient {
     async fn download(&self, url: &str) -> Result<Vec<u8>, CodeServerError> {
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| CodeServerError::DownloadFailed {
-                component: url.to_string(),
-                source: e,
-            })?;
+        let response =
+            self.client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| CodeServerError::DownloadFailed {
+                    component: url.to_string(),
+                    source: e,
+                })?;
 
         let bytes = response
             .bytes()
@@ -200,15 +200,15 @@ impl ReqwestHttpClient {
     ) -> Result<Vec<u8>, CodeServerError> {
         use futures::StreamExt;
 
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| CodeServerError::DownloadFailed {
-                component: url.to_string(),
-                source: e,
-            })?;
+        let response =
+            self.client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| CodeServerError::DownloadFailed {
+                    component: url.to_string(),
+                    source: e,
+                })?;
 
         let total_size = response.content_length().unwrap_or(0);
         let mut downloaded: u64 = 0;
@@ -288,8 +288,8 @@ impl ArchiveExtractorImpl {
         archive_name: &str,
     ) -> Result<std::path::PathBuf, CodeServerError> {
         let cursor = Cursor::new(archive_data);
-        let mut archive =
-            zip::ZipArchive::new(cursor).map_err(|e| CodeServerError::ExtractionFailed(e.to_string()))?;
+        let mut archive = zip::ZipArchive::new(cursor)
+            .map_err(|e| CodeServerError::ExtractionFailed(e.to_string()))?;
 
         for i in 0..archive.len() {
             let mut file = archive
@@ -302,27 +302,32 @@ impl ArchiveExtractorImpl {
             };
 
             if file.is_dir() {
-                std::fs::create_dir_all(&outpath)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to create directory: {e}")))?;
+                std::fs::create_dir_all(&outpath).map_err(|e| {
+                    CodeServerError::ExtractionFailed(format!("Failed to create directory: {e}"))
+                })?;
             } else {
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         std::fs::create_dir_all(parent).map_err(|e| {
-                            CodeServerError::ExtractionFailed(format!("Failed to create parent directory: {e}"))
+                            CodeServerError::ExtractionFailed(format!(
+                                "Failed to create parent directory: {e}"
+                            ))
                         })?;
                     }
                 }
 
-                let mut outfile = std::fs::File::create(&outpath)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to create file: {e}")))?;
+                let mut outfile = std::fs::File::create(&outpath).map_err(|e| {
+                    CodeServerError::ExtractionFailed(format!("Failed to create file: {e}"))
+                })?;
 
                 let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to read from archive: {e}")))?;
+                file.read_to_end(&mut buffer).map_err(|e| {
+                    CodeServerError::ExtractionFailed(format!("Failed to read from archive: {e}"))
+                })?;
 
-                outfile
-                    .write_all(&buffer)
-                    .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to write file: {e}")))?;
+                outfile.write_all(&buffer).map_err(|e| {
+                    CodeServerError::ExtractionFailed(format!("Failed to write file: {e}"))
+                })?;
             }
         }
 
@@ -342,9 +347,9 @@ impl ArchiveExtractorImpl {
         let decoder = GzDecoder::new(cursor);
         let mut archive = tar::Archive::new(decoder);
 
-        archive
-            .unpack(dest_dir)
-            .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to extract tar.gz: {e}")))?;
+        archive.unpack(dest_dir).map_err(|e| {
+            CodeServerError::ExtractionFailed(format!("Failed to extract tar.gz: {e}"))
+        })?;
 
         Ok(dest_dir.join(archive_name))
     }
@@ -361,9 +366,9 @@ impl ArchiveExtractorImpl {
         let decoder = XzDecoder::new(cursor);
         let mut archive = tar::Archive::new(decoder);
 
-        archive
-            .unpack(dest_dir)
-            .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to extract tar.xz: {e}")))?;
+        archive.unpack(dest_dir).map_err(|e| {
+            CodeServerError::ExtractionFailed(format!("Failed to extract tar.xz: {e}"))
+        })?;
 
         Ok(dest_dir.join(archive_name))
     }
@@ -491,7 +496,11 @@ impl ProcessSpawner for StdProcessSpawner {
 ///
 /// Returns `Ok(())` if the checksum matches, or `CodeServerError::ChecksumMismatch`
 /// if it doesn't.
-pub fn verify_checksum(data: &[u8], expected_sha256: &str, file_name: &str) -> Result<(), CodeServerError> {
+pub fn verify_checksum(
+    data: &[u8],
+    expected_sha256: &str,
+    file_name: &str,
+) -> Result<(), CodeServerError> {
     let actual = format!("{:x}", Sha256::digest(data));
 
     if actual != expected_sha256 {
@@ -603,7 +612,13 @@ pub struct RuntimeBootstrapper<
 }
 
 impl
-    RuntimeBootstrapper<ReqwestHttpClient, StdFileSystem, ArchiveExtractorImpl, NoOpEventEmitter, StdProcessSpawner>
+    RuntimeBootstrapper<
+        ReqwestHttpClient,
+        StdFileSystem,
+        ArchiveExtractorImpl,
+        NoOpEventEmitter,
+        StdProcessSpawner,
+    >
 {
     /// Create a new RuntimeBootstrapper with production dependencies.
     pub fn new(config: CodeServerConfig) -> Self {
@@ -767,7 +782,10 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         // so it appends to this file rather than creating a new one
         let extensions_json_path = self.config.extensions_dir.join("extensions.json");
         if !self.file_system.exists(&extensions_json_path) {
-            let codehydra_ext_path = self.config.extensions_dir.join(Self::CHIME_EXTENSION_DIR_NAME);
+            let codehydra_ext_path = self
+                .config
+                .extensions_dir
+                .join(Self::CHIME_EXTENSION_DIR_NAME);
             let codehydra_ext_path_str = codehydra_ext_path.to_string_lossy();
             let extensions_json = format!(
                 r#"[{{"identifier":{{"id":"codehydra.vscode"}},"version":"0.0.1","location":{{"$mid":1,"fsPath":"{}","external":"file://{}","path":"{}","scheme":"file"}},"relativeLocation":"{}","metadata":{{"installedTimestamp":{},"pinned":true,"source":"local","targetPlatform":"universal","updated":false,"private":true,"isPreReleaseVersion":false,"hasPreReleaseVersion":false}}}}]"#,
@@ -840,8 +858,9 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                     .remove_dir_all(target_node_dir)
                     .map_err(CodeServerError::PermissionError)?;
             }
-            std::fs::rename(&extracted_dir, target_node_dir)
-                .map_err(|e| CodeServerError::ExtractionFailed(format!("Failed to rename directory: {e}")))?;
+            std::fs::rename(&extracted_dir, target_node_dir).map_err(|e| {
+                CodeServerError::ExtractionFailed(format!("Failed to rename directory: {e}"))
+            })?;
         }
 
         // Prepare the node binary (set executable permissions, remove quarantine)
@@ -1027,7 +1046,10 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
     /// This is a helper method exposed for testing.
     pub fn extension_install_args(&self, extension_id: &str, version: &str) -> Vec<String> {
         vec![
-            self.config.code_server_entry_path().to_string_lossy().to_string(),
+            self.config
+                .code_server_entry_path()
+                .to_string_lossy()
+                .to_string(),
             "--install-extension".to_string(),
             format!("{}@{}", extension_id, version),
             "--extensions-dir".to_string(),
@@ -1174,7 +1196,10 @@ mod tests {
         let result = client.download("http://127.0.0.1:1/nonexistent").await;
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(CodeServerError::DownloadFailed { .. })));
+        assert!(matches!(
+            result,
+            Err(CodeServerError::DownloadFailed { .. })
+        ));
     }
 
     #[test]
@@ -1353,7 +1378,10 @@ mod tests {
         assert!(result.is_ok());
         let returned_path = result.unwrap();
         // The returned path points to a non-existent directory
-        assert!(!returned_path.exists(), "Returned path should not exist for mismatched archive name");
+        assert!(
+            !returned_path.exists(),
+            "Returned path should not exist for mismatched archive name"
+        );
     }
 
     #[test]
@@ -1399,7 +1427,8 @@ mod tests {
     #[test]
     fn test_default_keybindings_json_is_valid() {
         // Verify DEFAULT_KEYBINDINGS is valid JSON
-        let parsed: serde_json::Result<serde_json::Value> = serde_json::from_str(DEFAULT_KEYBINDINGS);
+        let parsed: serde_json::Result<serde_json::Value> =
+            serde_json::from_str(DEFAULT_KEYBINDINGS);
         assert!(parsed.is_ok(), "DEFAULT_KEYBINDINGS should be valid JSON");
 
         let arr = parsed.unwrap();
@@ -1477,7 +1506,10 @@ mod tests {
 
         // Verify the command format: node <npm-cli.js> install --prefix <dir> code-server@<version>
         // args[0] is the npm-cli.js path
-        assert!(args[0].ends_with("npm-cli.js"), "First arg should be npm-cli.js path");
+        assert!(
+            args[0].ends_with("npm-cli.js"),
+            "First arg should be npm-cli.js path"
+        );
         assert_eq!(args[1], "install");
         assert_eq!(args[2], "--prefix");
         assert_eq!(args[3], temp.path().to_string_lossy());
@@ -1522,7 +1554,10 @@ mod tests {
 
         // Verify the command format: node <entry.js> --install-extension <ext>@<version> --extensions-dir <dir>
         // args[0] is the code-server entry.js path
-        assert!(args[0].ends_with("entry.js"), "First arg should be code-server entry.js path");
+        assert!(
+            args[0].ends_with("entry.js"),
+            "First arg should be code-server entry.js path"
+        );
         assert_eq!(args[1], "--install-extension");
         assert_eq!(args[2], "sst-dev.opencode@0.0.12");
         assert_eq!(args[3], "--extensions-dir");
@@ -1626,7 +1661,10 @@ mod tests {
         );
 
         let result = bootstrapper.install_extensions();
-        assert!(result.is_err(), "Should fail when extension installation fails");
+        assert!(
+            result.is_err(),
+            "Should fail when extension installation fails"
+        );
 
         if let Err(CodeServerError::ExtensionInstallFailed { extension, reason }) = result {
             assert!(reason.contains("exit code 1"));
@@ -1893,9 +1931,7 @@ mod tests {
         let mock_spawner = MockProcessSpawner::new();
 
         // Track which paths are checked and created
-        mock_fs
-            .expect_exists()
-            .returning(|_| false); // Nothing exists initially
+        mock_fs.expect_exists().returning(|_| false); // Nothing exists initially
 
         // Called twice: once for extensions dir, once for extension subdir
         mock_fs
@@ -1904,10 +1940,7 @@ mod tests {
             .returning(|_| Ok(()));
 
         // 3 writes: package.json, extension.js, extensions.json
-        mock_fs
-            .expect_write()
-            .times(3)
-            .returning(|_, _| Ok(()));
+        mock_fs.expect_write().times(3).returning(|_, _| Ok(()));
 
         let bootstrapper = RuntimeBootstrapper::with_deps(
             test_config,
@@ -1919,7 +1952,10 @@ mod tests {
         );
 
         let result = bootstrapper.install_codehydra_extension();
-        assert!(result.is_ok(), "Should successfully install Codehydra extension");
+        assert!(
+            result.is_ok(),
+            "Should successfully install Codehydra extension"
+        );
     }
 
     #[test]
@@ -1981,10 +2017,12 @@ mod tests {
         mock_fs.expect_exists().returning(|_| false);
 
         // Simulate directory creation failure
-        mock_fs
-            .expect_create_dir_all()
-            .times(1)
-            .returning(|_| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Permission denied")));
+        mock_fs.expect_create_dir_all().times(1).returning(|_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Permission denied",
+            ))
+        });
 
         let bootstrapper = RuntimeBootstrapper::with_deps(
             test_config,
@@ -2022,15 +2060,19 @@ mod tests {
         mock_fs.expect_exists().returning(|path| {
             // Only the directories exist, not the files
             let path_str = path.to_string_lossy();
-            path_str.ends_with("extensions") || path_str.contains("codehydra.vscode-0.0.1-universal")
-                && !path_str.ends_with(".json") && !path_str.ends_with(".js")
+            path_str.ends_with("extensions")
+                || path_str.contains("codehydra.vscode-0.0.1-universal")
+                    && !path_str.ends_with(".json")
+                    && !path_str.ends_with(".js")
         });
 
         // Simulate file write failure
-        mock_fs
-            .expect_write()
-            .times(1)
-            .returning(|_, _| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Permission denied")));
+        mock_fs.expect_write().times(1).returning(|_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Permission denied",
+            ))
+        });
 
         let bootstrapper = RuntimeBootstrapper::with_deps(
             test_config,
@@ -2063,13 +2105,19 @@ mod tests {
         let bootstrapper = RuntimeBootstrapper::new(test_config.clone());
 
         let result = bootstrapper.install_codehydra_extension();
-        assert!(result.is_ok(), "Should successfully install Codehydra extension");
+        assert!(
+            result.is_ok(),
+            "Should successfully install Codehydra extension"
+        );
 
         // Verify files were created (using the correct directory name)
         let codehydra_dir = test_config
             .extensions_dir
             .join("codehydra.vscode-0.0.1-universal");
-        assert!(codehydra_dir.exists(), "Codehydra extension directory should exist");
+        assert!(
+            codehydra_dir.exists(),
+            "Codehydra extension directory should exist"
+        );
 
         let package_json_path = codehydra_dir.join("package.json");
         assert!(package_json_path.exists(), "package.json should exist");

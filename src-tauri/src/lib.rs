@@ -267,7 +267,10 @@ pub async fn close_project_impl(state: &AppState, handle: String) -> Result<(), 
 
     // Remove persistence FIRST (for atomicity)
     let project_path = context.provider.project_root();
-    state.project_store.remove_project(project_path).await
+    state
+        .project_store
+        .remove_project(project_path)
+        .await
         .map_err(|e| format!("Failed to remove project persistence data: {e}"))?;
 
     // Then remove from memory
@@ -513,9 +516,7 @@ async fn is_code_server_running(state: tauri::State<'_, AppState>) -> Result<boo
 
 /// Load all persisted project paths from disk
 #[tauri::command]
-async fn load_persisted_projects(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<String>, String> {
+async fn load_persisted_projects(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
     let paths = state.project_store.load_all_projects().await.to_tauri()?;
     Ok(paths
         .iter()
@@ -577,10 +578,7 @@ async fn setup_runtime(app: tauri::AppHandle) -> Result<(), String> {
         StdProcessSpawner,
     );
 
-    bootstrapper
-        .ensure_ready()
-        .await
-        .map_err(|e| e.to_string())
+    bootstrapper.ensure_ready().await.map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
