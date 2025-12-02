@@ -31,6 +31,16 @@
 </div>
 
 <style>
+  @keyframes pulse-red {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+
   .status-indicator {
     border-radius: 2px;
     flex-shrink: 0;
@@ -51,6 +61,12 @@
     background: var(--vscode-testing-iconPassed, #73c991);
   }
 
+  @media (prefers-reduced-motion: no-preference) {
+    .status-indicator.red {
+      animation: pulse-red 2s ease-in-out infinite;
+    }
+  }
+
   .status-indicator.red {
     background: var(--vscode-testing-iconFailed, #f14c4c);
   }
@@ -58,6 +74,12 @@
   .status-indicator.grey {
     background: var(--vscode-descriptionForeground, #969696);
     opacity: 0.4;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .status-indicator.mixed {
+      animation: pulse-red 2s ease-in-out infinite;
+    }
   }
 
   .status-indicator.mixed {
