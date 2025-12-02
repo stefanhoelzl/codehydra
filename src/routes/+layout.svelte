@@ -64,7 +64,7 @@
 
     // Listen for Alt+X activation from Tauri
     unlistenFunctions.push(
-      await listen('chime-shortcut-activated', () => {
+      await listen('codehydra-shortcut-activated', () => {
         if (!get(modalOpen)) {
           chimeShortcutActive.set(true);
         }
@@ -73,21 +73,21 @@
 
     // Listen for Alt+X release (deactivation) from Tauri
     unlistenFunctions.push(
-      await listen('chime-shortcut-deactivated', () => {
+      await listen('codehydra-shortcut-deactivated', () => {
         deactivateShortcutMode();
       })
     );
 
     // Listen for navigation actions
     unlistenFunctions.push(
-      await listen('chime-action-up', () => {
+      await listen('codehydra-action-up', () => {
         if (get(chimeShortcutActive) && !get(modalOpen)) {
           navigateUp();
         }
       })
     );
     unlistenFunctions.push(
-      await listen('chime-action-down', () => {
+      await listen('codehydra-action-down', () => {
         if (get(chimeShortcutActive) && !get(modalOpen)) {
           navigateDown();
         }
@@ -96,7 +96,7 @@
 
     // Listen for workspace actions
     unlistenFunctions.push(
-      await listen('chime-action-create', () => {
+      await listen('codehydra-action-create', () => {
         if (get(chimeShortcutActive) && !get(modalOpen)) {
           const active = get(activeWorkspace);
           if (active) {
@@ -106,7 +106,7 @@
       })
     );
     unlistenFunctions.push(
-      await listen('chime-action-remove', () => {
+      await listen('codehydra-action-remove', () => {
         if (get(chimeShortcutActive) && !get(modalOpen)) {
           const active = get(activeWorkspace);
           if (active) {
@@ -130,7 +130,7 @@
     for (let i = 1; i <= 9; i++) {
       const index = i;
       unlistenFunctions.push(
-        await listen(`chime-action-jump-${i}`, () => {
+        await listen(`codehydra-action-jump-${i}`, () => {
           if (get(chimeShortcutActive) && !get(modalOpen)) {
             jumpToIndex(index);
           }
@@ -139,7 +139,7 @@
     }
     // Jump to 10th (Alt+0)
     unlistenFunctions.push(
-      await listen('chime-action-jump-0', () => {
+      await listen('codehydra-action-jump-0', () => {
         if (get(chimeShortcutActive) && !get(modalOpen)) {
           jumpToIndex(10);
         }

@@ -17,7 +17,7 @@
 //! ├── 0.2.0/                      # Another version
 //! │   └── ...
 //! └── projects/                   # get_data_projects_dir() - SHARED across versions
-//!     ├── chime-a1b2c3d4/
+//!     ├── codehydra-a1b2c3d4/
 //!     │   └── config.json
 //!     └── my-app-f8e9d0c1/
 //!         └── config.json
@@ -50,7 +50,7 @@ const PATH_ENCODE_SET: &AsciiSet = &CONTROLS
 ///
 /// ```
 /// use std::path::Path;
-/// use chime_lib::platform::paths::encode_path_for_url;
+/// use codehydra_lib::platform::paths::encode_path_for_url;
 ///
 /// let path = Path::new("/home/user/my project");
 /// let encoded = encode_path_for_url(path);
@@ -84,7 +84,7 @@ pub fn normalize_path(path: &Path) -> Result<PathBuf, CodeServerError> {
 ///
 /// # Returns
 ///
-/// The path to the root data directory (e.g., `~/.local/share/chime` or `./app-data`).
+/// The path to the root data directory (e.g., `~/.local/share/codehydra` or `./app-data`).
 ///
 /// # Note
 ///
@@ -157,7 +157,7 @@ pub fn get_data_projects_dir() -> PathBuf {
 /// # Example
 ///
 /// ```
-/// use chime_lib::platform::paths::sanitize_workspace_name_for_path;
+/// use codehydra_lib::platform::paths::sanitize_workspace_name_for_path;
 ///
 /// assert_eq!(sanitize_workspace_name_for_path("feature/auth"), "feature%auth");
 /// assert_eq!(sanitize_workspace_name_for_path("simple-name"), "simple-name");
@@ -173,7 +173,7 @@ pub fn sanitize_workspace_name_for_path(name: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use chime_lib::platform::paths::unsanitize_workspace_name_from_path;
+/// use codehydra_lib::platform::paths::unsanitize_workspace_name_from_path;
 ///
 /// assert_eq!(unsanitize_workspace_name_from_path("feature%auth"), "feature/auth");
 /// assert_eq!(unsanitize_workspace_name_from_path("simple-name"), "simple-name");
@@ -218,35 +218,35 @@ pub fn get_project_workspaces_dir(project_path: &Path) -> PathBuf {
 
 /// Get the platform-specific user data directory.
 ///
-/// - Linux: `~/.local/share/chime`
-/// - macOS: `~/Library/Application Support/Chime`
-/// - Windows: `%APPDATA%\Chime`
+/// - Linux: `~/.local/share/codehydra`
+/// - macOS: `~/Library/Application Support/Codehydra`
+/// - Windows: `%APPDATA%\Codehydra`
 fn get_platform_data_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("~/.local/share"))
-            .join("chime")
+            .join("codehydra")
     }
 
     #[cfg(target_os = "macos")]
     {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("~/Library/Application Support"))
-            .join("Chime")
+            .join("Codehydra")
     }
 
     #[cfg(target_os = "windows")]
     {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("C:\\Users\\Default\\AppData\\Local"))
-            .join("Chime")
+            .join("Codehydra")
     }
 
     // Fallback for other platforms (shouldn't happen given our Platform enum)
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        PathBuf::from(".").join("chime-data")
+        PathBuf::from(".").join("codehydra-data")
     }
 }
 

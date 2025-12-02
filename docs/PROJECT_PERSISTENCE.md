@@ -25,8 +25,8 @@ Persist open projects so they are automatically restored when the app restarts. 
 ├── 0.2.0/                    # Another version
 │   └── ...
 └── projects/                 # SHARED across all versions
-    ├── chime-a1b2c3d4/
-    │   └── config.json       # { "version": 1, "path": "/path/to/chime" }
+    ├── codehydra-a1b2c3d4/
+    │   └── config.json       # { "version": 1, "path": "/path/to/codehydra" }
     └── my-app-f8e9d0c1/
         └── config.json
 ```
@@ -40,7 +40,7 @@ Format: `<project-name>-<8-char-hash>`
 
 Examples:
 
-- `/home/user/projects/chime` → `chime-a1b2c3d4`
+- `/home/user/projects/codehydra` → `codehydra-a1b2c3d4`
 - `/home/user/work/my-app` → `my-app-f8e9d0c1`
 
 ### config.json Format
@@ -61,7 +61,7 @@ The `version` field allows for future schema migrations.
 ```rust
 // src-tauri/src/platform/paths.rs
 
-/// Get the root data directory (e.g., ~/.local/share/chime or ./app-data)
+/// Get the root data directory (e.g., ~/.local/share/codehydra or ./app-data)
 pub fn get_data_root_dir() -> PathBuf;
 
 /// Get the versioned data directory (e.g., <root>/0.1.0/)

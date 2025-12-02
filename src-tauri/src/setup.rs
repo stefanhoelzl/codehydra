@@ -50,7 +50,7 @@ pub enum StepState {
 /// # Example
 ///
 /// ```
-/// use chime_lib::setup::{StepsBuilder, StepState};
+/// use codehydra_lib::setup::{StepsBuilder, StepState};
 ///
 /// let steps = StepsBuilder::new()
 ///     .node(StepState::Completed)

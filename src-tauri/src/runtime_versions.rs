@@ -19,7 +19,7 @@ pub const CODE_SERVER_VERSION: &str = "4.106.2";
 /// # Example
 ///
 /// ```
-/// use chime_lib::runtime_versions::get_required_extensions;
+/// use codehydra_lib::runtime_versions::get_required_extensions;
 ///
 /// let extensions = get_required_extensions();
 /// assert!(extensions.contains_key("sst-dev.opencode"));

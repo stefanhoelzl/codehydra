@@ -8,8 +8,8 @@
 //!
 //! ```text
 //! <data-root>/projects/
-//! ├── chime-a1b2c3d4/
-//! │   └── config.json       # { "version": 1, "path": "/path/to/chime" }
+//! ├── codehydra-a1b2c3d4/
+//! │   └── config.json       # { "version": 1, "path": "/path/to/codehydra" }
 //! └── my-app-f8e9d0c1/
 //!     └── config.json
 //! ```

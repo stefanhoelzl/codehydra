@@ -209,12 +209,12 @@ The key challenge is that keyboard events inside the VS Code iframe don't bubble
 │  - Works regardless of iframe focus                            │
 └────────────────────────────────────────────────────────────────┘
                               │
-                              ▼ Events: chime-shortcut-activated, chime-action-*
+                              ▼ Events: codehydra-shortcut-activated, codehydra-action-*
                           Frontend (Svelte)
 ┌────────────────────────────────────────────────────────────────┐
 │  +layout.svelte                                                │
-│  - On chime-shortcut-activated: set active, steal focus        │
-│  - On chime-action-*: if active, execute action                │
+│  - On codehydra-shortcut-activated: set active, steal focus        │
+│  - On codehydra-action-*: if active, execute action                │
 │  - <svelte:window on:keyup>: detect Alt release → deactivate   │
 │  - <svelte:window on:blur>: deactivate on window blur          │
 └────────────────────────────────────────────────────────────────┘
@@ -379,17 +379,17 @@ Update `src-tauri/src/lib.rs` in the `run()` function's `.setup()` closure:
     // Define all shortcuts
     let shortcuts = vec![
         // Activation: Alt+X
-        (Shortcut::new(Some(Modifiers::ALT), Code::KeyX), "chime-shortcut-activated"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::KeyX), "codehydra-shortcut-activated"),
         // Navigation
-        (Shortcut::new(Some(Modifiers::ALT), Code::ArrowUp), "chime-action-up"),
-        (Shortcut::new(Some(Modifiers::ALT), Code::ArrowDown), "chime-action-down"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::ArrowUp), "codehydra-action-up"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::ArrowDown), "codehydra-action-down"),
         // Workspace actions
-        (Shortcut::new(Some(Modifiers::ALT), Code::Enter), "chime-action-create"),
-        (Shortcut::new(Some(Modifiers::ALT), Code::Delete), "chime-action-remove"),
-        (Shortcut::new(Some(Modifiers::ALT), Code::Backspace), "chime-action-remove"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::Enter), "codehydra-action-create"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::Delete), "codehydra-action-remove"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::Backspace), "codehydra-action-remove"),
         // Jump to workspace (1-9, 0)
-        (Shortcut::new(Some(Modifiers::ALT), Code::Digit1), "chime-action-jump-1"),
-        (Shortcut::new(Some(Modifiers::ALT), Code::Digit2), "chime-action-jump-2"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::Digit1), "codehydra-action-jump-1"),
+        (Shortcut::new(Some(Modifiers::ALT), Code::Digit2), "codehydra-action-jump-2"),
         // ... etc for 3-9, 0
     ];
 
@@ -454,7 +454,7 @@ let unlisteners: UnlistenFn[] = [];
 onMount(async () => {
   // Listen for activation (Alt+X)
   unlisteners.push(
-    await listen('chime-shortcut-activated', () => {
+    await listen('codehydra-shortcut-activated', () => {
       if (!get(modalOpen)) {
         chimeShortcutActive.set(true);
       }
@@ -463,19 +463,19 @@ onMount(async () => {
 
   // Listen for navigation actions
   unlisteners.push(
-    await listen('chime-action-up', () => {
+    await listen('codehydra-action-up', () => {
       if (get(chimeShortcutActive)) navigateUp();
     })
   );
   unlisteners.push(
-    await listen('chime-action-down', () => {
+    await listen('codehydra-action-down', () => {
       if (get(chimeShortcutActive)) navigateDown();
     })
   );
 
   // Listen for workspace actions
   unlisteners.push(
-    await listen('chime-action-create', () => {
+    await listen('codehydra-action-create', () => {
       if (get(chimeShortcutActive)) {
         const active = get(activeWorkspace);
         if (active) createDialogRequest.set(active.projectHandle);
@@ -483,7 +483,7 @@ onMount(async () => {
     })
   );
   unlisteners.push(
-    await listen('chime-action-remove', () => {
+    await listen('codehydra-action-remove', () => {
       if (get(chimeShortcutActive)) {
         const active = get(activeWorkspace);
         if (active) removeDialogRequest.set(active);
@@ -495,13 +495,13 @@ onMount(async () => {
   for (let i = 1; i <= 9; i++) {
     const index = i;
     unlisteners.push(
-      await listen(`chime-action-jump-${i}`, () => {
+      await listen(`codehydra-action-jump-${i}`, () => {
         if (get(chimeShortcutActive)) jumpToIndex(index);
       })
     );
   }
   unlisteners.push(
-    await listen('chime-action-jump-0', () => {
+    await listen('codehydra-action-jump-0', () => {
       if (get(chimeShortcutActive)) jumpToIndex(10);
     })
   );
@@ -628,17 +628,17 @@ Since shortcuts are now handled entirely by Tauri (Rust side), frontend tests on
 // Example test:
 import { mockEmit } from './setup';
 
-test('activates shortcut mode on chime-shortcut-activated event', async () => {
+test('activates shortcut mode on codehydra-shortcut-activated event', async () => {
   // Simulate Tauri emitting the activation event
-  mockEmit('chime-shortcut-activated', null);
+  mockEmit('codehydra-shortcut-activated', null);
 
   // Assert shortcut mode is active
   expect(get(chimeShortcutActive)).toBe(true);
 });
 
-test('navigates up on chime-action-up event when active', async () => {
+test('navigates up on codehydra-action-up event when active', async () => {
   chimeShortcutActive.set(true);
-  mockEmit('chime-action-up', null);
+  mockEmit('codehydra-action-up', null);
 
   // Assert navigation occurred
   // ...
@@ -766,10 +766,10 @@ test('navigates up on chime-action-up event when active', async () => {
 
 **Test cases:**
 
-- Listens for `chime-shortcut-activated` event
+- Listens for `codehydra-shortcut-activated` event
 - Activates `chimeShortcutActive` on activation event
 - Does not activate when `modalOpen` is true
-- Listens for `chime-action-*` events
+- Listens for `codehydra-action-*` events
 - Only handles action events when `chimeShortcutActive` is true
 - Deactivates on Alt keyup (detected via frontend)
 - Deactivates on Escape keydown

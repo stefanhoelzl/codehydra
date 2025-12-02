@@ -3,9 +3,9 @@
 // Integration tests for the Agent Status Provider infrastructure.
 
 use async_trait::async_trait;
-use chime_lib::agent_status::{AgentStatusCounts, AggregatedAgentStatus};
-use chime_lib::agent_status_manager::AgentStatusManager;
-use chime_lib::agent_status_provider::{
+use codehydra_lib::agent_status::{AgentStatusCounts, AggregatedAgentStatus};
+use codehydra_lib::agent_status_manager::AgentStatusManager;
+use codehydra_lib::agent_status_provider::{
     AgentStatusError, AgentStatusProvider, AgentStatusProviderFactory,
 };
 use std::path::{Path, PathBuf};

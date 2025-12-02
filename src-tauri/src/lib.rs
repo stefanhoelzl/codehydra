@@ -637,65 +637,65 @@ pub fn run() {
                     // Navigation
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::ArrowUp),
-                        "chime-action-up",
+                        "codehydra-action-up",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::ArrowDown),
-                        "chime-action-down",
+                        "codehydra-action-down",
                     ),
                     // Workspace actions
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Enter),
-                        "chime-action-create",
+                        "codehydra-action-create",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Delete),
-                        "chime-action-remove",
+                        "codehydra-action-remove",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Backspace),
-                        "chime-action-remove",
+                        "codehydra-action-remove",
                     ),
                     // Jump to workspace (1-9, 0 for 10th)
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit1),
-                        "chime-action-jump-1",
+                        "codehydra-action-jump-1",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit2),
-                        "chime-action-jump-2",
+                        "codehydra-action-jump-2",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit3),
-                        "chime-action-jump-3",
+                        "codehydra-action-jump-3",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit4),
-                        "chime-action-jump-4",
+                        "codehydra-action-jump-4",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit5),
-                        "chime-action-jump-5",
+                        "codehydra-action-jump-5",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit6),
-                        "chime-action-jump-6",
+                        "codehydra-action-jump-6",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit7),
-                        "chime-action-jump-7",
+                        "codehydra-action-jump-7",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit8),
-                        "chime-action-jump-8",
+                        "codehydra-action-jump-8",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit9),
-                        "chime-action-jump-9",
+                        "codehydra-action-jump-9",
                     ),
                     (
                         Shortcut::new(Some(Modifiers::ALT), Code::Digit0),
-                        "chime-action-jump-0",
+                        "codehydra-action-jump-0",
                     ),
                 ];
 
@@ -712,10 +712,10 @@ pub fn run() {
                             if shortcut == &activation_shortcut_for_handler {
                                 match event.state() {
                                     ShortcutState::Pressed => {
-                                        let _ = app_handle.emit("chime-shortcut-activated", ());
+                                        let _ = app_handle.emit("codehydra-shortcut-activated", ());
                                     }
                                     ShortcutState::Released => {
-                                        let _ = app_handle.emit("chime-shortcut-deactivated", ());
+                                        let _ = app_handle.emit("codehydra-shortcut-deactivated", ());
                                     }
                                 }
                                 return;
@@ -740,7 +740,7 @@ pub fn run() {
                 // Combine all shortcuts for registration
                 let all_shortcuts: Vec<(Shortcut, &'static str)> = std::iter::once((
                     activation_shortcut,
-                    "chime-shortcut-activated/deactivated",
+                    "codehydra-shortcut-activated/deactivated",
                 ))
                 .chain(action_shortcuts)
                 .collect();

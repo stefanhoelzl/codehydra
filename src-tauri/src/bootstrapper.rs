@@ -534,11 +534,11 @@ pub const DEFAULT_KEYBINDINGS: &str = r#"[]"#;
 
 /// Chime extension package.json - defines the extension metadata.
 pub const CHIME_EXTENSION_PACKAGE_JSON: &str = r#"{
-  "name": "chime",
-  "displayName": "Chime",
-  "description": "Chime integration for VS Code",
+  "name": "codehydra",
+  "displayName": "Codehydra",
+  "description": "Codehydra integration for VS Code",
   "version": "0.0.1",
-  "publisher": "chime",
+  "publisher": "codehydra",
   "engines": {
     "vscode": "^1.74.0"
   },
@@ -717,7 +717,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
 
     /// The directory name for the Chime extension following VS Code convention.
     /// Format: publisher.name-version-platform
-    const CHIME_EXTENSION_DIR_NAME: &'static str = "chime.chime-0.0.1-universal";
+    const CHIME_EXTENSION_DIR_NAME: &'static str = "codehydra.vscode-0.0.1-universal";
 
     /// Install the built-in Chime extension for VS Code integration.
     ///
@@ -725,7 +725,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
     /// and registers the extension in extensions.json so code-server recognizes it.
     /// This must be called BEFORE install_extensions() so code-server appends to
     /// the extensions.json rather than overwriting it.
-    pub fn install_chime_extension(&self) -> Result<(), CodeServerError> {
+    pub fn install_codehydra_extension(&self) -> Result<(), CodeServerError> {
         // Create extensions directory if it doesn't exist
         if !self.file_system.exists(&self.config.extensions_dir) {
             self.file_system
@@ -734,20 +734,20 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         }
 
         // Use proper VS Code extension directory naming: publisher.name-version-platform
-        let chime_ext_dir = self
+        let codehydra_ext_dir = self
             .config
             .extensions_dir
             .join(Self::CHIME_EXTENSION_DIR_NAME);
 
         // Create extension directory if it doesn't exist
-        if !self.file_system.exists(&chime_ext_dir) {
+        if !self.file_system.exists(&codehydra_ext_dir) {
             self.file_system
-                .create_dir_all(&chime_ext_dir)
+                .create_dir_all(&codehydra_ext_dir)
                 .map_err(CodeServerError::PermissionError)?;
         }
 
         // Write package.json
-        let package_json_path = chime_ext_dir.join("package.json");
+        let package_json_path = codehydra_ext_dir.join("package.json");
         if !self.file_system.exists(&package_json_path) {
             self.file_system
                 .write(&package_json_path, CHIME_EXTENSION_PACKAGE_JSON.as_bytes())
@@ -755,7 +755,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         }
 
         // Write extension.js
-        let extension_js_path = chime_ext_dir.join("extension.js");
+        let extension_js_path = codehydra_ext_dir.join("extension.js");
         if !self.file_system.exists(&extension_js_path) {
             self.file_system
                 .write(&extension_js_path, CHIME_EXTENSION_JS.as_bytes())
@@ -767,13 +767,13 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         // so it appends to this file rather than creating a new one
         let extensions_json_path = self.config.extensions_dir.join("extensions.json");
         if !self.file_system.exists(&extensions_json_path) {
-            let chime_ext_path = self.config.extensions_dir.join(Self::CHIME_EXTENSION_DIR_NAME);
-            let chime_ext_path_str = chime_ext_path.to_string_lossy();
+            let codehydra_ext_path = self.config.extensions_dir.join(Self::CHIME_EXTENSION_DIR_NAME);
+            let codehydra_ext_path_str = codehydra_ext_path.to_string_lossy();
             let extensions_json = format!(
-                r#"[{{"identifier":{{"id":"chime.chime"}},"version":"0.0.1","location":{{"$mid":1,"fsPath":"{}","external":"file://{}","path":"{}","scheme":"file"}},"relativeLocation":"{}","metadata":{{"installedTimestamp":{},"pinned":true,"source":"local","targetPlatform":"universal","updated":false,"private":true,"isPreReleaseVersion":false,"hasPreReleaseVersion":false}}}}]"#,
-                chime_ext_path_str,
-                chime_ext_path_str,
-                chime_ext_path_str,
+                r#"[{{"identifier":{{"id":"codehydra.vscode"}},"version":"0.0.1","location":{{"$mid":1,"fsPath":"{}","external":"file://{}","path":"{}","scheme":"file"}},"relativeLocation":"{}","metadata":{{"installedTimestamp":{},"pinned":true,"source":"local","targetPlatform":"universal","updated":false,"private":true,"isPreReleaseVersion":false,"hasPreReleaseVersion":false}}}}]"#,
+                codehydra_ext_path_str,
+                codehydra_ext_path_str,
+                codehydra_ext_path_str,
                 Self::CHIME_EXTENSION_DIR_NAME,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1066,7 +1066,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         }
 
         // Step 4: Install Chime extension first (writes extensions.json)
-        self.install_chime_extension()?;
+        self.install_codehydra_extension()?;
 
         // Step 5: Install marketplace extensions (code-server appends to extensions.json)
         if let Err(e) = self.install_extensions() {
@@ -1814,7 +1814,7 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_chime_extension_package_json_is_valid() {
+    fn test_codehydra_extension_package_json_is_valid() {
         // Verify CHIME_EXTENSION_PACKAGE_JSON is valid JSON
         let parsed: serde_json::Result<serde_json::Value> =
             serde_json::from_str(CHIME_EXTENSION_PACKAGE_JSON);
@@ -1825,8 +1825,8 @@ mod tests {
 
         let obj = parsed.unwrap();
         assert!(obj.is_object());
-        assert_eq!(obj.get("name").unwrap(), "chime");
-        assert_eq!(obj.get("displayName").unwrap(), "Chime");
+        assert_eq!(obj.get("name").unwrap(), "codehydra");
+        assert_eq!(obj.get("displayName").unwrap(), "Codehydra");
         assert_eq!(obj.get("main").unwrap(), "./extension.js");
         assert!(obj.get("activationEvents").is_some());
 
@@ -1838,7 +1838,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chime_extension_js_contains_required_code() {
+    fn test_codehydra_extension_js_contains_required_code() {
         // Verify CHIME_EXTENSION_JS contains all required components
         assert!(
             CHIME_EXTENSION_JS.contains("async function activate"),
@@ -1875,7 +1875,7 @@ mod tests {
     }
 
     #[test]
-    fn test_install_chime_extension_creates_directory_and_files() {
+    fn test_install_codehydra_extension_creates_directory_and_files() {
         let temp = tempdir().unwrap();
         let test_config = CodeServerConfig {
             runtime_dir: temp.path().to_path_buf(),
@@ -1918,12 +1918,12 @@ mod tests {
             mock_spawner,
         );
 
-        let result = bootstrapper.install_chime_extension();
-        assert!(result.is_ok(), "Should successfully install Chime extension");
+        let result = bootstrapper.install_codehydra_extension();
+        assert!(result.is_ok(), "Should successfully install Codehydra extension");
     }
 
     #[test]
-    fn test_install_chime_extension_skips_existing_files() {
+    fn test_install_codehydra_extension_skips_existing_files() {
         let temp = tempdir().unwrap();
         let test_config = CodeServerConfig {
             runtime_dir: temp.path().to_path_buf(),
@@ -1956,12 +1956,12 @@ mod tests {
             mock_spawner,
         );
 
-        let result = bootstrapper.install_chime_extension();
+        let result = bootstrapper.install_codehydra_extension();
         assert!(result.is_ok(), "Should succeed when files already exist");
     }
 
     #[test]
-    fn test_install_chime_extension_handles_directory_error() {
+    fn test_install_codehydra_extension_handles_directory_error() {
         let temp = tempdir().unwrap();
         let test_config = CodeServerConfig {
             runtime_dir: temp.path().to_path_buf(),
@@ -1995,13 +1995,13 @@ mod tests {
             mock_spawner,
         );
 
-        let result = bootstrapper.install_chime_extension();
+        let result = bootstrapper.install_codehydra_extension();
         assert!(result.is_err(), "Should fail when directory creation fails");
         assert!(matches!(result, Err(CodeServerError::PermissionError(_))));
     }
 
     #[test]
-    fn test_install_chime_extension_handles_write_error() {
+    fn test_install_codehydra_extension_handles_write_error() {
         let temp = tempdir().unwrap();
         let test_config = CodeServerConfig {
             runtime_dir: temp.path().to_path_buf(),
@@ -2022,7 +2022,7 @@ mod tests {
         mock_fs.expect_exists().returning(|path| {
             // Only the directories exist, not the files
             let path_str = path.to_string_lossy();
-            path_str.ends_with("extensions") || path_str.contains("chime.chime-0.0.1-universal")
+            path_str.ends_with("extensions") || path_str.contains("codehydra.vscode-0.0.1-universal")
                 && !path_str.ends_with(".json") && !path_str.ends_with(".js")
         });
 
@@ -2041,15 +2041,16 @@ mod tests {
             mock_spawner,
         );
 
-        let result = bootstrapper.install_chime_extension();
+        let result = bootstrapper.install_codehydra_extension();
         assert!(result.is_err(), "Should fail when file write fails");
         assert!(matches!(result, Err(CodeServerError::PermissionError(_))));
     }
 
     #[test]
-    fn test_install_chime_extension_integration() {
-        // Integration test using real filesystem
+    fn test_install_codehydra_extension_integration() {
         let temp = tempdir().unwrap();
+
+        // Create a config pointing to our temp directory
         let test_config = CodeServerConfig {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
@@ -2061,22 +2062,21 @@ mod tests {
 
         let bootstrapper = RuntimeBootstrapper::new(test_config.clone());
 
-        // First install should create files
-        let result = bootstrapper.install_chime_extension();
-        assert!(result.is_ok(), "Should successfully install Chime extension");
+        let result = bootstrapper.install_codehydra_extension();
+        assert!(result.is_ok(), "Should successfully install Codehydra extension");
 
         // Verify files were created (using the correct directory name)
-        let chime_dir = test_config
+        let codehydra_dir = test_config
             .extensions_dir
-            .join("chime.chime-0.0.1-universal");
-        assert!(chime_dir.exists(), "Chime extension directory should exist");
+            .join("codehydra.vscode-0.0.1-universal");
+        assert!(codehydra_dir.exists(), "Codehydra extension directory should exist");
 
-        let package_json_path = chime_dir.join("package.json");
+        let package_json_path = codehydra_dir.join("package.json");
         assert!(package_json_path.exists(), "package.json should exist");
         let package_json_content = std::fs::read_to_string(&package_json_path).unwrap();
         assert_eq!(package_json_content, CHIME_EXTENSION_PACKAGE_JSON);
 
-        let extension_js_path = chime_dir.join("extension.js");
+        let extension_js_path = codehydra_dir.join("extension.js");
         assert!(extension_js_path.exists(), "extension.js should exist");
         let extension_js_content = std::fs::read_to_string(&extension_js_path).unwrap();
         assert_eq!(extension_js_content, CHIME_EXTENSION_JS);
@@ -2090,7 +2090,7 @@ mod tests {
 
         // Second install should not overwrite
         std::fs::write(&package_json_path, "custom content").unwrap();
-        let result = bootstrapper.install_chime_extension();
+        let result = bootstrapper.install_codehydra_extension();
         assert!(result.is_ok());
         let content_after = std::fs::read_to_string(&package_json_path).unwrap();
         assert_eq!(

@@ -75,7 +75,7 @@ impl CodeServerConfig {
     /// # Example
     ///
     /// ```ignore
-    /// use chime_lib::config::CodeServerConfig;
+    /// use codehydra_lib::config::CodeServerConfig;
     ///
     /// let config = CodeServerConfig::new("0.1.0")?;
     /// println!("Node binary: {:?}", config.node_binary_path);

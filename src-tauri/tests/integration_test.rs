@@ -1,9 +1,9 @@
-use chime_lib::agent_status_manager::AgentStatusManager;
-use chime_lib::code_server::CodeServerManager;
-use chime_lib::config::CodeServerConfig;
-use chime_lib::project_store::ProjectStore;
-use chime_lib::workspace_provider::ProjectHandle;
-use chime_lib::{close_project_impl, discover_workspaces_impl, open_project_impl, AppState};
+use codehydra_lib::agent_status_manager::AgentStatusManager;
+use codehydra_lib::code_server::CodeServerManager;
+use codehydra_lib::config::CodeServerConfig;
+use codehydra_lib::project_store::ProjectStore;
+use codehydra_lib::workspace_provider::ProjectHandle;
+use codehydra_lib::{close_project_impl, discover_workspaces_impl, open_project_impl, AppState};
 use git2::{Repository, Signature};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -240,7 +240,7 @@ async fn test_open_project_via_symlink_returns_same_handle() {
 /// for that workspace so the status indicator works correctly.
 #[tokio::test]
 async fn test_create_workspace_initializes_agent_status() {
-    use chime_lib::create_workspace_impl;
+    use codehydra_lib::create_workspace_impl;
 
     let test_repo = TestRepo::new().unwrap();
 
@@ -299,8 +299,8 @@ async fn test_create_workspace_initializes_agent_status() {
 // These don't require actual code-server to be running
 
 mod code_server_tests {
-    use chime_lib::code_server::CodeServerManager;
-    use chime_lib::config::CodeServerConfig;
+    use codehydra_lib::code_server::CodeServerManager;
+    use codehydra_lib::config::CodeServerConfig;
     use std::path::{Path, PathBuf};
 
     fn test_config() -> CodeServerConfig {
@@ -348,7 +348,7 @@ mod code_server_tests {
 
 // Tests for workspace URL generation
 mod url_generation_tests {
-    use chime_lib::platform::paths::encode_path_for_url;
+    use codehydra_lib::platform::paths::encode_path_for_url;
     use std::path::Path;
 
     #[test]

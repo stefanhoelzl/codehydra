@@ -124,7 +124,7 @@ impl CodeServerManager {
 
         // Prepare arguments for code-server as owned strings
         let code_server_entry = self.config.code_server_entry_path().to_string_lossy().into_owned();
-        let bind_addr = format!("127.0.0.1:{}", port);
+        let bind_addr = format!("127.0.0.1:{port}");
         let user_data_dir = self.config.user_data_dir.to_string_lossy().into_owned();
         let extensions_dir = self.config.extensions_dir.to_string_lossy().into_owned();
 
@@ -221,7 +221,7 @@ impl CodeServerManager {
             ProcessRefreshKind::everything(),
         );
 
-        for (_pid, process) in system.processes() {
+        for process in system.processes().values() {
             let name = process.name();
             let name_str = name.to_string_lossy();
 
