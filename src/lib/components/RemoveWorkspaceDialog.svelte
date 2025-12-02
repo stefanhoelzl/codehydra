@@ -127,7 +127,12 @@
     bind:this={dialogRef}
     class="modal-content"
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
+    onkeydown={(e) => {
+      // Allow Escape, Enter, and Tab keys to propagate for dialog actions and focus management
+      if (e.key !== 'Escape' && e.key !== 'Enter' && e.key !== 'Tab') {
+        e.stopPropagation();
+      }
+    }}
     role="dialog"
     aria-modal="true"
     aria-labelledby="dialog-title"

@@ -355,7 +355,12 @@
     bind:this={dialogRef}
     class="modal-content"
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
+    onkeydown={(e) => {
+      // Allow Escape key to propagate to parent for dialog closing
+      if (e.key !== 'Escape') {
+        e.stopPropagation();
+      }
+    }}
     role="dialog"
     aria-modal="true"
     aria-labelledby="dialog-title"
