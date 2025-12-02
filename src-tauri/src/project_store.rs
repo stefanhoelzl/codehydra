@@ -138,16 +138,26 @@ impl ProjectStore {
 
     /// Remove a project from persistence
     ///
-    /// Deletes the project directory and config.json file.
+    /// Removes the project's config.json file and deletes the project directory only if it becomes empty.
     /// Returns Ok even if the project was not persisted.
     pub async fn remove_project(&self, project_path: &Path) -> Result<(), ProjectStoreError> {
         let dir_name = Self::project_dir_name(project_path);
         let project_dir = self.projects_dir.join(&dir_name);
+        let config_path = project_dir.join("config.json");
 
-        match tokio::fs::remove_dir_all(&project_dir).await {
+        // Remove only the config.json file
+        match tokio::fs::remove_file(&config_path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(ProjectStoreError::IoError(e)),
+        }
+
+        // Only remove directory if it's now empty
+        match tokio::fs::remove_dir(&project_dir).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
+            Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => Ok(()), // Keep directory if not empty
+            Err(e) => Err(ProjectStoreError::IoError(e)),
         }
     }
 }
@@ -362,6 +372,37 @@ mod tests {
 
         // Should not error
         store.remove_project(&project_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_remove_project_conservative_deletion() {
+        let temp = tempdir().unwrap();
+        let store = ProjectStore::with_dir(temp.path().to_path_buf());
+
+        let project_path = temp.path().join("my-project");
+        std::fs::create_dir(&project_path).unwrap();
+
+        // Save the project to create config.json
+        store.save_project(&project_path).await.unwrap();
+
+        // Add an extra file to the project directory (simulating user data)
+        let dir_name = ProjectStore::project_dir_name(&project_path);
+        let extra_file = store.projects_dir.join(dir_name).join("user-data.txt");
+        tokio::fs::write(&extra_file, "important user data").await.unwrap();
+
+        // Verify setup
+        let projects_before = store.load_all_projects().await.unwrap();
+        assert_eq!(projects_before.len(), 1);
+        assert!(extra_file.exists());
+
+        // Remove project
+        store.remove_project(&project_path).await.unwrap();
+
+        // Verify config.json is gone but directory and extra file remain
+        let projects_after = store.load_all_projects().await.unwrap();
+        assert!(projects_after.is_empty());
+        assert!(extra_file.exists()); // Extra file should still exist
+        assert!(extra_file.parent().unwrap().exists()); // Directory should still exist
     }
 
     #[tokio::test]

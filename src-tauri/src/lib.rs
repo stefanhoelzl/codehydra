@@ -86,6 +86,11 @@ impl AppState {
     pub fn agent_status_manager(&self) -> &Arc<AgentStatusManager> {
         &self.agent_status_manager
     }
+
+    /// Get the project store (exposed for testing)
+    pub fn project_store(&self) -> &Arc<ProjectStore> {
+        &self.project_store
+    }
 }
 
 /// Tauri-specific EventEmitter that uses app.emit() to send events to the frontend.
@@ -255,10 +260,18 @@ pub async fn close_project_impl(state: &AppState, handle: String) -> Result<(), 
     let handle: ProjectHandle = handle.parse().to_tauri()?;
 
     let mut projects = state.projects.write().await;
-    let _context = projects
-        .remove(&handle)
+    let context = projects
+        .get(&handle)
         .ok_or(WorkspaceError::ProjectNotFound)
         .to_tauri()?;
+
+    // Remove persistence FIRST (for atomicity)
+    let project_path = context.provider.project_root();
+    state.project_store.remove_project(project_path).await
+        .map_err(|e| format!("Failed to remove project persistence data: {e}"))?;
+
+    // Then remove from memory
+    projects.remove(&handle);
 
     drop(projects);
 

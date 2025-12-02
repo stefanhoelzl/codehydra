@@ -126,25 +126,31 @@ async fn test_open_multiple_projects() {
 }
 
 #[tokio::test]
-async fn test_close_project_removes_from_state() {
+async fn test_close_project_removes_from_state_and_persistence() {
     let test_repo = TestRepo::new().unwrap();
     let ctx = create_test_app_state();
+
+    // Verify project is not persisted initially
+    let initial_projects = ctx.state.project_store().load_all_projects().await.unwrap();
+    assert!(!initial_projects.contains(&test_repo.path().to_path_buf()));
 
     let handle = open_project_impl(&ctx.state, test_repo.path().to_string_lossy().to_string())
         .await
         .unwrap();
 
+    // Verify project is now persisted
+    let persisted_projects = ctx.state.project_store().load_all_projects().await.unwrap();
+    assert!(persisted_projects.contains(&test_repo.path().to_path_buf()));
+
     close_project_impl(&ctx.state, handle.clone()).await.unwrap();
 
-    // Create a fake handle string that should be parseable but not found
+    // Verify project is removed from memory
     let result = discover_workspaces_impl(&ctx.state, handle).await;
-
-    // The discover should fail because the project was closed, but since
-    // we're not actually starting code-server in tests, we just verify
-    // the project is gone by checking the error
     assert!(result.is_err());
-    // Note: This might fail at the code-server start step, not the project lookup
-    // depending on how the test runs
+
+    // Verify project persistence is removed
+    let final_projects = ctx.state.project_store().load_all_projects().await.unwrap();
+    assert!(!final_projects.contains(&test_repo.path().to_path_buf()));
 }
 
 #[tokio::test]
