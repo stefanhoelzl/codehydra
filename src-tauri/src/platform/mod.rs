@@ -10,7 +10,7 @@ pub mod download;
 pub mod paths;
 pub mod process;
 
-/// Supported platforms for Chime.
+/// Supported platforms for codehydra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     LinuxX64,

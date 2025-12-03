@@ -1,6 +1,6 @@
 <script lang="ts">
   import { projects, activeWorkspace } from '$lib/stores/projects';
-  import { chimeShortcutActive } from '$lib/stores/keyboardNavigation';
+  import { codehydraShortcutActive } from '$lib/stores/keyboardNavigation';
   import { agentCounts } from '$lib/stores/agentStatus';
   import { ensureCodeServerRunning, getWorkspaceUrl } from '$lib/api/tauri';
   import { tick, onDestroy } from 'svelte';
@@ -112,7 +112,7 @@
     await tick();
     // Don't focus iframe if keyboard shortcut mode is active
     // The layout will handle focusing the iframe when shortcut mode deactivates
-    if (get(chimeShortcutActive)) {
+    if (get(codehydraShortcutActive)) {
       return;
     }
     const iframe = iframeElements.get(workspacePath);

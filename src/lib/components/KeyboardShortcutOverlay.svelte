@@ -1,10 +1,10 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
-  import { chimeShortcutActive } from '$lib/stores/keyboardNavigation';
+  import { codehydraShortcutActive } from '$lib/stores/keyboardNavigation';
   import { CHIME_SHORTCUTS } from '$lib/config/keybindings';
 </script>
 
-{#if $chimeShortcutActive}
+{#if $codehydraShortcutActive}
   <div class="overlay" role="status" aria-live="polite" transition:fade={{ duration: 150 }}>
     <span class="shortcut">
       <span class="key">{CHIME_SHORTCUTS.navigateUp.label}</span>

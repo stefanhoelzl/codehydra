@@ -631,7 +631,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             let shutdown_token = shutdown_token_for_setup;
-            // Set up global shortcuts for Chime keyboard navigation
+            // Set up global shortcuts for codehydra keyboard navigation
             // Alt+X activates shortcut mode (must hold both Alt and X)
             // Alt+{ActionKey} performs actions while active
             #[cfg(desktop)]
@@ -759,7 +759,7 @@ pub fn run() {
                 // Register all shortcuts (ignore registration failures for now)
                 for (shortcut, event_name) in &all_shortcuts {
                     if let Err(e) = app.global_shortcut().register(*shortcut) {
-                        eprintln!("[Chime] Failed to register shortcut for {event_name}: {e:?}");
+                        eprintln!("[codehydra] Failed to register shortcut for {event_name}: {e:?}");
                     }
                 }
             }

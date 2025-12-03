@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import {
-  chimeShortcutActive,
+  codehydraShortcutActive,
   modalOpen,
   flatWorkspaceList,
   navigateUp,
@@ -44,17 +44,17 @@ describe('keyboardNavigation', () => {
     vi.useRealTimers();
   });
 
-  describe('chimeShortcutActive', () => {
+  describe('codehydraShortcutActive', () => {
     it('starts as false', () => {
-      expect(get(chimeShortcutActive)).toBe(false);
+      expect(get(codehydraShortcutActive)).toBe(false);
     });
 
     it('can be toggled on and off', () => {
-      chimeShortcutActive.set(true);
-      expect(get(chimeShortcutActive)).toBe(true);
+      codehydraShortcutActive.set(true);
+      expect(get(codehydraShortcutActive)).toBe(true);
 
-      chimeShortcutActive.set(false);
-      expect(get(chimeShortcutActive)).toBe(false);
+      codehydraShortcutActive.set(false);
+      expect(get(codehydraShortcutActive)).toBe(false);
     });
   });
 

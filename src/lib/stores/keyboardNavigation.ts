@@ -3,10 +3,10 @@ import { projects, activeWorkspace, setActiveWorkspace, type ActiveWorkspaceId }
 import type { Workspace } from '$lib/types/project';
 
 /**
- * Whether the Chime shortcut mode is active (Alt held after Alt+X).
+ * Whether the codehydra shortcut mode is active (Alt held after Alt+X).
  * When true, the overlay is shown and workspace numbers are visible.
  */
-export const chimeShortcutActive = writable<boolean>(false);
+export const codehydraShortcutActive = writable<boolean>(false);
 
 /**
  * Whether a modal dialog is open.
@@ -181,7 +181,7 @@ export function isActiveWorkspaceMain(): boolean {
  * Used for testing and cleanup.
  */
 export function resetKeyboardNavigationState(): void {
-  chimeShortcutActive.set(false);
+  codehydraShortcutActive.set(false);
   modalOpen.set(false);
   createDialogRequest.set(null);
   removeDialogRequest.set(null);

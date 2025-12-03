@@ -541,7 +541,7 @@ pub const DEFAULT_SETTINGS: &str = r#"{
 /// Default keybindings for code-server.
 pub const DEFAULT_KEYBINDINGS: &str = r#"[]"#;
 
-/// Chime extension package.json - defines the extension metadata.
+/// codehydra extension package.json - defines the extension metadata.
 pub const CHIME_EXTENSION_PACKAGE_JSON: &str = r#"{
   "name": "codehydra",
   "displayName": "Codehydra",
@@ -558,7 +558,7 @@ pub const CHIME_EXTENSION_PACKAGE_JSON: &str = r#"{
   "contributes": {}
 }"#;
 
-/// Chime extension JavaScript code - auto-opens OpenCode on startup.
+/// codehydra extension JavaScript code - auto-opens OpenCode on startup.
 pub const CHIME_EXTENSION_JS: &str = r#"const vscode = require('vscode');
 
 async function activate(context) {
@@ -575,7 +575,7 @@ async function activate(context) {
       // Close empty editor groups created by the terminal opening "beside"
       await vscode.commands.executeCommand('workbench.action.closeEditorsInOtherGroups');
     } catch (err) {
-      console.error('Chime extension error:', err);
+      console.error('codehydra extension error:', err);
     }
   }, 1000);
 }
@@ -730,11 +730,11 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         Ok(())
     }
 
-    /// The directory name for the Chime extension following VS Code convention.
+    /// The directory name for the codehydra extension following VS Code convention.
     /// Format: publisher.name-version-platform
     const CHIME_EXTENSION_DIR_NAME: &'static str = "codehydra.vscode-0.0.1-universal";
 
-    /// Install the built-in Chime extension for VS Code integration.
+    /// Install the built-in codehydra extension for VS Code integration.
     ///
     /// Creates the extension directory, writes package.json and extension.js,
     /// and registers the extension in extensions.json so code-server recognizes it.
@@ -777,7 +777,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 .map_err(CodeServerError::PermissionError)?;
         }
 
-        // Write extensions.json with Chime extension entry
+        // Write extensions.json with codehydra extension entry
         // This must be done before code-server installs other extensions
         // so it appends to this file rather than creating a new one
         let extensions_json_path = self.config.extensions_dir.join("extensions.json");
@@ -1087,7 +1087,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Err(e);
         }
 
-        // Step 4: Install Chime extension first (writes extensions.json)
+        // Step 4: Install codehydra extension first (writes extensions.json)
         self.install_codehydra_extension()?;
 
         // Step 5: Install marketplace extensions (code-server appends to extensions.json)
@@ -1848,7 +1848,7 @@ mod tests {
     }
 
     // ============================================================================
-    // Chime Extension Tests
+    // codehydra Extension Tests
     // ============================================================================
 
     #[test]

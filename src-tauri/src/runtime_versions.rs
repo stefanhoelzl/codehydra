@@ -1,4 +1,4 @@
-//! Pinned runtime versions for Chime.
+//! Pinned runtime versions for codehydra.
 //!
 //! This module contains the pinned versions for all runtime dependencies.
 //! These versions are manually updated when needed.

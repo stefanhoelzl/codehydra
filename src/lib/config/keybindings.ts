@@ -1,5 +1,5 @@
 /**
- * Central configuration for all Chime keyboard shortcuts.
+ * Central configuration for all codehydra keyboard shortcuts.
  *
  * Activation: Alt+X - captured via Tauri global shortcut
  * Actions: Alt+{ActionKey} - captured via Tauri global shortcuts, only handled when active

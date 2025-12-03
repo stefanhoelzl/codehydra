@@ -106,7 +106,7 @@
 {#if visible}
   <div class="modal-overlay">
     <div class="modal-content">
-      <h1>Setting up Chime</h1>
+      <h1>Setting up codehydra</h1>
 
       <div class="status">
         <p class="caption">{statusMessage}</p>

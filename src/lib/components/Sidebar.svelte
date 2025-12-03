@@ -8,7 +8,7 @@
   import { agentCounts } from '$lib/stores/agentStatus';
   import { createEmptyCounts } from '$lib/types/agentStatus';
   import {
-    chimeShortcutActive,
+    codehydraShortcutActive,
     getWorkspaceIndex,
     modalOpen,
     createDialogRequest,
@@ -39,7 +39,7 @@
         createDialogProject = project;
         createTriggerRef = null; // No trigger element for keyboard shortcut
         // Deactivate shortcut mode when opening dialog
-        chimeShortcutActive.set(false);
+        codehydraShortcutActive.set(false);
       }
       // Clear the request
       createDialogRequest.set(null);
@@ -55,7 +55,7 @@
         removeDialogData = { project, workspace };
         removeTriggerRef = null; // No trigger element for keyboard shortcut
         // Deactivate shortcut mode when opening dialog
-        chimeShortcutActive.set(false);
+        codehydraShortcutActive.set(false);
       }
       // Clear the request
       removeDialogRequest.set(null);
@@ -140,7 +140,7 @@
           role="button"
           tabindex="0"
         >
-          {#if $chimeShortcutActive && mainDisplayKey}
+          {#if $codehydraShortcutActive && mainDisplayKey}
             <span class="shortcut-key">{mainDisplayKey}</span>
           {/if}
           <vscode-icon name="folder" class="icon"></vscode-icon>
@@ -181,7 +181,7 @@
             role="button"
             tabindex="0"
           >
-            {#if $chimeShortcutActive && displayKey}
+            {#if $codehydraShortcutActive && displayKey}
               <span class="shortcut-key">{displayKey}</span>
             {/if}
             <vscode-icon name="git-branch" class="icon"></vscode-icon>

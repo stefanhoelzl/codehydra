@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import KeyboardShortcutOverlay from './KeyboardShortcutOverlay.svelte';
-import { chimeShortcutActive, resetKeyboardNavigationState } from '$lib/stores/keyboardNavigation';
+import {
+  codehydraShortcutActive,
+  resetKeyboardNavigationState,
+} from '$lib/stores/keyboardNavigation';
 import { CHIME_SHORTCUTS } from '$lib/config/keybindings';
 
 describe('KeyboardShortcutOverlay', () => {
@@ -25,7 +28,7 @@ describe('KeyboardShortcutOverlay', () => {
     render(KeyboardShortcutOverlay);
 
     // Activate shortcut mode
-    chimeShortcutActive.set(true);
+    codehydraShortcutActive.set(true);
 
     // Wait for the DOM to update
     await new Promise((r) => setTimeout(r, 0));
@@ -36,7 +39,7 @@ describe('KeyboardShortcutOverlay', () => {
 
   it('has role="status" and aria-live="polite" for accessibility', async () => {
     render(KeyboardShortcutOverlay);
-    chimeShortcutActive.set(true);
+    codehydraShortcutActive.set(true);
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -46,7 +49,7 @@ describe('KeyboardShortcutOverlay', () => {
 
   it('displays navigation shortcut label and description', async () => {
     render(KeyboardShortcutOverlay);
-    chimeShortcutActive.set(true);
+    codehydraShortcutActive.set(true);
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -56,7 +59,7 @@ describe('KeyboardShortcutOverlay', () => {
 
   it('displays create workspace shortcut label and description', async () => {
     render(KeyboardShortcutOverlay);
-    chimeShortcutActive.set(true);
+    codehydraShortcutActive.set(true);
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -66,7 +69,7 @@ describe('KeyboardShortcutOverlay', () => {
 
   it('displays remove workspace shortcut label and description', async () => {
     render(KeyboardShortcutOverlay);
-    chimeShortcutActive.set(true);
+    codehydraShortcutActive.set(true);
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -76,7 +79,7 @@ describe('KeyboardShortcutOverlay', () => {
 
   it('displays jump to workspace shortcut label and description', async () => {
     render(KeyboardShortcutOverlay);
-    chimeShortcutActive.set(true);
+    codehydraShortcutActive.set(true);
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -86,7 +89,7 @@ describe('KeyboardShortcutOverlay', () => {
 
   it('has overlay class', async () => {
     render(KeyboardShortcutOverlay);
-    chimeShortcutActive.set(true);
+    codehydraShortcutActive.set(true);
 
     await new Promise((r) => setTimeout(r, 0));
 

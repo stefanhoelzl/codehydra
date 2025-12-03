@@ -11,7 +11,7 @@
   import { initAgentStatusListener, loadInitialStatuses } from '$lib/stores/agentStatus';
   import { activeWorkspace, projects } from '$lib/stores/projects';
   import {
-    chimeShortcutActive,
+    codehydraShortcutActive,
     modalOpen,
     createDialogRequest,
     removeDialogRequest,
@@ -66,7 +66,7 @@
     unlistenFunctions.push(
       await listen('codehydra-shortcut-activated', () => {
         if (!get(modalOpen)) {
-          chimeShortcutActive.set(true);
+          codehydraShortcutActive.set(true);
         }
       })
     );
@@ -81,14 +81,14 @@
     // Listen for navigation actions
     unlistenFunctions.push(
       await listen('codehydra-action-up', () => {
-        if (get(chimeShortcutActive) && !get(modalOpen)) {
+        if (get(codehydraShortcutActive) && !get(modalOpen)) {
           navigateUp();
         }
       })
     );
     unlistenFunctions.push(
       await listen('codehydra-action-down', () => {
-        if (get(chimeShortcutActive) && !get(modalOpen)) {
+        if (get(codehydraShortcutActive) && !get(modalOpen)) {
           navigateDown();
         }
       })
@@ -97,7 +97,7 @@
     // Listen for workspace actions
     unlistenFunctions.push(
       await listen('codehydra-action-create', () => {
-        if (get(chimeShortcutActive) && !get(modalOpen)) {
+        if (get(codehydraShortcutActive) && !get(modalOpen)) {
           const active = get(activeWorkspace);
           if (active) {
             createDialogRequest.set(active.projectHandle);
@@ -107,7 +107,7 @@
     );
     unlistenFunctions.push(
       await listen('codehydra-action-remove', () => {
-        if (get(chimeShortcutActive) && !get(modalOpen)) {
+        if (get(codehydraShortcutActive) && !get(modalOpen)) {
           const active = get(activeWorkspace);
           if (active) {
             if (isActiveWorkspaceMain()) {
@@ -131,7 +131,7 @@
       const index = i;
       unlistenFunctions.push(
         await listen(`codehydra-action-jump-${i}`, () => {
-          if (get(chimeShortcutActive) && !get(modalOpen)) {
+          if (get(codehydraShortcutActive) && !get(modalOpen)) {
             jumpToIndex(index);
           }
         })
@@ -140,7 +140,7 @@
     // Jump to 10th (Alt+0)
     unlistenFunctions.push(
       await listen('codehydra-action-jump-0', () => {
-        if (get(chimeShortcutActive) && !get(modalOpen)) {
+        if (get(codehydraShortcutActive) && !get(modalOpen)) {
           jumpToIndex(10);
         }
       })
@@ -181,9 +181,9 @@
    * This ensures keyboard input works correctly in VS Code after shortcuts.
    */
   function deactivateShortcutMode() {
-    if (!get(chimeShortcutActive)) return;
+    if (!get(codehydraShortcutActive)) return;
 
-    chimeShortcutActive.set(false);
+    codehydraShortcutActive.set(false);
 
     // Restore focus to the active iframe after a brief delay
     // This ensures the keyboard state is properly restored in VS Code
@@ -204,7 +204,7 @@
 
   // Deactivate on Escape
   function onKeyDown(event: KeyboardEvent) {
-    if (get(chimeShortcutActive) && event.key === 'Escape') {
+    if (get(codehydraShortcutActive) && event.key === 'Escape') {
       deactivateShortcutMode();
     }
   }
