@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use sha2::{Digest, Sha256, Sha512};
 use std::io::{Cursor, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Default timeout for code-server installation (5 minutes).
@@ -127,6 +127,28 @@ pub trait ProcessSpawner: Send + Sync {
     /// * `binary` - Path to the binary to execute
     /// * `args` - Command line arguments
     /// * `cwd` - Working directory
+    /// * `env_vars` - Environment variables as (key, value) pairs
+    /// * `timeout` - Maximum time to wait for the process
+    ///
+    /// # Returns
+    ///
+    /// The process result including exit code, stdout, and stderr.
+    fn spawn_and_wait_with_env<'a>(
+        &self,
+        binary: &Path,
+        args: &[String],
+        cwd: &Path,
+        env_vars: &[(&'a str, &'a str)],
+        timeout: Duration,
+    ) -> Result<ProcessResult, CodeServerError>;
+
+    /// Spawn a process and wait for it to complete with a timeout.
+    ///
+    /// # Arguments
+    ///
+    /// * `binary` - Path to the binary to execute
+    /// * `args` - Command line arguments
+    /// * `cwd` - Working directory
     /// * `timeout` - Maximum time to wait for the process
     ///
     /// # Returns
@@ -138,7 +160,9 @@ pub trait ProcessSpawner: Send + Sync {
         args: &[String],
         cwd: &Path,
         timeout: Duration,
-    ) -> Result<ProcessResult, CodeServerError>;
+    ) -> Result<ProcessResult, CodeServerError> {
+        self.spawn_and_wait_with_env(binary, args, cwd, &[], timeout)
+    }
 }
 
 // ============================================================================
@@ -391,24 +415,34 @@ impl EventEmitter for NoOpEventEmitter {
 pub struct StdProcessSpawner;
 
 impl ProcessSpawner for StdProcessSpawner {
-    fn spawn_and_wait(
+    fn spawn_and_wait_with_env<'a>(
         &self,
         binary: &Path,
         args: &[String],
         cwd: &Path,
+        env_vars: &[(&'a str, &'a str)],
         timeout: Duration,
     ) -> Result<ProcessResult, CodeServerError> {
         use std::process::{Command, Stdio};
         use std::time::Instant;
 
-        // Prepend the binary's directory to PATH so child processes use our Node
-        let bin_dir = binary.parent();
-        let path_env = if let Some(dir) = bin_dir {
-            let current_path = std::env::var("PATH").unwrap_or_default();
-            format!("{}:{}", dir.display(), current_path)
-        } else {
-            std::env::var("PATH").unwrap_or_default()
-        };
+        // Build PATH environment variable
+        let mut path_env = String::new();
+
+        // Check if PATH is already provided in env_vars
+        let mut has_path = false;
+        for (key, value) in env_vars {
+            if *key == "PATH" {
+                path_env = value.to_string();
+                has_path = true;
+                break;
+            }
+        }
+
+        // If PATH not provided, use current environment PATH
+        if !has_path {
+            path_env = std::env::var("PATH").unwrap_or_default();
+        }
 
         // Set npm_config_user_agent to report our Node version
         // code-server's postinstall script parses this to check Node version
@@ -420,11 +454,22 @@ impl ProcessSpawner for StdProcessSpawner {
         );
 
         let start = Instant::now();
-        let mut child = Command::new(binary)
+        let mut command = Command::new(binary);
+        command
             .args(args)
             .current_dir(cwd)
             .env("PATH", path_env)
-            .env("npm_config_user_agent", user_agent)
+            .env("npm_config_user_agent", user_agent);
+
+        // Set additional environment variables
+        for (key, value) in env_vars {
+            if *key != "PATH" {
+                // PATH already handled above
+                command.env(key, value);
+            }
+        }
+
+        let mut child = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -690,10 +735,61 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         }
     }
 
+    /// Check if a command is available and functional on the system.
+    ///
+    /// Runs `command --version` and returns true if it succeeds.
+    fn is_command_available(command: &str) -> bool {
+        std::process::Command::new(command)
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Build PATH environment variable that prioritizes downloaded binaries.
+    ///
+    /// Prepends all downloaded binary directories to PATH so that downloaded
+    /// versions take priority over system versions.
+    fn build_path_env(&self) -> String {
+        let mut path_parts = Vec::new();
+
+        // Prepend downloaded Node.js bin directory
+        if let Some(node_dir) = self.config.node_binary_path.parent() {
+            path_parts.push(node_dir.to_string_lossy().to_string());
+        }
+
+        // Prepend downloaded Python bin directory
+        if let Some(python_dir) = self.config.python_binary_path.parent() {
+            path_parts.push(python_dir.to_string_lossy().to_string());
+        }
+
+        // Prepend downloaded opencode directory
+        if let Some(opencode_dir) = self.config.opencode_binary_path().parent() {
+            path_parts.push(opencode_dir.to_string_lossy().to_string());
+        }
+
+        // Append system PATH
+        if let Ok(system_path) = std::env::var("PATH") {
+            path_parts.push(system_path);
+        }
+
+        path_parts.join(":")
+    }
+
     /// Check if the runtime is ready (all components installed).
     pub fn is_ready(&self) -> bool {
-        // Check if Node.js binary exists
-        if !self.file_system.exists(&self.config.node_binary_path) {
+        // Check if Node.js is available (downloaded or system)
+        if !self.file_system.exists(&self.config.node_binary_path)
+            && !Self::is_command_available("node")
+        {
+            return false;
+        }
+
+        // Check if Python is available (downloaded or system)
+        if !(self.file_system.exists(&self.config.python_binary_path)
+            || Self::is_command_available("python3")
+            || Self::is_command_available("python"))
+        {
             return false;
         }
 
@@ -702,8 +798,10 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return false;
         }
 
-        // Check if opencode is installed
-        if !self.file_system.exists(&self.config.opencode_binary_path()) {
+        // Check if opencode is available (downloaded or system)
+        if !self.file_system.exists(&self.config.opencode_binary_path())
+            && !Self::is_command_available("opencode")
+        {
             return false;
         }
 
@@ -1000,6 +1098,11 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
     ///
     /// Returns `CodeServerError::ExtensionInstallFailed` if installation fails.
     pub fn install_code_server(&self) -> Result<(), CodeServerError> {
+        // Skip if code-server is already installed
+        if self.file_system.exists(&self.config.code_server_dir()) {
+            return Ok(());
+        }
+
         self.emit(SetupEvent::Update {
             message: "Installing code-server...".into(),
             steps: StepsBuilder::new()
@@ -1009,6 +1112,11 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 .build(),
         });
 
+        // Ensure runtime directory exists
+        self.file_system
+            .create_dir_all(&self.config.runtime_dir)
+            .map_err(CodeServerError::PermissionError)?;
+
         // First, create a package.json if it doesn't exist
         let package_json_path = self.config.runtime_dir.join("package.json");
         if !self.file_system.exists(&package_json_path) {
@@ -1017,17 +1125,24 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 .map_err(CodeServerError::PermissionError)?;
         }
 
-        let args = self.code_server_install_args();
+        // Run npm directly - PATH will resolve to correct npm
+        let args = vec![
+            "install".to_string(),
+            "--prefix".to_string(),
+            self.config.runtime_dir.to_string_lossy().to_string(),
+            format!("code-server@{}", CODE_SERVER_VERSION),
+        ];
 
         // Set PYTHON environment variable for npm install to use our Python
         let python_env = self.config.python_binary_path.to_string_lossy().to_string();
-        std::env::set_var("PYTHON", &python_env);
+        let path_env = self.build_path_env();
 
-        // Run node directly with the npm CLI script to ensure we use our Node.js
-        let result = self.process_spawner.spawn_and_wait(
-            &self.config.node_binary_path,
+        // Run npm directly
+        let result = self.process_spawner.spawn_and_wait_with_env(
+            &PathBuf::from("npm"),
             &args,
             &self.config.runtime_dir,
+            &[("PATH", &path_env), ("PYTHON", &python_env)],
             CODE_SERVER_INSTALL_TIMEOUT,
         )?;
 
@@ -1079,6 +1194,13 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
     ///
     /// Returns `CodeServerError::ExtensionInstallFailed` if installation fails.
     pub fn install_opencode(&self) -> Result<(), CodeServerError> {
+        // Skip if opencode is already available (downloaded or system)
+        if self.file_system.exists(&self.config.opencode_binary_path())
+            || Self::is_command_available("opencode")
+        {
+            return Ok(());
+        }
+
         self.emit(SetupEvent::Update {
             message: "Installing OpenCode...".into(),
             steps: StepsBuilder::new()
@@ -1089,13 +1211,21 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 .build(),
         });
 
-        let args = self.opencode_install_args();
+        // Run npm directly - PATH will resolve to correct npm
+        let args = vec![
+            "install".to_string(),
+            "--prefix".to_string(),
+            self.config.runtime_dir.to_string_lossy().to_string(),
+            "opencode-ai".to_string(),
+        ];
 
-        // Run node directly with the npm CLI script to ensure we use our Node.js
-        let result = self.process_spawner.spawn_and_wait(
-            &self.config.node_binary_path,
+        // Run npm directly
+        let path_env = self.build_path_env();
+        let result = self.process_spawner.spawn_and_wait_with_env(
+            &PathBuf::from("npm"),
             &args,
             &self.config.runtime_dir,
+            &[("PATH", &path_env)],
             OPENCODE_INSTALL_TIMEOUT,
         )?;
 
@@ -1148,6 +1278,23 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
     pub fn install_extensions(&self) -> Result<(), CodeServerError> {
         let extensions = get_required_extensions();
 
+        // Check if all required extensions are already installed
+        if let Ok(entries) = std::fs::read_dir(&self.config.extensions_dir) {
+            let installed_extensions: std::collections::HashSet<String> = entries
+                .filter_map(|entry| entry.ok())
+                .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_lowercase()))
+                .collect();
+
+            let all_installed = extensions.iter().all(|(extension_id, version)| {
+                let expected_name = format!("{extension_id}-{version}-linux-x64").to_lowercase();
+                installed_extensions.contains(&expected_name)
+            });
+
+            if all_installed {
+                return Ok(());
+            }
+        }
+
         // Create extensions directory if it doesn't exist
         if !self.file_system.exists(&self.config.extensions_dir) {
             self.file_system
@@ -1169,11 +1316,13 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
 
             let args = self.extension_install_args(extension_id, version);
 
-            // Run node directly with the npx CLI script to ensure we use our Node.js
-            let result = self.process_spawner.spawn_and_wait(
-                &self.config.node_binary_path,
+            // Run code-server with node - PATH will resolve to correct Node.js
+            let path_env = self.build_path_env();
+            let result = self.process_spawner.spawn_and_wait_with_env(
+                &PathBuf::from("node"),
                 &args,
                 &self.config.runtime_dir,
+                &[("PATH", &path_env)],
                 EXTENSION_INSTALL_TIMEOUT,
             )?;
 
@@ -1215,20 +1364,24 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Ok(());
         }
 
-        // Step 1: Download Node.js
-        if let Err(e) = self.download_node().await {
-            self.emit(SetupEvent::Failed {
-                error: e.to_string(),
-            });
-            return Err(e);
+        // Step 1: Download Node.js (skip if system node is available)
+        if !Self::is_command_available("node") {
+            if let Err(e) = self.download_node().await {
+                self.emit(SetupEvent::Failed {
+                    error: e.to_string(),
+                });
+                return Err(e);
+            }
         }
 
-        // Step 2: Download Python
-        if let Err(e) = self.download_python().await {
-            self.emit(SetupEvent::Failed {
-                error: e.to_string(),
-            });
-            return Err(e);
+        // Step 2: Download Python (skip if system python3 or python is available)
+        if !(Self::is_command_available("python3") || Self::is_command_available("python")) {
+            if let Err(e) = self.download_python().await {
+                self.emit(SetupEvent::Failed {
+                    error: e.to_string(),
+                });
+                return Err(e);
+            }
         }
 
         // Step 3: Install code-server
@@ -1239,12 +1392,14 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Err(e);
         }
 
-        // Step 3: Install opencode
-        if let Err(e) = self.install_opencode() {
-            self.emit(SetupEvent::Failed {
-                error: e.to_string(),
-            });
-            return Err(e);
+        // Step 3: Install opencode (skip if system opencode is available)
+        if !Self::is_command_available("opencode") {
+            if let Err(e) = self.install_opencode() {
+                self.emit(SetupEvent::Failed {
+                    error: e.to_string(),
+                });
+                return Err(e);
+            }
         }
 
         // Step 4: Install codehydra extension first (writes extensions.json)
@@ -1769,9 +1924,9 @@ mod tests {
         let expected_calls = extensions.len();
 
         mock_spawner
-            .expect_spawn_and_wait()
+            .expect_spawn_and_wait_with_env()
             .times(expected_calls)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(ProcessResult {
                     exit_code: 0,
                     stdout: String::new(),
@@ -1818,9 +1973,9 @@ mod tests {
 
         // Simulate installation failure
         mock_spawner
-            .expect_spawn_and_wait()
+            .expect_spawn_and_wait_with_env()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(ProcessResult {
                     exit_code: 1,
                     stdout: String::new(),
@@ -1879,9 +2034,9 @@ mod tests {
 
         // Simulate timeout
         mock_spawner
-            .expect_spawn_and_wait()
+            .expect_spawn_and_wait_with_env()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Err(CodeServerError::ExtensionInstallFailed {
                     extension: "process".to_string(),
                     reason: "Timed out after 120s".to_string(),
@@ -1927,7 +2082,8 @@ mod tests {
         let mut mock_emitter = MockEventEmitter::new();
         let mut mock_spawner = MockProcessSpawner::new();
 
-        // Mock filesystem for package.json creation
+        // Mock filesystem for runtime directory and package.json creation
+        mock_fs.expect_create_dir_all().returning(|_| Ok(()));
         mock_fs.expect_exists().returning(|_| false);
         mock_fs.expect_write().returning(|_, _| Ok(()));
 
@@ -1935,9 +2091,9 @@ mod tests {
 
         // Simulate npm install failure
         mock_spawner
-            .expect_spawn_and_wait()
+            .expect_spawn_and_wait_with_env()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(ProcessResult {
                     exit_code: 1,
                     stdout: String::new(),
@@ -1986,7 +2142,8 @@ mod tests {
         let mut mock_emitter = MockEventEmitter::new();
         let mut mock_spawner = MockProcessSpawner::new();
 
-        // Mock filesystem for package.json creation
+        // Mock filesystem for runtime directory and package.json creation
+        mock_fs.expect_create_dir_all().returning(|_| Ok(()));
         mock_fs.expect_exists().returning(|_| false);
         mock_fs.expect_write().returning(|_, _| Ok(()));
 
@@ -1994,9 +2151,9 @@ mod tests {
 
         // Simulate successful installation
         mock_spawner
-            .expect_spawn_and_wait()
+            .expect_spawn_and_wait_with_env()
             .times(1)
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _| {
                 Ok(ProcessResult {
                     exit_code: 0,
                     stdout: "added 1 package".to_string(),
