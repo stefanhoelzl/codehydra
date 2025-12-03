@@ -43,6 +43,8 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install dependencies
         run: pnpm install
+        env:
+          FORCE_NODE_VERSION: 22
       - name: Build Tauri app
         run: pnpm tauri build --bundles ${{ matrix.bundle }} --target ${{ matrix.target }}
       - name: Upload binary
