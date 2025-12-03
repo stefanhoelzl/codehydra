@@ -48,6 +48,12 @@ pub struct CodeServerConfig {
     /// Path to the Node.js binary (e.g., `<runtime>/node/bin/node`)
     pub node_binary_path: PathBuf,
 
+    /// Path to the Python installation directory (e.g., `<runtime>/python/`)
+    pub python_dir: PathBuf,
+
+    /// Path to the Python binary (e.g., `<runtime>/python/bin/python`)
+    pub python_binary_path: PathBuf,
+
     /// Directory for installed VSCode extensions
     pub extensions_dir: PathBuf,
 
@@ -84,6 +90,7 @@ impl CodeServerConfig {
         let platform = Platform::current().ok_or(CodeServerError::UnsupportedPlatform)?;
         let runtime_dir = get_data_version_dir(app_version);
         let node_dir = runtime_dir.join("node");
+        let python_dir = runtime_dir.join("python");
 
         // On Windows, binaries are directly in the node folder
         // On Unix, binaries are in node/bin/
@@ -93,9 +100,19 @@ impl CodeServerConfig {
             node_dir.join("bin")
         };
 
+        // On Windows, Python binaries are directly in the python folder
+        // On Unix, Python binaries are in python/bin/
+        let python_bin_dir = if platform.is_windows() {
+            python_dir.clone()
+        } else {
+            python_dir.join("bin")
+        };
+
         Ok(Self {
             node_dir,
             node_binary_path: bin_dir.join(platform.node_binary_name()),
+            python_dir,
+            python_binary_path: python_bin_dir.join(platform.python_binary_name()),
             extensions_dir: runtime_dir.join("extensions"),
             user_data_dir: runtime_dir.join("user-data"),
             port_start: PORT_RANGE_START,
@@ -181,6 +198,7 @@ mod tests {
         // Verify all paths are set
         assert!(!config.runtime_dir.as_os_str().is_empty());
         assert!(!config.node_binary_path.as_os_str().is_empty());
+        assert!(!config.python_binary_path.as_os_str().is_empty());
         assert!(!config.extensions_dir.as_os_str().is_empty());
         assert!(!config.user_data_dir.as_os_str().is_empty());
 
@@ -188,6 +206,10 @@ mod tests {
         assert!(
             config.node_binary_path.starts_with(&config.runtime_dir),
             "node_binary_path should be under runtime_dir"
+        );
+        assert!(
+            config.python_binary_path.starts_with(&config.runtime_dir),
+            "python_binary_path should be under runtime_dir"
         );
         assert!(
             config.extensions_dir.starts_with(&config.runtime_dir),
@@ -327,6 +349,8 @@ mod tests {
         assert_eq!(config.runtime_dir, cloned.runtime_dir);
         assert_eq!(config.node_binary_path, cloned.node_binary_path);
         assert_eq!(config.node_dir, cloned.node_dir);
+        assert_eq!(config.python_binary_path, cloned.python_binary_path);
+        assert_eq!(config.python_dir, cloned.python_dir);
         assert_eq!(config.extensions_dir, cloned.extensions_dir);
         assert_eq!(config.user_data_dir, cloned.user_data_dir);
         assert_eq!(config.port_start, cloned.port_start);
@@ -340,5 +364,6 @@ mod tests {
         assert!(debug.contains("CodeServerConfig"));
         assert!(debug.contains("runtime_dir"));
         assert!(debug.contains("node_binary_path"));
+        assert!(debug.contains("python_binary_path"));
     }
 }

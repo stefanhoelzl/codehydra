@@ -341,6 +341,8 @@ mod tests {
             runtime_dir: PathBuf::from("/tmp/test-runtime"),
             node_dir: PathBuf::from("/tmp/test-runtime/node"),
             node_binary_path: PathBuf::from("/tmp/test-runtime/node/bin/node"),
+            python_dir: PathBuf::from("/tmp/test-runtime/python"),
+            python_binary_path: PathBuf::from("/tmp/test-runtime/python/bin/python"),
             extensions_dir: PathBuf::from("/tmp/test-runtime/extensions"),
             user_data_dir: PathBuf::from("/tmp/test-runtime/user-data"),
             port_start: 50000,

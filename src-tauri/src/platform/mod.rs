@@ -68,6 +68,31 @@ impl Platform {
             _ => "node",
         }
     }
+
+    /// Get the Python archive name for this platform.
+    ///
+    /// This matches the naming convention used by python-build-standalone releases.
+    pub fn python_archive_name(&self, version: &str, build_date: &str) -> String {
+        let arch = match self {
+            Self::LinuxX64 => "x86_64-unknown-linux-gnu",
+            Self::LinuxArm64 => "aarch64-unknown-linux-gnu",
+            Self::MacOSX64 => "x86_64-apple-darwin",
+            Self::MacOSArm64 => "aarch64-apple-darwin",
+            Self::WindowsX64 => "x86_64-pc-windows-msvc",
+        };
+        format!("cpython-{version}+{build_date}-{arch}-install_only.tar.gz")
+    }
+
+    /// Get the Python binary name for this platform.
+    ///
+    /// Returns "python.exe" on Windows, "python" on all other platforms.
+    pub fn python_binary_name(&self) -> &'static str {
+        match self {
+            Self::WindowsX64 => "python.exe",
+            _ => "python",
+        }
+    }
+
     /// Check if this platform is Windows.
     pub fn is_windows(&self) -> bool {
         matches!(self, Self::WindowsX64)
@@ -85,7 +110,7 @@ impl Platform {
 }
 
 // Re-export commonly used items
-pub use download::{node_checksum, node_download_url, npm_checksum, npm_download_url};
+pub use download::{node_checksum, node_download_url, python_checksum, python_download_url};
 pub use paths::{encode_path_for_url, normalize_path};
 pub use process::{prepare_binary, remove_quarantine, set_executable, spawn_code_server};
 
@@ -154,6 +179,52 @@ mod tests {
         assert_eq!(Platform::LinuxArm64.node_binary_name(), "node");
         assert_eq!(Platform::MacOSX64.node_binary_name(), "node");
         assert_eq!(Platform::MacOSArm64.node_binary_name(), "node");
+    }
+
+    #[test]
+    fn test_python_archive_name_format() {
+        let platform = Platform::LinuxX64;
+        let archive_name = platform.python_archive_name("3.14.1", "20251202");
+        assert_eq!(
+            archive_name,
+            "cpython-3.14.1+20251202-x86_64-unknown-linux-gnu-install_only.tar.gz"
+        );
+    }
+
+    #[test]
+    fn test_python_archive_name_all_platforms() {
+        let test_cases = vec![
+            (Platform::LinuxX64, "x86_64-unknown-linux-gnu"),
+            (Platform::LinuxArm64, "aarch64-unknown-linux-gnu"),
+            (Platform::MacOSX64, "x86_64-apple-darwin"),
+            (Platform::MacOSArm64, "aarch64-apple-darwin"),
+            (Platform::WindowsX64, "x86_64-pc-windows-msvc"),
+        ];
+
+        for (platform, expected_arch) in test_cases {
+            let archive_name = platform.python_archive_name("3.14.1", "20251202");
+            assert!(
+                archive_name.contains(expected_arch),
+                "Archive name for {platform:?} should contain {expected_arch}: {archive_name}"
+            );
+            assert!(
+                archive_name.ends_with("-install_only.tar.gz"),
+                "Archive name should end with -install_only.tar.gz: {archive_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_python_binary_name_windows_has_exe() {
+        assert_eq!(Platform::WindowsX64.python_binary_name(), "python.exe");
+    }
+
+    #[test]
+    fn test_python_binary_name_unix_no_extension() {
+        assert_eq!(Platform::LinuxX64.python_binary_name(), "python");
+        assert_eq!(Platform::LinuxArm64.python_binary_name(), "python");
+        assert_eq!(Platform::MacOSX64.python_binary_name(), "python");
+        assert_eq!(Platform::MacOSArm64.python_binary_name(), "python");
     }
 
     #[test]

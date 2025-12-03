@@ -26,8 +26,8 @@ use crate::platform::{prepare_binary, Platform};
 use crate::runtime_versions::{get_required_extensions, CODE_SERVER_VERSION};
 use crate::setup::{SetupEvent, StepState, StepsBuilder};
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use sha2::{Digest, Sha256, Sha512};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -506,17 +506,19 @@ pub fn verify_checksum(
     file_name: &str,
 ) -> Result<(), CodeServerError> {
     if let Some(hash) = integrity.strip_prefix("sha512-") {
-        let expected = STANDARD.decode(hash).map_err(|_| CodeServerError::ChecksumMismatch {
-            file: file_name.to_string(),
-            expected: integrity.to_string(),
-            actual: "invalid base64".to_string(),
-        })?;
+        let expected = STANDARD
+            .decode(hash)
+            .map_err(|_| CodeServerError::ChecksumMismatch {
+                file: file_name.to_string(),
+                expected: integrity.to_string(),
+                actual: "invalid base64".to_string(),
+            })?;
         let actual = Sha512::digest(data);
         if actual.as_slice() != expected.as_slice() {
             return Err(CodeServerError::ChecksumMismatch {
                 file: file_name.to_string(),
                 expected: integrity.to_string(),
-                actual: format!("{:x}", actual),
+                actual: format!("{actual:x}"),
             });
         }
     } else {
@@ -531,7 +533,7 @@ pub fn verify_checksum(
             return Err(CodeServerError::ChecksumMismatch {
                 file: file_name.to_string(),
                 expected: integrity.to_string(),
-                actual: format!("{:x}", actual),
+                actual: format!("{actual:x}"),
             });
         }
     }
@@ -541,9 +543,10 @@ pub fn verify_checksum(
 
 /// Simple hex decode function.
 fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
-    (0..s.len()).step_by(2).map(|i| {
-        u8::from_str_radix(&s[i..(i+2).min(s.len())], 16).map_err(|_| ())
-    }).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..(i + 2).min(s.len())], 16).map_err(|_| ()))
+        .collect()
 }
 
 /// Download data and verify its checksum.
@@ -900,8 +903,90 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
 
         self.emit(SetupEvent::Update {
             message: "Node.js runtime ready".into(),
+            steps: StepsBuilder::new().node(StepState::Completed).build(),
+        });
+
+        Ok(())
+    }
+
+    /// Download and extract Python runtime.
+    ///
+    /// Downloads Python from python-build-standalone, verifies checksum,
+    /// extracts to the runtime directory, and prepares the binary.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CodeServerError::UnsupportedPlatform` if the current platform is not supported.
+    /// Returns `CodeServerError::PermissionError` if directory creation fails.
+    /// Returns `CodeServerError::DownloadFailed` if download fails.
+    /// Returns `CodeServerError::ChecksumMismatch` if checksum verification fails.
+    /// Returns `CodeServerError::ExtractionFailed` if extraction fails.
+    pub async fn download_python(&self) -> Result<(), CodeServerError> {
+        use crate::runtime_versions::{PYTHON_BUILD_DATE, PYTHON_VERSION};
+
+        let platform = Platform::current().ok_or(CodeServerError::UnsupportedPlatform)?;
+
+        // Create runtime directory
+        self.file_system
+            .create_dir_all(&self.config.runtime_dir)
+            .map_err(CodeServerError::PermissionError)?;
+
+        // Get download URL and checksum
+        let url = crate::platform::python_download_url(platform);
+        let checksum = crate::platform::python_checksum(platform);
+        let archive_name = platform.python_archive_name(PYTHON_VERSION, PYTHON_BUILD_DATE);
+
+        // Download the archive
+        self.emit(SetupEvent::Update {
+            message: "Downloading Python runtime...".into(),
             steps: StepsBuilder::new()
                 .node(StepState::Completed)
+                .python(StepState::InProgress)
+                .build(),
+        });
+
+        let archive_data = download_and_verify(&self.http_client, &url, checksum).await?;
+
+        self.emit(SetupEvent::Update {
+            message: "Extracting Python...".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .python(StepState::InProgress)
+                .build(),
+        });
+
+        // Extract the archive - Python archives extract to a "python" directory
+        self.archive_extractor.extract_archive(
+            &archive_data,
+            &self.config.runtime_dir,
+            &archive_name,
+            ".tar.gz", // python-build-standalone uses .tar.gz for all platforms
+        )?;
+
+        // Python archives extract to a "python" directory
+        let extracted_python_dir = self.config.runtime_dir.join("python");
+        let target_python_dir = &self.config.python_dir;
+
+        // Move the extracted python directory to the target location if needed
+        if extracted_python_dir != *target_python_dir {
+            if self.file_system.exists(target_python_dir) {
+                self.file_system
+                    .remove_dir_all(target_python_dir)
+                    .map_err(CodeServerError::PermissionError)?;
+            }
+            std::fs::rename(&extracted_python_dir, target_python_dir).map_err(|e| {
+                CodeServerError::ExtractionFailed(format!("Failed to rename directory: {e}"))
+            })?;
+        }
+
+        // Prepare the python binary (set executable permissions, remove quarantine)
+        prepare_binary(&self.config.python_binary_path)?;
+
+        self.emit(SetupEvent::Update {
+            message: "Python runtime ready".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .python(StepState::Completed)
                 .build(),
         });
         Ok(())
@@ -919,6 +1004,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             message: "Installing code-server...".into(),
             steps: StepsBuilder::new()
                 .node(StepState::Completed)
+                .python(StepState::Completed)
                 .code_server(StepState::InProgress)
                 .build(),
         });
@@ -933,6 +1019,10 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
 
         let args = self.code_server_install_args();
 
+        // Set PYTHON environment variable for npm install to use our Python
+        let python_env = self.config.python_binary_path.to_string_lossy().to_string();
+        std::env::set_var("PYTHON", &python_env);
+
         // Run node directly with the npm CLI script to ensure we use our Node.js
         let result = self.process_spawner.spawn_and_wait(
             &self.config.node_binary_path,
@@ -940,6 +1030,9 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             &self.config.runtime_dir,
             CODE_SERVER_INSTALL_TIMEOUT,
         )?;
+
+        // Clean up the environment variable
+        std::env::remove_var("PYTHON");
 
         if result.exit_code != 0 {
             return Err(CodeServerError::ExtensionInstallFailed {
@@ -950,6 +1043,15 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 ),
             });
         }
+
+        self.emit(SetupEvent::Update {
+            message: "code-server installed successfully".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .python(StepState::Completed)
+                .code_server(StepState::Completed)
+                .build(),
+        });
 
         Ok(())
     }
@@ -981,6 +1083,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             message: "Installing OpenCode...".into(),
             steps: StepsBuilder::new()
                 .node(StepState::Completed)
+                .python(StepState::Completed)
                 .code_server(StepState::Completed)
                 .opencode(StepState::InProgress)
                 .build(),
@@ -1005,6 +1108,16 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 ),
             });
         }
+
+        self.emit(SetupEvent::Update {
+            message: "OpenCode installed successfully".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .python(StepState::Completed)
+                .code_server(StepState::Completed)
+                .opencode(StepState::Completed)
+                .build(),
+        });
 
         Ok(())
     }
@@ -1047,6 +1160,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
                 message: format!("Installing {extension_id}..."),
                 steps: StepsBuilder::new()
                     .node(StepState::Completed)
+                    .python(StepState::Completed)
                     .code_server(StepState::Completed)
                     .opencode(StepState::Completed)
                     .extensions(StepState::InProgress)
@@ -1109,7 +1223,15 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             return Err(e);
         }
 
-        // Step 2: Install code-server
+        // Step 2: Download Python
+        if let Err(e) = self.download_python().await {
+            self.emit(SetupEvent::Failed {
+                error: e.to_string(),
+            });
+            return Err(e);
+        }
+
+        // Step 3: Install code-server
         if let Err(e) = self.install_code_server() {
             self.emit(SetupEvent::Failed {
                 error: e.to_string(),
@@ -1144,6 +1266,7 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
             message: "Setup complete!".into(),
             steps: StepsBuilder::new()
                 .node(StepState::Completed)
+                .python(StepState::Completed)
                 .code_server(StepState::Completed)
                 .opencode(StepState::Completed)
                 .extensions(StepState::Completed)
@@ -1272,6 +1395,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1312,6 +1437,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1345,6 +1472,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1484,6 +1613,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1520,6 +1651,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1568,6 +1701,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1609,6 +1744,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1662,6 +1799,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1721,6 +1860,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1773,6 +1914,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1830,6 +1973,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -1957,6 +2102,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -2003,6 +2150,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -2041,6 +2190,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -2083,6 +2234,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,
@@ -2135,6 +2288,8 @@ mod tests {
             runtime_dir: temp.path().to_path_buf(),
             node_dir: temp.path().join("node"),
             node_binary_path: temp.path().join("node").join("bin").join("node"),
+            python_dir: temp.path().join("python"),
+            python_binary_path: temp.path().join("python").join("bin").join("python"),
             extensions_dir: temp.path().join("extensions"),
             user_data_dir: temp.path().join("user-data"),
             port_start: 50000,

@@ -60,6 +60,7 @@ pub enum StepState {
 #[derive(Debug, Clone, Default)]
 pub struct StepsBuilder {
     node: StepState,
+    python: StepState,
     code_server: StepState,
     opencode: StepState,
     extensions: StepState,
@@ -74,6 +75,12 @@ impl StepsBuilder {
     /// Set the Node.js runtime step state.
     pub fn node(mut self, state: StepState) -> Self {
         self.node = state;
+        self
+    }
+
+    /// Set the Python runtime step state.
+    pub fn python(mut self, state: StepState) -> Self {
+        self.python = state;
         self
     }
 
@@ -103,6 +110,10 @@ impl StepsBuilder {
                 state: self.node,
             },
             StepStatus {
+                label: "Python runtime".into(),
+                state: self.python,
+            },
+            StepStatus {
                 label: "code-server".into(),
                 state: self.code_server,
             },
@@ -125,7 +136,7 @@ mod tests {
     #[test]
     fn test_steps_builder_defaults_to_pending() {
         let steps = StepsBuilder::new().build();
-        assert_eq!(steps.len(), 4);
+        assert_eq!(steps.len(), 5);
         for step in steps {
             assert_eq!(step.state, StepState::Pending);
         }
@@ -135,19 +146,22 @@ mod tests {
     fn test_steps_builder_sets_individual_states() {
         let steps = StepsBuilder::new()
             .node(StepState::Completed)
-            .code_server(StepState::InProgress)
-            .opencode(StepState::Pending)
-            .extensions(StepState::Failed)
+            .python(StepState::InProgress)
+            .code_server(StepState::Pending)
+            .opencode(StepState::Failed)
+            .extensions(StepState::Completed)
             .build();
 
         assert_eq!(steps[0].label, "Node.js runtime");
         assert_eq!(steps[0].state, StepState::Completed);
-        assert_eq!(steps[1].label, "code-server");
+        assert_eq!(steps[1].label, "Python runtime");
         assert_eq!(steps[1].state, StepState::InProgress);
-        assert_eq!(steps[2].label, "OpenCode");
+        assert_eq!(steps[2].label, "code-server");
         assert_eq!(steps[2].state, StepState::Pending);
-        assert_eq!(steps[3].label, "Extensions");
+        assert_eq!(steps[3].label, "OpenCode");
         assert_eq!(steps[3].state, StepState::Failed);
+        assert_eq!(steps[4].label, "Extensions");
+        assert_eq!(steps[4].state, StepState::Completed);
     }
 
     #[test]
@@ -156,9 +170,10 @@ mod tests {
         let steps = StepsBuilder::new().node(StepState::InProgress).build();
 
         assert_eq!(steps[0].state, StepState::InProgress);
-        assert_eq!(steps[1].state, StepState::Pending);
-        assert_eq!(steps[2].state, StepState::Pending);
-        assert_eq!(steps[3].state, StepState::Pending);
+        assert_eq!(steps[1].state, StepState::Pending); // Python
+        assert_eq!(steps[2].state, StepState::Pending); // code-server
+        assert_eq!(steps[3].state, StepState::Pending); // OpenCode
+        assert_eq!(steps[4].state, StepState::Pending); // Extensions
     }
 
     #[test]

@@ -11,11 +11,11 @@ pub const NODE_VERSION: &str = "22.21.1";
 /// Pinned code-server version.
 pub const CODE_SERVER_VERSION: &str = "4.106.2";
 
-/// Pinned npm version for bundling.
-pub const NPM_VERSION: &str = "11.6.4";
+/// Pinned Python version for native module compilation.
+pub const PYTHON_VERSION: &str = "3.14.1";
 
-/// npm integrity for verification.
-pub const NPM_INTEGRITY: &str = "sha512-ERjKtGoFpQrua/9bG0+h3xiv/4nVdGViCjUYA1AmlV24fFvfnSB7B7dIfZnySQ1FDLd0ZVrWPsLLp78dCtJdRQ==";
+/// Python build date for python-build-standalone releases.
+pub const PYTHON_BUILD_DATE: &str = "20251202";
 
 /// Get the required extensions with their pinned versions.
 ///
@@ -73,6 +73,37 @@ mod tests {
                 "CODE_SERVER_VERSION part '{part}' should be a number"
             );
         }
+    }
+
+    #[test]
+    fn test_python_version_is_valid_semver() {
+        // Version should be in semver format (x.y.z)
+        let parts: Vec<&str> = PYTHON_VERSION.split('.').collect();
+        assert_eq!(
+            parts.len(),
+            3,
+            "PYTHON_VERSION should have 3 parts: {PYTHON_VERSION}"
+        );
+        for part in parts {
+            assert!(
+                part.parse::<u32>().is_ok(),
+                "PYTHON_VERSION part '{part}' should be a number"
+            );
+        }
+    }
+
+    #[test]
+    fn test_python_build_date_is_valid() {
+        // Build date should be 8 digits (YYYYMMDD format)
+        assert_eq!(
+            PYTHON_BUILD_DATE.len(),
+            8,
+            "PYTHON_BUILD_DATE should be 8 digits: {PYTHON_BUILD_DATE}"
+        );
+        assert!(
+            PYTHON_BUILD_DATE.parse::<u32>().is_ok(),
+            "PYTHON_BUILD_DATE should be a valid number: {PYTHON_BUILD_DATE}"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! - SHA256 checksums for binary verification
 
 use super::Platform;
-use crate::runtime_versions::NODE_VERSION;
+use crate::runtime_versions::{NODE_VERSION, PYTHON_BUILD_DATE, PYTHON_VERSION};
 
 /// Get the SHA256 checksum for Node.js binary on the given platform.
 ///
@@ -30,7 +30,27 @@ pub fn node_download_url(platform: Platform) -> String {
     format!("https://nodejs.org/dist/v{NODE_VERSION}/{archive_name}{extension}")
 }
 
+/// Get the SHA256 checksum for Python binary on the given platform.
+///
+/// These checksums are from https://github.com/astral-sh/python-build-standalone/releases/download/20251202/
+pub fn python_checksum(platform: Platform) -> &'static str {
+    // Checksums for Python 3.14.1+20251202
+    match platform {
+        Platform::LinuxX64 => "a72f313bad49846e5e9671af2be7476033a877c80831cf47f431400ccb520090",
+        Platform::LinuxArm64 => "5dde7dba0b8ef34c0d5cb8a721254b1e11028bfc09ff06664879c245fe8df73f",
+        Platform::MacOSX64 => "f25ce050e1d370f9c05c9623b769ffa4b269a6ae17e611b435fd2b8b09972a88",
+        Platform::MacOSArm64 => "cdf1ba0789f529fa34bb5b5619c5da9757ac1067d6b8dd0ee8b78e50078fc561",
+        Platform::WindowsX64 => "cb478a5a37eb93ce4d3c27ae64d211d6a5a42475ae53f666a8d1570e71fcf409",
+    }
+}
 
+/// Get the download URL for Python binary on the given platform.
+///
+/// URLs point to the python-build-standalone GitHub releases.
+pub fn python_download_url(platform: Platform) -> String {
+    let archive_name = platform.python_archive_name(PYTHON_VERSION, PYTHON_BUILD_DATE);
+    format!("https://github.com/astral-sh/python-build-standalone/releases/download/{PYTHON_BUILD_DATE}/{archive_name}")
+}
 
 #[cfg(test)]
 mod tests {
@@ -106,4 +126,66 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_python_download_url_format() {
+        let url = python_download_url(Platform::LinuxX64);
+        assert!(url.starts_with(
+            "https://github.com/astral-sh/python-build-standalone/releases/download/"
+        ));
+        assert!(url.contains(PYTHON_BUILD_DATE));
+        assert!(url.contains("cpython-"));
+        assert!(url.contains("linux-gnu"));
+        assert!(url.ends_with("-install_only.tar.gz"));
+    }
+
+    #[test]
+    fn test_python_download_url_all_platforms() {
+        let test_cases = vec![
+            (Platform::LinuxX64, "x86_64-unknown-linux-gnu"),
+            (Platform::LinuxArm64, "aarch64-unknown-linux-gnu"),
+            (Platform::MacOSX64, "x86_64-apple-darwin"),
+            (Platform::MacOSArm64, "aarch64-apple-darwin"),
+            (Platform::WindowsX64, "x86_64-pc-windows-msvc"),
+        ];
+
+        for (platform, expected_arch) in test_cases {
+            let url = python_download_url(platform);
+            assert!(
+                url.contains(expected_arch),
+                "URL for {platform:?} should contain {expected_arch}: {url}"
+            );
+            assert!(
+                url.contains(PYTHON_VERSION),
+                "URL should contain Python version {PYTHON_VERSION}: {url}"
+            );
+            assert!(
+                url.contains(PYTHON_BUILD_DATE),
+                "URL should contain build date {PYTHON_BUILD_DATE}: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_python_checksum_returns_string() {
+        let platforms = [
+            Platform::LinuxX64,
+            Platform::LinuxArm64,
+            Platform::MacOSX64,
+            Platform::MacOSArm64,
+            Platform::WindowsX64,
+        ];
+
+        for platform in platforms {
+            let checksum = python_checksum(platform);
+            assert!(
+                !checksum.is_empty(),
+                "Checksum for {platform:?} should not be empty"
+            );
+        }
+    }
+
+    // Compile-time assertions
+    const _: () = assert!(!PYTHON_VERSION.is_empty());
+    const _: () = assert!(!PYTHON_BUILD_DATE.is_empty());
 }
