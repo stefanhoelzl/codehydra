@@ -131,12 +131,7 @@ impl CodeServerConfig {
     /// Get the path to the npm CLI script.
     /// This is the actual JS file that should be run with node.
     pub fn npm_cli_path(&self) -> PathBuf {
-        self.node_dir
-            .join("lib")
-            .join("node_modules")
-            .join("npm")
-            .join("bin")
-            .join("npm-cli.js")
+        self.node_dir.join("bin").join("npm-cli.js")
     }
 
     /// Get the path to the code-server entry point.
