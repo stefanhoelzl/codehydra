@@ -85,7 +85,7 @@ impl Platform {
 }
 
 // Re-export commonly used items
-pub use download::{node_checksum, node_download_url};
+pub use download::{node_checksum, node_download_url, npm_checksum, npm_download_url};
 pub use paths::{encode_path_for_url, normalize_path};
 pub use process::{prepare_binary, remove_quarantine, set_executable, spawn_code_server};
 

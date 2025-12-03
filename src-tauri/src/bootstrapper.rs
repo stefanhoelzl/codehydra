@@ -26,7 +26,8 @@ use crate::platform::{prepare_binary, Platform};
 use crate::runtime_versions::{get_required_extensions, CODE_SERVER_VERSION};
 use crate::setup::{SetupEvent, StepState, StepsBuilder};
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -485,12 +486,15 @@ impl ProcessSpawner for StdProcessSpawner {
 // Checksum Verification
 // ============================================================================
 
-/// Verify the SHA256 checksum of data.
+/// Verify the checksum of data.
+///
+/// Supports SHA256 (hex) and SHA512 (base64 from integrity).
 ///
 /// # Arguments
 ///
 /// * `data` - The data to verify
-/// * `expected_sha256` - The expected SHA256 checksum (lowercase hex)
+/// * `integrity` - The integrity string (e.g., "sha256-<hex>" or "sha512-<base64>")
+/// * `file_name` - The name of the file for error reporting
 ///
 /// # Returns
 ///
@@ -498,30 +502,58 @@ impl ProcessSpawner for StdProcessSpawner {
 /// if it doesn't.
 pub fn verify_checksum(
     data: &[u8],
-    expected_sha256: &str,
+    integrity: &str,
     file_name: &str,
 ) -> Result<(), CodeServerError> {
-    let actual = format!("{:x}", Sha256::digest(data));
-
-    if actual != expected_sha256 {
-        return Err(CodeServerError::ChecksumMismatch {
+    if let Some(hash) = integrity.strip_prefix("sha512-") {
+        let expected = STANDARD.decode(hash).map_err(|_| CodeServerError::ChecksumMismatch {
             file: file_name.to_string(),
-            expected: expected_sha256.to_string(),
-            actual,
-        });
+            expected: integrity.to_string(),
+            actual: "invalid base64".to_string(),
+        })?;
+        let actual = Sha512::digest(data);
+        if actual.as_slice() != expected.as_slice() {
+            return Err(CodeServerError::ChecksumMismatch {
+                file: file_name.to_string(),
+                expected: integrity.to_string(),
+                actual: format!("{:x}", actual),
+            });
+        }
+    } else {
+        // Assume SHA256 hex
+        let expected = hex_decode(integrity).map_err(|_| CodeServerError::ChecksumMismatch {
+            file: file_name.to_string(),
+            expected: integrity.to_string(),
+            actual: "invalid hex".to_string(),
+        })?;
+        let actual = Sha256::digest(data);
+        if actual.as_slice() != expected.as_slice() {
+            return Err(CodeServerError::ChecksumMismatch {
+                file: file_name.to_string(),
+                expected: integrity.to_string(),
+                actual: format!("{:x}", actual),
+            });
+        }
     }
 
     Ok(())
+}
+
+/// Simple hex decode function.
+fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
+    (0..s.len()).step_by(2).map(|i| {
+        u8::from_str_radix(&s[i..(i+2).min(s.len())], 16).map_err(|_| ())
+    }).collect()
 }
 
 /// Download data and verify its checksum.
 pub async fn download_and_verify<H: HttpClient>(
     http_client: &H,
     url: &str,
-    expected_sha256: &str,
+    integrity: &str,
 ) -> Result<Vec<u8>, CodeServerError> {
     let data = http_client.download(url).await?;
-    verify_checksum(&data, expected_sha256, url)?;
+    verify_checksum(&data, integrity, url)?;
     Ok(data)
 }
 
@@ -865,6 +897,44 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
 
         // Prepare the node binary (set executable permissions, remove quarantine)
         prepare_binary(&self.config.node_binary_path)?;
+
+        // Download and extract npm
+        self.emit(SetupEvent::Update {
+            message: "Downloading npm...".into(),
+            steps: StepsBuilder::new().node(StepState::Completed).build(),
+        });
+
+        let npm_url = crate::platform::npm_download_url(platform);
+        let npm_integrity = crate::platform::npm_checksum(platform);
+
+        let npm_data = download_and_verify(&self.http_client, &npm_url, npm_integrity).await?;
+
+        self.emit(SetupEvent::Update {
+            message: "Extracting npm...".into(),
+            steps: StepsBuilder::new().node(StepState::Completed).build(),
+        });
+
+        // Extract npm tarball (extracts to package/ directory)
+        let npm_extracted_dir = self.archive_extractor.extract_archive(
+            &npm_data,
+            &self.config.node_dir,
+            "package",
+            ".tar.gz",
+        )?;
+
+        // Move npm-cli.js to bin/
+        let npm_cli_src = npm_extracted_dir.join("bin").join("npm-cli.js");
+        let npm_cli_dest = self.config.node_dir.join("bin").join("npm-cli.js");
+        if self.file_system.exists(&npm_cli_src) {
+            std::fs::rename(&npm_cli_src, &npm_cli_dest).map_err(|e| {
+                CodeServerError::ExtractionFailed(format!("Failed to move npm-cli.js: {e}"))
+            })?;
+        }
+
+        // Clean up the package directory
+        if self.file_system.exists(&npm_extracted_dir) {
+            self.file_system.remove_dir_all(&npm_extracted_dir).map_err(CodeServerError::PermissionError)?;
+        }
 
         Ok(())
     }

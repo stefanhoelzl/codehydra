@@ -5,7 +5,7 @@
 //! - SHA256 checksums for binary verification
 
 use super::Platform;
-use crate::runtime_versions::NODE_VERSION;
+use crate::runtime_versions::{NODE_VERSION, NPM_VERSION, NPM_INTEGRITY};
 
 /// Get the SHA256 checksum for Node.js binary on the given platform.
 ///
@@ -28,6 +28,20 @@ pub fn node_download_url(platform: Platform) -> String {
     let archive_name = platform.node_archive_name(NODE_VERSION);
     let extension = platform.node_archive_extension();
     format!("https://nodejs.org/dist/v{NODE_VERSION}/{archive_name}{extension}")
+}
+
+/// Get the integrity for npm package.
+///
+/// From npm registry.
+pub fn npm_checksum(_platform: Platform) -> &'static str {
+    NPM_INTEGRITY
+}
+
+/// Get the download URL for npm package.
+///
+/// From npm registry.
+pub fn npm_download_url(_platform: Platform) -> String {
+    format!("https://registry.npmjs.org/npm/-/npm-{}.tgz", NPM_VERSION)
 }
 
 #[cfg(test)]

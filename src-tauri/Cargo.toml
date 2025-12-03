@@ -35,6 +35,7 @@ process-wrap = { version = "8.2.1", features = ["tokio1", "process-group", "job-
 percent-encoding = "2.3.2"
 dirs = "6.0.0"
 sha2 = "0.10.9"
+base64 = "0.21"
 zip = "6.0.0"
 tar = "0.4.44"
 flate2 = "1.1.5"

@@ -11,6 +11,12 @@ pub const NODE_VERSION: &str = "22.21.1";
 /// Pinned code-server version.
 pub const CODE_SERVER_VERSION: &str = "4.106.2";
 
+/// Pinned npm version for bundling.
+pub const NPM_VERSION: &str = "11.6.4";
+
+/// npm integrity for verification.
+pub const NPM_INTEGRITY: &str = "sha512-ERjKtGoFpQrua/9bG0+h3xiv/4nVdGViCjUYA1AmlV24fFvfnSB7B7dIfZnySQ1FDLd0ZVrWPsLLp78dCtJdRQ==";
+
 /// Get the required extensions with their pinned versions.
 ///
 /// Returns a HashMap mapping extension IDs to their versions.
