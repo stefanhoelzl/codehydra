@@ -37,7 +37,7 @@ This is a freshly scaffolded Tauri 2.0 application with:
 ## Project Structure
 
 ```
-chime/
+codehydra/
 ├── src/                      # Svelte frontend source
 │   ├── app.html             # HTML template
 │   └── routes/              # SvelteKit routes
@@ -128,23 +128,23 @@ pnpm preview    # Preview production build
 
 ### `src-tauri/tauri.conf.json`
 
-- **Product name**: "chime"
-- **Identifier**: "com.stefan.chime"
+- **Product name**: "codehydra"
+- **Identifier**: "com.stefan.codehydra"
 - **Window size**: 800x600 (default)
 - **Dev URL**: http://localhost:1420
 - **Frontend dist**: ../build (SvelteKit output)
 
 ### `package.json`
 
-- **Name**: "chime"
+- **Name**: "codehydra"
 - **Version**: 0.1.0
 - **Type**: "module" (ES modules)
 
 ### `src-tauri/Cargo.toml`
 
-- **Package name**: "chime"
+- **Package name**: "codehydra"
 - **Crate type**: staticlib, cdylib, rlib
-- **Lib name**: chime_lib
+- **Lib name**: codehydra_lib
 
 ## Development Workflow
 

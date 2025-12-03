@@ -3619,7 +3619,7 @@ describe('Agent Status API', () => {
 ```rust
 // src-tauri/tests/agent_status_integration.rs
 
-use chime::{
+use codehydra::{
     agent_status::{AgentStatusCounts, AggregatedAgentStatus},
     agent_status_manager::AgentStatusManager,
     agent_status_provider::{AgentStatusError, AgentStatusProvider, AgentStatusProviderFactory},
