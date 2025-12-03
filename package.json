@@ -31,8 +31,7 @@
     "@tauri-apps/plugin-global-shortcut": "^2.3.1",
     "@tauri-apps/plugin-opener": "^2",
     "@vscode-elements/elements": "^2.3.1",
-    "@vscode/codicons": "^0.0.42",
-    "code-server": "4.106.2"
+    "@vscode/codicons": "^0.0.42"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.0",
