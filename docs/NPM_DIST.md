@@ -12,13 +12,7 @@ This document outlines the plan to make Codehydra installable via `npx codehydra
 
 ## Implementation Plan
 
-### Phase 1: Rename "Chime" to "Codehydra" ✅
-
-- Update all UI text, docs, and code references
-- Change extension ID from `chime.chime` to `codehydra.vscode`
-- Update app title and setup messages
-
-### Phase 2: Configure Cross-Platform Standalone Builds
+### Phase 1: Configure Cross-Platform Standalone Builds
 
 **Update `src-tauri/tauri.conf.json`:**
 
@@ -124,7 +118,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-### Phase 3: Single NPM Package with All Binaries
+### Phase 2: Single NPM Package with All Binaries
 
 **Package Structure:**
 
@@ -214,9 +208,8 @@ Based on research, Tauri's `exe` bundle target creates standalone executables:
 
 ## Implementation Order
 
-1. ✅ **Commit 1**: Rename "Chime" → "codehydra" references
-2. **Commit 2**: Update Tauri config for cross-platform standalone builds
-3. **Commit 3**: Add GitHub Actions workflow for automated builds + testing
-4. **Commit 4**: Create separate npm package repository with embedded binaries
-5. **Commit 5**: Add automated npm publishing workflow</content>
+1. **Commit 1**: Update Tauri config for cross-platform standalone builds
+2. **Commit 2**: Add GitHub Actions workflow for automated builds + testing
+3. **Commit 3**: Create separate npm package repository with embedded binaries
+4. **Commit 4**: Add automated npm publishing workflow</content>
    <parameter name="filePath">docs/NPM_DIST.md
