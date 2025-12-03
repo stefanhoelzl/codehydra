@@ -1188,6 +1188,12 @@ describe('CreateWorkspaceDialog', () => {
         expect(options.length).toBe(1);
         expect(options[0]).toHaveTextContent('special-branch');
       });
+
+      // Assert scroll position resets to top for filtered results
+      await waitFor(() => {
+        const dropdownList = screen.getByRole('listbox');
+        expect(dropdownList.scrollTop).toBe(0);
+      });
     });
 
     it('keeps dropdown open when clicking name input (dropdown closes via trigger or escape)', async () => {
@@ -1250,13 +1256,19 @@ describe('CreateWorkspaceDialog', () => {
       expect(nameInput).toHaveFocus();
 
       await user.tab();
-      expect(getDropdownTrigger()).toHaveFocus();
+      await waitFor(() => {
+        expect(getDropdownTrigger()).toHaveFocus();
+      });
 
       await user.tab();
-      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+      });
 
       await user.tab();
-      expect(screen.getByRole('button', { name: 'OK' })).toHaveFocus();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'OK' })).toHaveFocus();
+      });
     });
   });
 });
