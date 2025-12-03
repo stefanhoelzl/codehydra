@@ -126,10 +126,9 @@ mod tests {
     fn test_steps_builder_defaults_to_pending() {
         let steps = StepsBuilder::new().build();
         assert_eq!(steps.len(), 4);
-        assert_eq!(steps[0].state, StepState::Pending);
-        assert_eq!(steps[1].state, StepState::Pending);
-        assert_eq!(steps[2].state, StepState::Pending);
-        assert_eq!(steps[3].state, StepState::Pending);
+        for step in steps {
+            assert_eq!(step.state, StepState::Pending);
+        }
     }
 
     #[test]

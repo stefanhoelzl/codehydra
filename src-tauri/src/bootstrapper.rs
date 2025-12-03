@@ -898,44 +898,12 @@ impl<H: HttpClient, F: FileSystem, A: ArchiveExtractor, E: EventEmitter, P: Proc
         // Prepare the node binary (set executable permissions, remove quarantine)
         prepare_binary(&self.config.node_binary_path)?;
 
-        // Download and extract npm
         self.emit(SetupEvent::Update {
-            message: "Downloading npm...".into(),
-            steps: StepsBuilder::new().node(StepState::Completed).build(),
+            message: "Node.js runtime ready".into(),
+            steps: StepsBuilder::new()
+                .node(StepState::Completed)
+                .build(),
         });
-
-        let npm_url = crate::platform::npm_download_url(platform);
-        let npm_integrity = crate::platform::npm_checksum(platform);
-
-        let npm_data = download_and_verify(&self.http_client, &npm_url, npm_integrity).await?;
-
-        self.emit(SetupEvent::Update {
-            message: "Extracting npm...".into(),
-            steps: StepsBuilder::new().node(StepState::Completed).build(),
-        });
-
-        // Extract npm tarball (extracts to package/ directory)
-        let npm_extracted_dir = self.archive_extractor.extract_archive(
-            &npm_data,
-            &self.config.node_dir,
-            "package",
-            ".tar.gz",
-        )?;
-
-        // Move npm-cli.js to bin/
-        let npm_cli_src = npm_extracted_dir.join("bin").join("npm-cli.js");
-        let npm_cli_dest = self.config.node_dir.join("bin").join("npm-cli.js");
-        if self.file_system.exists(&npm_cli_src) {
-            std::fs::rename(&npm_cli_src, &npm_cli_dest).map_err(|e| {
-                CodeServerError::ExtractionFailed(format!("Failed to move npm-cli.js: {e}"))
-            })?;
-        }
-
-        // Clean up the package directory
-        if self.file_system.exists(&npm_extracted_dir) {
-            self.file_system.remove_dir_all(&npm_extracted_dir).map_err(CodeServerError::PermissionError)?;
-        }
-
         Ok(())
     }
 

@@ -42,6 +42,11 @@ jobs:
         run: pnpm install
       - name: Sync SvelteKit
         run: pnpm exec svelte-kit sync
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
