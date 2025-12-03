@@ -1,8 +1,127 @@
-# AI Agent Instructions for Chime Development
+# AI Agent Instructions for codehydra Development
 
-This document contains specific instructions for AI coding agents (Claude, etc.) working on the Chime project.
+This document contains specific instructions for AI coding agents (Claude, etc.) working on the codehydra project.
 
 ---
+
+## Project Overview
+
+**codehydra** is a multi-agent IDE that enables developers to orchestrate multiple AI agents working in parallel across isolated git worktrees. This is the base Tauri application that will be built into the full codehydra application.
+
+For detailed concept and architecture, see `docs/INITIAL_CONCEPT.md`.
+
+## Current Status
+
+This is a freshly scaffolded Tauri 2.0 application with:
+
+- **Frontend**: Svelte 5 + TypeScript + SvelteKit
+- **Backend**: Rust with Tauri 2.9
+- **Package Manager**: pnpm
+- **Build Tool**: Vite 6
+
+## Key Configuration Files
+
+### `src-tauri/tauri.conf.json`
+
+- **Product name**: "codehydra"
+- **Identifier**: "com.stefan.codehydra"
+- **Window size**: 800x600 (default)
+- **Dev URL**: http://localhost:1420
+- **Frontend dist**: ../build (SvelteKit output)
+
+### `package.json`
+
+- **Name**: "codehydra"
+- **Version**: 0.1.0
+- **Type**: "module" (ES modules)
+
+### `src-tauri/Cargo.toml`
+
+- **Package name**: "codehydra"
+- **Crate type**: staticlib, cdylib, rlib
+- **Lib name**: codehydra_lib
+
+## Development Workflow
+
+### Run Development Server
+
+```bash
+pnpm tauri dev
+```
+
+This will:
+
+1. Start Vite dev server on http://localhost:1420
+2. Compile Rust backend
+3. Launch the Tauri desktop application with hot reload
+
+### Build for Production
+
+```bash
+pnpm tauri build
+```
+
+This creates a production build with platform-specific installers in `src-tauri/target/release/bundle/`.
+
+### Type Checking
+
+```bash
+pnpm check
+```
+
+Run TypeScript and Svelte type checking.
+
+### Type Checking (Watch Mode)
+
+```bash
+pnpm check:watch
+```
+
+Continuously check types as you develop.
+
+### Frontend Only Development
+
+```bash
+pnpm dev        # Start Vite dev server
+pnpm build      # Build frontend only
+pnpm preview    # Preview production build
+```
+
+## Key Development Patterns
+
+### Frontend (Svelte)
+
+- Use **Svelte stores** for state management
+- Follow **SvelteKit conventions** for routing
+- Keep components small and focused
+- Use **TypeScript** for all logic
+
+### Backend (Rust)
+
+- Follow the **Provider pattern** for components (see INITIAL_CONCEPT.md):
+  - `WorkspaceProvider` - Git worktree management
+  - `AgentProvider` - Code-server process management
+  - `AgentObserver` - State monitoring
+- Use **traits** for abstraction and future extensibility
+- Handle errors properly with `Result<T, E>`
+- Use **async/await** for concurrent operations
+
+### IPC Communication
+
+- Use Tauri commands for frontend → backend calls
+- Use Tauri events for backend → frontend updates
+- Keep payloads serializable (use serde)
+
+## Future Development Plan
+
+According to `docs/INITIAL_CONCEPT.md`, the next phases involve:
+
+1. **Agent Manager** - Coordinate agent lifecycle
+2. **WorkspaceProvider** - Git worktree isolation (GitWorktreeProvider)
+3. **AgentProvider** - Code-server + Claude Code setup (ClaudeCodeAgentProvider)
+4. **AgentObserver** - Monitor agent state transitions
+5. **UI Components** - Sidebar, tabs, iframe embedding
+6. **Notifications** - Audio chimes, system notifications
 
 ## Running the Application
 
