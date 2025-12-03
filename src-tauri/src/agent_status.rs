@@ -63,10 +63,11 @@ impl std::ops::AddAssign for AgentStatusCounts {
 }
 
 /// Aggregated status for a workspace (derived from all providers)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AggregatedAgentStatus {
     /// No agents running (grey)
+    #[default]
     NoAgents,
     /// All agents are idle (green)
     AllIdle { count: u32 },
@@ -74,12 +75,6 @@ pub enum AggregatedAgentStatus {
     AllBusy { count: u32 },
     /// Some idle, some busy (mixed - half red/half green)
     Mixed { idle: u32, busy: u32 },
-}
-
-impl Default for AggregatedAgentStatus {
-    fn default() -> Self {
-        Self::NoAgents
-    }
 }
 
 impl From<AgentStatusCounts> for AggregatedAgentStatus {
