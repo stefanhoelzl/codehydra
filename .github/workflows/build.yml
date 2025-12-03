@@ -6,6 +6,7 @@ on:
 jobs:
   build-tauri:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
