@@ -40,6 +40,8 @@ jobs:
           version: 9
       - name: Install dependencies
         run: pnpm install
+      - name: Sync SvelteKit
+        run: pnpm exec svelte-kit sync
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
