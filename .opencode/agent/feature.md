@@ -195,13 +195,7 @@ After @implement reports IMPLEMENTATION COMPLETE:
         prompt="Review this implementation to verify it followed the plan.
 
    ## Plan
-   [FULL PLAN CONTENT]
-
-   ## Git Diff
-   [OUTPUT OF git diff main...HEAD]
-
-   ## Changed Files
-   [LIST OF CHANGED FILES]")
+   [FULL PLAN CONTENT]")
    ```
 
 2. **Present results to user**:
