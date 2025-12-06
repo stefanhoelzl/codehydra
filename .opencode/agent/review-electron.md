@@ -1,6 +1,7 @@
 ---
 description: Reviews Electron-specific code for security, performance, and best practices
 mode: subagent
+model: anthropic/claude-sonnet-4-5
 thinking:
   type: enabled
   budgetTokens: 8000

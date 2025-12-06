@@ -1,6 +1,7 @@
 ---
 description: Reviews general architecture, integration patterns, and system design
 mode: subagent
+model: anthropic/claude-sonnet-4-5
 thinking:
   type: enabled
   budgetTokens: 8000
