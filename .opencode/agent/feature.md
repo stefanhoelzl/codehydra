@@ -445,22 +445,34 @@ This reviewer analyzes the **actual code** after implementation completes:
 
 ### Invoking Plan Reviewers
 
-**CRITICAL**: You MUST invoke ALL approved reviewers in PARALLEL by using multiple Task tool calls in a SINGLE response.
+**CRITICAL**: You MUST invoke ALL approved reviewers in PARALLEL by including multiple `<invoke name="task">` blocks within a SINGLE `<function_calls>` block.
 
-When invoking reviewers:
+**Example - invoke 3 reviewers in parallel:**
 
-1. Use the Task tool for each reviewer
-2. Call ALL Task tools in a SINGLE message/response (this runs them in parallel)
-3. Pass the full plan content to each reviewer in the prompt
+```xml
+<function_calls>
+<invoke name="task">
+<parameter name="subagent_type">review-ui</parameter>
+<parameter name="description">Review plan for UI/Svelte</parameter>
+<parameter name="prompt">Please review this plan for UI/Svelte aspects:
 
-**Example - invoke 3 reviewers in parallel (single response with 3 Task tool calls):**
+[FULL PLAN CONTENT]</parameter>
+</invoke>
+<invoke name="task">
+<parameter name="subagent_type">review-typescript</parameter>
+<parameter name="description">Review plan for TypeScript</parameter>
+<parameter name="prompt">Please review this plan for TypeScript quality:
 
-```
-Task(subagent_type="review-svelte", description="Review plan for UI/Svelte", prompt="Please review this plan for UI/Svelte aspects:\n\n[FULL PLAN CONTENT]")
+[FULL PLAN CONTENT]</parameter>
+</invoke>
+<invoke name="task">
+<parameter name="subagent_type">review-arch</parameter>
+<parameter name="description">Review plan for architecture</parameter>
+<parameter name="prompt">Please review this plan for architecture:
 
-Task(subagent_type="review-typescript", description="Review plan for TypeScript", prompt="Please review this plan for TypeScript quality:\n\n[FULL PLAN CONTENT]")
-
-Task(subagent_type="review-arch", description="Review plan for architecture", prompt="Please review this plan for architecture:\n\n[FULL PLAN CONTENT]")
+[FULL PLAN CONTENT]</parameter>
+</invoke>
+</function_calls>
 ```
 
 **DO NOT** invoke reviewers one at a time in separate responses - this runs them sequentially and wastes time.
@@ -474,7 +486,7 @@ After all reviews complete, present this summary (ISSUES ONLY - no strengths):
 
 ### Critical Issues (Must Fix)
 
-1. **[review-svelte]** Issue description
+1. **[review-ui]** Issue description
    - Location: step/section affected
    - Recommendation: how to fix
 

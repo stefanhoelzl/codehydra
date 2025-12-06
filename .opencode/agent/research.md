@@ -66,11 +66,24 @@ Use the `@explore` subagent for:
 - Answering questions about codebase structure
 - Exploring unfamiliar parts of the project
 
-Example:
+**Invoking @explore**: Use the Task tool with `subagent_type="explore"`. When you have multiple independent codebase questions, invoke them in parallel by including multiple `<invoke name="task">` blocks within a SINGLE `<function_calls>` block:
 
+```xml
+<function_calls>
+<invoke name="task">
+<parameter name="subagent_type">explore</parameter>
+<parameter name="description">Find IPC handler patterns</parameter>
+<parameter name="prompt">medium: Find all IPC handlers in the codebase and explain the pattern used</parameter>
+</invoke>
+<invoke name="task">
+<parameter name="subagent_type">explore</parameter>
+<parameter name="description">Find service layer patterns</parameter>
+<parameter name="prompt">medium: How are services organized? Find all service files and explain the patterns</parameter>
+</invoke>
+</function_calls>
 ```
-@explore Find all IPC handlers in the codebase and explain the pattern used
-```
+
+**DO NOT** invoke multiple explore queries one at a time - this runs them sequentially and wastes time.
 
 ## Output Format
 
