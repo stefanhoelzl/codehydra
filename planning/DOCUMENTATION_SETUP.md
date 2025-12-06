@@ -10,7 +10,7 @@ reviewers: []
 
 - **Problem**: CodeHydra needs foundational documentation for AI agents and developers to understand the target Electron application architecture, user flows, and quality standards.
 - **Solution**: Create high-level documentation that describes the target application (not migration process). Documents will evolve as features are built.
-- **Risks**: 
+- **Risks**:
   - Documentation may become stale as implementation progresses → Mitigate by updating docs during each phase
   - Over-documenting upfront → Mitigate by keeping docs high-level, expanding during implementation
 - **Alternatives Considered**:
@@ -32,16 +32,16 @@ codehydra/
 
 ### Key Architecture Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Project concept | Git repo path (container, not viewable) | Simplifies worktree handling |
-| Workspace concept | Git worktree (all equal, no "main") | No special cases |
-| Worktree discovery | Find in ANY location | Support manually created worktrees |
-| Worktree creation | Only in managed location | Consistent, predictable paths |
-| Empty project | Auto-open create dialog | Clear UX for new projects |
-| Keyboard navigation | Spans all projects | Simple mental model |
-| Package manager | pnpm | Project standard |
-| Ignore comments | Never without approval | Strict code quality |
+| Decision            | Choice                                  | Rationale                          |
+| ------------------- | --------------------------------------- | ---------------------------------- |
+| Project concept     | Git repo path (container, not viewable) | Simplifies worktree handling       |
+| Workspace concept   | Git worktree (all equal, no "main")     | No special cases                   |
+| Worktree discovery  | Find in ANY location                    | Support manually created worktrees |
+| Worktree creation   | Only in managed location                | Consistent, predictable paths      |
+| Empty project       | Auto-open create dialog                 | Clear UX for new projects          |
+| Keyboard navigation | Spans all projects                      | Simple mental model                |
+| Package manager     | pnpm                                    | Project standard                   |
+| Ignore comments     | Never without approval                  | Strict code quality                |
 
 ### Managed Worktree Location
 
@@ -82,13 +82,14 @@ codehydra/
 ## Testing Strategy
 
 ### Manual Verification
-| Check | Criteria |
-|-------|----------|
-| AGENTS.md | Covers: overview, tech stack, quality standards, pnpm, no-ignore rule |
-| ARCHITECTURE.md | Covers: system diagram, project/workspace concepts, components, data flow |
-| USER_INTERFACE.md | Covers: layout mockup, all user flows, keyboard shortcuts, UI states |
-| Consistency | No references to codehydra-tauri or demo |
-| Accuracy | Architecture matches key decisions table above |
+
+| Check             | Criteria                                                                  |
+| ----------------- | ------------------------------------------------------------------------- |
+| AGENTS.md         | Covers: overview, tech stack, quality standards, pnpm, no-ignore rule     |
+| ARCHITECTURE.md   | Covers: system diagram, project/workspace concepts, components, data flow |
+| USER_INTERFACE.md | Covers: layout mockup, all user flows, keyboard shortcuts, UI states      |
+| Consistency       | No references to codehydra-tauri or demo                                  |
+| Accuracy          | Architecture matches key decisions table above                            |
 
 ## Dependencies
 
@@ -98,11 +99,11 @@ No new dependencies required for documentation.
 
 ### New Documentation Required
 
-| File | Purpose |
-|------|---------|
-| `AGENTS.md` | AI agent onboarding and quality standards |
-| `docs/ARCHITECTURE.md` | System architecture and component design |
-| `docs/USER_INTERFACE.md` | User flows, mockups, keyboard navigation |
+| File                     | Purpose                                   |
+| ------------------------ | ----------------------------------------- |
+| `AGENTS.md`              | AI agent onboarding and quality standards |
+| `docs/ARCHITECTURE.md`   | System architecture and component design  |
+| `docs/USER_INTERFACE.md` | User flows, mockups, keyboard navigation  |
 
 ## Definition of Done
 
@@ -127,33 +128,38 @@ No new dependencies required for documentation.
 # CodeHydra - AI Agent Instructions
 
 ## Project Overview
+
 - Multi-workspace IDE for parallel AI agent development
 - Each workspace = git worktree in isolated WebContentsView with VS Code (code-server)
 - Real-time OpenCode agent status monitoring
 
 ## Tech Stack
-| Layer | Technology |
-|-------|------------|
-| Desktop | Electron (BaseWindow + WebContentsViews) |
-| Frontend | Svelte 5 + TypeScript + @vscode-elements |
-| Backend | Node.js services |
-| Testing | Vitest |
-| Build | Vite |
-| Package Manager | pnpm |
+
+| Layer           | Technology                               |
+| --------------- | ---------------------------------------- |
+| Desktop         | Electron (BaseWindow + WebContentsViews) |
+| Frontend        | Svelte 5 + TypeScript + @vscode-elements |
+| Backend         | Node.js services                         |
+| Testing         | Vitest                                   |
+| Build           | Vite                                     |
+| Package Manager | pnpm                                     |
 
 ## Key Concepts
-| Concept | Description |
-|---------|-------------|
-| Project | Git repository path (container, not viewable) |
-| Workspace | Git worktree (viewable in code-server) |
-| WebContentsView | Electron view for embedding (not iframe) |
+
+| Concept         | Description                                   |
+| --------------- | --------------------------------------------- |
+| Project         | Git repository path (container, not viewable) |
+| Workspace       | Git worktree (viewable in code-server)        |
+| WebContentsView | Electron view for embedding (not iframe)      |
 
 ## Development Workflow
+
 - TDD: failing test → implement → refactor
 - Scripts: `pnpm dev`, `pnpm build`, `pnpm test`, `pnpm lint`
 - Use `pnpm add <package>` for dependencies (never edit package.json manually)
 
 ## Code Quality Standards
+
 - TypeScript strict mode, no `any`, no implicit types
 - ESLint warnings treated as errors
 - Prettier enforced formatting
@@ -162,25 +168,27 @@ No new dependencies required for documentation.
 ## CRITICAL: No Ignore Comments
 
 **NEVER add without explicit user approval:**
+
 - `// @ts-ignore`, `// @ts-expect-error`
 - `// eslint-disable`, `// eslint-disable-next-line`
 - `any` type assertions
 - Modifications to `.eslintignore`, `.prettierignore`
 
 **Process if exception needed:**
+
 1. Explain why the exception is necessary
 2. Wait for explicit user approval
 3. Only then add with explanatory comment
 
 ## Validation Commands
 
-| Check | Command | Requirement |
-|-------|---------|-------------|
-| TypeScript | pnpm check | Zero errors |
-| ESLint | pnpm lint | Zero errors |
-| Prettier | pnpm format:check | All formatted |
-| Tests | pnpm test | All passing |
-| Build | pnpm build | Completes |
+| Check      | Command           | Requirement   |
+| ---------- | ----------------- | ------------- |
+| TypeScript | pnpm check        | Zero errors   |
+| ESLint     | pnpm lint         | Zero errors   |
+| Prettier   | pnpm format:check | All formatted |
+| Tests      | pnpm test         | All passing   |
+| Build      | pnpm build        | Completes     |
 
 Run all checks before marking any task complete.
 ```
@@ -193,37 +201,38 @@ Run all checks before marking any task complete.
 ## System Overview
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         CodeHydra Application                            │
+│ CodeHydra Application │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  Main Process (Electron)                                                 │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────────┐ │
-│  │ Window Manager │  │ View Manager   │  │ App Services               │ │
-│  │ BaseWindow     │  │ WebContentsView│  │ ├─ Git Worktree Provider   │ │
-│  │ resize/bounds  │  │ create/destroy │  │ ├─ Code-Server Manager     │ │
-│  │                │  │ z-order        │  │ ├─ Project Store           │ │
-│  └────────────────┘  └────────────────┘  │ └─ OpenCode Discovery      │ │
-│                                          └────────────────────────────┘ │
+│ Main Process (Electron) │
+│ ┌────────────────┐ ┌────────────────┐ ┌────────────────────────────┐ │
+│ │ Window Manager │ │ View Manager │ │ App Services │ │
+│ │ BaseWindow │ │ WebContentsView│ │ ├─ Git Worktree Provider │ │
+│ │ resize/bounds │ │ create/destroy │ │ ├─ Code-Server Manager │ │
+│ │ │ │ z-order │ │ ├─ Project Store │ │
+│ └────────────────┘ └────────────────┘ │ └─ OpenCode Discovery │ │
+│ └────────────────────────────┘ │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  UI Layer (transparent WebContentsView)                                  │
-│  Sidebar, Dialogs, Keyboard Overlay                                      │
+│ UI Layer (transparent WebContentsView) │
+│ Sidebar, Dialogs, Keyboard Overlay │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  Workspace Views (code-server WebContentsViews)                          │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                     │
-│  │ Workspace 1  │ │ Workspace 2  │ │ Workspace 3  │                     │
-│  │ (visible)    │ │ (hidden)     │ │ (hidden)     │                     │
-│  └──────────────┘ └──────────────┘ └──────────────┘                     │
+│ Workspace Views (code-server WebContentsViews) │
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ │
+│ │ Workspace 1 │ │ Workspace 2 │ │ Workspace 3 │ │
+│ │ (visible) │ │ (hidden) │ │ (hidden) │ │
+│ └──────────────┘ └──────────────┘ └──────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
 
 ## Core Concepts
 
 ### Project vs Workspace
 
-| Concept | What it is | Viewable | Actions |
-|---------|------------|----------|---------|
-| Project | Git repository path | No | Close, Add workspace |
-| Workspace | Git worktree | Yes (code-server) | Select, Remove |
+| Concept   | What it is          | Viewable          | Actions              |
+| --------- | ------------------- | ----------------- | -------------------- |
+| Project   | Git repository path | No                | Close, Add workspace |
+| Workspace | Git worktree        | Yes (code-server) | Select, Remove       |
 
 **Key behavior:**
+
 - Projects are containers, not viewable
 - All workspaces are equal (no "main" worktree concept)
 - Worktrees discovered in ANY location
@@ -233,12 +242,14 @@ Run all checks before marking any task complete.
 
 Managed location for created worktrees:
 ```
+
 ~/.local/share/codehydra/
 └── projects/
-    └── <project-name>-<8-char-hash>/
-        └── workspaces/
-            ├── feature-auth/    ← git worktree
-            └── bugfix-123/      ← git worktree
+└── <project-name>-<8-char-hash>/
+└── workspaces/
+├── feature-auth/ ← git worktree
+└── bugfix-123/ ← git worktree
+
 ```
 
 Discovery also finds worktrees in other locations (e.g., manually created).
@@ -305,34 +316,40 @@ Discovery also finds worktrees in other locations (e.g., manually created).
 
 ### Opening a Project
 ```
+
 User: Click "Open Project"
-  → System folder picker
-  → Validate: is git repository?
-  → Git Worktree Provider: discover existing worktrees
-  → Project Store: save project
-  → If 0 worktrees: auto-open create dialog
-  → If 1+ worktrees: activate first workspace
+→ System folder picker
+→ Validate: is git repository?
+→ Git Worktree Provider: discover existing worktrees
+→ Project Store: save project
+→ If 0 worktrees: auto-open create dialog
+→ If 1+ worktrees: activate first workspace
+
 ```
 
 ### Switching Workspaces
 ```
+
 User: Click workspace (or keyboard shortcut)
-  → IPC: switch-workspace
-  → View Manager: hide current (zero bounds)
-  → View Manager: show target (full bounds)
-  → View Manager: bring to front (z-order)
-  → Store: update activeWorkspace
-  → Focus: code-server view
+→ IPC: switch-workspace
+→ View Manager: hide current (zero bounds)
+→ View Manager: show target (full bounds)
+→ View Manager: bring to front (z-order)
+→ Store: update activeWorkspace
+→ Focus: code-server view
+
 ```
 
 ### Creating a Workspace
 ```
+
 User: Click [+], fill dialog, click OK
-  → IPC: create-workspace
-  → Git Worktree Provider: create in managed location
-  → Code-Server Manager: get URL
-  → View Manager: create WebContentsView
-  → Store: add workspace, set active
+→ IPC: create-workspace
+→ Git Worktree Provider: create in managed location
+→ Code-Server Manager: get URL
+→ View Manager: create WebContentsView
+→ Store: add workspace, set active
+
 ```
 
 ## IPC Contract
@@ -352,30 +369,31 @@ User: Click [+], fill dialog, click OK
 ## Application Layout
 
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  CODEHYDRA                                                                       │
+│ CODEHYDRA │
 ├────────────────────────┬────────────────────────────────────────────────────────┤
-│                        │                                                        │
-│  PROJECTS              │                                                        │
-│                        │                                                        │
-│  📁 my-project   [+][×]│                                                        │
-│    └─ 🌿 feature (feat)│                VS CODE (code-server)                   │
-│    └─ 🌿 bugfix (fix)  │                                                        │
-│                        │                  Active workspace view                 │
-│  📁 other-proj   [+][×]│                                                        │
-│    └─ 🌿 experiment    │                                                        │
-│                        │                                                        │
-│  [Open Project]        │                                                        │
-│                        │                                                        │
+│ │ │
+│ PROJECTS │ │
+│ │ │
+│ 📁 my-project [+][×]│ │
+│ └─ 🌿 feature (feat)│ VS CODE (code-server) │
+│ └─ 🌿 bugfix (fix) │ │
+│ │ Active workspace view │
+│ 📁 other-proj [+][×]│ │
+│ └─ 🌿 experiment │ │
+│ │ │
+│ [Open Project] │ │
+│ │ │
 └────────────────────────┴────────────────────────────────────────────────────────┘
 
 ## UI Elements
 
 ### Project Row (container, NOT selectable)
-
 ```
+
 ┌────────────────────────────────┐
-│ 📁 project-name         [+][×] │
+│ 📁 project-name [+][×] │
 └────────────────────────────────┘
+
 ```
 
 | Element | Behavior |
@@ -387,9 +405,11 @@ User: Click [+], fill dialog, click OK
 ### Workspace Row (selectable)
 
 ```
+
 ┌────────────────────────────────┐
-│   └─ 🌿 name (branch)     [×]  │
+│ └─ 🌿 name (branch) [×] │
 └────────────────────────────────┘
+
 ```
 
 | Element | Behavior |
@@ -404,13 +424,15 @@ User: Click [+], fill dialog, click OK
 ### First Launch
 
 ```
+
 ┌────────────────────────┐
-│  PROJECTS              │
-│                        │
-│  No projects open.     │
-│                        │
-│  [Open Project]        │
+│ PROJECTS │
+│ │
+│ No projects open. │
+│ │
+│ [Open Project] │
 └────────────────────────┘
+
 ```
 
 User sees empty state with "Open Project" button.
@@ -428,14 +450,16 @@ User sees empty state with "Open Project" button.
 
 **Empty project (auto-opens create dialog):**
 ```
-┌────────────────────────┐        ┌──────────────────────────────────┐
-│  PROJECTS              │        │  Create Workspace                │
-│                        │        │                                  │
-│  📁 new-project  [+][×]│   +    │  Name: [________________]        │
-│    (no workspaces)     │        │  Branch: [main________▼]        │
-│                        │        │                                  │
-│  [Open Project]        │        │         [Cancel]  [OK]           │
-└────────────────────────┘        └──────────────────────────────────┘
+
+┌────────────────────────┐ ┌──────────────────────────────────┐
+│ PROJECTS │ │ Create Workspace │
+│ │ │ │
+│ 📁 new-project [+][×]│ + │ Name: [________________] │
+│ (no workspaces) │ │ Branch: [main________▼] │
+│ │ │ │
+│ [Open Project] │ │ [Cancel] [OK] │
+└────────────────────────┘ └──────────────────────────────────┘
+
 ```
 
 ### Closing a Project
@@ -450,10 +474,12 @@ User sees empty state with "Open Project" button.
 
 **Hover state:**
 ```
+
 ┌────────────────────────────────┐
-│ 📁 my-project    [+][×]        │  ← [×] visible on hover
-│   └─ 🌿 feature          [×]   │
+│ 📁 my-project [+][×] │ ← [×] visible on hover
+│ └─ 🌿 feature [×] │
 └────────────────────────────────┘
+
 ```
 
 ### Selecting a Workspace
@@ -466,9 +492,11 @@ User sees empty state with "Open Project" button.
 
 **Visual feedback:**
 ```
-│ 📁 my-project           [+][×] │
-│   └─ 🌿 feature (feat)    [×]  │  ← Normal
-│   └─ 🌿 bugfix (fix)      [×]  │  ← ACTIVE (highlighted)
+
+│ 📁 my-project [+][×] │
+│ └─ 🌿 feature (feat) [×] │ ← Normal
+│ └─ 🌿 bugfix (fix) [×] │ ← ACTIVE (highlighted)
+
 ```
 
 ### Creating a Workspace
@@ -486,43 +514,51 @@ User sees empty state with "Open Project" button.
 
 Initial (loading branches):
 ```
+
 ┌──────────────────────────────────────────┐
-│  Create Workspace                        │
-│                                          │
-│  Name                                    │
-│  [________________________________]      │
-│                                          │
-│  Base Branch                       [◐]   │  ← Spinner
-│  [main_____________________________▼]    │
-│                                          │
-│                    [Cancel]  [OK]        │
-│                              ~~~~        │  ← Disabled
+│ Create Workspace │
+│ │
+│ Name │
+│ [________________________________] │
+│ │
+│ Base Branch [◐] │ ← Spinner
+│ [main_____________________________▼] │
+│ │
+│ [Cancel] [OK] │
+│ ~~~~ │ ← Disabled
 └──────────────────────────────────────────┘
+
 ```
 
 Validation error:
 ```
-│  Name                                    │
-│  [-invalid____________________________]  │  ← Red border
-│  ⚠ Must start with letter or number     │
+
+│ Name │
+│ [-invalid____________________________] │ ← Red border
+│ ⚠ Must start with letter or number │
+
 ```
 
 Valid state:
 ```
-│  Name                                    │
-│  [my-feature__________________________]  │
-│                                          │
-│  Base Branch                             │
-│  [origin/main______________________▼]    │
-│                                          │
-│                    [Cancel]  [OK]        │
-│                              ════        │  ← Enabled
+
+│ Name │
+│ [my-feature__________________________] │
+│ │
+│ Base Branch │
+│ [origin/main______________________▼] │
+│ │
+│ [Cancel] [OK] │
+│ ════ │ ← Enabled
+
 ```
 
 Creating:
 ```
-│                    [Cancel]  [◐ Creating...]  │
-│                    ~~~~~~~~  ~~~~~~~~~~~~~~~  │  ← Both disabled
+
+│ [Cancel] [◐ Creating...] │
+│ ~~~~~~~~ ~~~~~~~~~~~~~~~ │ ← Both disabled
+
 ```
 
 ### Removing a Workspace
@@ -542,35 +578,41 @@ Creating:
 
 **Hover state (branch stays visible):**
 ```
-│   └─ 🌿 feature (feat)       [×]  │  ← [×] appears, branch visible
+
+│ └─ 🌿 feature (feat) [×] │ ← [×] appears, branch visible
+
 ```
 
 **Confirmation dialog (clean):**
 ```
+
 ┌────────────────────────────────────────────┐
-│  Remove Workspace                          │
-│                                            │
-│  Remove workspace "feature-auth"?          │
-│                                            │
-│  [Cancel]  [Keep Branch]  [Delete]         │
-│                           ~~~~~~~~         │  ← Red/destructive
+│ Remove Workspace │
+│ │
+│ Remove workspace "feature-auth"? │
+│ │
+│ [Cancel] [Keep Branch] [Delete] │
+│ ~~~~~~~~ │ ← Red/destructive
 └────────────────────────────────────────────┘
+
 ```
 
 **Confirmation dialog (uncommitted changes):**
 ```
+
 ┌────────────────────────────────────────────┐
-│  Remove Workspace                          │
-│                                            │
-│  Remove workspace "feature-auth"?          │
-│                                            │
-│  ┌────────────────────────────────────┐    │
-│  │ ⚠ This workspace has uncommitted   │    │
-│  │   changes that will be lost.       │    │
-│  └────────────────────────────────────┘    │
-│                                            │
-│  [Cancel]  [Keep Branch]  [Delete]         │
+│ Remove Workspace │
+│ │
+│ Remove workspace "feature-auth"? │
+│ │
+│ ┌────────────────────────────────────┐ │
+│ │ ⚠ This workspace has uncommitted │ │
+│ │ changes that will be lost. │ │
+│ └────────────────────────────────────┘ │
+│ │
+│ [Cancel] [Keep Branch] [Delete] │
 └────────────────────────────────────────────┘
+
 ```
 
 ### Agent Status Monitoring
@@ -590,9 +632,11 @@ Creating:
 
 **Sidebar with status:**
 ```
-│ 📁 my-project           [+][×] │
-│   └─ 🌿 feature (feat) 🟢 [×]  │  ← Idle
-│   └─ 🌿 bugfix (fix)   🟡 [×]  │  ← Working
+
+│ 📁 my-project [+][×] │
+│ └─ 🌿 feature (feat) 🟢 [×] │ ← Idle
+│ └─ 🌿 bugfix (fix) 🟡 [×] │ ← Working
+
 ```
 
 ## Keyboard Navigation
@@ -637,27 +681,33 @@ Press and hold `Alt`, then press `X` to enter shortcut mode.
 
 **Normal state:**
 ```
-│  📁 my-project           [+][×] │
-│    └─ 🌿 feature-auth      [×] │
-│    └─ 🌿 bugfix-123        [×] │
-│  📁 other-project        [+][×] │
-│    └─ 🌿 experiment        [×] │
+
+│ 📁 my-project [+][×] │
+│ └─ 🌿 feature-auth [×] │
+│ └─ 🌿 bugfix-123 [×] │
+│ 📁 other-project [+][×] │
+│ └─ 🌿 experiment [×] │
+
 ```
 
 **Shortcut mode active:**
 ```
-│  📁 my-project           [+][×] │
-│    └─ 1 🌿 feature-auth    [×] │  ← Index numbers
-│    └─ 2 🌿 bugfix-123      [×] │
-│  📁 other-project        [+][×] │
-│    └─ 3 🌿 experiment      [×] │
+
+│ 📁 my-project [+][×] │
+│ └─ 1 🌿 feature-auth [×] │ ← Index numbers
+│ └─ 2 🌿 bugfix-123 [×] │
+│ 📁 other-project [+][×] │
+│ └─ 3 🌿 experiment [×] │
+
 ```
 
 **Overlay (bottom center):**
 ```
+
 ┌─────────────────────────────────────────┐
-│  ↑↓ Navigate   ⏎ New   ⌫ Del   1-0 Jump │
+│ ↑↓ Navigate ⏎ New ⌫ Del 1-0 Jump │
 └─────────────────────────────────────────┘
+
 ```
 
 ### Dialog Shortcuts
@@ -672,25 +722,32 @@ Press and hold `Alt`, then press `X` to enter shortcut mode.
 
 ### Empty State (no projects)
 ```
+
 ┌────────────────────────┐
-│  PROJECTS              │
-│                        │
-│  No projects open.     │
-│                        │
-│  [Open Project]        │
+│ PROJECTS │
+│ │
+│ No projects open. │
+│ │
+│ [Open Project] │
 └────────────────────────┘
+
 ```
 
 ### Loading State
 ```
-│  📁 my-project           [+][×] │
-│    ◐ Loading workspaces...     │
+
+│ 📁 my-project [+][×] │
+│ ◐ Loading workspaces... │
+
 ```
 
 ### Error State
 ```
-│  📁 my-project           [+][×] │
-│    ⚠ Failed to load workspaces │
-│    [Retry]                      │
+
+│ 📁 my-project [+][×] │
+│ ⚠ Failed to load workspaces │
+│ [Retry] │
+
 ```
+
 ```

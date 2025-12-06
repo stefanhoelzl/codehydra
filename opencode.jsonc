@@ -2,10 +2,10 @@
   "$schema": "https://opencode.ai/config.json",
   "agent": {
     "build": {
-      "color": "#A16207" // amber
+      "color": "#A16207", // amber
     },
     "plan": {
-      "color": "#3B82F6" // blue
-    }
-  }
+      "color": "#3B82F6", // blue
+    },
+  },
 }

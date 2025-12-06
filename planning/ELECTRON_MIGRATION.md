@@ -5,6 +5,7 @@
 Migrate CodeHydra from Tauri to Electron to replace iframe-based code-server embedding with native `WebContentsView` components, solving keyboard capture, focus management, and z-ordering issues.
 
 **Reference Implementations**:
+
 - `../codehydra-tauri` - Current Tauri implementation (source of business logic and UI)
 - `../demo` - Electron PoC demonstrating WebContentsView-based embedding solution
 
@@ -12,17 +13,17 @@ Migrate CodeHydra from Tauri to Electron to replace iframe-based code-server emb
 
 ## Key Decisions
 
-| Decision | Choice |
-|----------|--------|
-| Backend | Node.js (port from Rust in `codehydra-tauri/src-tauri/`) |
-| Node.js runtime | Use Electron's bundled Node.js for code-server |
-| UI framework | Svelte 5 + @vscode-elements (as in Tauri version) |
-| Platform support | Linux, macOS, Windows (all from start) |
-| OpenCode | Discover externally-running instances (spawned by code-server) |
-| Bundling | code-server + extensions bundled at build time |
-| Testing | Unit + Integration first, E2E later |
-| Linting | Strict mode (all warnings = errors) |
-| Phases | Sequential execution |
+| Decision         | Choice                                                         |
+| ---------------- | -------------------------------------------------------------- |
+| Backend          | Node.js (port from Rust in `codehydra-tauri/src-tauri/`)       |
+| Node.js runtime  | Use Electron's bundled Node.js for code-server                 |
+| UI framework     | Svelte 5 + @vscode-elements (as in Tauri version)              |
+| Platform support | Linux, macOS, Windows (all from start)                         |
+| OpenCode         | Discover externally-running instances (spawned by code-server) |
+| Bundling         | code-server + extensions bundled at build time                 |
+| Testing          | Unit + Integration first, E2E later                            |
+| Linting          | Strict mode (all warnings = errors)                            |
+| Phases           | Sequential execution                                           |
 
 ---
 
@@ -30,12 +31,12 @@ Migrate CodeHydra from Tauri to Electron to replace iframe-based code-server emb
 
 ### Code Quality Standards
 
-| Rule | Enforcement |
-|------|-------------|
-| TypeScript | Strict mode, no `any`, no implicit types |
-| ESLint | All warnings treated as errors |
-| Prettier | Enforced formatting, checked in CI |
-| Tests | TDD approach: failing test → implement → refactor |
+| Rule       | Enforcement                                       |
+| ---------- | ------------------------------------------------- |
+| TypeScript | Strict mode, no `any`, no implicit types          |
+| ESLint     | All warnings treated as errors                    |
+| Prettier   | Enforced formatting, checked in CI                |
+| Tests      | TDD approach: failing test → implement → refactor |
 
 ### Dependency Management
 
@@ -86,6 +87,7 @@ Phase 7: Packaging & Distribution
 **Goal**: Establish project foundation for AI agents and developers
 
 **Deliverables**:
+
 - `AGENTS.md` - Project overview for AI agents starting work on the project
 - `docs/ARCHITECTURE.md` - System architecture and component relationships
 - `docs/USER_FLOWS.md` - User workflows and interactions
@@ -100,6 +102,7 @@ Phase 7: Packaging & Distribution
 **Goal**: Initialize project with strict tooling and minimal Electron shell
 
 **Deliverables**:
+
 - npm project structure
 - TypeScript configuration (strict mode)
 - ESLint configuration (warnings = errors)
@@ -118,11 +121,11 @@ Phase 7: Packaging & Distribution
 
 **Services** (ported from `codehydra-tauri/src-tauri/src/`):
 
-| Service | Tauri Source | Responsibility |
-|---------|--------------|----------------|
-| Code-server manager | `code_server.rs` | Start/stop code-server, port management, URL generation |
-| Git worktree provider | `git_worktree_provider.rs` | Discover, create, remove worktrees, branch operations |
-| Project store | `project_store.rs` | Persist open projects across sessions |
+| Service               | Tauri Source               | Responsibility                                          |
+| --------------------- | -------------------------- | ------------------------------------------------------- |
+| Code-server manager   | `code_server.rs`           | Start/stop code-server, port management, URL generation |
+| Git worktree provider | `git_worktree_provider.rs` | Discover, create, remove worktrees, branch operations   |
+| Project store         | `project_store.rs`         | Persist open projects across sessions                   |
 
 **Note**: These services are pure Node.js with no Electron dependencies. Library choices (git library, etc.) will be discussed when planning this phase in detail.
 
@@ -134,14 +137,15 @@ Phase 7: Packaging & Distribution
 
 **Components** (patterns from `demo/main.js`):
 
-| Component | Responsibility |
-|-----------|----------------|
-| Window manager | BaseWindow creation, resize handling |
-| View manager | Create/destroy WebContentsViews, bounds calculation, z-order |
-| IPC handlers | Bridge between renderer and app services (IPC contract defined here) |
-| Preload scripts | `preload.ts` (UI layer), `webview-preload.ts` (code-server views) |
+| Component       | Responsibility                                                       |
+| --------------- | -------------------------------------------------------------------- |
+| Window manager  | BaseWindow creation, resize handling                                 |
+| View manager    | Create/destroy WebContentsViews, bounds calculation, z-order         |
+| IPC handlers    | Bridge between renderer and app services (IPC contract defined here) |
+| Preload scripts | `preload.ts` (UI layer), `webview-preload.ts` (code-server views)    |
 
 **Key Behaviors**:
+
 - UI layer as transparent WebContentsView (sidebar visible, rest transparent)
 - Workspace views hidden via zero-bounds (preserves VS Code state)
 - Z-order control via add/remove child views
@@ -154,15 +158,16 @@ Phase 7: Packaging & Distribution
 
 **Components** (adapted from `codehydra-tauri/src/lib/components/`):
 
-| Component | Tauri Source | Responsibility |
-|-----------|--------------|----------------|
-| Sidebar | `Sidebar.svelte` | Project list, workspace list, status indicators |
-| Create dialog | `CreateWorkspaceDialog.svelte` | New workspace form |
-| Remove dialog | `RemoveWorkspaceDialog.svelte` | Confirmation with options |
-| Setup modal | `SetupModal.svelte` | First-run experience (if needed) |
-| Empty states | `WorkspaceView.svelte` | No project, loading, error states |
+| Component     | Tauri Source                   | Responsibility                                  |
+| ------------- | ------------------------------ | ----------------------------------------------- |
+| Sidebar       | `Sidebar.svelte`               | Project list, workspace list, status indicators |
+| Create dialog | `CreateWorkspaceDialog.svelte` | New workspace form                              |
+| Remove dialog | `RemoveWorkspaceDialog.svelte` | Confirmation with options                       |
+| Setup modal   | `SetupModal.svelte`            | First-run experience (if needed)                |
+| Empty states  | `WorkspaceView.svelte`         | No project, loading, error states               |
 
 **Key Changes from Tauri**:
+
 - Remove iframe management (handled by Electron main process)
 - Replace Tauri API calls (`$lib/api/tauri.ts`) with Electron IPC (`$lib/api/electron.ts`)
 - Stores communicate via IPC events instead of Tauri event listeners
@@ -175,14 +180,15 @@ Phase 7: Packaging & Distribution
 
 **Components** (patterns from `demo/main.js` and `demo/webview-preload.js`):
 
-| Component | Responsibility |
-|-----------|----------------|
-| Global shortcuts | OS-level shortcuts via Electron `globalShortcut` |
-| Webview preload | Capture-phase keyboard interception before VS Code handlers |
-| Focus manager | Transfer focus between UI layer and workspace views |
-| Shortcut overlay | Visual indicator of available shortcuts |
+| Component        | Responsibility                                              |
+| ---------------- | ----------------------------------------------------------- |
+| Global shortcuts | OS-level shortcuts via Electron `globalShortcut`            |
+| Webview preload  | Capture-phase keyboard interception before VS Code handlers |
+| Focus manager    | Transfer focus between UI layer and workspace views         |
+| Shortcut overlay | Visual indicator of available shortcuts                     |
 
 **Key Behaviors** (from `codehydra-tauri/docs/KEYBOARD_NAVIGATION.md`):
+
 - Alt+X (hold): Activate shortcut mode, show overlay
 - Alt+{1-9,0}: Jump to workspace by index
 - Alt+Arrow: Navigate workspace list
@@ -198,14 +204,15 @@ Phase 7: Packaging & Distribution
 
 **Components** (ported from `codehydra-tauri/src-tauri/src/opencode/`):
 
-| Component | Tauri Source | Responsibility |
-|-----------|--------------|----------------|
-| Discovery service | `discovery.rs` | Port scanning for OpenCode instances |
-| SSE client | `client.rs` | Connect to OpenCode status endpoints |
-| Status provider | `provider.rs` | Map OpenCode instances to workspaces |
-| Status manager | `agent_status_manager.rs` | Aggregate status, broadcast changes |
+| Component         | Tauri Source              | Responsibility                       |
+| ----------------- | ------------------------- | ------------------------------------ |
+| Discovery service | `discovery.rs`            | Port scanning for OpenCode instances |
+| SSE client        | `client.rs`               | Connect to OpenCode status endpoints |
+| Status provider   | `provider.rs`             | Map OpenCode instances to workspaces |
+| Status manager    | `agent_status_manager.rs` | Aggregate status, broadcast changes  |
 
 **Key Behaviors**:
+
 - Scan for OpenCode instances running as children of code-server
 - Connect via SSE to receive real-time status updates
 - Display status indicators in sidebar (idle/working/error)
@@ -218,15 +225,16 @@ Phase 7: Packaging & Distribution
 
 **Components**:
 
-| Component | Responsibility |
-|-----------|----------------|
-| Build config | electron-builder configuration |
-| Bundled code-server | code-server binary using Electron's Node.js |
-| Bundled extensions | Pre-installed VS Code extensions |
-| Platform builds | Linux (AppImage/deb), macOS (dmg), Windows (exe/msi) |
-| External links | Open URLs in system browser (pattern from `demo/main.js`) |
+| Component           | Responsibility                                            |
+| ------------------- | --------------------------------------------------------- |
+| Build config        | electron-builder configuration                            |
+| Bundled code-server | code-server binary using Electron's Node.js               |
+| Bundled extensions  | Pre-installed VS Code extensions                          |
+| Platform builds     | Linux (AppImage/deb), macOS (dmg), Windows (exe/msi)      |
+| External links      | Open URLs in system browser (pattern from `demo/main.js`) |
 
 **Build-time Bundling**:
+
 - code-server downloaded/built during package step
 - Extensions installed into bundled code-server
 - No runtime bootstrapping needed (unlike Tauri version)
@@ -235,11 +243,11 @@ Phase 7: Packaging & Distribution
 
 ## User Workflows
 
-| Workflow | Description |
-|----------|-------------|
-| First Launch | Open app → Empty state → Open project → Workspaces discovered |
+| Workflow            | Description                                                           |
+| ------------------- | --------------------------------------------------------------------- |
+| First Launch        | Open app → Empty state → Open project → Workspaces discovered         |
 | Workspace Switching | Click sidebar or keyboard shortcut → Instant switch (state preserved) |
-| Create Workspace | Dialog → Select branch → New worktree created → Opens in view |
-| Remove Workspace | Confirmation → Optional branch deletion → View removed |
-| Agent Monitoring | OpenCode runs in terminal → Status indicator updates in real-time |
-| Keyboard Navigation | Hold Alt+X → See overlay → Press shortcut → Action executed |
+| Create Workspace    | Dialog → Select branch → New worktree created → Opens in view         |
+| Remove Workspace    | Confirmation → Optional branch deletion → View removed                |
+| Agent Monitoring    | OpenCode runs in terminal → Status indicator updates in real-time     |
+| Keyboard Navigation | Hold Alt+X → See overlay → Press shortcut → Action executed           |

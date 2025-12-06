@@ -22,6 +22,7 @@
 ```
 
 ### Layout Dimensions
+
 - **Sidebar**: Fixed width (not resizable in v1)
 - **Window minimum size**: 800x600
 - **Window title**: "CODEHYDRA - [workspace name]" or "CODEHYDRA" if no workspace
@@ -37,7 +38,7 @@
 ```
 
 | Element    | Behavior                                                     |
-|------------|--------------------------------------------------------------|
+| ---------- | ------------------------------------------------------------ |
 | Row click  | Nothing (not selectable)                                     |
 | [+] button | Opens create workspace dialog                                |
 | [×] button | Closes project (removes from sidebar only, NO file deletion) |
@@ -53,7 +54,7 @@ Buttons appear on hover.
 ```
 
 | Element          | Behavior                                       |
-|------------------|------------------------------------------------|
+| ---------------- | ---------------------------------------------- |
 | Row click        | Activates workspace, shows in code-server view |
 | Branch name      | Shows git branch in parentheses                |
 | [×] button       | Opens remove workspace dialog                  |
@@ -62,7 +63,9 @@ Buttons appear on hover.
 [×] button appears on hover. Branch name stays visible.
 
 ### Scrolling Behavior
+
 When there are more workspaces than fit:
+
 - Single scrollable list (projects + workspaces together)
 - Scroll position preserved when switching workspaces
 
@@ -85,6 +88,7 @@ User sees empty state with "Open Project" button.
 ### Opening a Project
 
 **Flow:**
+
 1. Click "Open Project" button
 2. System folder picker opens
 3. Select folder
@@ -97,6 +101,7 @@ User sees empty state with "Open Project" button.
 **Note**: The main git directory is the PROJECT, not a workspace. Only worktrees are workspaces.
 
 **Empty project (no worktrees, auto-opens create dialog):**
+
 ```
 ┌────────────────────────┐        ┌──────────────────────────────────┐
 │  PROJECTS              │        │  Create Workspace                │
@@ -111,6 +116,7 @@ User sees empty state with "Open Project" button.
 ### Closing a Project
 
 **Flow:**
+
 1. Hover project row → [×] button becomes visible
 2. Click [×]
 3. Project removed from sidebar immediately
@@ -119,6 +125,7 @@ User sees empty state with "Open Project" button.
 6. If no projects remain → show empty state
 
 **Hover state:**
+
 ```
 ┌────────────────────────────────┐
 │ 📁 my-project    [+][×]        │  ← [×] visible on hover
@@ -129,12 +136,14 @@ User sees empty state with "Open Project" button.
 ### Selecting a Workspace
 
 **Flow:**
+
 1. Click workspace row in sidebar
 2. Workspace view becomes visible instantly (no reload)
 3. Previous workspace hidden (VS Code state preserved)
 4. Sidebar highlights new active workspace
 
 **Visual feedback:**
+
 ```
 │ 📁 my-project           [+][×] │
 │   └─ 🌿 feature (feat)    [×]  │  ← Normal
@@ -144,6 +153,7 @@ User sees empty state with "Open Project" button.
 ### Creating a Workspace
 
 **Flow:**
+
 1. Click [+] on project row
 2. Create dialog opens
 3. Enter workspace name (validated in real-time)
@@ -153,6 +163,7 @@ User sees empty state with "Open Project" button.
 7. New workspace becomes active
 
 **Workspace name validation rules:**
+
 - Must start with letter or number
 - Can contain: letters, numbers, hyphens, underscores, slashes, dots
 - Max length: 100 characters
@@ -162,6 +173,7 @@ User sees empty state with "Open Project" button.
 **Dialog states:**
 
 Initial (loading branches):
+
 ```
 ┌──────────────────────────────────────────┐
 │  Create Workspace                        │
@@ -178,6 +190,7 @@ Initial (loading branches):
 ```
 
 Validation error:
+
 ```
 │  Name                                    │
 │  [-invalid____________________________]  │  ← Red border
@@ -185,6 +198,7 @@ Validation error:
 ```
 
 Valid state:
+
 ```
 │  Name                                    │
 │  [my-feature__________________________]  │
@@ -197,12 +211,14 @@ Valid state:
 ```
 
 Creating:
+
 ```
 │                    [Cancel]  [◐ Creating...]  │
 │                    ~~~~~~~~  ~~~~~~~~~~~~~~~  │  ← Both disabled
 ```
 
 Error:
+
 ```
 │  ┌────────────────────────────────────┐  │
 │  │ ⚠ Failed to create workspace.      │  │
@@ -215,6 +231,7 @@ Error:
 ### Removing a Workspace
 
 **Flow:**
+
 1. Hover workspace row → [×] button becomes visible (branch name stays visible)
 2. Click [×]
 3. Confirmation dialog opens
@@ -228,11 +245,13 @@ Error:
 8. If last workspace in project → project remains (can create new)
 
 **Hover state (branch stays visible):**
+
 ```
 │   └─ 🌿 feature (feat)       [×]  │  ← [×] appears, branch visible
 ```
 
 **Confirmation dialog (clean):**
+
 ```
 ┌────────────────────────────────────────────┐
 │  Remove Workspace                          │
@@ -245,6 +264,7 @@ Error:
 ```
 
 **Confirmation dialog (uncommitted changes):**
+
 ```
 ┌────────────────────────────────────────────┐
 │  Remove Workspace                          │
@@ -263,20 +283,22 @@ Error:
 ### Agent Status Monitoring
 
 **Flow:**
+
 - User runs OpenCode in VS Code terminal (within a workspace)
 - CodeHydra discovers running OpenCode instance
 - Status indicator appears next to workspace in sidebar
 - Status updates in real-time
 
 **Status indicators:**
-| Status  | Indicator      | Meaning                                    |
+| Status | Indicator | Meaning |
 |---------|----------------|--------------------------------------------|
-| None    | (no indicator) | No OpenCode running in this workspace      |
-| Idle    | 🟢             | Agent waiting for input                    |
-| Working | 🟡             | Agent actively processing (animated pulse) |
-| Error   | 🔴             | Agent encountered error                    |
+| None | (no indicator) | No OpenCode running in this workspace |
+| Idle | 🟢 | Agent waiting for input |
+| Working | 🟡 | Agent actively processing (animated pulse) |
+| Error | 🔴 | Agent encountered error |
 
 **Sidebar with status:**
+
 ```
 │ 📁 my-project           [+][×] │
 │   └─ 🌿 feature (feat) 🟢 [×]  │  ← Idle
@@ -299,7 +321,7 @@ Error:
 ### Shortcuts (while Alt held after Alt+X)
 
 | Shortcut       | Action                                                     |
-|----------------|------------------------------------------------------------|
+| -------------- | ---------------------------------------------------------- |
 | Alt+X          | Activate shortcut mode                                     |
 | Alt+↑          | Previous workspace (across all projects)                   |
 | Alt+↓          | Next workspace (across all projects)                       |
@@ -312,6 +334,7 @@ Error:
 ### Behavior Details
 
 **Activation:**
+
 - Press Alt+X: shortcut mode activates
 - Overlay appears at bottom center of window
 - Workspace index numbers (1-9, 0) appear in sidebar
@@ -319,21 +342,25 @@ Error:
 - X can be released after pressing; Alt must stay held
 
 **Navigation:**
+
 - Alt+↑/↓ moves through ALL workspaces across ALL projects
 - Order: top to bottom as displayed in sidebar
 - Wraps: last workspace ↓ → first workspace; first workspace ↑ → last workspace
 
 **Alt+Enter context:**
+
 - Opens create dialog for the project that contains the currently active workspace
 - If no active workspace (empty state), Alt+Enter does nothing
 
 **Deactivation (any of these):**
+
 - Release Alt key
 - Press Escape (while in shortcut mode)
 - Window loses focus
 - Dialog opens (create/remove)
 
 **After deactivation:**
+
 - Overlay disappears
 - Index numbers disappear
 - Focus returns to VS Code editor
@@ -341,6 +368,7 @@ Error:
 ### Shortcut Mode UI
 
 **Normal state:**
+
 ```
 │  📁 my-project           [+][×] │
 │    └─ 🌿 feature-auth      [×] │
@@ -350,6 +378,7 @@ Error:
 ```
 
 **Shortcut mode active:**
+
 ```
 │  📁 my-project           [+][×] │
 │    └─ 1 🌿 feature-auth    [×] │  ← Index numbers appear
@@ -361,6 +390,7 @@ Error:
 Index numbering: 1-9, then 0 for 10th. Workspaces 11+ have no number (use ↑↓).
 
 **Overlay (bottom center, semi-transparent):**
+
 ```
 ┌─────────────────────────────────────────┐
 │  ↑↓ Navigate   ⏎ New   ⌫ Del   1-0 Jump │
@@ -370,7 +400,7 @@ Index numbering: 1-9, then 0 for 10th. Workspaces 11+ have no number (use ↑↓
 ### Dialog Shortcuts
 
 | Key    | Action                  |
-|--------|-------------------------|
+| ------ | ----------------------- |
 | Enter  | Confirm / OK            |
 | Escape | Cancel / Close          |
 | Tab    | Navigate between fields |
@@ -378,6 +408,7 @@ Index numbering: 1-9, then 0 for 10th. Workspaces 11+ have no number (use ↑↓
 ## UI States
 
 ### Empty State (no projects)
+
 ```
 ┌────────────────────────┐
 │  PROJECTS              │
@@ -389,12 +420,14 @@ Index numbering: 1-9, then 0 for 10th. Workspaces 11+ have no number (use ↑↓
 ```
 
 ### Loading State
+
 ```
 │  📁 my-project           [+][×] │
 │    ◐ Loading workspaces...     │
 ```
 
 ### Error State
+
 ```
 │  📁 my-project           [+][×] │
 │    ⚠ Failed to load workspaces │
