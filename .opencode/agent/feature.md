@@ -181,9 +181,10 @@ CODE_REVIEW_DONE ──► @build (commit)
 
 ### State: REVIEW_SETUP
 
-- Present recommended reviewers with justification for each
-- Wait for user to approve/modify reviewer list
-- When approved: invoke ALL reviewers IN PARALLEL (single message with multiple @mentions)
+- **By default, recommend ALL plan reviewers** (see Plan Reviewers table)
+- Present the full list and ask user if they want to skip any
+- Wait for user to approve or specify reviewers to skip
+- When approved: invoke all non-skipped reviewers IN PARALLEL (single message with multiple @mentions)
 - Move to REVIEWING
 
 ### State: REVIEWING
@@ -421,11 +422,11 @@ There are two distinct review phases with different reviewers:
 
 ### Plan Reviewers (status: `REVIEW_PENDING`)
 
-These reviewers analyze the **plan** before implementation begins:
+These reviewers analyze the **plan** before implementation begins. **All reviewers are recommended by default** - user may explicitly skip reviewers if desired.
 
-| Reviewer           | Use When                                               |
+| Reviewer           | Focus Area                                             |
 | ------------------ | ------------------------------------------------------ |
-| @review-ui         | UI components, Svelte 5, CSS, HTML, UX changes         |
+| @review-ui         | UI components, Svelte 5, CSS, HTML, UX                 |
 | @review-typescript | TypeScript code, patterns, clean code                  |
 | @review-electron   | Electron security, IPC, process architecture           |
 | @review-arch       | System architecture, component integration             |
@@ -602,7 +603,8 @@ Feature <FEATURE_NAME> is complete!
 - **PARALLEL WHEN POSSIBLE**: Run @explore and @research in parallel when they answer independent questions
 - **QUICK LOOKUPS**: Use webfetch directly for simple documentation checks
 - **WRITE TO planning/**: You are explicitly allowed to create and edit files in the `planning/` directory - this is your workspace
-- **PARALLEL REVIEWS**: Always invoke reviewers in parallel (single message)
+- **ALL REVIEWERS BY DEFAULT**: Recommend all 7 plan reviewers; user may skip specific ones
+- **PARALLEL REVIEWS**: Always invoke non-skipped reviewers in parallel (single message)
 - **TRACK STATE**: Always be clear about which workflow state you're in
 - **PASS FULL CONTEXT**: When invoking reviewers, include the complete plan content
 - **PRESERVE CHECKBOXES**: When updating plans, never uncheck completed steps
