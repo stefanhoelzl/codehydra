@@ -1,7 +1,6 @@
 ---
 description: Senior engineer review for project integration, duplication, and maintainability
 mode: subagent
-model: anthropic/review
 tools:
   write: false
   edit: false

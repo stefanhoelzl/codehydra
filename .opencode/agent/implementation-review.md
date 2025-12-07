@@ -1,7 +1,6 @@
 ---
 description: Reviews implementation to verify it followed the approved plan
 mode: subagent
-model: anthropic/review
 tools:
   write: false
   edit: false

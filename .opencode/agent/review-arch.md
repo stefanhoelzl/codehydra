@@ -1,7 +1,6 @@
 ---
 description: Reviews general architecture, integration patterns, and system design
 mode: subagent
-model: anthropic/review
 tools:
   write: false
   edit: false
