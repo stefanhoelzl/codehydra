@@ -156,7 +156,7 @@ REVIEW_PENDING ──► (plan reviews) ──► user accepts ──► @implem
 (completes)      user: "accept"
     │                  │
     ▼                  ▼
-CODE_REVIEW_DONE ──► @build (commit)
+CODE_REVIEW_DONE ──► @general (commit)
                            │
                            ▼
                       COMPLETED
@@ -276,10 +276,10 @@ After @implement reports IMPLEMENTATION COMPLETE:
 
 #### If user says "accept":
 
-- Invoke build agent to commit:
+- Invoke general agent to commit:
 
   ```
-  Task(subagent_type="build",
+  Task(subagent_type="general",
        description="Commit feature implementation",
        prompt="Update the plan status to COMPLETED and commit all changes.
 
@@ -577,7 +577,7 @@ When user says "accept" (or similar) after testing:
 Great! Committing the changes now...
 ```
 
-Then invoke build agent (see State: USER_TESTING section above).
+Then invoke general agent (see State: USER_TESTING section above).
 
 Report the commit result to user:
 
