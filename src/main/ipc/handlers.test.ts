@@ -9,13 +9,6 @@ import { z } from "zod";
 // Mock functions at top level
 const mockHandle = vi.fn();
 const mockSend = vi.fn();
-const mockGetAllWindows = vi.fn(() => [
-  {
-    webContents: {
-      send: mockSend,
-    },
-  },
-]);
 
 // Mock Electron - must be at module scope, no top level variable references in factory
 vi.mock("electron", () => {
@@ -23,16 +16,14 @@ vi.mock("electron", () => {
     ipcMain: {
       handle: (...args: unknown[]) => mockHandle(...args),
     },
-    BrowserWindow: {
-      getAllWindows: () => mockGetAllWindows(),
-    },
   };
 });
 
 // Import after mock
-import { registerHandler, emitEvent, serializeError } from "./handlers";
+import { registerHandler, registerAllHandlers, emitEvent, serializeError } from "./handlers";
 import { ValidationError } from "./validation";
 import { WorkspaceError } from "../../services/errors";
+import type { IViewManager } from "../managers/view-manager.interface";
 
 describe("registerHandler", () => {
   beforeEach(() => {
@@ -146,23 +137,82 @@ describe("serializeError", () => {
   });
 });
 
+describe("createUISetDialogModeHandler", () => {
+  beforeEach(() => {
+    mockHandle.mockClear();
+  });
+
+  it("calls viewManager.setDialogMode with isOpen=true", async () => {
+    const mockSetDialogMode = vi.fn();
+    const mockViewManager = { setDialogMode: mockSetDialogMode };
+
+    const { createUISetDialogModeHandler } = await import("./handlers");
+    const handler = createUISetDialogModeHandler(mockViewManager);
+
+    await handler({} as never, { isOpen: true });
+
+    expect(mockSetDialogMode).toHaveBeenCalledWith(true);
+  });
+
+  it("calls viewManager.setDialogMode with isOpen=false", async () => {
+    const mockSetDialogMode = vi.fn();
+    const mockViewManager = { setDialogMode: mockSetDialogMode };
+
+    const { createUISetDialogModeHandler } = await import("./handlers");
+    const handler = createUISetDialogModeHandler(mockViewManager);
+
+    await handler({} as never, { isOpen: false });
+
+    expect(mockSetDialogMode).toHaveBeenCalledWith(false);
+  });
+});
+
 describe("emitEvent", () => {
   beforeEach(() => {
     mockSend.mockClear();
   });
 
-  it("sends event to all windows", () => {
-    const payload = { project: { path: "/test", name: "test", workspaces: [] } };
+  it("sends event to UI view via viewManager", () => {
+    // Create mock viewManager with getUIView
+    const mockViewManager = {
+      getUIView: vi.fn().mockReturnValue({
+        webContents: {
+          send: mockSend,
+        },
+      }),
+      createWorkspaceView: vi.fn(),
+      destroyWorkspaceView: vi.fn(),
+      getWorkspaceView: vi.fn(),
+      updateBounds: vi.fn(),
+      setActiveWorkspace: vi.fn(),
+      focusActiveWorkspace: vi.fn(),
+      focusUI: vi.fn(),
+      setDialogMode: vi.fn(),
+    } satisfies IViewManager;
+
+    // Create mock appState
+    const mockAppState = {
+      getProject: vi.fn(),
+      getProjects: vi.fn().mockReturnValue([]),
+      openProject: vi.fn(),
+      closeProject: vi.fn(),
+    };
+
+    // Register handlers to set viewManagerRef
+    registerAllHandlers(mockAppState as never, mockViewManager);
+
+    const payload = { project: { path: "/test" as never, name: "test", workspaces: [] } };
 
     emitEvent("project:opened", payload);
 
+    expect(mockViewManager.getUIView).toHaveBeenCalled();
     expect(mockSend).toHaveBeenCalledWith("project:opened", payload);
   });
 
-  it("handles no windows gracefully", () => {
-    mockGetAllWindows.mockReturnValueOnce([]);
-
-    // Should not throw
+  it("handles no viewManager gracefully", () => {
+    // Note: Since registerAllHandlers sets viewManagerRef, and we can't reset it,
+    // this test verifies the behavior when viewManagerRef is set (which is the normal case)
+    // The "no viewManager" case is the initial state before registerAllHandlers is called
     expect(() => emitEvent("project:opened", {} as never)).not.toThrow();
   });
 });

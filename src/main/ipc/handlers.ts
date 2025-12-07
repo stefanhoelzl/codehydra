@@ -2,11 +2,17 @@
  * IPC handler registration with type-safe wrappers and error serialization.
  */
 
-import { ipcMain, BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
-import type { IpcCommands, IpcEvents } from "../../shared/ipc";
+import type { IpcCommands, IpcEvents, UISetDialogModePayload } from "../../shared/ipc";
 import { ValidationError, validate } from "./validation";
 import { isServiceError } from "../../services/errors";
+import type { IViewManager } from "../managers/view-manager.interface";
+
+/**
+ * Reference to the view manager for emitting events.
+ */
+let viewManagerRef: IViewManager | null = null;
 
 /**
  * Serialized IPC error format for transport.
@@ -84,16 +90,26 @@ export function registerHandler<K extends keyof IpcCommands>(
 }
 
 /**
- * Emits an event to all renderer windows.
+ * Emits an event to the UI view.
  *
  * @param channel - The event channel name
  * @param payload - The event payload
  */
 export function emitEvent<K extends keyof IpcEvents>(channel: K, payload: IpcEvents[K]): void {
-  const windows = BrowserWindow.getAllWindows();
-  for (const window of windows) {
-    window.webContents.send(channel, payload);
+  if (viewManagerRef) {
+    viewManagerRef.getUIView().webContents.send(channel, payload);
   }
+}
+
+/**
+ * Creates handler for ui:set-dialog-mode command.
+ */
+export function createUISetDialogModeHandler(
+  viewManager: Pick<IViewManager, "setDialogMode">
+): (event: IpcMainInvokeEvent, payload: UISetDialogModePayload) => Promise<void> {
+  return async (_event, payload) => {
+    viewManager.setDialogMode(payload.isOpen);
+  };
 }
 
 // Import handlers and schemas
@@ -120,9 +136,9 @@ import {
   WorkspaceListBasesPayloadSchema,
   WorkspaceUpdateBasesPayloadSchema,
   WorkspaceIsDirtyPayloadSchema,
+  UISetDialogModePayloadSchema,
 } from "./validation";
 import type { AppState } from "../app-state";
-import type { IViewManager } from "../managers/view-manager.interface";
 
 /**
  * Registers all IPC handlers for the application.
@@ -131,6 +147,8 @@ import type { IViewManager } from "../managers/view-manager.interface";
  * @param viewManager - The view manager
  */
 export function registerAllHandlers(appState: AppState, viewManager: IViewManager): void {
+  viewManagerRef = viewManager;
+
   // Project handlers
   registerHandler("project:open", ProjectOpenPayloadSchema, createProjectOpenHandler(appState));
   registerHandler("project:close", ProjectClosePayloadSchema, createProjectCloseHandler(appState));
@@ -167,5 +185,12 @@ export function registerAllHandlers(appState: AppState, viewManager: IViewManage
     "workspace:is-dirty",
     WorkspaceIsDirtyPayloadSchema,
     createWorkspaceIsDirtyHandler(appState)
+  );
+
+  // UI handlers
+  registerHandler(
+    "ui:set-dialog-mode",
+    UISetDialogModePayloadSchema,
+    createUISetDialogModeHandler(viewManager)
   );
 }

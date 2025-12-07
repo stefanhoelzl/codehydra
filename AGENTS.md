@@ -45,6 +45,45 @@ src/
 └── services/       # Node.js services (pure, no Electron deps)
 ```
 
+## Renderer Architecture
+
+### Directory Structure
+
+```
+src/renderer/
+├── lib/
+│   ├── api/          # Re-exports window.api for mockability
+│   ├── components/   # Svelte 5 components
+│   ├── stores/       # Svelte 5 runes-based stores (.svelte.ts)
+│   ├── styles/       # Global CSS (variables.css, global.css)
+│   └── utils/        # Utility functions (focus-trap, etc.)
+├── App.svelte        # Main application component
+└── main.ts           # Entry point
+```
+
+### Patterns
+
+- **API imports**: Always import from `$lib/api`, never `window.api` directly
+- **State management**: Use Svelte 5 runes (`$state`, `$derived`, `$effect`)
+- **Testing**: Mock `$lib/api` in tests, not `window.api`
+- **Note**: `window.electronAPI` was renamed to `window.api` in Phase 4
+
+## IPC Patterns
+
+### Fire-and-Forget IPC
+
+For UI state changes that cannot fail (like z-order swapping), use the `void` operator to call IPC without awaiting:
+
+```typescript
+void api.setDialogMode(true); // Intentionally not awaited
+```
+
+This pattern is used when:
+
+1. The operation cannot meaningfully fail
+2. Immediate UI response is more important than confirmation
+3. The renderer should not block on the main process
+
 ## Development Workflow
 
 - TDD: failing test → implement → refactor

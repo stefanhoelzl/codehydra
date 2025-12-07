@@ -7,6 +7,7 @@ const { mockWindowManager, MockWebContentsViewClass, mockOpenExternal } = vi.hoi
   const createMockView = () => ({
     setBounds: vi.fn(),
     setBackgroundColor: vi.fn(),
+    isDestroyed: vi.fn(() => false),
     webContents: {
       loadFile: vi.fn(() => Promise.resolve()),
       loadURL: vi.fn(() => Promise.resolve()),
@@ -16,6 +17,7 @@ const { mockWindowManager, MockWebContentsViewClass, mockOpenExternal } = vi.hoi
       on: vi.fn().mockReturnThis(),
       close: vi.fn(),
       openDevTools: vi.fn(),
+      isDestroyed: vi.fn(() => false),
       session: {
         setPermissionRequestHandler: vi.fn(),
       },
@@ -37,6 +39,7 @@ const { mockWindowManager, MockWebContentsViewClass, mockOpenExternal } = vi.hoi
     getBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
     on: vi.fn().mockReturnThis(),
     close: vi.fn(),
+    isDestroyed: vi.fn(() => false),
     contentView: {
       addChildView: vi.fn(),
       removeChildView: vi.fn(),
@@ -205,7 +208,7 @@ describe("ViewManager", () => {
       );
     });
 
-    it("adds workspace view to window", () => {
+    it("adds workspace view to window on top (normal state - workspace receives events)", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         webviewPreloadPath: "/path/to/webview-preload.js",
@@ -216,6 +219,11 @@ describe("ViewManager", () => {
 
       // Should be called twice: once for UI view, once for workspace view
       expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(2);
+      // Workspace view should be added without index (at end = on top)
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(
+        workspaceView
+      );
     });
 
     it("configures window open handler", () => {
@@ -289,6 +297,89 @@ describe("ViewManager", () => {
 
       expect(manager.getWorkspaceView("/path/to/workspace")).toBeUndefined();
     });
+
+    it("does not throw when view is already destroyed", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
+
+      // Simulate the view being already destroyed (e.g., window closing)
+      workspaceView.webContents.isDestroyed = vi.fn(() => true);
+
+      // Should not throw
+      expect(() => manager.destroyWorkspaceView("/path/to/workspace")).not.toThrow();
+    });
+
+    it("skips webContents.close when already destroyed", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
+
+      // Simulate the view being already destroyed
+      workspaceView.webContents.isDestroyed = vi.fn(() => true);
+      workspaceView.webContents.close.mockClear();
+
+      manager.destroyWorkspaceView("/path/to/workspace");
+
+      // close() should NOT be called on destroyed webContents
+      expect(workspaceView.webContents.close).not.toHaveBeenCalled();
+    });
+
+    it("handles errors gracefully when view operations fail", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
+
+      // Simulate the view throwing when accessing webContents (destroyed state)
+      workspaceView.webContents.isDestroyed = vi.fn(() => {
+        throw new Error("Object has been destroyed");
+      });
+
+      // Should not throw - error should be caught
+      expect(() => manager.destroyWorkspaceView("/path/to/workspace")).not.toThrow();
+
+      // Should still remove from internal map
+      expect(manager.getWorkspaceView("/path/to/workspace")).toBeUndefined();
+    });
+
+    it("skips removeChildView when window is destroyed", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      const mockWindow = mockWindowManager.getWindow();
+
+      // Simulate window being destroyed
+      mockWindow.isDestroyed = vi.fn(() => true);
+      mockWindow.contentView.removeChildView.mockClear();
+
+      // Should not throw
+      expect(() => manager.destroyWorkspaceView("/path/to/workspace")).not.toThrow();
+
+      // removeChildView should NOT be called on destroyed window
+      expect(mockWindow.contentView.removeChildView).not.toHaveBeenCalled();
+
+      // Reset for other tests
+      mockWindow.isDestroyed = vi.fn(() => false);
+    });
   });
 
   describe("getWorkspaceView", () => {
@@ -320,7 +411,7 @@ describe("ViewManager", () => {
   });
 
   describe("updateBounds", () => {
-    it("sets UI layer bounds to sidebar width", () => {
+    it("sets UI layer bounds to full window width", () => {
       mockWindowManager.getBounds.mockReturnValue({ width: 1400, height: 900 });
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
@@ -334,7 +425,7 @@ describe("ViewManager", () => {
       expect(uiView?.setBounds).toHaveBeenCalledWith({
         x: 0,
         y: 0,
-        width: SIDEBAR_WIDTH,
+        width: 1400,
         height: 900,
       });
     });
@@ -566,6 +657,236 @@ describe("ViewManager", () => {
       handler?.(mockEvent, "http://localhost:8080/other-path");
       expect(mockEvent.preventDefault).not.toHaveBeenCalled();
       expect(mockOpenExternal).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("setDialogMode", () => {
+    it("moves UI layer to top when isOpen is true", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Clear previous calls from create
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.setDialogMode(true);
+
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      // Should be called without index parameter (adds to end = top)
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(uiView);
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(1);
+    });
+
+    it("moves UI layer to bottom when isOpen is false", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Clear previous calls from create
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.setDialogMode(false);
+
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      // Should be called with index 0 (adds to bottom)
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(
+        uiView,
+        0
+      );
+    });
+
+    it("is idempotent - multiple calls with same value are safe", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Clear previous calls from create
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      // Call setDialogMode(true) twice
+      expect(() => {
+        manager.setDialogMode(true);
+        manager.setDialogMode(true);
+      }).not.toThrow();
+
+      // Both calls should succeed
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not throw when window is destroyed", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      const mockWindow = mockWindowManager.getWindow();
+      // Simulate window being destroyed
+      mockWindow.isDestroyed = vi.fn(() => true);
+
+      // Should not throw
+      expect(() => manager.setDialogMode(true)).not.toThrow();
+
+      // Reset for other tests
+      mockWindow.isDestroyed = vi.fn(() => false);
+    });
+
+    it("does not affect workspace views - they remain accessible", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create workspace views
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+
+      // Change dialog mode
+      manager.setDialogMode(true);
+
+      // Workspace views should still be accessible
+      expect(manager.getWorkspaceView("/path/to/workspace1")).toBeDefined();
+      expect(manager.getWorkspaceView("/path/to/workspace2")).toBeDefined();
+    });
+  });
+
+  describe("destroy", () => {
+    it("unsubscribes from resize events", () => {
+      const unsubscribe = vi.fn();
+      mockWindowManager.onResize.mockReturnValue(unsubscribe);
+
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.destroy();
+
+      expect(unsubscribe).toHaveBeenCalled();
+    });
+
+    it("destroys all workspace views", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+
+      const workspaceView1 = MockWebContentsViewClass.mock.results[1]!.value;
+      const workspaceView2 = MockWebContentsViewClass.mock.results[2]!.value;
+
+      manager.destroy();
+
+      expect(workspaceView1.webContents.close).toHaveBeenCalled();
+      expect(workspaceView2.webContents.close).toHaveBeenCalled();
+    });
+
+    it("closes UI view", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      const uiView = MockWebContentsViewClass.mock.results[0]!.value;
+
+      manager.destroy();
+
+      expect(uiView.webContents.close).toHaveBeenCalled();
+    });
+
+    it("does not throw when views are already destroyed", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      const uiView = MockWebContentsViewClass.mock.results[0]!.value;
+      const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
+
+      // Simulate views being already destroyed (e.g., window closing)
+      uiView.webContents.isDestroyed = vi.fn(() => true);
+      workspaceView.webContents.isDestroyed = vi.fn(() => true);
+
+      // Should not throw
+      expect(() => manager.destroy()).not.toThrow();
+    });
+
+    it("skips close on already destroyed UI view", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      const uiView = MockWebContentsViewClass.mock.results[0]!.value;
+
+      // Simulate UI view being already destroyed
+      uiView.webContents.isDestroyed = vi.fn(() => true);
+      uiView.webContents.close.mockClear();
+
+      manager.destroy();
+
+      // close() should NOT be called on destroyed webContents
+      expect(uiView.webContents.close).not.toHaveBeenCalled();
+    });
+
+    it("handles errors gracefully when view operations fail during cleanup", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      const uiView = MockWebContentsViewClass.mock.results[0]!.value;
+      const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
+
+      // Simulate views throwing when accessing webContents (destroyed state)
+      uiView.webContents.isDestroyed = vi.fn(() => {
+        throw new Error("Object has been destroyed");
+      });
+      workspaceView.webContents.isDestroyed = vi.fn(() => {
+        throw new Error("Object has been destroyed");
+      });
+
+      // Should not throw - errors should be caught
+      expect(() => manager.destroy()).not.toThrow();
+    });
+
+    it("handles window being destroyed during cleanup", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        webviewPreloadPath: "/path/to/webview-preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      const mockWindow = mockWindowManager.getWindow();
+      // Simulate window being destroyed
+      mockWindow.isDestroyed = vi.fn(() => true);
+
+      // Should not throw
+      expect(() => manager.destroy()).not.toThrow();
+
+      // Reset for other tests
+      mockWindow.isDestroyed = vi.fn(() => false);
     });
   });
 });

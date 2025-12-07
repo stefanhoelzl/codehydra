@@ -6,6 +6,10 @@
     "moduleResolution": "bundler",
     "target": "ESNext",
     "outDir": "out",
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"]
+    },
     "types": ["node"]
   },
   "include": ["src/main/**/*", "src/preload/**/*", "src/services/**/*", "src/shared/**/*"]

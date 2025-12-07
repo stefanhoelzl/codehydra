@@ -4,7 +4,8 @@
  */
 
 import type {
-  IpcCommands,
+  Project,
+  BaseInfo,
   ProjectOpenedEvent,
   ProjectClosedEvent,
   WorkspaceCreatedEvent,
@@ -19,18 +20,83 @@ export type Unsubscribe = () => void;
 
 /**
  * Type-safe Electron API exposed to the renderer via contextBridge.
+ * Individual typed functions for better discoverability and cleaner call sites.
  */
-export interface ElectronAPI {
+export interface Api {
+  // ============ Commands ============
+
   /**
-   * Type-safe invoke for IPC commands.
-   * @param channel - The IPC channel name
-   * @param payload - The payload for the command (type-checked per channel)
-   * @returns Promise resolving to the command's response type
+   * Open a folder picker dialog to select a project directory.
+   * @returns The selected path, or null if cancelled
    */
-  invoke<K extends keyof IpcCommands>(
-    channel: K,
-    payload: IpcCommands[K]["payload"]
-  ): Promise<IpcCommands[K]["response"]>;
+  selectFolder(): Promise<string | null>;
+
+  /**
+   * Open a project from the given path.
+   * @param path - Absolute path to the git repository
+   */
+  openProject(path: string): Promise<void>;
+
+  /**
+   * Close an open project.
+   * @param path - Absolute path to the project
+   */
+  closeProject(path: string): Promise<void>;
+
+  /**
+   * List all open projects.
+   * @returns Array of open projects
+   */
+  listProjects(): Promise<Project[]>;
+
+  /**
+   * Create a new workspace (git worktree) in a project.
+   * @param projectPath - Path to the project
+   * @param name - Name for the new workspace
+   * @param baseBranch - Branch to base the workspace on
+   */
+  createWorkspace(projectPath: string, name: string, baseBranch: string): Promise<void>;
+
+  /**
+   * Remove a workspace from a project.
+   * @param workspacePath - Path to the workspace
+   * @param deleteBranch - Whether to also delete the associated branch
+   */
+  removeWorkspace(workspacePath: string, deleteBranch: boolean): Promise<void>;
+
+  /**
+   * Switch to a different workspace.
+   * @param workspacePath - Path to the workspace to switch to
+   */
+  switchWorkspace(workspacePath: string): Promise<void>;
+
+  /**
+   * List available branches for workspace creation.
+   * @param projectPath - Path to the project
+   * @returns Array of branch information
+   */
+  listBases(projectPath: string): Promise<BaseInfo[]>;
+
+  /**
+   * Update available branches by fetching from remotes.
+   * @param projectPath - Path to the project
+   */
+  updateBases(projectPath: string): Promise<void>;
+
+  /**
+   * Check if a workspace has uncommitted changes.
+   * @param workspacePath - Path to the workspace
+   * @returns True if the workspace has uncommitted changes
+   */
+  isWorkspaceDirty(workspacePath: string): Promise<boolean>;
+
+  /**
+   * Set dialog mode (z-order swapping).
+   * @param isOpen - True to move UI layer to top (dialog mode), false for normal mode
+   */
+  setDialogMode(isOpen: boolean): Promise<void>;
+
+  // ============ Event Subscriptions ============
 
   /**
    * Subscribe to project opened events.
@@ -70,7 +136,7 @@ export interface ElectronAPI {
 
 declare global {
   interface Window {
-    electronAPI: ElectronAPI;
+    api: Api;
   }
 }
 

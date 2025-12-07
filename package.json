@@ -44,6 +44,7 @@
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.2.9",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.10.1",
     "electron": "^39.2.6",
     "electron-vite": "^4.0.1",

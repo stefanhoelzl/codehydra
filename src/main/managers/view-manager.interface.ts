@@ -66,4 +66,12 @@ export interface IViewManager {
    * Focuses the UI layer view.
    */
   focusUI(): void;
+
+  /**
+   * Sets whether the UI layer should be in dialog mode.
+   * In dialog mode, the UI is moved to the top to overlay workspace views.
+   *
+   * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
+   */
+  setDialogMode(isOpen: boolean): void;
 }

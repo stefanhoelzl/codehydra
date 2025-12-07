@@ -13,10 +13,23 @@ export default defineConfig({
     isolate: true,
     restoreMocks: true,
     clearMocks: true,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      include: ["src/renderer/**/*.ts", "src/renderer/**/*.svelte"],
+      exclude: ["**/*.test.ts", "**/test-*.ts"],
+      thresholds: {
+        lines: 80,
+        branches: 80,
+        functions: 80,
+        statements: 80,
+      },
+    },
   },
   resolve: {
     alias: {
       $lib: resolve("./src/renderer/lib"),
+      "@shared": resolve("./src/shared"),
     },
   },
 });

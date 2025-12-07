@@ -151,7 +151,7 @@ export class ViewManager implements IViewManager {
     // Load the URL
     void view.webContents.loadURL(url);
 
-    // Add to window (workspace views are in front of UI layer)
+    // Add to window (on top of UI layer - normal state, workspace receives events)
     this.windowManager.getWindow().contentView.addChildView(view);
 
     // Store in map
@@ -174,18 +174,28 @@ export class ViewManager implements IViewManager {
       return;
     }
 
-    // Remove from window
-    this.windowManager.getWindow().contentView.removeChildView(view);
-
-    // Close webContents
-    view.webContents.close();
-
-    // Remove from map
+    // Remove from map first to ensure cleanup even if view is destroyed
     this.workspaceViews.delete(workspacePath);
 
     // If this was the active workspace, clear it
     if (this.activeWorkspacePath === workspacePath) {
       this.activeWorkspacePath = null;
+    }
+
+    try {
+      // Remove from window only if window is not destroyed
+      const window = this.windowManager.getWindow();
+      if (!window.isDestroyed()) {
+        window.contentView.removeChildView(view);
+      }
+
+      // Close webContents only if not already destroyed
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.close();
+      }
+    } catch {
+      // Ignore errors during cleanup - view may be in an inconsistent state
+      // This can happen when the view or its webContents is already destroyed
     }
   }
 
@@ -210,11 +220,11 @@ export class ViewManager implements IViewManager {
     const width = Math.max(bounds.width, MIN_WIDTH);
     const height = Math.max(bounds.height, MIN_HEIGHT);
 
-    // UI layer: sidebar area only
+    // UI layer: full window (so dialogs can overlay everything)
     this.uiView.setBounds({
       x: 0,
       y: 0,
-      width: SIDEBAR_WIDTH,
+      width,
       height,
     });
 
@@ -273,6 +283,30 @@ export class ViewManager implements IViewManager {
   }
 
   /**
+   * Sets whether the UI layer should be in dialog mode.
+   * In dialog mode, the UI is moved to the top to overlay workspace views.
+   *
+   * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
+   */
+  setDialogMode(isOpen: boolean): void {
+    try {
+      const window = this.windowManager.getWindow();
+      if (window.isDestroyed()) return;
+
+      const contentView = window.contentView;
+      if (isOpen) {
+        // Move UI to top (adding existing child moves it to end = top)
+        contentView.addChildView(this.uiView);
+      } else {
+        // Move UI to bottom (index 0 = behind workspaces)
+        contentView.addChildView(this.uiView, 0);
+      }
+    } catch {
+      // Ignore errors during z-order change - window may be closing
+    }
+  }
+
+  /**
    * Destroys the ViewManager and cleans up all views.
    * Called on application shutdown.
    */
@@ -285,7 +319,13 @@ export class ViewManager implements IViewManager {
       this.destroyWorkspaceView(path);
     }
 
-    // Close UI view
-    this.uiView.webContents.close();
+    // Close UI view only if not already destroyed (can happen during window close)
+    try {
+      if (!this.uiView.webContents.isDestroyed()) {
+        this.uiView.webContents.close();
+      }
+    } catch {
+      // Ignore errors during cleanup - view may be in an inconsistent state
+    }
   }
 }

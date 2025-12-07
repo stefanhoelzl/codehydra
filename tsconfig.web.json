@@ -9,8 +9,9 @@
     "outDir": "out",
     "baseUrl": ".",
     "paths": {
-      "$lib/*": ["src/renderer/lib/*"]
+      "$lib/*": ["src/renderer/lib/*"],
+      "@shared/*": ["src/shared/*"]
     }
   },
-  "include": ["src/renderer/**/*", "src/shared/**/*"]
+  "include": ["src/renderer/**/*", "src/shared/**/*", "src/test/**/*"]
 }

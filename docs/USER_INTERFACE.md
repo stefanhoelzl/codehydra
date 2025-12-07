@@ -1,5 +1,7 @@
 # CodeHydra User Interface
 
+> **Implementation Note (Phase 4)**: The UI layer has been implemented with Svelte 5 runes and @vscode-elements. The Remove Workspace dialog uses a Cancel/OK pattern with a "Delete branch" checkbox, which differs slightly from some original specifications that showed three buttons.
+
 ## Application Layout
 
 ```

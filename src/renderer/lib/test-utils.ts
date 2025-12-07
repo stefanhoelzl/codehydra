@@ -1,0 +1,36 @@
+/**
+ * Test utilities for renderer tests.
+ * Provides mock API and helper functions.
+ */
+
+import { vi } from "vitest";
+import type { Api } from "@shared/electron-api";
+
+/**
+ * Creates a mock API object with all functions mocked.
+ * All command mocks return sensible defaults.
+ * All event subscription mocks return unsubscribe functions.
+ */
+export function createMockApi(): Api {
+  return {
+    // Commands
+    selectFolder: vi.fn().mockResolvedValue(null),
+    openProject: vi.fn().mockResolvedValue(undefined),
+    closeProject: vi.fn().mockResolvedValue(undefined),
+    listProjects: vi.fn().mockResolvedValue([]),
+    createWorkspace: vi.fn().mockResolvedValue(undefined),
+    removeWorkspace: vi.fn().mockResolvedValue(undefined),
+    switchWorkspace: vi.fn().mockResolvedValue(undefined),
+    listBases: vi.fn().mockResolvedValue([]),
+    updateBases: vi.fn().mockResolvedValue(undefined),
+    isWorkspaceDirty: vi.fn().mockResolvedValue(false),
+    setDialogMode: vi.fn().mockResolvedValue(undefined),
+
+    // Event subscriptions return unsubscribe functions
+    onProjectOpened: vi.fn(() => vi.fn()),
+    onProjectClosed: vi.fn(() => vi.fn()),
+    onWorkspaceCreated: vi.fn(() => vi.fn()),
+    onWorkspaceRemoved: vi.fn(() => vi.fn()),
+    onWorkspaceSwitched: vi.fn(() => vi.fn()),
+  };
+}

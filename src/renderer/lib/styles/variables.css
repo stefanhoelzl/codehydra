@@ -1,0 +1,30 @@
+/**
+ * VS Code CSS custom properties with fallbacks.
+ * Prefixed with --ch- (CodeHydra) to avoid conflicts.
+ */
+
+:root {
+  /* Text colors */
+  --ch-foreground: var(--vscode-foreground, #cccccc);
+  --ch-background: var(--vscode-editor-background, #1e1e1e);
+
+  /* Button colors */
+  --ch-button-bg: var(--vscode-button-background, #0e639c);
+  --ch-button-fg: var(--vscode-button-foreground, #ffffff);
+
+  /* Input colors */
+  --ch-input-bg: var(--vscode-input-background, #3c3c3c);
+  --ch-input-border: var(--vscode-input-border, #3c3c3c);
+
+  /* Focus/selection colors */
+  --ch-focus-border: var(--vscode-focusBorder, #007fd4);
+  --ch-list-active-bg: var(--vscode-list-activeSelectionBackground, #094771);
+
+  /* Error colors */
+  --ch-error-fg: var(--vscode-errorForeground, #f48771);
+  --ch-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+
+  /* Component-specific */
+  --ch-sidebar-width: 250px;
+  --ch-dialog-max-width: 450px;
+}

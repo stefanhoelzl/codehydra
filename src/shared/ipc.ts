@@ -125,6 +125,10 @@ export interface WorkspaceIsDirtyPayload {
   readonly workspacePath: string;
 }
 
+export interface UISetDialogModePayload {
+  readonly isOpen: boolean;
+}
+
 // ============ Event Payload Types ============
 
 export interface ProjectOpenedEvent {
@@ -165,6 +169,7 @@ export interface IpcCommands {
     response: UpdateBasesResult;
   };
   "workspace:is-dirty": { payload: WorkspaceIsDirtyPayload; response: boolean };
+  "ui:set-dialog-mode": { payload: UISetDialogModePayload; response: void };
 }
 
 export interface IpcEvents {
@@ -189,6 +194,7 @@ export const IpcChannels = {
   WORKSPACE_LIST_BASES: "workspace:list-bases",
   WORKSPACE_UPDATE_BASES: "workspace:update-bases",
   WORKSPACE_IS_DIRTY: "workspace:is-dirty",
+  UI_SET_DIALOG_MODE: "ui:set-dialog-mode",
   // Events
   PROJECT_OPENED: "project:opened",
   PROJECT_CLOSED: "project:closed",

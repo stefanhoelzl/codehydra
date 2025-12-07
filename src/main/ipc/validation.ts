@@ -93,6 +93,13 @@ export const WorkspaceIsDirtyPayloadSchema = z.object({
 });
 
 /**
+ * Validation schema for ui:set-dialog-mode payload.
+ */
+export const UISetDialogModePayloadSchema = z.object({
+  isOpen: z.boolean(),
+});
+
+/**
  * Validates a payload against a Zod schema.
  *
  * @param schema - The Zod schema to validate against

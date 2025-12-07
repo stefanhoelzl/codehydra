@@ -8,6 +8,7 @@ const { mockBaseWindow, MockBaseWindowClass, mockMenuSetApplicationMenu } = vi.h
     getBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
     on: vi.fn().mockReturnThis(),
     close: vi.fn(),
+    maximize: vi.fn(),
     contentView: {
       addChildView: vi.fn(),
       removeChildView: vi.fn(),
@@ -63,6 +64,12 @@ describe("WindowManager", () => {
       const manager = WindowManager.create();
 
       expect(manager).toBeInstanceOf(WindowManager);
+    });
+
+    it("maximizes the window after creation", () => {
+      WindowManager.create();
+
+      expect(mockBaseWindow.maximize).toHaveBeenCalled();
     });
   });
 

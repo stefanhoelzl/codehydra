@@ -1,0 +1,53 @@
+/**
+ * Global styles and resets for CodeHydra.
+ */
+
+/* Minimal reset for consistent base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+body {
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  background: var(--ch-background);
+  color: var(--ch-foreground);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* Focus visible styles for accessibility */
+:focus-visible {
+  outline: 2px solid var(--ch-focus-border);
+  outline-offset: 2px;
+}
+
+/* Remove default focus outline for mouse users */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Visually hidden utility for screen reader only text */
+.ch-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

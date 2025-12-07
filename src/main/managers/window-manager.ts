@@ -53,6 +53,8 @@ export class WindowManager {
       title: "CodeHydra",
     });
 
+    window.maximize();
+
     return new WindowManager(window);
   }
 

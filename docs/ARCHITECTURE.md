@@ -160,13 +160,25 @@ Services are unit-testable without Electron runtime.
 
 ### Frontend Components (Svelte 5)
 
-| Component             | Purpose                                                    |
-| --------------------- | ---------------------------------------------------------- |
-| Sidebar               | Project list, workspace list, status indicators            |
-| CreateWorkspaceDialog | New workspace form with validation                         |
-| RemoveWorkspaceDialog | Confirmation with uncommitted changes warning              |
-| KeyboardOverlay       | Shortcut hints when active                                 |
-| Stores                | projects, activeWorkspace, agentStatus, keyboardNavigation |
+| Component             | Purpose                                              |
+| --------------------- | ---------------------------------------------------- |
+| App                   | Main application component, IPC event handling       |
+| Sidebar               | Project list, workspace list, action buttons         |
+| EmptyState            | Displayed when no projects are open                  |
+| Dialog                | Base dialog component with focus trap, accessibility |
+| CreateWorkspaceDialog | New workspace form with validation, branch selection |
+| RemoveWorkspaceDialog | Confirmation with uncommitted changes warning        |
+| BranchDropdown        | Searchable combobox for branch selection             |
+| Stores                | projects, dialogs (Svelte 5 runes)                   |
+
+### Dialog Overlay Mode
+
+When a modal dialog is open, the UI layer's z-order is changed to overlay workspace views:
+
+- **Normal mode**: UI layer at index 0 (behind), workspace views on top
+- **Dialog mode**: UI layer at last index (on top), receives all events
+
+This is triggered by a reactive `$effect` in App.svelte that watches `dialogState` and calls `api.setDialogMode(isOpen)`. The main process ViewManager handles the z-order swap using `contentView.addChildView()` reordering.
 
 ## OpenCode Integration
 
