@@ -79,9 +79,10 @@ contextBridge.exposeInMainWorld("api", {
   /**
    * Switch to a different workspace.
    * @param workspacePath - Path to the workspace to switch to
+   * @param focusWorkspace - Whether to focus the workspace view (default: true)
    */
-  switchWorkspace: (workspacePath: string): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.WORKSPACE_SWITCH, { workspacePath }),
+  switchWorkspace: (workspacePath: string, focusWorkspace?: boolean): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.WORKSPACE_SWITCH, { workspacePath, focusWorkspace }),
 
   /**
    * List available branches for workspace creation.

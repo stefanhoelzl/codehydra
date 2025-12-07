@@ -38,6 +38,7 @@ export default defineConfig({
     resolve: {
       alias: {
         $lib: resolve(__dirname, "src/renderer/lib"),
+        "@shared": resolve(__dirname, "src/shared"),
       },
     },
   },

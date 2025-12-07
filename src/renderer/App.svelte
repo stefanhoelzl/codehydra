@@ -5,6 +5,8 @@
     activeWorkspacePath,
     loadingState,
     loadingError,
+    activeProject,
+    getAllWorkspaces,
     setProjects,
     addProject,
     removeProject,
@@ -19,6 +21,7 @@
     shortcutModeActive,
     handleShortcutEnable,
     handleShortcutDisable,
+    handleKeyDown,
     handleKeyUp,
     handleWindowBlur,
   } from "$lib/stores/shortcuts.svelte.js";
@@ -126,7 +129,7 @@
   }
 </script>
 
-<svelte:window onkeyup={handleKeyUp} onblur={handleWindowBlur} />
+<svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} onblur={handleWindowBlur} />
 
 <main class="app">
   <Sidebar
@@ -134,6 +137,7 @@
     activeWorkspacePath={activeWorkspacePath.value}
     loadingState={loadingState.value}
     loadingError={loadingError.value}
+    shortcutModeActive={shortcutModeActive.value}
     onOpenProject={handleOpenProject}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
@@ -148,7 +152,12 @@
   <RemoveWorkspaceDialog open={true} workspacePath={dialogState.value.workspacePath} />
 {/if}
 
-<ShortcutOverlay active={shortcutModeActive.value} />
+<ShortcutOverlay
+  active={shortcutModeActive.value}
+  workspaceCount={getAllWorkspaces().length}
+  hasActiveProject={activeProject.value !== undefined}
+  hasActiveWorkspace={activeWorkspacePath.value !== null}
+/>
 
 <style>
   .app {

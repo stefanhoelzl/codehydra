@@ -452,5 +452,121 @@ describe("App component", () => {
       // setDialogMode should not be called when shortcut mode is not active
       expect(mockApi.setDialogMode).not.toHaveBeenCalled();
     });
+
+    it("should-connect-handleKeyDown-to-window: action key triggers action during shortcut mode", async () => {
+      // Set up projects with workspaces
+      const mockProjects: Project[] = [
+        {
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [
+            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
+            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
+          ],
+        },
+      ];
+      mockApi.listProjects.mockResolvedValue(mockProjects);
+
+      let shortcutEnableCallback: (() => void) | null = null;
+      (
+        mockApi.onShortcutEnable as unknown as {
+          mockImplementation: (fn: (cb: () => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        shortcutEnableCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      // Wait for projects to load
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(shortcutEnableCallback).not.toBeNull();
+      });
+
+      // Enable shortcut mode
+      shortcutEnableCallback!();
+
+      // Press "1" key to jump to first workspace
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "1" }));
+
+      // Should have called switchWorkspace with focusWorkspace=false to keep shortcut mode active
+      await waitFor(() => {
+        expect(mockApi.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws1", false);
+      });
+    });
+
+    it("should-pass-shortcutModeActive-to-sidebar: sidebar shows index numbers when active", async () => {
+      const mockProjects: Project[] = [
+        {
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [{ path: "/test/.worktrees/ws1", name: "ws1", branch: "main" }],
+        },
+      ];
+      mockApi.listProjects.mockResolvedValue(mockProjects);
+
+      let shortcutEnableCallback: (() => void) | null = null;
+      (
+        mockApi.onShortcutEnable as unknown as {
+          mockImplementation: (fn: (cb: () => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        shortcutEnableCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(shortcutEnableCallback).not.toBeNull();
+      });
+
+      // Enable shortcut mode
+      shortcutEnableCallback!();
+
+      // Sidebar should show the index number
+      await waitFor(() => {
+        expect(screen.getByText("1")).toBeInTheDocument();
+      });
+    });
+
+    it("should-pass-all-context-props-to-overlay: overlay hides hints when no context", async () => {
+      // Empty projects = no workspaces, no active project/workspace
+      mockApi.listProjects.mockResolvedValue([]);
+
+      let shortcutEnableCallback: (() => void) | null = null;
+      (
+        mockApi.onShortcutEnable as unknown as {
+          mockImplementation: (fn: (cb: () => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        shortcutEnableCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(shortcutEnableCallback).not.toBeNull();
+      });
+
+      // Enable shortcut mode
+      shortcutEnableCallback!();
+
+      // With no workspaces, navigate and jump hints should be hidden
+      await waitFor(() => {
+        const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
+        expect(navigateHint).toHaveClass("shortcut-hint--hidden");
+
+        const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
+        expect(jumpHint).toHaveClass("shortcut-hint--hidden");
+
+        // Open should always be visible
+        const openHint = screen.getByLabelText("O to open project");
+        expect(openHint).not.toHaveClass("shortcut-hint--hidden");
+      });
+    });
   });
 });

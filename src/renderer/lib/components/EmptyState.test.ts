@@ -9,6 +9,7 @@ import EmptyState from "./EmptyState.svelte";
 describe("EmptyState component", () => {
   const defaultProps = {
     onOpenProject: vi.fn(),
+    shortcutModeActive: false,
   };
 
   beforeEach(() => {
@@ -43,5 +44,23 @@ describe("EmptyState component", () => {
     const button = screen.getByRole("button", { name: /open project/i });
     button.focus();
     expect(document.activeElement).toBe(button);
+  });
+
+  describe("shortcut mode", () => {
+    it("should-show-O-in-empty-state: shows O hint when shortcut mode active", () => {
+      render(EmptyState, {
+        props: { ...defaultProps, shortcutModeActive: true },
+      });
+
+      expect(screen.getByText("O")).toBeInTheDocument();
+    });
+
+    it("should-hide-O-in-empty-state: hides O hint when shortcut mode inactive", () => {
+      render(EmptyState, {
+        props: { ...defaultProps, shortcutModeActive: false },
+      });
+
+      expect(screen.queryByText("O")).not.toBeInTheDocument();
+    });
   });
 });

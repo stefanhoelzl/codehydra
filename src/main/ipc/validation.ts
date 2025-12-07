@@ -78,6 +78,7 @@ export const WorkspaceRemovePayloadSchema = z.object({
 
 export const WorkspaceSwitchPayloadSchema = z.object({
   workspacePath: absolutePathSchema,
+  focusWorkspace: z.boolean().optional(),
 });
 
 export const WorkspaceListBasesPayloadSchema = z.object({

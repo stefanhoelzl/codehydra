@@ -1,24 +1,63 @@
 <script lang="ts">
   interface Props {
     active: boolean;
+    workspaceCount?: number;
+    hasActiveProject?: boolean;
+    hasActiveWorkspace?: boolean;
   }
 
-  let { active }: Props = $props();
+  let {
+    active,
+    workspaceCount = 0,
+    hasActiveProject = false,
+    hasActiveWorkspace = false,
+  }: Props = $props();
+
+  const showNavigation = $derived(workspaceCount > 1);
+  const showJump = $derived(workspaceCount > 1);
+  const showNew = $derived(hasActiveProject);
+  const showDelete = $derived(hasActiveWorkspace);
 </script>
 
 <!-- 
   Content is always rendered (no {#if}) so fade-out transition works smoothly.
   aria-hidden prevents screen readers from reading invisible content.
   Dynamic sr-only text announces state changes for aria-live region.
+  Use visibility:hidden (not display:none) for unavailable hints to prevent layout shifts.
 -->
 <div class="shortcut-overlay" class:active role="status" aria-live="polite" aria-hidden={!active}>
   {#if active}
     <span class="sr-only">Shortcut mode active.</span>
   {/if}
-  <span aria-label="Up and Down arrows to navigate">↑↓ Navigate</span>
-  <span aria-label="Enter key to create new workspace">⏎ New</span>
-  <span aria-label="Delete key to remove workspace">⌫ Del</span>
-  <span aria-label="Number keys 1 through 0 to jump">1-0 Jump</span>
+  <span
+    class="shortcut-hint"
+    class:shortcut-hint--hidden={!showNavigation}
+    aria-label="Up and Down arrows to navigate"
+  >
+    ↑↓ Navigate
+  </span>
+  <span
+    class="shortcut-hint"
+    class:shortcut-hint--hidden={!showNew}
+    aria-label="Enter key to create new workspace"
+  >
+    ⏎ New
+  </span>
+  <span
+    class="shortcut-hint"
+    class:shortcut-hint--hidden={!showDelete}
+    aria-label="Delete key to remove workspace"
+  >
+    ⌫ Del
+  </span>
+  <span
+    class="shortcut-hint"
+    class:shortcut-hint--hidden={!showJump}
+    aria-label="Number keys 1 through 0 to jump"
+  >
+    1-0 Jump
+  </span>
+  <span class="shortcut-hint" aria-label="O to open project"> O Open </span>
 </div>
 
 <style>
@@ -43,6 +82,15 @@
 
   .shortcut-overlay.active {
     opacity: 1;
+  }
+
+  .shortcut-hint {
+    transition: opacity 150ms ease-out;
+  }
+
+  .shortcut-hint--hidden {
+    visibility: hidden;
+    opacity: 0;
   }
 
   /* Screen reader only - announces state changes */

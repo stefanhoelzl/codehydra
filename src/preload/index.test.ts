@@ -119,16 +119,33 @@ describe("preload API", () => {
       });
     });
 
-    it("switchWorkspace calls ipcRenderer.invoke with workspacePath", async () => {
+    it("switchWorkspace calls ipcRenderer.invoke with workspacePath and default focus", async () => {
       mockIpcRenderer.invoke.mockResolvedValue(undefined);
 
       const switchWorkspace = exposedApi.switchWorkspace as (
-        workspacePath: string
+        workspacePath: string,
+        focusWorkspace?: boolean
       ) => Promise<void>;
       await switchWorkspace("/project/.worktrees/feature-1");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("workspace:switch", {
         workspacePath: "/project/.worktrees/feature-1",
+        focusWorkspace: undefined,
+      });
+    });
+
+    it("switchWorkspace passes focusWorkspace=false when specified", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue(undefined);
+
+      const switchWorkspace = exposedApi.switchWorkspace as (
+        workspacePath: string,
+        focusWorkspace?: boolean
+      ) => Promise<void>;
+      await switchWorkspace("/project/.worktrees/feature-1", false);
+
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("workspace:switch", {
+        workspacePath: "/project/.worktrees/feature-1",
+        focusWorkspace: false,
       });
     });
 

@@ -111,6 +111,8 @@ export interface WorkspaceRemovePayload {
 
 export interface WorkspaceSwitchPayload {
   readonly workspacePath: string;
+  /** Whether to focus the workspace view after switching (default: true) */
+  readonly focusWorkspace?: boolean;
 }
 
 export interface WorkspaceListBasesPayload {

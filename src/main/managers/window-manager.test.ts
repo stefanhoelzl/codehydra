@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const { mockBaseWindow, MockBaseWindowClass, mockMenuSetApplicationMenu } = vi.hoisted(() => {
   const mockWindow = {
     getBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
+    getContentBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
     on: vi.fn().mockReturnThis(),
     close: vi.fn(),
     maximize: vi.fn(),
@@ -85,7 +86,7 @@ describe("WindowManager", () => {
 
   describe("getBounds", () => {
     it("returns window content bounds", () => {
-      mockBaseWindow.getBounds.mockReturnValue({ width: 1400, height: 900, x: 100, y: 50 });
+      mockBaseWindow.getContentBounds.mockReturnValue({ width: 1400, height: 900, x: 100, y: 50 });
       const manager = WindowManager.create();
 
       const bounds = manager.getBounds();

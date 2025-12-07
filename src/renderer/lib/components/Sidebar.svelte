@@ -1,5 +1,43 @@
+<script lang="ts" module>
+  import type { Project } from "$lib/api";
+
+  /**
+   * Calculate the global index of a workspace across all projects.
+   * Returns the sum of all workspaces in previous projects plus the workspace index.
+   */
+  export function getWorkspaceGlobalIndex(
+    projects: readonly Project[],
+    projectIndex: number,
+    workspaceIndex: number
+  ): number {
+    let globalIndex = 0;
+    for (let p = 0; p < projectIndex; p++) {
+      globalIndex += projects[p]?.workspaces.length ?? 0;
+    }
+    return globalIndex + workspaceIndex;
+  }
+
+  /**
+   * Format a global index as a shortcut key display.
+   * Returns "1"-"9" for indices 0-8, "0" for index 9, null for 10+.
+   */
+  export function formatIndexDisplay(globalIndex: number): string | null {
+    if (globalIndex > 9) return null; // No shortcut for 11+
+    return globalIndex === 9 ? "0" : String(globalIndex + 1);
+  }
+
+  /**
+   * Get the shortcut hint for a workspace at a given global index.
+   */
+  export function getShortcutHint(globalIndex: number): string {
+    if (globalIndex > 9) return ""; // No shortcut
+    const key = globalIndex === 9 ? "0" : String(globalIndex + 1);
+    return ` - Press ${key} to jump`;
+  }
+</script>
+
 <script lang="ts">
-  import type { Project, ProjectPath } from "$lib/api";
+  import type { ProjectPath } from "$lib/api";
   import EmptyState from "./EmptyState.svelte";
 
   interface SidebarProps {
@@ -7,6 +45,7 @@
     activeWorkspacePath: string | null;
     loadingState: "loading" | "loaded" | "error";
     loadingError: string | null;
+    shortcutModeActive?: boolean;
     onOpenProject: () => void;
     onCloseProject: (path: ProjectPath) => void;
     onSwitchWorkspace: (path: string) => void;
@@ -19,6 +58,7 @@
     activeWorkspacePath,
     loadingState,
     loadingError,
+    shortcutModeActive = false,
     onOpenProject,
     onCloseProject,
     onSwitchWorkspace,
@@ -51,10 +91,10 @@
       <p>{loadingError ?? "An error occurred"}</p>
     </div>
   {:else if projects.length === 0}
-    <EmptyState {onOpenProject} />
+    <EmptyState {onOpenProject} {shortcutModeActive} />
   {:else}
     <ul class="project-list">
-      {#each projects as project (project.path)}
+      {#each projects as project, projectIndex (project.path)}
         <li class="project-item">
           <div class="project-header">
             <span class="project-name" title={project.path}>{project.name}</span>
@@ -80,7 +120,10 @@
             </div>
           </div>
           <ul class="workspace-list">
-            {#each project.workspaces as workspace (workspace.path)}
+            {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
+              {@const globalIndex = getWorkspaceGlobalIndex(projects, projectIndex, workspaceIndex)}
+              {@const displayIndex = formatIndexDisplay(globalIndex)}
+              {@const shortcutHint = getShortcutHint(globalIndex)}
               <li
                 class="workspace-item"
                 class:active={workspace.path === activeWorkspacePath}
@@ -89,8 +132,18 @@
                 <button
                   type="button"
                   class="workspace-btn"
+                  aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
                   onclick={() => onSwitchWorkspace(workspace.path)}
                 >
+                  {#if shortcutModeActive}
+                    <span
+                      class="shortcut-index"
+                      class:shortcut-index--dimmed={displayIndex === null}
+                      aria-hidden="true"
+                    >
+                      {displayIndex ?? "·"}
+                    </span>
+                  {/if}
                   {workspace.name}
                 </button>
                 <button
@@ -109,7 +162,17 @@
       {/each}
     </ul>
     <div class="sidebar-footer">
-      <button type="button" class="open-project-btn" onclick={onOpenProject}> Open Project </button>
+      <button
+        type="button"
+        class="open-project-btn"
+        aria-label={"Open Project" + (shortcutModeActive ? " - Press O" : "")}
+        onclick={onOpenProject}
+      >
+        {#if shortcutModeActive}
+          <span class="shortcut-index" aria-hidden="true">O</span>
+        {/if}
+        Open Project
+      </button>
     </div>
   {/if}
 </nav>
@@ -280,5 +343,23 @@
 
   .open-project-btn:hover {
     opacity: 0.9;
+  }
+
+  .shortcut-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--ch-button-fg);
+    background: var(--ch-button-bg);
+    border-radius: 2px;
+  }
+
+  .shortcut-index--dimmed {
+    opacity: 0.4;
   }
 </style>

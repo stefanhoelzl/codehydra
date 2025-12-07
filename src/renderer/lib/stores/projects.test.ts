@@ -50,6 +50,10 @@ import {
   addWorkspace,
   removeWorkspace,
   reset,
+  getAllWorkspaces,
+  getWorkspaceByIndex,
+  findWorkspaceIndex,
+  wrapIndex,
 } from "./projects.svelte.js";
 
 describe("projects store", () => {
@@ -252,6 +256,160 @@ describe("projects store", () => {
       removeWorkspace("/test/project" as ProjectPath, "/test/project/.worktrees/ws1");
 
       expect(projects.value[0]?.workspaces).toHaveLength(0);
+    });
+  });
+
+  describe("getAllWorkspaces", () => {
+    it("should-return-flat-array-of-all-workspaces", () => {
+      const ws1 = createMockWorkspace({ path: "/test/p1/ws1" });
+      const ws2 = createMockWorkspace({ path: "/test/p1/ws2" });
+      const ws3 = createMockWorkspace({ path: "/test/p2/ws3" });
+
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          workspaces: [ws1, ws2],
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/p2" as ProjectPath,
+          workspaces: [ws3],
+        })
+      );
+
+      const result = getAllWorkspaces();
+      expect(result).toHaveLength(3);
+      expect(result[0]).toEqual(ws1);
+      expect(result[1]).toEqual(ws2);
+      expect(result[2]).toEqual(ws3);
+    });
+
+    it("should-maintain-project-then-workspace-order", () => {
+      const wsA1 = createMockWorkspace({ path: "/test/a/ws1", name: "a1" });
+      const wsA2 = createMockWorkspace({ path: "/test/a/ws2", name: "a2" });
+      const wsB1 = createMockWorkspace({ path: "/test/b/ws1", name: "b1" });
+
+      addProject(
+        createMockProject({
+          path: "/test/a" as ProjectPath,
+          workspaces: [wsA1, wsA2],
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/b" as ProjectPath,
+          workspaces: [wsB1],
+        })
+      );
+
+      const result = getAllWorkspaces();
+      expect(result.map((w: Workspace) => w.name)).toEqual(["a1", "a2", "b1"]);
+    });
+
+    it("should-return-empty-array-when-no-projects", () => {
+      const result = getAllWorkspaces();
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("getWorkspaceByIndex", () => {
+    it("should-return-workspace-at-global-index", () => {
+      const ws1 = createMockWorkspace({ path: "/test/p1/ws1", name: "first" });
+      const ws2 = createMockWorkspace({ path: "/test/p1/ws2", name: "second" });
+      const ws3 = createMockWorkspace({ path: "/test/p2/ws3", name: "third" });
+
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          workspaces: [ws1, ws2],
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/p2" as ProjectPath,
+          workspaces: [ws3],
+        })
+      );
+
+      expect(getWorkspaceByIndex(0)?.name).toBe("first");
+      expect(getWorkspaceByIndex(1)?.name).toBe("second");
+      expect(getWorkspaceByIndex(2)?.name).toBe("third");
+    });
+
+    it("should-return-undefined-for-out-of-range-index", () => {
+      const ws = createMockWorkspace({ path: "/test/p1/ws1" });
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          workspaces: [ws],
+        })
+      );
+
+      expect(getWorkspaceByIndex(-1)).toBeUndefined();
+      expect(getWorkspaceByIndex(1)).toBeUndefined();
+      expect(getWorkspaceByIndex(100)).toBeUndefined();
+    });
+  });
+
+  describe("findWorkspaceIndex", () => {
+    it("should-find-workspace-index-by-path", () => {
+      const ws1 = createMockWorkspace({ path: "/test/p1/ws1" });
+      const ws2 = createMockWorkspace({ path: "/test/p1/ws2" });
+      const ws3 = createMockWorkspace({ path: "/test/p2/ws3" });
+
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          workspaces: [ws1, ws2],
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/p2" as ProjectPath,
+          workspaces: [ws3],
+        })
+      );
+
+      expect(findWorkspaceIndex("/test/p1/ws1")).toBe(0);
+      expect(findWorkspaceIndex("/test/p1/ws2")).toBe(1);
+      expect(findWorkspaceIndex("/test/p2/ws3")).toBe(2);
+    });
+
+    it("should-return-negative-one-for-unknown-path", () => {
+      const ws = createMockWorkspace({ path: "/test/p1/ws1" });
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          workspaces: [ws],
+        })
+      );
+
+      expect(findWorkspaceIndex("/nonexistent/path")).toBe(-1);
+    });
+
+    it("returns -1 for null path", () => {
+      expect(findWorkspaceIndex(null)).toBe(-1);
+    });
+  });
+
+  describe("wrapIndex", () => {
+    it("should-wrap-positive-overflow-to-start", () => {
+      expect(wrapIndex(3, 3)).toBe(0);
+      expect(wrapIndex(4, 3)).toBe(1);
+      expect(wrapIndex(5, 3)).toBe(2);
+    });
+
+    it("should-wrap-negative-underflow-to-end", () => {
+      expect(wrapIndex(-1, 3)).toBe(2);
+      expect(wrapIndex(-2, 3)).toBe(1);
+      expect(wrapIndex(-3, 3)).toBe(0);
+    });
+
+    it("should-leave-valid-indices-unchanged", () => {
+      expect(wrapIndex(0, 3)).toBe(0);
+      expect(wrapIndex(1, 3)).toBe(1);
+      expect(wrapIndex(2, 3)).toBe(2);
     });
   });
 });

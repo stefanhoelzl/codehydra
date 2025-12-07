@@ -188,7 +188,7 @@ describe("workspace:remove handler", () => {
 });
 
 describe("workspace:switch handler", () => {
-  it("switches active workspace", async () => {
+  it("switches active workspace and focuses by default", async () => {
     const mockAppState = createMockAppState();
     const mockViewManager = createMockViewManager();
 
@@ -209,6 +209,30 @@ describe("workspace:switch handler", () => {
 
     expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith("/test/repo/.worktrees/ws1");
     expect(mockViewManager.focusActiveWorkspace).toHaveBeenCalled();
+  });
+
+  it("focuses UI instead of workspace when focusWorkspace is false", async () => {
+    const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
+
+    const project: Project = {
+      path: "/test/repo" as ProjectPath,
+      name: "repo",
+      workspaces: [{ name: "ws1", path: "/test/repo/.worktrees/ws1", branch: "ws1" }],
+    };
+
+    mockAppState.findProjectForWorkspace.mockReturnValue(project);
+
+    const handler = createWorkspaceSwitchHandler(mockAppState, mockViewManager);
+    const payload: WorkspaceSwitchPayload = {
+      workspacePath: "/test/repo/.worktrees/ws1",
+      focusWorkspace: false,
+    };
+
+    await handler(mockEvent, payload);
+
+    expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith("/test/repo/.worktrees/ws1");
+    expect(mockViewManager.focusActiveWorkspace).not.toHaveBeenCalled();
   });
 
   it("throws for workspace from closed project", async () => {

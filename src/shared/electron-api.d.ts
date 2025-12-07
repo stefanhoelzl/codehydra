@@ -67,8 +67,9 @@ export interface Api {
   /**
    * Switch to a different workspace.
    * @param workspacePath - Path to the workspace to switch to
+   * @param focusWorkspace - Whether to focus the workspace view (default: true)
    */
-  switchWorkspace(workspacePath: string): Promise<void>;
+  switchWorkspace(workspacePath: string, focusWorkspace?: boolean): Promise<void>;
 
   /**
    * List available branches for workspace creation.

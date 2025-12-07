@@ -121,3 +121,37 @@ export function reset(): void {
   _loadingState = "loading";
   _loadingError = null;
 }
+
+// ============ Helper Functions ============
+
+/**
+ * Get flat array of all workspaces across all projects.
+ * Order: project order, then workspace order within each project.
+ */
+export function getAllWorkspaces(): Workspace[] {
+  return _projects.flatMap((p) => [...p.workspaces]);
+}
+
+/**
+ * Get workspace by global index (0-based).
+ * @returns Workspace at index, or undefined if out of range.
+ */
+export function getWorkspaceByIndex(index: number): Workspace | undefined {
+  return getAllWorkspaces()[index];
+}
+
+/**
+ * Find the index of a workspace by its path.
+ * @returns 0-based index, or -1 if not found.
+ */
+export function findWorkspaceIndex(path: string | null): number {
+  if (!path) return -1;
+  return getAllWorkspaces().findIndex((w) => w.path === path);
+}
+
+/**
+ * Wrap an index to stay within bounds (for circular navigation).
+ */
+export function wrapIndex(index: number, length: number): number {
+  return ((index % length) + length) % length;
+}

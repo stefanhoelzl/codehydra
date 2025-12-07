@@ -644,4 +644,249 @@ describe("Integration tests", () => {
       expect(mockApi.focusActiveWorkspace).toHaveBeenCalled();
     });
   });
+
+  describe("keyboard action flows", () => {
+    it("should-complete-full-shortcut-flow-activate-action-release: Alt+X → ↓ → workspace switches → release Alt → overlay hides", async () => {
+      const ws1 = createWorkspace("main", "/test/my-project");
+      const ws2 = createWorkspace("feature", "/test/my-project");
+      const project = createProject("my-project", [ws1, ws2]);
+      mockApi.listProjects.mockResolvedValue([project]);
+
+      render(App);
+
+      // Wait for load
+      await waitFor(() => {
+        expect(screen.getByText("main")).toBeInTheDocument();
+        expect(screen.getByText("feature")).toBeInTheDocument();
+      });
+
+      // Set active workspace
+      callbacks.onWorkspaceSwitched!({ workspacePath: asWorkspacePath(ws1.path) });
+      await waitFor(() => {
+        expect(projectsStore.activeWorkspacePath.value).toBe(ws1.path);
+      });
+
+      // Clear mocks
+      mockApi.switchWorkspace.mockClear();
+
+      // Step 1: Activate shortcut mode
+      callbacks.onShortcutEnable!();
+      await waitFor(() => {
+        expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+      });
+
+      // Step 2: Press ArrowDown
+      await fireEvent.keyDown(window, { key: "ArrowDown" });
+
+      // Step 3: Verify workspace switch was called with focusWorkspace=false to keep shortcut mode active
+      await waitFor(() => {
+        expect(mockApi.switchWorkspace).toHaveBeenCalledWith(ws2.path, false);
+      });
+
+      // Step 4: Verify overlay is still active
+      expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+
+      // Step 5: Release Alt
+      await fireEvent.keyUp(window, { key: "Alt" });
+
+      // Step 6: Verify overlay hides
+      await waitFor(() => {
+        expect(shortcutsStore.shortcutModeActive.value).toBe(false);
+      });
+    });
+
+    it("should-execute-multiple-actions-in-sequence: Alt+X → 1 → 2 → verify both executed", async () => {
+      const workspaces = Array.from({ length: 3 }, (_, i) =>
+        createWorkspace(`ws${i + 1}`, "/test/my-project")
+      );
+      const project = createProject("my-project", workspaces);
+      mockApi.listProjects.mockResolvedValue([project]);
+
+      render(App);
+
+      // Wait for load
+      await waitFor(() => {
+        expect(screen.getByText("ws1")).toBeInTheDocument();
+      });
+
+      // Activate shortcut mode
+      callbacks.onShortcutEnable!();
+      await waitFor(() => {
+        expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+      });
+
+      // Press 1 then wait for it to complete
+      await fireEvent.keyDown(window, { key: "1" });
+      await waitFor(() => {
+        expect(mockApi.switchWorkspace).toHaveBeenCalledWith(workspaces[0]!.path, false);
+      });
+
+      // Clear and press 2
+      mockApi.switchWorkspace.mockClear();
+      await fireEvent.keyDown(window, { key: "2" });
+
+      await waitFor(() => {
+        expect(mockApi.switchWorkspace).toHaveBeenCalledWith(workspaces[1]!.path, false);
+      });
+
+      // Verify overlay is still visible
+      expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+    });
+
+    it("should-open-dialog-and-hide-overlay: Alt+X → Enter → dialog opens, overlay hides", async () => {
+      const ws = createWorkspace("main", "/test/my-project");
+      const project = createProject("my-project", [ws]);
+      mockApi.listProjects.mockResolvedValue([project]);
+
+      render(App);
+
+      // Wait for load
+      await waitFor(() => {
+        expect(screen.getByText("my-project")).toBeInTheDocument();
+      });
+
+      // Set active workspace so activeProject is available
+      callbacks.onWorkspaceSwitched!({ workspacePath: asWorkspacePath(ws.path) });
+      await waitFor(() => {
+        expect(projectsStore.activeWorkspacePath.value).toBe(ws.path);
+      });
+
+      // Activate shortcut mode
+      callbacks.onShortcutEnable!();
+      await waitFor(() => {
+        expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+      });
+
+      // Press Enter to open create dialog
+      await fireEvent.keyDown(window, { key: "Enter" });
+
+      // Verify dialog opens
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+      });
+
+      // Verify shortcut mode deactivated
+      expect(shortcutsStore.shortcutModeActive.value).toBe(false);
+    });
+
+    it("should-wrap-navigation-at-boundaries: Alt+X → at last workspace → ↓ → wraps to first", async () => {
+      const ws1 = createWorkspace("first", "/test/my-project");
+      const ws2 = createWorkspace("last", "/test/my-project");
+      const project = createProject("my-project", [ws1, ws2]);
+      mockApi.listProjects.mockResolvedValue([project]);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(screen.getByText("first")).toBeInTheDocument();
+      });
+
+      // Set active to last workspace
+      callbacks.onWorkspaceSwitched!({ workspacePath: asWorkspacePath(ws2.path) });
+      await waitFor(() => {
+        expect(projectsStore.activeWorkspacePath.value).toBe(ws2.path);
+      });
+
+      mockApi.switchWorkspace.mockClear();
+
+      // Activate shortcut mode
+      callbacks.onShortcutEnable!();
+
+      // Press ArrowDown (should wrap to first)
+      await fireEvent.keyDown(window, { key: "ArrowDown" });
+
+      await waitFor(() => {
+        expect(mockApi.switchWorkspace).toHaveBeenCalledWith(ws1.path, false);
+      });
+    });
+
+    it("should-trigger-folder-picker-on-o-key: Alt+X → O → folder picker opens", async () => {
+      render(App);
+
+      await waitFor(() => {
+        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+      });
+
+      mockApi.selectFolder.mockClear();
+
+      // Activate shortcut mode
+      callbacks.onShortcutEnable!();
+      await waitFor(() => {
+        expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+      });
+
+      // Press O
+      await fireEvent.keyDown(window, { key: "o" });
+
+      // Verify shortcut mode deactivated
+      expect(shortcutsStore.shortcutModeActive.value).toBe(false);
+
+      // Verify folder picker called
+      await waitFor(() => {
+        expect(mockApi.selectFolder).toHaveBeenCalled();
+      });
+    });
+
+    it("should-handle-no-workspaces-gracefully: no workspaces → only O Open visible", async () => {
+      mockApi.listProjects.mockResolvedValue([]);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+      });
+
+      // Activate shortcut mode
+      callbacks.onShortcutEnable!();
+      await waitFor(() => {
+        expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+      });
+
+      // Verify navigate and jump hints are hidden
+      const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
+      expect(navigateHint).toHaveClass("shortcut-hint--hidden");
+
+      const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
+      expect(jumpHint).toHaveClass("shortcut-hint--hidden");
+
+      // Verify O Open is visible
+      const openHint = screen.getByLabelText("O to open project");
+      expect(openHint).not.toHaveClass("shortcut-hint--hidden");
+
+      // Pressing arrow should be no-op
+      mockApi.switchWorkspace.mockClear();
+      await fireEvent.keyDown(window, { key: "ArrowDown" });
+      expect(mockApi.switchWorkspace).not.toHaveBeenCalled();
+    });
+
+    it("should-handle-single-workspace-gracefully: single workspace → navigate hints hidden, jump works for index 1", async () => {
+      const ws = createWorkspace("only", "/test/my-project");
+      const project = createProject("my-project", [ws]);
+      mockApi.listProjects.mockResolvedValue([project]);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(screen.getByText("only")).toBeInTheDocument();
+      });
+
+      // Activate shortcut mode
+      callbacks.onShortcutEnable!();
+      await waitFor(() => {
+        expect(shortcutsStore.shortcutModeActive.value).toBe(true);
+      });
+
+      // Navigate hints should be hidden (single workspace)
+      const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
+      expect(navigateHint).toHaveClass("shortcut-hint--hidden");
+
+      // Jump should still work for index 1
+      await fireEvent.keyDown(window, { key: "1" });
+
+      await waitFor(() => {
+        expect(mockApi.switchWorkspace).toHaveBeenCalledWith(ws.path, false);
+      });
+    });
+  });
 });

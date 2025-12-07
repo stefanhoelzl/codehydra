@@ -1,14 +1,25 @@
 <script lang="ts">
   interface EmptyStateProps {
     onOpenProject: () => void;
+    shortcutModeActive?: boolean;
   }
 
-  let { onOpenProject }: EmptyStateProps = $props();
+  let { onOpenProject, shortcutModeActive = false }: EmptyStateProps = $props();
 </script>
 
 <div class="empty-state">
   <p class="empty-message">No projects open.</p>
-  <button class="open-project-btn" type="button" onclick={onOpenProject}> Open Project </button>
+  <button
+    class="open-project-btn"
+    type="button"
+    aria-label={"Open Project" + (shortcutModeActive ? " - Press O" : "")}
+    onclick={onOpenProject}
+  >
+    {#if shortcutModeActive}
+      <span class="shortcut-index" aria-hidden="true">O</span>
+    {/if}
+    Open Project
+  </button>
 </div>
 
 <style>
@@ -43,5 +54,21 @@
   .open-project-btn:focus-visible {
     outline: 2px solid var(--ch-focus-border);
     outline-offset: 2px;
+  }
+
+  .shortcut-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--ch-button-fg);
+    background: var(--ch-button-bg);
+    border-radius: 2px;
+    border: 1px solid var(--ch-foreground);
+    opacity: 0.8;
   }
 </style>

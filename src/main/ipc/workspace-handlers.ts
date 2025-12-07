@@ -104,7 +104,7 @@ export function createWorkspaceRemoveHandler(
  */
 export function createWorkspaceSwitchHandler(
   appState: Pick<AppState, "findProjectForWorkspace">,
-  viewManager: Pick<IViewManager, "setActiveWorkspace" | "focusActiveWorkspace">
+  viewManager: Pick<IViewManager, "setActiveWorkspace" | "focusActiveWorkspace" | "focusUI">
 ): (event: IpcMainInvokeEvent, payload: WorkspaceSwitchPayload) => Promise<void> {
   return async (_event, payload) => {
     const project = appState.findProjectForWorkspace(payload.workspacePath);
@@ -113,7 +113,11 @@ export function createWorkspaceSwitchHandler(
     }
 
     viewManager.setActiveWorkspace(payload.workspacePath);
-    viewManager.focusActiveWorkspace();
+
+    // Only focus workspace if not explicitly skipped (e.g., during shortcut mode navigation)
+    if (payload.focusWorkspace !== false) {
+      viewManager.focusActiveWorkspace();
+    }
 
     // Emit event
     emitEvent("workspace:switched", {

@@ -8,6 +8,13 @@ import { render, screen } from "@testing-library/svelte";
 import ShortcutOverlay from "./ShortcutOverlay.svelte";
 
 describe("ShortcutOverlay component", () => {
+  const defaultProps = {
+    active: true,
+    workspaceCount: 3,
+    hasActiveProject: true,
+    hasActiveWorkspace: true,
+  };
+
   afterEach(() => {
     document.body.innerHTML = "";
   });
@@ -142,6 +149,86 @@ describe("ShortcutOverlay component", () => {
 
       const overlay = screen.getByRole("status");
       expect(overlay).toHaveClass("shortcut-overlay");
+    });
+  });
+
+  describe("conditional visibility of hints", () => {
+    it("should-hide-navigate-hint-when-one-or-fewer-workspaces", () => {
+      render(ShortcutOverlay, {
+        props: { ...defaultProps, workspaceCount: 1 },
+      });
+
+      const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
+      expect(navigateHint).toHaveClass("shortcut-hint--hidden");
+    });
+
+    it("should-hide-jump-hint-when-one-or-fewer-workspaces", () => {
+      render(ShortcutOverlay, {
+        props: { ...defaultProps, workspaceCount: 0 },
+      });
+
+      const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
+      expect(jumpHint).toHaveClass("shortcut-hint--hidden");
+    });
+
+    it("should-hide-new-hint-when-no-active-project", () => {
+      render(ShortcutOverlay, {
+        props: { ...defaultProps, hasActiveProject: false },
+      });
+
+      const newHint = screen.getByLabelText("Enter key to create new workspace");
+      expect(newHint).toHaveClass("shortcut-hint--hidden");
+    });
+
+    it("should-hide-delete-hint-when-no-active-workspace", () => {
+      render(ShortcutOverlay, {
+        props: { ...defaultProps, hasActiveWorkspace: false },
+      });
+
+      const delHint = screen.getByLabelText("Delete key to remove workspace");
+      expect(delHint).toHaveClass("shortcut-hint--hidden");
+    });
+
+    it("should-always-show-open-hint", () => {
+      render(ShortcutOverlay, {
+        props: {
+          ...defaultProps,
+          workspaceCount: 0,
+          hasActiveProject: false,
+          hasActiveWorkspace: false,
+        },
+      });
+
+      const openHint = screen.getByLabelText("O to open project");
+      expect(openHint).not.toHaveClass("shortcut-hint--hidden");
+    });
+
+    it("should-show-all-hints-when-context-available", () => {
+      render(ShortcutOverlay, { props: defaultProps });
+
+      const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
+      const newHint = screen.getByLabelText("Enter key to create new workspace");
+      const delHint = screen.getByLabelText("Delete key to remove workspace");
+      const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
+      const openHint = screen.getByLabelText("O to open project");
+
+      expect(navigateHint).not.toHaveClass("shortcut-hint--hidden");
+      expect(newHint).not.toHaveClass("shortcut-hint--hidden");
+      expect(delHint).not.toHaveClass("shortcut-hint--hidden");
+      expect(jumpHint).not.toHaveClass("shortcut-hint--hidden");
+      expect(openHint).not.toHaveClass("shortcut-hint--hidden");
+    });
+
+    it("should-not-cause-layout-shift-when-hints-hidden", () => {
+      // Hidden hints should use visibility:hidden (not display:none) to prevent layout shifts
+      render(ShortcutOverlay, {
+        props: { ...defaultProps, workspaceCount: 0 },
+      });
+
+      // The navigation hint should still exist in the DOM (visibility:hidden, not display:none)
+      const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
+      expect(navigateHint).toBeInTheDocument();
+      expect(navigateHint).toHaveClass("shortcut-hint--hidden");
     });
   });
 });
