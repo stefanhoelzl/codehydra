@@ -20,6 +20,9 @@ const mockApi: Api = {
   isWorkspaceDirty: vi.fn().mockResolvedValue(false),
   setDialogMode: vi.fn().mockResolvedValue(undefined),
   focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
+  getAgentStatus: vi.fn().mockResolvedValue({ status: "none", counts: { idle: 0, busy: 0 } }),
+  getAllAgentStatuses: vi.fn().mockResolvedValue({}),
+  refreshAgentStatus: vi.fn().mockResolvedValue(undefined),
   onProjectOpened: vi.fn(() => vi.fn()),
   onProjectClosed: vi.fn(() => vi.fn()),
   onWorkspaceCreated: vi.fn(() => vi.fn()),
@@ -27,6 +30,7 @@ const mockApi: Api = {
   onWorkspaceSwitched: vi.fn(() => vi.fn()),
   onShortcutEnable: vi.fn(() => vi.fn()),
   onShortcutDisable: vi.fn(() => vi.fn()),
+  onAgentStatusChanged: vi.fn(() => vi.fn()),
 };
 
 // Set up window.api
@@ -36,6 +40,7 @@ window.api = mockApi;
 import Sidebar from "./Sidebar.svelte";
 import { createMockProject, createMockWorkspace } from "$lib/test-fixtures";
 import type { ProjectPath } from "@shared/ipc";
+import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 
 describe("Sidebar component", () => {
   const defaultProps = {
@@ -369,6 +374,139 @@ describe("Sidebar component", () => {
 
       // The "O" hint should not be present
       expect(screen.queryByText("O")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("agent status indicator", () => {
+    beforeEach(() => {
+      // Reset agent status store before each test
+      agentStatusStore.reset();
+    });
+
+    it("renders agent status indicator for each workspace", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1" });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      // Should have an indicator with status role
+      const indicators = screen.getAllByRole("status");
+      expect(indicators.length).toBeGreaterThan(0);
+    });
+
+    it("shows 'none' status when no agent status is set", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1" });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      // Should show 'no agents running' indicator
+      const indicator = screen.getByRole("status");
+      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/no agents running/i));
+    });
+
+    it("shows idle status when agent status store has idle agents", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1" });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set agent status to idle
+      agentStatusStore.updateStatus("/test/.worktrees/ws1", {
+        status: "idle",
+        counts: { idle: 2, busy: 0 },
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const indicator = screen.getByRole("status");
+      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/2 agents? idle/i));
+    });
+
+    it("shows busy status when agent status store has busy agents", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1" });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set agent status to busy
+      agentStatusStore.updateStatus("/test/.worktrees/ws1", {
+        status: "busy",
+        counts: { idle: 0, busy: 1 },
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const indicator = screen.getByRole("status");
+      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/1 agent busy/i));
+    });
+
+    it("shows mixed status when agent status store has both idle and busy agents", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1" });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set agent status to mixed
+      agentStatusStore.updateStatus("/test/.worktrees/ws1", {
+        status: "mixed",
+        counts: { idle: 1, busy: 2 },
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const indicator = screen.getByRole("status");
+      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/1 idle.+2 busy/i));
+    });
+
+    it("renders separate indicators for multiple workspaces", () => {
+      const ws1 = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const ws2 = createMockWorkspace({ path: "/test/.worktrees/ws2", name: "ws2" });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws1, ws2],
+      });
+
+      // Set different statuses
+      agentStatusStore.updateStatus("/test/.worktrees/ws1", {
+        status: "idle",
+        counts: { idle: 1, busy: 0 },
+      });
+      agentStatusStore.updateStatus("/test/.worktrees/ws2", {
+        status: "busy",
+        counts: { idle: 0, busy: 2 },
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const indicators = screen.getAllByRole("status");
+      expect(indicators).toHaveLength(2);
+
+      // Check that we have both idle and busy indicators
+      const ariaLabels = indicators.map((el) => el.getAttribute("aria-label"));
+      expect(ariaLabels.some((label) => label?.match(/idle/i))).toBe(true);
+      expect(ariaLabels.some((label) => label?.match(/busy/i))).toBe(true);
     });
   });
 });

@@ -382,4 +382,70 @@ describe("AppState", () => {
       expect(project).toBeUndefined();
     });
   });
+
+  describe("openProject agent status integration", () => {
+    it("calls initWorkspace on agentStatusManager for each discovered workspace", async () => {
+      const mockAgentStatusManager = {
+        initWorkspace: vi.fn(),
+        removeWorkspace: vi.fn(),
+      };
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        8080
+      );
+      appState.setAgentStatusManager(
+        mockAgentStatusManager as unknown as Parameters<typeof appState.setAgentStatusManager>[0]
+      );
+
+      await appState.openProject("/project");
+
+      expect(mockAgentStatusManager.initWorkspace).toHaveBeenCalledWith(
+        "/project/.worktrees/feature-1"
+      );
+    });
+
+    it("calls initWorkspace for each workspace when multiple exist", async () => {
+      mockWorkspaceProvider.discover.mockResolvedValueOnce([
+        { name: "feature-1", path: "/project/.worktrees/feature-1", branch: "feature-1" },
+        { name: "feature-2", path: "/project/.worktrees/feature-2", branch: "feature-2" },
+      ]);
+
+      const mockAgentStatusManager = {
+        initWorkspace: vi.fn(),
+        removeWorkspace: vi.fn(),
+      };
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        8080
+      );
+      appState.setAgentStatusManager(
+        mockAgentStatusManager as unknown as Parameters<typeof appState.setAgentStatusManager>[0]
+      );
+
+      await appState.openProject("/project");
+
+      expect(mockAgentStatusManager.initWorkspace).toHaveBeenCalledTimes(2);
+      expect(mockAgentStatusManager.initWorkspace).toHaveBeenCalledWith(
+        "/project/.worktrees/feature-1"
+      );
+      expect(mockAgentStatusManager.initWorkspace).toHaveBeenCalledWith(
+        "/project/.worktrees/feature-2"
+      );
+    });
+
+    it("does not fail when agentStatusManager is not set", async () => {
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        8080
+      );
+
+      // Should not throw even without agentStatusManager
+      await expect(appState.openProject("/project")).resolves.toBeDefined();
+    });
+  });
 });

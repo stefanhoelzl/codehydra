@@ -10,6 +10,7 @@
 
 declare const ProjectPathBrand: unique symbol;
 declare const WorkspacePathBrand: unique symbol;
+declare const PortBrand: unique symbol;
 
 /**
  * Branded type for project paths (git repository root directories).
@@ -20,6 +21,11 @@ export type ProjectPath = string & { readonly [ProjectPathBrand]: true };
  * Branded type for workspace paths (git worktree directories).
  */
 export type WorkspacePath = string & { readonly [WorkspacePathBrand]: true };
+
+/**
+ * Branded type for network port numbers.
+ */
+export type Port = number & { readonly [PortBrand]: true };
 
 // ============ Domain Types ============
 
@@ -86,6 +92,40 @@ export interface Project {
   readonly path: ProjectPath;
   readonly name: string; // folder name
   readonly workspaces: readonly Workspace[];
+}
+
+// ============ Agent Status Types ============
+
+/**
+ * Counts of agents in each status for a workspace.
+ */
+export interface AgentStatusCounts {
+  readonly idle: number;
+  readonly busy: number;
+}
+
+/**
+ * Aggregated agent status for a workspace (discriminated union).
+ */
+export type AggregatedAgentStatus =
+  | { readonly status: "none"; readonly counts: AgentStatusCounts }
+  | { readonly status: "idle"; readonly counts: AgentStatusCounts }
+  | { readonly status: "busy"; readonly counts: AgentStatusCounts }
+  | { readonly status: "mixed"; readonly counts: AgentStatusCounts };
+
+/**
+ * Event payload for agent status changes.
+ */
+export interface AgentStatusChangedEvent {
+  readonly workspacePath: WorkspacePath;
+  readonly status: AggregatedAgentStatus;
+}
+
+/**
+ * Payload for getting status of a specific workspace.
+ */
+export interface AgentGetStatusPayload {
+  readonly workspacePath: string;
 }
 
 // ============ Payload Types ============
@@ -175,6 +215,12 @@ export interface IpcCommands {
   "workspace:is-dirty": { payload: WorkspaceIsDirtyPayload; response: boolean };
   "ui:set-dialog-mode": { payload: UISetDialogModePayload; response: void };
   "ui:focus-active-workspace": { payload: void; response: void };
+  "agent:get-status": { payload: AgentGetStatusPayload; response: AggregatedAgentStatus };
+  "agent:get-all-statuses": {
+    payload: void;
+    response: Record<string, AggregatedAgentStatus>;
+  };
+  "agent:refresh": { payload: void; response: void };
 }
 
 export interface IpcEvents {
@@ -183,6 +229,7 @@ export interface IpcEvents {
   "workspace:created": WorkspaceCreatedEvent;
   "workspace:removed": WorkspaceRemovedEvent;
   "workspace:switched": WorkspaceSwitchedEvent;
+  "agent:status-changed": AgentStatusChangedEvent;
 }
 
 // ============ IPC Channel Names ============
@@ -201,12 +248,16 @@ export const IpcChannels = {
   WORKSPACE_IS_DIRTY: "workspace:is-dirty",
   UI_SET_DIALOG_MODE: "ui:set-dialog-mode",
   UI_FOCUS_ACTIVE_WORKSPACE: "ui:focus-active-workspace",
+  AGENT_GET_STATUS: "agent:get-status",
+  AGENT_GET_ALL_STATUSES: "agent:get-all-statuses",
+  AGENT_REFRESH: "agent:refresh",
   // Events
   PROJECT_OPENED: "project:opened",
   PROJECT_CLOSED: "project:closed",
   WORKSPACE_CREATED: "workspace:created",
   WORKSPACE_REMOVED: "workspace:removed",
   WORKSPACE_SWITCHED: "workspace:switched",
+  AGENT_STATUS_CHANGED: "agent:status-changed",
   // Shortcut events (main → renderer)
   SHORTCUT_ENABLE: "shortcut:enable",
   SHORTCUT_DISABLE: "shortcut:disable",

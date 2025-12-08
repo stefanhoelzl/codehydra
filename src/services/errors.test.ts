@@ -6,6 +6,7 @@ import {
   WorkspaceError,
   CodeServerError,
   ProjectStoreError,
+  OpenCodeError,
   isServiceError,
   type SerializedError,
 } from "./errors";
@@ -113,6 +114,44 @@ describe("ServiceError", () => {
       });
     });
   });
+
+  describe("OpenCodeError", () => {
+    it("has correct type", () => {
+      const error = new OpenCodeError("Connection failed");
+      expect(error.type).toBe("opencode");
+    });
+
+    it("preserves message", () => {
+      const error = new OpenCodeError("Connection failed");
+      expect(error.message).toBe("Connection failed");
+    });
+
+    it("preserves optional code", () => {
+      const error = new OpenCodeError("Connection failed", "CONNECTION_REFUSED");
+      expect(error.code).toBe("CONNECTION_REFUSED");
+    });
+
+    it("is instanceof Error", () => {
+      const error = new OpenCodeError("test");
+      expect(error).toBeInstanceOf(Error);
+    });
+
+    it("is instanceof ServiceError", () => {
+      const error = new OpenCodeError("test");
+      expect(error).toBeInstanceOf(ServiceError);
+    });
+
+    it("serializes correctly", () => {
+      const error = new OpenCodeError("Connection failed", "CONNECTION_REFUSED");
+      const json = error.toJSON();
+
+      expect(json).toEqual({
+        type: "opencode",
+        message: "Connection failed",
+        code: "CONNECTION_REFUSED",
+      });
+    });
+  });
 });
 
 describe("ServiceError.fromJSON", () => {
@@ -164,6 +203,20 @@ describe("ServiceError.fromJSON", () => {
 
     expect(error).toBeInstanceOf(ProjectStoreError);
     expect(error.message).toBe("Failed to save");
+  });
+
+  it("deserializes OpenCodeError", () => {
+    const json: SerializedError = {
+      type: "opencode",
+      message: "Connection failed",
+      code: "CONNECTION_REFUSED",
+    };
+
+    const error = ServiceError.fromJSON(json);
+
+    expect(error).toBeInstanceOf(OpenCodeError);
+    expect(error.message).toBe("Connection failed");
+    expect(error.code).toBe("CONNECTION_REFUSED");
   });
 
   it("roundtrips correctly", () => {

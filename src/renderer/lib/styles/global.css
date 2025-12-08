@@ -58,3 +58,14 @@ textarea {
   white-space: nowrap;
   border: 0;
 }
+
+/* Shared pulse animation for agent status indicators */
+@keyframes ch-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

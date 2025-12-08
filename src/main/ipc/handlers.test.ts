@@ -214,6 +214,8 @@ describe("emitEvent", () => {
       getProjects: vi.fn().mockReturnValue([]),
       openProject: vi.fn(),
       closeProject: vi.fn(),
+      getAgentStatusManager: vi.fn().mockReturnValue(null),
+      getDiscoveryService: vi.fn().mockReturnValue(null),
     };
 
     // Register handlers to set viewManagerRef

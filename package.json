@@ -29,13 +29,19 @@
     "onlyBuiltDependencies": [
       "electron",
       "esbuild"
-    ]
+    ],
+    "patchedDependencies": {
+      "systeminformation@5.27.11": "patches/systeminformation@5.27.11.patch"
+    }
   },
   "dependencies": {
     "@vscode-elements/elements": "^2.3.1",
     "@vscode/codicons": "^0.0.43",
+    "eventsource": "^4.1.0",
     "execa": "^9.6.1",
+    "pidtree": "^0.6.0",
     "simple-git": "^3.30.0",
+    "systeminformation": "^5.27.11",
     "zod": "^4.1.13"
   },
   "devDependencies": {

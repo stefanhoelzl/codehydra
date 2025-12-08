@@ -85,6 +85,98 @@ This pattern is used when:
 2. Immediate UI response is more important than confirmation
 3. The renderer should not block on the main process
 
+## OpenCode Integration
+
+### Agent Status Store (Svelte 5 Runes)
+
+The agent status store uses Svelte 5's runes pattern for reactive state:
+
+```typescript
+// src/renderer/lib/stores/agent-status.svelte.ts
+let statuses = $state(new Map<string, AggregatedAgentStatus>());
+let counts = $state(new Map<string, AgentStatusCounts>());
+
+// Access via exported objects with .value getter
+export const agentStatusStore = {
+  get statuses() {
+    return statuses;
+  },
+  get counts() {
+    return counts;
+  },
+};
+
+// Update functions called by IPC listener in App.svelte
+export function updateAgentStatus(
+  workspacePath: string,
+  status: AggregatedAgentStatus,
+  newCounts: AgentStatusCounts
+): void {
+  statuses = new Map(statuses).set(workspacePath, status);
+  counts = new Map(counts).set(workspacePath, newCounts);
+}
+```
+
+### Service Dependency Injection Pattern
+
+OpenCode services use constructor DI for testability (NOT singletons):
+
+```typescript
+// Service with injected dependencies
+class DiscoveryService {
+  constructor(
+    private readonly portScanner: PortScanner,
+    private readonly processTree: ProcessTreeProvider,
+    private readonly instanceProbe: InstanceProbe
+  ) {}
+}
+
+// Services owned and wired by AppState
+class AppState {
+  readonly discoveryService: DiscoveryService;
+  readonly agentStatusManager: AgentStatusManager;
+
+  constructor() {
+    const portScanner = new NetstatPortScanner();
+    const processTree = new PidtreeProvider();
+    const instanceProbe = new HttpInstanceProbe();
+    this.discoveryService = new DiscoveryService(portScanner, processTree, instanceProbe);
+    this.agentStatusManager = new AgentStatusManager();
+  }
+}
+```
+
+### SSE Connection Lifecycle
+
+`OpenCodeClient` manages SSE connections with auto-reconnection:
+
+```typescript
+// Connection lifecycle
+client.connect(); // Start SSE connection
+client.disconnect(); // Stop and cleanup
+client.dispose(); // Full cleanup, stops reconnection
+
+// Exponential backoff: 1s, 2s, 4s, 8s... max 30s
+// Resets to 1s on successful connection
+// Stops reconnecting after dispose()
+```
+
+### Callback Pattern (NOT Direct IPC)
+
+Services emit events via callbacks; IPC wiring happens at boundary:
+
+```typescript
+// In service (pure, testable)
+agentStatusManager.onStatusChanged((path, status, counts) => {
+  // Callback fired when status changes
+});
+
+// At IPC boundary (main/ipc/agent-handlers.ts)
+agentStatusManager.onStatusChanged((path, status, counts) => {
+  emitToRenderer("agent:status-changed", { workspacePath: path, status, counts });
+});
+```
+
 ## Development Workflow
 
 - TDD: failing test → implement → refactor

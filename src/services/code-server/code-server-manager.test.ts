@@ -174,6 +174,137 @@ describe("CodeServerManager", () => {
     });
   });
 
+  describe("onPidChanged", () => {
+    it("calls callback when PID changes during startup", async () => {
+      const { spawnProcess } = await import("../platform/process");
+      const { get } = await import("http");
+
+      // Mock successful spawn
+      const mockProcess = {
+        pid: 12345,
+        kill: vi.fn(),
+        catch: vi.fn().mockReturnThis(),
+      };
+      vi.mocked(spawnProcess).mockReturnValue(mockProcess as never);
+
+      // Mock successful health check
+      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
+        const cb = callback as (res: { statusCode: number }) => void;
+        setTimeout(() => cb({ statusCode: 200 }), 0);
+        return {
+          on: vi.fn().mockReturnThis(),
+          setTimeout: vi.fn().mockReturnThis(),
+        } as never;
+      });
+
+      const callback = vi.fn();
+      manager.onPidChanged(callback);
+
+      await manager.ensureRunning();
+
+      expect(callback).toHaveBeenCalledWith(12345);
+    });
+
+    it("calls callback with null when server stops", async () => {
+      const { spawnProcess } = await import("../platform/process");
+      const { get } = await import("http");
+
+      // Mock successful spawn
+      const mockProcess = {
+        pid: 12345,
+        kill: vi.fn(),
+        catch: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.mocked(spawnProcess).mockReturnValue(mockProcess as never);
+
+      // Mock successful health check
+      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
+        const cb = callback as (res: { statusCode: number }) => void;
+        setTimeout(() => cb({ statusCode: 200 }), 0);
+        return {
+          on: vi.fn().mockReturnThis(),
+          setTimeout: vi.fn().mockReturnThis(),
+        } as never;
+      });
+
+      const callback = vi.fn();
+      manager.onPidChanged(callback);
+
+      await manager.ensureRunning();
+      callback.mockClear(); // Clear the startup call
+
+      await manager.stop();
+
+      expect(callback).toHaveBeenCalledWith(null);
+    });
+
+    it("returns unsubscribe function", async () => {
+      const { spawnProcess } = await import("../platform/process");
+      const { get } = await import("http");
+
+      // Mock successful spawn
+      const mockProcess = {
+        pid: 12345,
+        kill: vi.fn(),
+        catch: vi.fn().mockReturnThis(),
+      };
+      vi.mocked(spawnProcess).mockReturnValue(mockProcess as never);
+
+      // Mock successful health check
+      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
+        const cb = callback as (res: { statusCode: number }) => void;
+        setTimeout(() => cb({ statusCode: 200 }), 0);
+        return {
+          on: vi.fn().mockReturnThis(),
+          setTimeout: vi.fn().mockReturnThis(),
+        } as never;
+      });
+
+      const callback = vi.fn();
+      const unsubscribe = manager.onPidChanged(callback);
+
+      // Unsubscribe before starting
+      unsubscribe();
+
+      await manager.ensureRunning();
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("supports multiple listeners", async () => {
+      const { spawnProcess } = await import("../platform/process");
+      const { get } = await import("http");
+
+      // Mock successful spawn
+      const mockProcess = {
+        pid: 12345,
+        kill: vi.fn(),
+        catch: vi.fn().mockReturnThis(),
+      };
+      vi.mocked(spawnProcess).mockReturnValue(mockProcess as never);
+
+      // Mock successful health check
+      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
+        const cb = callback as (res: { statusCode: number }) => void;
+        setTimeout(() => cb({ statusCode: 200 }), 0);
+        return {
+          on: vi.fn().mockReturnThis(),
+          setTimeout: vi.fn().mockReturnThis(),
+        } as never;
+      });
+
+      const callback1 = vi.fn();
+      const callback2 = vi.fn();
+      manager.onPidChanged(callback1);
+      manager.onPidChanged(callback2);
+
+      await manager.ensureRunning();
+
+      expect(callback1).toHaveBeenCalledWith(12345);
+      expect(callback2).toHaveBeenCalledWith(12345);
+    });
+  });
+
   describe("stop", () => {
     it("transitions state correctly", async () => {
       const { spawnProcess } = await import("../platform/process");

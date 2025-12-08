@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import path from "node:path";
+import type { WorkspacePath } from "../../shared/ipc";
 
 /**
  * Issue from Zod validation error.
@@ -55,6 +56,12 @@ export const absolutePathSchema = z
     message: 'Path must be absolute, normalized, and contain no ".." segments',
   });
 
+/**
+ * Workspace path schema that produces the branded WorkspacePath type.
+ * Combines path validation with type transformation.
+ */
+export const workspacePathSchema = absolutePathSchema.transform((p) => p as WorkspacePath);
+
 // ============ Payload Schemas ============
 
 export const ProjectOpenPayloadSchema = z.object({
@@ -98,6 +105,14 @@ export const WorkspaceIsDirtyPayloadSchema = z.object({
  */
 export const UISetDialogModePayloadSchema = z.object({
   isOpen: z.boolean(),
+});
+
+/**
+ * Validation schema for agent:get-status payload.
+ * Uses workspacePathSchema to produce the branded WorkspacePath type.
+ */
+export const AgentGetStatusPayloadSchema = z.object({
+  workspacePath: workspacePathSchema,
 });
 
 /**

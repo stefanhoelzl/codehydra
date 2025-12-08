@@ -11,6 +11,8 @@ import type {
   WorkspaceCreatedEvent,
   WorkspaceRemovedEvent,
   WorkspaceSwitchedEvent,
+  AgentStatusChangedEvent,
+  AggregatedAgentStatus,
 } from "./ipc";
 
 /**
@@ -158,6 +160,35 @@ export interface Api {
    * @returns Unsubscribe function to remove the listener
    */
   onShortcutDisable(callback: () => void): Unsubscribe;
+
+  // ============ Agent Status Commands ============
+
+  /**
+   * Get the agent status for a specific workspace.
+   * @param workspacePath - Path to the workspace
+   * @returns Aggregated agent status for the workspace
+   */
+  getAgentStatus(workspacePath: string): Promise<AggregatedAgentStatus>;
+
+  /**
+   * Get all workspace agent statuses.
+   * @returns Record of workspace paths to their statuses
+   */
+  getAllAgentStatuses(): Promise<Record<string, AggregatedAgentStatus>>;
+
+  /**
+   * Trigger a manual refresh of agent status discovery.
+   */
+  refreshAgentStatus(): Promise<void>;
+
+  // ============ Agent Status Events ============
+
+  /**
+   * Subscribe to agent status change events.
+   * @param callback - Called when an agent status changes
+   * @returns Unsubscribe function to remove the listener
+   */
+  onAgentStatusChanged(callback: (event: AgentStatusChangedEvent) => void): Unsubscribe;
 }
 
 declare global {

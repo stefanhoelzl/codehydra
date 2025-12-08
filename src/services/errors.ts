@@ -6,7 +6,7 @@
  * Serialized error format for IPC transport.
  */
 export interface SerializedError {
-  readonly type: "git" | "workspace" | "code-server" | "project-store";
+  readonly type: "git" | "workspace" | "code-server" | "project-store" | "opencode";
   readonly message: string;
   readonly code?: string;
 }
@@ -70,6 +70,8 @@ export abstract class ServiceError extends Error {
         return new CodeServerError(json.message, json.code);
       case "project-store":
         return new ProjectStoreError(json.message, json.code);
+      case "opencode":
+        return new OpenCodeError(json.message, json.code);
     }
   }
 }
@@ -100,6 +102,13 @@ export class CodeServerError extends ServiceError {
  */
 export class ProjectStoreError extends ServiceError {
   readonly type = "project-store" as const;
+}
+
+/**
+ * Error from OpenCode integration operations.
+ */
+export class OpenCodeError extends ServiceError {
+  readonly type = "opencode" as const;
 }
 
 /**

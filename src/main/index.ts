@@ -14,6 +14,13 @@ import {
   getDataProjectsDir,
   type CodeServerConfig,
 } from "../services";
+import {
+  DiscoveryService,
+  AgentStatusManager,
+  SiPortScanner,
+  PidtreeProvider,
+  HttpInstanceProbe,
+} from "../services/opencode";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { AppState } from "./app-state";
@@ -38,6 +45,9 @@ let windowManager: WindowManager | null = null;
 let viewManager: ViewManager | null = null;
 let appState: AppState | null = null;
 let codeServerManager: CodeServerManager | null = null;
+let discoveryService: DiscoveryService | null = null;
+let agentStatusManager: AgentStatusManager | null = null;
+let scanInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Initializes the application.
@@ -84,22 +94,59 @@ async function initialize(): Promise<void> {
   const projectStore = new ProjectStore(getDataProjectsDir());
   appState = new AppState(projectStore, viewManager, port);
 
-  // 6. Register IPC handlers
+  // 6. Initialize OpenCode services
+  const portScanner = new SiPortScanner();
+  const processTree = new PidtreeProvider();
+  const instanceProbe = new HttpInstanceProbe();
+
+  discoveryService = new DiscoveryService({
+    portScanner,
+    processTree,
+    instanceProbe,
+  });
+
+  agentStatusManager = new AgentStatusManager(discoveryService);
+
+  // Inject services into AppState
+  appState.setDiscoveryService(discoveryService);
+  appState.setAgentStatusManager(agentStatusManager);
+
+  // Wire up code-server PID changes to discovery service
+  codeServerManager.onPidChanged((pid) => {
+    if (discoveryService) {
+      discoveryService.setCodeServerPid(pid);
+    }
+  });
+
+  // Set initial PID if code-server is already running
+  const currentPid = codeServerManager.pid();
+  if (currentPid !== null) {
+    discoveryService.setCodeServerPid(currentPid);
+  }
+
+  // Start scan interval (1s) - DiscoveryService handles its own concurrency
+  scanInterval = setInterval(() => {
+    if (discoveryService) {
+      void discoveryService.scan();
+    }
+  }, 1000);
+
+  // 7. Register IPC handlers
   registerAllHandlers(appState, viewManager);
 
-  // 7. Load UI layer HTML
+  // 8. Load UI layer HTML
   const uiView = viewManager.getUIView();
   await uiView.webContents.loadFile(nodePath.join(__dirname, "../renderer/index.html"));
 
-  // 8. Open DevTools in development only (detached to avoid interfering with UI layer)
+  // 9. Open DevTools in development only (detached to avoid interfering with UI layer)
   if (!app.isPackaged) {
     uiView.webContents.openDevTools({ mode: "detach" });
   }
 
-  // 9. Load persisted projects
+  // 10. Load persisted projects
   await appState.loadPersistedProjects();
 
-  // 10. Set first workspace active if any projects loaded
+  // 11. Set first workspace active if any projects loaded
   const projects = appState.getAllProjects();
   if (projects.length > 0) {
     const firstWorkspace = projects[0]?.workspaces[0];
@@ -113,6 +160,24 @@ async function initialize(): Promise<void> {
  * Cleans up resources on shutdown.
  */
 async function cleanup(): Promise<void> {
+  // Stop scan interval
+  if (scanInterval) {
+    clearInterval(scanInterval);
+    scanInterval = null;
+  }
+
+  // Dispose agent status manager
+  if (agentStatusManager) {
+    agentStatusManager.dispose();
+    agentStatusManager = null;
+  }
+
+  // Dispose discovery service
+  if (discoveryService) {
+    discoveryService.dispose();
+    discoveryService = null;
+  }
+
   // Destroy all views
   if (viewManager) {
     viewManager.destroy();
@@ -145,5 +210,21 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  // Explicit cleanup for OpenCode services - synchronous operations
+  // These are done explicitly to ensure they happen even if cleanup() is async
+  if (scanInterval) {
+    clearInterval(scanInterval);
+    scanInterval = null;
+  }
+  if (agentStatusManager) {
+    agentStatusManager.dispose();
+    agentStatusManager = null;
+  }
+  if (discoveryService) {
+    discoveryService.dispose();
+    discoveryService = null;
+  }
+
+  // Run full cleanup for remaining resources (code-server, views, etc.)
   void cleanup();
 });

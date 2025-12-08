@@ -27,6 +27,11 @@ export function createMockApi(): Api {
     setDialogMode: vi.fn().mockResolvedValue(undefined),
     focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
 
+    // Agent status commands
+    getAgentStatus: vi.fn().mockResolvedValue({ status: "none", counts: { idle: 0, busy: 0 } }),
+    getAllAgentStatuses: vi.fn().mockResolvedValue({}),
+    refreshAgentStatus: vi.fn().mockResolvedValue(undefined),
+
     // Event subscriptions return unsubscribe functions
     onProjectOpened: vi.fn(() => vi.fn()),
     onProjectClosed: vi.fn(() => vi.fn()),
@@ -35,5 +40,6 @@ export function createMockApi(): Api {
     onWorkspaceSwitched: vi.fn(() => vi.fn()),
     onShortcutEnable: vi.fn(() => vi.fn()),
     onShortcutDisable: vi.fn(() => vi.fn()),
+    onAgentStatusChanged: vi.fn(() => vi.fn()),
   };
 }

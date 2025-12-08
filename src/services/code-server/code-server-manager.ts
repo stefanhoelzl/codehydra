@@ -10,6 +10,16 @@ import { encodePathForUrl } from "../platform/paths";
 import { CodeServerError } from "../errors";
 
 /**
+ * Function to unsubscribe from PID change events.
+ */
+type Unsubscribe = () => void;
+
+/**
+ * Callback for PID change events.
+ */
+type PidChangedCallback = (pid: number | null) => void;
+
+/**
  * Generate URL for opening a folder in code-server.
  *
  * @param port The port code-server is running on
@@ -40,9 +50,31 @@ export class CodeServerManager {
   private currentPid: number | null = null;
   private process: ResultPromise | null = null;
   private startPromise: Promise<number> | null = null;
+  private readonly pidListeners = new Set<PidChangedCallback>();
 
   constructor(config: CodeServerConfig) {
     this.config = config;
+  }
+
+  /**
+   * Subscribe to PID change events.
+   * Called when the server starts (with PID) or stops (with null).
+   *
+   * @param callback - Function to call when PID changes
+   * @returns Unsubscribe function to remove the listener
+   */
+  onPidChanged(callback: PidChangedCallback): Unsubscribe {
+    this.pidListeners.add(callback);
+    return () => this.pidListeners.delete(callback);
+  }
+
+  /**
+   * Notify all listeners of a PID change.
+   */
+  private notifyPidChanged(pid: number | null): void {
+    for (const listener of this.pidListeners) {
+      listener(pid);
+    }
   }
 
   /**
@@ -135,6 +167,11 @@ export class CodeServerManager {
 
       // Wait for health check
       await this.waitForHealthy(port);
+
+      // Notify listeners of PID change
+      if (this.currentPid !== null) {
+        this.notifyPidChanged(this.currentPid);
+      }
 
       return port;
     } catch (error: unknown) {
@@ -232,6 +269,7 @@ export class CodeServerManager {
       this.currentPid = null;
       this.process = null;
       this.startPromise = null;
+      this.notifyPidChanged(null);
     }
   }
 }

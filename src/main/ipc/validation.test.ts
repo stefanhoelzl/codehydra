@@ -4,7 +4,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { WorkspaceSwitchPayloadSchema, validate, ValidationError } from "./validation";
+import {
+  WorkspaceSwitchPayloadSchema,
+  AgentGetStatusPayloadSchema,
+  validate,
+  ValidationError,
+} from "./validation";
 
 describe("WorkspaceSwitchPayloadSchema", () => {
   it("accepts workspacePath without focusWorkspace", () => {
@@ -50,5 +55,32 @@ describe("WorkspaceSwitchPayloadSchema", () => {
     };
 
     expect(() => validate(WorkspaceSwitchPayloadSchema, payload)).toThrow(ValidationError);
+  });
+});
+
+describe("AgentGetStatusPayloadSchema", () => {
+  it("accepts valid absolute workspacePath", () => {
+    const payload = { workspacePath: "/test/repo/.worktrees/ws1" };
+    const result = validate(AgentGetStatusPayloadSchema, payload);
+
+    expect(result.workspacePath).toBe("/test/repo/.worktrees/ws1");
+  });
+
+  it("rejects relative path", () => {
+    const payload = { workspacePath: "relative/path" };
+
+    expect(() => validate(AgentGetStatusPayloadSchema, payload)).toThrow(ValidationError);
+  });
+
+  it("rejects path with traversal", () => {
+    const payload = { workspacePath: "/test/../etc/passwd" };
+
+    expect(() => validate(AgentGetStatusPayloadSchema, payload)).toThrow(ValidationError);
+  });
+
+  it("rejects missing workspacePath", () => {
+    const payload = {};
+
+    expect(() => validate(AgentGetStatusPayloadSchema, payload)).toThrow(ValidationError);
   });
 });

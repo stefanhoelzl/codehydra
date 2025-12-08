@@ -1,0 +1,13 @@
+diff --git a/lib/network.js b/lib/network.js
+index f47ccadfdd2432e251854331ae272e592437ac29..3446abf355d347bffc17561f3410cfcd715e845d 100644
+--- a/lib/network.js
++++ b/lib/network.js
+@@ -1525,7 +1525,7 @@ function networkConnections(callback) {
+                       let proc = line[6].replace('users:(("', '').replace(/"/g, '').split(',');
+                       if (proc.length > 2) {
+                         process = proc[0].split(' ')[0].split(':')[0];
+-                        pid = parseInt(proc[1], 10);
++                        pid = parseInt(proc[1].replace('pid=', ''), 10);
+                       }
+                     }
+                     if (connstate) {

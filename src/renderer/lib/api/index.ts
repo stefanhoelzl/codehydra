@@ -22,6 +22,9 @@ export const {
   isWorkspaceDirty,
   setDialogMode,
   focusActiveWorkspace,
+  getAgentStatus,
+  getAllAgentStatuses,
+  refreshAgentStatus,
   onProjectOpened,
   onProjectClosed,
   onWorkspaceCreated,
@@ -29,6 +32,7 @@ export const {
   onWorkspaceSwitched,
   onShortcutEnable,
   onShortcutDisable,
+  onAgentStatusChanged,
 } = window.api;
 
 // Re-export types for convenience

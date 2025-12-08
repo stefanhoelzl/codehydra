@@ -12,7 +12,9 @@ import {
   urlForFolder,
 } from "../services";
 import type { IViewManager } from "./managers/view-manager.interface";
-import type { Project, ProjectPath } from "../shared/ipc";
+import type { Project, ProjectPath, WorkspacePath } from "../shared/ipc";
+import type { AgentStatusManager } from "../services/opencode/agent-status-manager";
+import type { DiscoveryService } from "../services/opencode/discovery-service";
 
 /**
  * Runtime state for an open project.
@@ -32,11 +34,41 @@ export class AppState {
   private readonly viewManager: IViewManager;
   private readonly codeServerPort: number;
   private readonly openProjects: Map<string, OpenProject> = new Map();
+  private discoveryService: DiscoveryService | null = null;
+  private agentStatusManager: AgentStatusManager | null = null;
 
   constructor(projectStore: ProjectStore, viewManager: IViewManager, codeServerPort: number) {
     this.projectStore = projectStore;
     this.viewManager = viewManager;
     this.codeServerPort = codeServerPort;
+  }
+
+  /**
+   * Set the discovery service (injected from main process).
+   */
+  setDiscoveryService(service: DiscoveryService): void {
+    this.discoveryService = service;
+  }
+
+  /**
+   * Get the discovery service.
+   */
+  getDiscoveryService(): DiscoveryService | null {
+    return this.discoveryService;
+  }
+
+  /**
+   * Set the agent status manager (injected from main process).
+   */
+  setAgentStatusManager(manager: AgentStatusManager): void {
+    this.agentStatusManager = manager;
+  }
+
+  /**
+   * Get the agent status manager.
+   */
+  getAgentStatusManager(): AgentStatusManager | null {
+    return this.agentStatusManager;
   }
 
   /**
@@ -54,10 +86,15 @@ export class AppState {
     // Discover existing workspaces (excludes main directory)
     const workspaces = await provider.discover();
 
-    // Create views for each workspace
+    // Create views for each workspace and initialize agent status tracking
     for (const workspace of workspaces) {
       const url = this.getWorkspaceUrl(workspace.path);
       this.viewManager.createWorkspaceView(workspace.path, url);
+
+      // Initialize agent status tracking for the workspace
+      if (this.agentStatusManager) {
+        void this.agentStatusManager.initWorkspace(workspace.path as WorkspacePath);
+      }
     }
 
     // Set first workspace as active, or null if none
@@ -200,6 +237,11 @@ export class AppState {
       ...openProject,
       project: updatedProject,
     });
+
+    // Initialize agent status tracking for the workspace
+    if (this.agentStatusManager) {
+      void this.agentStatusManager.initWorkspace(workspace.path as WorkspacePath);
+    }
   }
 
   /**
@@ -228,5 +270,10 @@ export class AppState {
       ...openProject,
       project: updatedProject,
     });
+
+    // Remove agent status tracking for the workspace
+    if (this.agentStatusManager) {
+      this.agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
+    }
   }
 }

@@ -159,8 +159,8 @@ Services are pure Node.js for testability without Electron:
 | Git Worktree Provider    | Discover worktrees (not main dir), create, remove | Implemented |
 | Code-Server Manager      | Start/stop code-server, port management           | Implemented |
 | Project Store            | Persist open projects across sessions             | Implemented |
-| OpenCode Discovery       | Find running OpenCode instances                   | Phase 6     |
-| OpenCode Status Provider | SSE connections, status aggregation               | Phase 6     |
+| OpenCode Discovery       | Find running OpenCode instances                   | Implemented |
+| OpenCode Status Provider | SSE connections, status aggregation               | Implemented |
 
 ```
 Electron Main Process
@@ -219,19 +219,89 @@ The main process ViewManager handles the z-order swap using `contentView.addChil
 
 ## OpenCode Integration
 
-> **Phase 6**: OpenCode integration is not yet implemented. The following describes the planned design.
+The OpenCode integration provides real-time agent status monitoring for AI agents running in each workspace.
 
-### Discovery
+### Architecture Overview
 
-- Scan for OpenCode status server instances (port scanning)
-- Match instances to workspaces via process tree / port mapping
-- Runs periodically in background
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        MAIN PROCESS                              │
+│                                                                  │
+│  DiscoveryService ──► PortScanner + ProcessTree + InstanceProbe │
+│         │                                                        │
+│         │ discovers ports for workspaces                         │
+│         ▼                                                        │
+│  AgentStatusManager ◄── OpenCodeClient (SSE events)             │
+│         │                                                        │
+│         │ callback on status change                              │
+│         ▼                                                        │
+│  IPC Handlers ──► agent:status-changed event                    │
+│                                                                  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+═══════════════════════════╪══════════════════════════════════════
+                           │
+┌──────────────────────────┼──────────────────────────────────────┐
+│                    RENDERER PROCESS                              │
+│                          │                                       │
+│  api.onAgentStatusChanged() ──► agentStatusStore                │
+│                                       │                          │
+│                                       │ reactive binding         │
+│                                       ▼                          │
+│  Sidebar.svelte ◄── AgentStatusIndicator (visual indicator)     │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-### Status Updates
+### Services (src/services/opencode/)
 
-- SSE connection to each discovered instance
-- Real-time status: idle, working, error
-- Broadcast changes to frontend via IPC events
+| Service              | Responsibility                                            |
+| -------------------- | --------------------------------------------------------- |
+| `DiscoveryService`   | Discovers OpenCode instances via port scanning            |
+| `OpenCodeClient`     | Connects to OpenCode HTTP/SSE API, handles reconnection   |
+| `AgentStatusManager` | Aggregates status across workspaces, emits status changes |
+
+Supporting modules:
+
+| Module          | Responsibility                                          |
+| --------------- | ------------------------------------------------------- |
+| `PortScanner`   | Scans for listening ports with PID info (node-netstat)  |
+| `ProcessTree`   | Gets descendant PIDs of code-server process (pidtree)   |
+| `InstanceProbe` | Probes ports to identify OpenCode instances (localhost) |
+
+### Discovery Flow
+
+1. **PID Change Event**: `CodeServerManager.onPidChanged()` notifies `DiscoveryService`
+2. **Port Scan**: Main process polls `DiscoveryService.scan()` every 1s
+3. **Process Filtering**: Only scans ports owned by code-server descendants
+4. **Instance Probe**: HTTP request to `/path` endpoint identifies OpenCode instances
+5. **Caching**: Non-OpenCode ports cached (5 min TTL) to avoid re-probing
+
+### Status Update Flow
+
+1. **SSE Connection**: `OpenCodeClient` connects to `/event` endpoint
+2. **Event Parsing**: Receives `session.status`, `session.deleted`, `session.idle` events
+3. **Aggregation**: `AgentStatusManager` counts idle/busy sessions per workspace
+4. **Callback**: Status change triggers callback (NOT direct IPC)
+5. **IPC Emit**: Handler subscribes to callback, emits `agent:status-changed`
+6. **Store Update**: Renderer receives event, updates `agentStatusStore`
+7. **UI Update**: `AgentStatusIndicator` component reflects new state
+
+### IPC Channels
+
+| Channel                  | Type    | Payload                             | Description                       |
+| ------------------------ | ------- | ----------------------------------- | --------------------------------- |
+| `agent:status-changed`   | Event   | `{ workspacePath, status, counts }` | Status update for workspace       |
+| `agent:get-status`       | Command | `{ workspacePath: string }`         | Get status for specific workspace |
+| `agent:get-all-statuses` | Command | `void`                              | Get all workspace statuses        |
+| `agent:refresh`          | Command | `void`                              | Trigger immediate scan            |
+
+### Error Handling
+
+- **Connection Failures**: Exponential backoff reconnection (1s, 2s, 4s... max 30s)
+- **Port Reuse**: PID comparison detects when different process reuses a port
+- **Concurrent Scans**: Mutex flag prevents overlapping scan operations
+- **Resource Cleanup**: `IDisposable` pattern ensures proper cleanup on shutdown
 
 ## External URL Handling
 

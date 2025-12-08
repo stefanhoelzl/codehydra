@@ -39,6 +39,8 @@
 <script lang="ts">
   import type { ProjectPath } from "$lib/api";
   import EmptyState from "./EmptyState.svelte";
+  import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
+  import { getStatus } from "$lib/stores/agent-status.svelte.js";
 
   interface SidebarProps {
     projects: readonly Project[];
@@ -124,6 +126,7 @@
               {@const globalIndex = getWorkspaceGlobalIndex(projects, projectIndex, workspaceIndex)}
               {@const displayIndex = formatIndexDisplay(globalIndex)}
               {@const shortcutHint = getShortcutHint(globalIndex)}
+              {@const agentStatus = getStatus(workspace.path)}
               <li
                 class="workspace-item"
                 class:active={workspace.path === activeWorkspacePath}
@@ -146,6 +149,10 @@
                   {/if}
                   {workspace.name}
                 </button>
+                <AgentStatusIndicator
+                  idleCount={agentStatus.counts.idle}
+                  busyCount={agentStatus.counts.busy}
+                />
                 <button
                   type="button"
                   class="action-btn remove-btn"
@@ -296,6 +303,11 @@
 
   .workspace-item.active {
     background: var(--ch-list-active-bg);
+  }
+
+  .workspace-item:focus-within {
+    outline: 1px solid var(--ch-focus-border);
+    outline-offset: -1px;
   }
 
   .workspace-btn {

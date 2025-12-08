@@ -25,6 +25,7 @@
     handleKeyUp,
     handleWindowBlur,
   } from "$lib/stores/shortcuts.svelte.js";
+  import { updateStatus, setAllStatuses } from "$lib/stores/agent-status.svelte.js";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import CreateWorkspaceDialog from "$lib/components/CreateWorkspaceDialog.svelte";
   import RemoveWorkspaceDialog from "$lib/components/RemoveWorkspaceDialog.svelte";
@@ -63,6 +64,16 @@
         setError(err instanceof Error ? err.message : "Failed to load projects");
       });
 
+    // Initialize - load agent statuses
+    api
+      .getAllAgentStatuses()
+      .then((statuses) => {
+        setAllStatuses(statuses);
+      })
+      .catch(() => {
+        // Agent status is optional, don't fail if it doesn't work
+      });
+
     // Subscribe to events
     subscriptions.push(
       api.onProjectOpened((event) => {
@@ -91,6 +102,13 @@
     subscriptions.push(
       api.onWorkspaceSwitched((event) => {
         setActiveWorkspace(event.workspacePath);
+      })
+    );
+
+    // Subscribe to agent status changes
+    subscriptions.push(
+      api.onAgentStatusChanged((event) => {
+        updateStatus(event.workspacePath, event.status);
       })
     );
 

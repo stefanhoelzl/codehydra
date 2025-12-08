@@ -61,6 +61,9 @@ const mockApi = vi.hoisted(() => ({
   updateBases: vi.fn().mockResolvedValue(undefined),
   isWorkspaceDirty: vi.fn().mockResolvedValue(false),
   setDialogMode: vi.fn().mockResolvedValue(undefined),
+  getAgentStatus: vi.fn().mockResolvedValue({ status: "none", counts: { idle: 0, busy: 0 } }),
+  getAllAgentStatuses: vi.fn().mockResolvedValue({}),
+  refreshAgentStatus: vi.fn().mockResolvedValue(undefined),
   onProjectOpened: vi.fn((cb: (e: ProjectOpenedEvent) => void): Unsubscribe => {
     callbacks.onProjectOpened = cb;
     return vi.fn();
@@ -89,6 +92,9 @@ const mockApi = vi.hoisted(() => ({
     callbacks.onShortcutDisable = cb;
     return vi.fn();
   }),
+  onAgentStatusChanged: vi.fn((): Unsubscribe => {
+    return vi.fn();
+  }),
   focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -100,6 +106,7 @@ import App from "../App.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
+import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 
 // Helper to create mock workspace
 function createWorkspace(name: string, projectPath: string): Workspace {
@@ -125,6 +132,7 @@ describe("Integration tests", () => {
     projectsStore.reset();
     dialogsStore.reset();
     shortcutsStore.reset();
+    agentStatusStore.reset();
 
     // Reset callbacks
     callbacks.onProjectOpened = null;
@@ -142,6 +150,7 @@ describe("Integration tests", () => {
       { name: "develop", isRemote: false },
     ]);
     mockApi.isWorkspaceDirty.mockResolvedValue(false);
+    mockApi.getAllAgentStatuses.mockResolvedValue({});
   });
 
   afterEach(() => {

@@ -11,6 +11,8 @@ import type {
   WorkspaceCreatedEvent,
   WorkspaceRemovedEvent,
   WorkspaceSwitchedEvent,
+  AgentStatusChangedEvent,
+  AggregatedAgentStatus,
 } from "../shared/ipc";
 
 /**
@@ -134,4 +136,37 @@ contextBridge.exposeInMainWorld("api", {
   // Shortcut events
   onShortcutEnable: createEventSubscription<void>(IpcChannels.SHORTCUT_ENABLE),
   onShortcutDisable: createEventSubscription<void>(IpcChannels.SHORTCUT_DISABLE),
+
+  // ============ Agent Status Commands ============
+
+  /**
+   * Get the agent status for a specific workspace.
+   * @param workspacePath - Path to the workspace
+   * @returns Aggregated agent status for the workspace
+   */
+  getAgentStatus: (workspacePath: string): Promise<AggregatedAgentStatus> =>
+    ipcRenderer.invoke(IpcChannels.AGENT_GET_STATUS, { workspacePath }),
+
+  /**
+   * Get all workspace agent statuses.
+   * @returns Record of workspace paths to their statuses
+   */
+  getAllAgentStatuses: (): Promise<Record<string, AggregatedAgentStatus>> =>
+    ipcRenderer.invoke(IpcChannels.AGENT_GET_ALL_STATUSES),
+
+  /**
+   * Trigger a manual refresh of agent status discovery.
+   */
+  refreshAgentStatus: (): Promise<void> => ipcRenderer.invoke(IpcChannels.AGENT_REFRESH),
+
+  // ============ Agent Status Events ============
+
+  /**
+   * Subscribe to agent status change events.
+   * @param callback - Called when an agent status changes
+   * @returns Unsubscribe function to remove the listener
+   */
+  onAgentStatusChanged: createEventSubscription<AgentStatusChangedEvent>(
+    IpcChannels.AGENT_STATUS_CHANGED
+  ),
 });

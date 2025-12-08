@@ -139,6 +139,11 @@ import {
   createWorkspaceIsDirtyHandler,
 } from "./workspace-handlers";
 import {
+  createAgentGetStatusHandler,
+  createAgentGetAllStatusesHandler,
+  createAgentRefreshHandler,
+} from "./agent-handlers";
+import {
   ProjectOpenPayloadSchema,
   ProjectClosePayloadSchema,
   WorkspaceCreatePayloadSchema,
@@ -148,6 +153,7 @@ import {
   WorkspaceUpdateBasesPayloadSchema,
   WorkspaceIsDirtyPayloadSchema,
   UISetDialogModePayloadSchema,
+  AgentGetStatusPayloadSchema,
 } from "./validation";
 import type { AppState } from "../app-state";
 
@@ -209,4 +215,30 @@ export function registerAllHandlers(appState: AppState, viewManager: IViewManage
     null,
     createUIFocusActiveWorkspaceHandler(viewManager)
   );
+
+  // Agent status handlers
+  const agentStatusManager = appState.getAgentStatusManager();
+  const discoveryService = appState.getDiscoveryService();
+
+  if (agentStatusManager) {
+    registerHandler(
+      "agent:get-status",
+      AgentGetStatusPayloadSchema,
+      createAgentGetStatusHandler(agentStatusManager)
+    );
+    registerHandler(
+      "agent:get-all-statuses",
+      null,
+      createAgentGetAllStatusesHandler(agentStatusManager)
+    );
+
+    // Subscribe to status changes and emit IPC events
+    agentStatusManager.onStatusChanged((workspacePath, status) => {
+      emitEvent("agent:status-changed", { workspacePath, status });
+    });
+  }
+
+  if (discoveryService) {
+    registerHandler("agent:refresh", null, createAgentRefreshHandler(discoveryService));
+  }
 }

@@ -13,6 +13,8 @@ import type {
   ProjectClosedEvent,
   WorkspaceSwitchedEvent,
   WorkspacePath,
+  AgentStatusChangedEvent,
+  AggregatedAgentStatus,
 } from "@shared/ipc";
 
 // Helper to create typed ProjectPath
@@ -39,6 +41,9 @@ const mockApi = vi.hoisted(() => ({
   isWorkspaceDirty: vi.fn().mockResolvedValue(false),
   setDialogMode: vi.fn().mockResolvedValue(undefined),
   focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
+  getAgentStatus: vi.fn().mockResolvedValue({ status: "none", counts: { idle: 0, busy: 0 } }),
+  getAllAgentStatuses: vi.fn().mockResolvedValue({}),
+  refreshAgentStatus: vi.fn().mockResolvedValue(undefined),
   onProjectOpened: vi.fn(() => vi.fn()),
   onProjectClosed: vi.fn(() => vi.fn()),
   onWorkspaceCreated: vi.fn(() => vi.fn()),
@@ -46,6 +51,7 @@ const mockApi = vi.hoisted(() => ({
   onWorkspaceSwitched: vi.fn(() => vi.fn()),
   onShortcutEnable: vi.fn(() => vi.fn()),
   onShortcutDisable: vi.fn(() => vi.fn()),
+  onAgentStatusChanged: vi.fn(() => vi.fn()),
 }));
 
 // Mock the API module before any imports use it
@@ -56,6 +62,7 @@ import App from "./App.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
+import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 
 describe("App component", () => {
   beforeEach(() => {
@@ -64,8 +71,11 @@ describe("App component", () => {
     projectsStore.reset();
     dialogsStore.reset();
     shortcutsStore.reset();
+    agentStatusStore.reset();
     // Default to returning empty projects
     mockApi.listProjects.mockResolvedValue([]);
+    // Default to returning empty agent statuses
+    mockApi.getAllAgentStatuses.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -567,6 +577,91 @@ describe("App component", () => {
         const openHint = screen.getByLabelText("O to open project");
         expect(openHint).not.toHaveClass("shortcut-hint--hidden");
       });
+    });
+  });
+
+  describe("agent status handling", () => {
+    it("calls getAllAgentStatuses on mount to initialize", async () => {
+      render(App);
+
+      await waitFor(() => {
+        expect(mockApi.getAllAgentStatuses).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("sets initial statuses from getAllAgentStatuses response", async () => {
+      const initialStatuses: Record<string, AggregatedAgentStatus> = {
+        "/test/.worktrees/ws1": { status: "idle", counts: { idle: 2, busy: 0 } },
+        "/test/.worktrees/ws2": { status: "busy", counts: { idle: 0, busy: 1 } },
+      };
+      mockApi.getAllAgentStatuses.mockResolvedValue(initialStatuses);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(agentStatusStore.getStatus("/test/.worktrees/ws1")).toEqual(
+          initialStatuses["/test/.worktrees/ws1"]
+        );
+        expect(agentStatusStore.getStatus("/test/.worktrees/ws2")).toEqual(
+          initialStatuses["/test/.worktrees/ws2"]
+        );
+      });
+    });
+
+    it("subscribes to onAgentStatusChanged on mount", async () => {
+      render(App);
+
+      await waitFor(() => {
+        expect(mockApi.onAgentStatusChanged).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("updates store on agent:status-changed event", async () => {
+      let agentStatusCallback: ((event: AgentStatusChangedEvent) => void) | null = null;
+      (
+        mockApi.onAgentStatusChanged as unknown as {
+          mockImplementation: (
+            fn: (cb: (event: AgentStatusChangedEvent) => void) => Unsubscribe
+          ) => void;
+        }
+      ).mockImplementation((cb) => {
+        agentStatusCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(agentStatusCallback).not.toBeNull();
+      });
+
+      // Simulate agent status changed event
+      const newStatus: AggregatedAgentStatus = {
+        status: "busy",
+        counts: { idle: 0, busy: 3 },
+      };
+      agentStatusCallback!({
+        workspacePath: asWorkspacePath("/test/.worktrees/feature"),
+        status: newStatus,
+      });
+
+      // Verify status was updated in store
+      expect(agentStatusStore.getStatus("/test/.worktrees/feature")).toEqual(newStatus);
+    });
+
+    it("unsubscribes from onAgentStatusChanged on unmount", async () => {
+      const unsubAgentStatus = vi.fn();
+      mockApi.onAgentStatusChanged.mockReturnValue(unsubAgentStatus);
+
+      const { unmount } = render(App);
+
+      await waitFor(() => {
+        expect(mockApi.onAgentStatusChanged).toHaveBeenCalled();
+      });
+
+      unmount();
+
+      expect(unsubAgentStatus).toHaveBeenCalledTimes(1);
     });
   });
 });
