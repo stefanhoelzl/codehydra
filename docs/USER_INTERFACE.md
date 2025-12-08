@@ -12,8 +12,8 @@
 │  PROJECTS              │                                                        │
 │                        │                                                        │
 │  📁 my-project   [+][×]│                                                        │
-│    └─ 🌿 feature (feat)│                VS CODE (code-server)                   │
-│    └─ 🌿 bugfix (fix)  │                                                        │
+│    └─ 🌿 feature       │                VS CODE (code-server)                   │
+│    └─ 🌿 bugfix        │                                                        │
 │                        │                  Active workspace view                 │
 │  📁 other-proj   [+][×]│                                                        │
 │    └─ 🌿 experiment    │                                                        │
@@ -51,18 +51,17 @@ Buttons appear on hover.
 
 ```
 ┌────────────────────────────────┐
-│   └─ 🌿 name (branch)     [×]  │
+│   └─ 🌿 workspace-name    [×]  │
 └────────────────────────────────┘
 ```
 
 | Element          | Behavior                                       |
 | ---------------- | ---------------------------------------------- |
 | Row click        | Activates workspace, shows in code-server view |
-| Branch name      | Shows git branch in parentheses                |
 | [×] button       | Opens remove workspace dialog                  |
 | Status indicator | Shows OpenCode agent status (if running)       |
 
-[×] button appears on hover. Branch name stays visible.
+[×] button appears on hover.
 
 ### Scrolling Behavior
 
@@ -148,8 +147,8 @@ User sees empty state with "Open Project" button.
 
 ```
 │ 📁 my-project           [+][×] │
-│   └─ 🌿 feature (feat)    [×]  │  ← Normal
-│   └─ 🌿 bugfix (fix)      [×]  │  ← ACTIVE (highlighted)
+│   └─ 🌿 feature           [×]  │  ← Normal
+│   └─ 🌿 bugfix            [×]  │  ← ACTIVE (highlighted)
 ```
 
 ### Creating a Workspace
@@ -234,22 +233,22 @@ Error:
 
 **Flow:**
 
-1. Hover workspace row → [×] button becomes visible (branch name stays visible)
+1. Hover workspace row → [×] button becomes visible
 2. Click [×]
 3. Confirmation dialog opens
 4. If uncommitted changes → warning shown
 5. Choose action:
    - **Cancel**: Close dialog, no action
-   - **Keep Branch**: Remove worktree, keep git branch
-   - **Delete**: Remove worktree AND delete git branch
+   - **Remove** (with "Delete branch" checked): Remove worktree AND delete git branch
+   - **Remove** (with "Delete branch" unchecked): Remove worktree only, keep branch
 6. On confirm: workspace removed
 7. If was active → switch to another workspace in same project
 8. If last workspace in project → project remains (can create new)
 
-**Hover state (branch stays visible):**
+**Hover state:**
 
 ```
-│   └─ 🌿 feature (feat)       [×]  │  ← [×] appears, branch visible
+│   └─ 🌿 feature              [×]  │  ← [×] appears on hover
 ```
 
 **Confirmation dialog (clean):**
@@ -260,12 +259,30 @@ Error:
 │                                            │
 │  Remove workspace "feature-auth"?          │
 │                                            │
-│  [Cancel]  [Keep Branch]  [Delete]         │
-│                           ~~~~~~~~         │  ← Red/destructive
+│  ☑ Delete branch                           │
+│                                            │
+│                    [Cancel]  [Remove]      │
 └────────────────────────────────────────────┘
 ```
 
-**Confirmation dialog (uncommitted changes):**
+**Confirmation dialog (checking state):**
+
+```
+┌────────────────────────────────────────────┐
+│  Remove Workspace                          │
+│                                            │
+│  Remove workspace "feature-auth"?          │
+│                                            │
+│  Checking for uncommitted changes...       │
+│                                            │
+│  ☐ Delete branch                           │
+│                                            │
+│                    [Cancel]  [Remove]      │
+│                              ~~~~~~~~      │  ← Disabled
+└────────────────────────────────────────────┘
+```
+
+**Confirmation dialog (uncommitted changes warning):**
 
 ```
 ┌────────────────────────────────────────────┐
@@ -278,11 +295,22 @@ Error:
 │  │   changes that will be lost.       │    │
 │  └────────────────────────────────────┘    │
 │                                            │
-│  [Cancel]  [Keep Branch]  [Delete]         │
+│  ☑ Delete branch                           │
+│                                            │
+│                    [Cancel]  [Remove]      │
 └────────────────────────────────────────────┘
 ```
 
+**Removing state:**
+
+```
+│                    [Cancel]  [Removing...] │
+│                    ~~~~~~~~  ~~~~~~~~~~~~  │  ← Both disabled
+```
+
 ### Agent Status Monitoring
+
+> **Phase 6**: Agent status monitoring is not yet implemented. The following describes the planned design.
 
 **Flow:**
 
@@ -303,9 +331,9 @@ Error:
 
 ```
 │ 📁 my-project           [+][×] │
-│   └─ 🌿 feature (feat) 🟢 [×]  │  ← Idle
-│   └─ 🌿 bugfix (fix)   🟡 [×]  │  ← Working
-│   └─ 🌿 hotfix (hot)      [×]  │  ← No agent running
+│   └─ 🌿 feature        🟢 [×]  │  ← Idle
+│   └─ 🌿 bugfix         🟡 [×]  │  ← Working
+│   └─ 🌿 hotfix            [×]  │  ← No agent running
 ```
 
 ## Keyboard Navigation
@@ -332,6 +360,7 @@ Error:
 | Alt+Backspace  | Remove active workspace                                    |
 | Alt+1 to Alt+9 | Jump to workspace 1-9                                      |
 | Alt+0          | Jump to workspace 10                                       |
+| Alt+O          | Open project (folder picker)                               |
 
 ### Behavior Details
 
@@ -387,17 +416,31 @@ Error:
 │    └─ 2 🌿 bugfix-123      [×] │
 │  📁 other-project        [+][×] │
 │    └─ 3 🌿 experiment      [×] │
+│    └─ · 🌿 eleventh-ws     [×] │  ← Dot for workspaces 11+
+│                                 │
+│    O [Open Project]             │  ← "O" prefix appears
 ```
 
-Index numbering: 1-9, then 0 for 10th. Workspaces 11+ have no number (use ↑↓).
+Index display rules:
 
-**Overlay (bottom center, semi-transparent):**
+- Workspaces 1-9: Show digit (1-9)
+- Workspace 10: Show "0"
+- Workspaces 11+: Show "·" (dimmed dot, no keyboard shortcut)
+
+**Overlay (bottom center):**
 
 ```
-┌─────────────────────────────────────────┐
-│  ↑↓ Navigate   ⏎ New   ⌫ Del   1-0 Jump │
-└─────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│  ↑↓ Navigate   ⏎ New   ⌫ Del   1-0 Jump   O Open     │
+└───────────────────────────────────────────────────────┘
 ```
+
+**Note**: Some hints are conditionally hidden based on application state:
+
+- "↑↓ Navigate" and "1-0 Jump" only visible when more than 1 workspace exists
+- "⏎ New" only visible when there's an active project
+- "⌫ Del" only visible when there's an active workspace
+- "O Open" is always visible
 
 ### Dialog Shortcuts
 

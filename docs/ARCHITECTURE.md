@@ -80,51 +80,56 @@ Discovery finds worktrees in ANY location; creation only in managed location.
 - **Hide**: Set bounds to zero (width: 0, height: 0) - preserves VS Code state
 - **Z-order**: Controlled by `contentView.removeChildView(view)` then `contentView.addChildView(view)` (last added = front)
 
+### View Lifecycle
+
+```
+[not created] ──createWorkspaceView()──► [created/hidden]
+                                              │
+                                              │ bounds: (0, 0, 0, 0)
+                                              │
+                                      setActiveWorkspace()
+                                              │
+                                              ▼
+                                        [active/visible]
+                                              │
+                                              │ bounds: (SIDEBAR_WIDTH, 0, w, h)
+                                              │
+                                      setActiveWorkspace(other)
+                                              │
+                                              ▼
+                                           [hidden]
+                                              │
+                                      destroyWorkspaceView()
+                                              │
+                                              ▼
+                                         [destroyed]
+```
+
+- **Hidden views** retain their VS Code state (no reload when shown again)
+- **Bounds-based hiding** (0x0) is more efficient than destroying/recreating views
+
 ### UI Layer State Machine
 
-The UI layer uses **bounds-based visibility**, not transparency:
+The application uses a **hybrid visibility approach**:
 
-| State   | UI Bounds                               | UI Z-Order                  | Focus    | Description                   |
-| ------- | --------------------------------------- | --------------------------- | -------- | ----------------------------- |
-| Normal  | Sidebar only (x:0, width:SIDEBAR_WIDTH) | Behind workspace views      | VS Code  | User working in editor        |
-| Overlay | Full window                             | In front of workspace views | UI layer | Keyboard shortcut mode active |
+- **UI layer**: Always has full-window bounds. Visibility controlled by z-order.
+- **Workspace views**: Visibility controlled by bounds (active = content area, inactive = 0x0).
+
+| State   | UI Z-Order                  | Focus    | Description                  |
+| ------- | --------------------------- | -------- | ---------------------------- |
+| Normal  | Behind workspace views      | VS Code  | User working in editor       |
+| Overlay | In front of workspace views | UI layer | Shortcut mode or dialog open |
 
 **State transitions:**
 
-- Normal → Overlay: User activates shortcut mode (Alt+X)
-- Overlay → Normal: User releases Alt, presses Escape, or window loses focus
+- Normal → Overlay: User activates shortcut mode (Alt+X) or opens dialog
+- Overlay → Normal: User releases Alt, presses Escape, closes dialog, or window loses focus
 
 **Implementation:**
 
-- Background: `setBackgroundColor('#00000000')` for transparency
-- Bounds: Change dynamically based on state
-- Z-order: Remove/re-add child view to change order
-
-## Keyboard Architecture
-
-### Dual Capture Strategy
-
-Both mechanisms required:
-
-| Mechanism        | Level    | Purpose                                                      |
-| ---------------- | -------- | ------------------------------------------------------------ |
-| `globalShortcut` | OS-level | Capture Alt+X even when VS Code has focus                    |
-| Preload capture  | In-view  | Intercept shortcuts in capture phase before VS Code handlers |
-
-### Alt Key Handling
-
-- **Alt+X**: Activates shortcut mode (registered via globalShortcut)
-- **Alt must be held**: All shortcuts require Alt to be held continuously
-- **X can be released**: After pressing Alt+X, X can be released while Alt stays down
-- **Alt release**: Deactivates shortcut mode, returns focus to VS Code
-- **Alt keyup suppression**: Must suppress in capture phase to prevent VS Code menu bar activation
-
-### Preload Scripts
-
-| Script             | Used By         | Purpose                                             |
-| ------------------ | --------------- | --------------------------------------------------- |
-| preload.ts         | UI layer        | Expose IPC API for sidebar, dialogs, stores         |
-| webview-preload.ts | Workspace views | Keyboard capture, Alt suppression, URL interception |
+- UI transparency: `setBackgroundColor('#00000000')`
+- Z-order front: `contentView.addChildView(view)` (no index = add to end = top)
+- Z-order back: `contentView.addChildView(view, 0)` (index 0 = bottom)
 
 ## Component Architecture
 
@@ -137,17 +142,25 @@ Both mechanisms required:
 | IPC Handlers    | Bridge between renderer and services                        |
 | Preload Scripts | Secure IPC exposure, keyboard capture                       |
 
+### Preload Scripts
+
+| Script           | Used By  | Purpose                                            |
+| ---------------- | -------- | -------------------------------------------------- |
+| preload/index.ts | UI layer | Expose IPC API for sidebar, dialogs, shortcut mode |
+
+**Note**: Workspace views intentionally have NO preload script. Keyboard capture is handled via main-process `before-input-event` for simplicity and security.
+
 ### App Services (pure Node.js, no Electron deps)
 
 Services are pure Node.js for testability without Electron:
 
-| Service                  | Responsibility                                    |
-| ------------------------ | ------------------------------------------------- |
-| Git Worktree Provider    | Discover worktrees (not main dir), create, remove |
-| Code-Server Manager      | Start/stop code-server, port management           |
-| Project Store            | Persist open projects across sessions             |
-| OpenCode Discovery       | Find running OpenCode instances                   |
-| OpenCode Status Provider | SSE connections, status aggregation               |
+| Service                  | Responsibility                                    | Status      |
+| ------------------------ | ------------------------------------------------- | ----------- |
+| Git Worktree Provider    | Discover worktrees (not main dir), create, remove | Implemented |
+| Code-Server Manager      | Start/stop code-server, port management           | Implemented |
+| Project Store            | Persist open projects across sessions             | Implemented |
+| OpenCode Discovery       | Find running OpenCode instances                   | Phase 6     |
+| OpenCode Status Provider | SSE connections, status aggregation               | Phase 6     |
 
 ```
 Electron Main Process
@@ -169,18 +182,44 @@ Services are unit-testable without Electron runtime.
 | CreateWorkspaceDialog | New workspace form with validation, branch selection |
 | RemoveWorkspaceDialog | Confirmation with uncommitted changes warning        |
 | BranchDropdown        | Searchable combobox for branch selection             |
-| Stores                | projects, dialogs (Svelte 5 runes)                   |
+| ShortcutOverlay       | Keyboard shortcut hints (shown during shortcut mode) |
+| Stores                | projects, dialogs, shortcuts (Svelte 5 runes)        |
 
 ### Dialog Overlay Mode
 
-When a modal dialog is open, the UI layer's z-order is changed to overlay workspace views:
+When a modal dialog or shortcut mode is active, the UI layer's z-order is changed to overlay workspace views:
 
-- **Normal mode**: UI layer at index 0 (behind), workspace views on top
-- **Dialog mode**: UI layer at last index (on top), receives all events
+```
+NORMAL STATE (no dialog, no shortcut mode):
+┌─────────────────────────────────────────────────────────────────────┐
+│ children[0]: UI Layer        │ children[N]: Workspace Views        │
+│ z-order: BEHIND              │ z-order: ON TOP                     │
+│                              │                                     │
+│ Sidebar receives events      │ Workspace receives events           │
+└──────────────────────────────┴─────────────────────────────────────┘
 
-This is triggered by a reactive `$effect` in App.svelte that watches `dialogState` and calls `api.setDialogMode(isOpen)`. The main process ViewManager handles the z-order swap using `contentView.addChildView()` reordering.
+DIALOG/SHORTCUT STATE:
+┌─────────────────────────────────────────────────────────────────────┐
+│ children[0..N-1]: Workspace Views (z-order: BEHIND)                 │
+├─────────────────────────────────────────────────────────────────────┤
+│ children[N]: UI Layer (z-order: ON TOP)                             │
+│ ┌─────────────────────────────────────────────────────────────────┐ │
+│ │                  Dialog or Shortcut Overlay                     │ │
+│ │              (receives all keyboard/mouse events)               │ │
+│ └─────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+This is triggered by:
+
+- **Dialogs**: A reactive `$effect` in App.svelte watches `dialogState` and calls `api.setDialogMode(isOpen)`
+- **Shortcut mode**: `ShortcutController` calls `setDialogMode(true)` when Alt+X detected
+
+The main process ViewManager handles the z-order swap using `contentView.addChildView()` reordering.
 
 ## OpenCode Integration
+
+> **Phase 6**: OpenCode integration is not yet implemented. The following describes the planned design.
 
 ### Discovery
 
@@ -229,6 +268,54 @@ Once activated, the UI layer has focus and handles keys directly via DOM events:
 | --------------------------------------------- | ---------------------------------- |
 | `src/main/shortcut-controller.ts`             | Activation detection state machine |
 | `src/renderer/lib/stores/shortcuts.svelte.ts` | UI layer state and handlers        |
+
+### ShortcutController State Machine
+
+```
+                              ┌──────────┐
+              ┌───────────────│  NORMAL  │◄────────────────────────────────┐
+              │               └────┬─────┘                                 │
+              │                    │                                       │
+              │ Alt up             │ Alt down                              │
+              │ (suppress)         │ (preventDefault)                      │
+              │                    ▼                                       │
+              │            ┌─────────────┐                                 │
+              │            │ ALT_WAITING │                                 │
+              │            └──────┬──────┘                                 │
+              │                   │                                        │
+              │     ┌─────────────┼─────────────┐                          │
+              │     │             │             │                          │
+              │  Alt up      non-X key       X down                        │
+              │  (suppress)  (let through)      │                          │
+              │     │             │             ▼                          │
+              │     │             │      • preventDefault                  │
+              │     │             │      • setDialogMode(true)             │
+              │     │             │      • focusUI()                       │
+              │     │             │      • Emit ENABLE to UI               │
+              │     │             │             │                          │
+              └─────┴─────────────┴─────────────┘                          │
+                                                                           │
+              Main process returns to NORMAL immediately ──────────────────┘
+```
+
+**Note**: Alt keyup is ALWAYS suppressed (in both states) so VS Code never sees Alt-only key events.
+
+### Race Condition Handling
+
+There is a race condition where the user can release Alt faster than focus switches to the UI layer:
+
+1. User presses Alt+X → ShortcutController activates mode, calls `focusUI()`
+2. User releases Alt VERY QUICKLY (before focus actually switches)
+3. Workspace view still has focus, catches the Alt keyup via `before-input-event`
+4. **Problem**: UI layer never sees Alt keyup, thinks shortcut mode is still active
+
+**Solution**: Main process tracks `shortcutModeActive` flag. On Alt keyup, if the flag was true:
+
+- Reset flag to false
+- Send `shortcut:disable` event to UI
+- UI receives event and resets its state
+
+This ensures the UI never gets stuck in shortcut mode.
 
 ## Data Flow
 
@@ -289,10 +376,46 @@ User: Click [×] on project row
 
 ## IPC Contract
 
+All IPC channels are defined in `src/shared/ipc.ts` with TypeScript types for compile-time safety.
+
 ### Commands (renderer → main)
 
-[Placeholder - to be defined in Phase 3]
+| Channel                     | Payload                             | Response            | Description                       |
+| --------------------------- | ----------------------------------- | ------------------- | --------------------------------- |
+| `project:open`              | `{ path: string }`                  | `Project`           | Open project, discover workspaces |
+| `project:close`             | `{ path: string }`                  | `void`              | Close project, destroy views      |
+| `project:list`              | `void`                              | `Project[]`         | List all open projects            |
+| `project:select-folder`     | `void`                              | `string \| null`    | Show folder picker dialog         |
+| `workspace:create`          | `{ projectPath, name, baseBranch }` | `Workspace`         | Create workspace, create view     |
+| `workspace:remove`          | `{ workspacePath, deleteBranch }`   | `RemovalResult`     | Remove workspace, destroy view    |
+| `workspace:switch`          | `{ workspacePath }`                 | `void`              | Switch active workspace           |
+| `workspace:list-bases`      | `{ projectPath }`                   | `BaseInfo[]`        | List available branches           |
+| `workspace:update-bases`    | `{ projectPath }`                   | `UpdateBasesResult` | Fetch from remotes                |
+| `workspace:is-dirty`        | `{ workspacePath }`                 | `boolean`           | Check for uncommitted changes     |
+| `ui:set-dialog-mode`        | `{ isOpen: boolean }`               | `void`              | Swap UI layer z-order             |
+| `ui:focus-active-workspace` | `void`                              | `void`              | Return focus to VS Code           |
 
 ### Events (main → renderer)
 
-[Placeholder - to be defined in Phase 3]
+| Channel              | Payload                                          | Description                               |
+| -------------------- | ------------------------------------------------ | ----------------------------------------- |
+| `project:opened`     | `{ project: Project }`                           | Project was opened                        |
+| `project:closed`     | `{ path: string }`                               | Project was closed                        |
+| `workspace:created`  | `{ projectPath: string, workspace: Workspace }`  | Workspace was created                     |
+| `workspace:removed`  | `{ projectPath: string, workspacePath: string }` | Workspace was removed                     |
+| `workspace:switched` | `{ workspacePath: string }`                      | Active workspace changed                  |
+| `shortcut:enable`    | `void`                                           | Shortcut mode activated                   |
+| `shortcut:disable`   | `void`                                           | Shortcut mode deactivated (race recovery) |
+
+**Note**: `shortcut:enable` and `shortcut:disable` are defined as channel constants but are not typed in the `IpcEvents` interface (they use simple void payloads).
+
+### IPC Data Flow
+
+```
+┌─────────────┐  IPC invoke   ┌─────────────┐  direct call  ┌─────────────┐
+│  Renderer   │ ────────────► │    Main     │ ────────────► │  Services   │
+│  (Svelte)   │               │  (handlers) │               │  (Node.js)  │
+│             │ ◄──────────── │             │ ◄──────────── │             │
+└─────────────┘  IPC response/ └─────────────┘  return value/ └─────────────┘
+                    events                      throw error
+```
