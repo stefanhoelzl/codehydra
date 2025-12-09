@@ -354,25 +354,29 @@ async function bootstrap(): Promise<void> {
     codeServerPort: 0,
   });
 
-  // 6. Register setup:ready handler EARLY (before loading UI)
+  // 6. Maximize window after ViewManager subscription is active
+  // On Linux, maximize() is async - wait for it to complete before loading UI
+  await windowManager.maximizeAsync();
+
+  // 7. Register setup:ready handler EARLY (before loading UI)
   // This handler is ALWAYS registered and returns { ready: boolean }
   registerSetupReadyHandler();
 
-  // 7. Register setup:retry and setup:quit handlers
+  // 8. Register setup:retry and setup:quit handlers
   registerSetupRetryAndQuitHandlers();
 
-  // 8. If setup is complete, start services immediately
+  // 9. If setup is complete, start services immediately
   // This is done BEFORE loading UI so handlers are ready when MainView mounts
   if (setupComplete) {
     await startServices();
   }
 
-  // 9. Load UI layer HTML
+  // 10. Load UI layer HTML
   // Renderer will call setupReady() in onMount and route based on response
   const uiView = viewManager.getUIView();
   await uiView.webContents.loadFile(nodePath.join(__dirname, "../renderer/index.html"));
 
-  // 10. Open DevTools in development only
+  // 11. Open DevTools in development only
   if (!app.isPackaged) {
     uiView.webContents.openDevTools({ mode: "detach" });
   }

@@ -66,11 +66,32 @@ describe("WindowManager", () => {
 
       expect(manager).toBeInstanceOf(WindowManager);
     });
+  });
 
-    it("maximizes the window after creation", () => {
-      WindowManager.create();
+  describe("maximizeAsync", () => {
+    it("maximizes the window and notifies resize callbacks after delay", async () => {
+      vi.useFakeTimers();
+      const manager = WindowManager.create();
+      const callback = vi.fn();
+      manager.onResize(callback);
+      callback.mockClear();
 
+      const promise = manager.maximizeAsync();
+
+      // maximize() called immediately
       expect(mockBaseWindow.maximize).toHaveBeenCalled();
+
+      // Callback not called yet (before delay)
+      expect(callback).not.toHaveBeenCalled();
+
+      // Fast-forward past the 50ms delay
+      await vi.advanceTimersByTimeAsync(50);
+      await promise;
+
+      // Callback called after delay
+      expect(callback).toHaveBeenCalled();
+
+      vi.useRealTimers();
     });
   });
 

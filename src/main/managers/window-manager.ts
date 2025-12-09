@@ -67,8 +67,6 @@ export class WindowManager {
       title: "CodeHydra",
     });
 
-    window.maximize();
-
     return new WindowManager(window);
   }
 
@@ -103,6 +101,21 @@ export class WindowManager {
     return () => {
       this.resizeCallbacks.delete(callback);
     };
+  }
+
+  /**
+   * Maximizes the window and waits for bounds to stabilize.
+   *
+   * On Linux/GTK, window.maximize() is asynchronous - the maximize event
+   * fires immediately but getContentBounds() returns stale values until
+   * GTK completes the operation (~16ms observed, 50ms for safety margin).
+   * User-initiated resizes work fine; this delay is only needed for
+   * programmatic maximize at startup.
+   */
+  async maximizeAsync(): Promise<void> {
+    this.window.maximize();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    this.notifyResizeCallbacks();
   }
 
   /**
