@@ -377,8 +377,19 @@ async function bootstrap(): Promise<void> {
   await uiView.webContents.loadFile(nodePath.join(__dirname, "../renderer/index.html"));
 
   // 11. Open DevTools in development only
+  // Note: DevTools not auto-opened to avoid z-order issues on Linux.
+  // Use Ctrl+Shift+I to open manually when needed (opens detached).
   if (!app.isPackaged) {
-    uiView.webContents.openDevTools({ mode: "detach" });
+    uiView.webContents.on("before-input-event", (event, input) => {
+      if (input.control && input.shift && input.key === "I") {
+        if (uiView.webContents.isDevToolsOpened()) {
+          uiView.webContents.closeDevTools();
+        } else {
+          uiView.webContents.openDevTools({ mode: "detach" });
+        }
+        event.preventDefault();
+      }
+    });
   }
 }
 
