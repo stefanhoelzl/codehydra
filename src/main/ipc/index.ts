@@ -34,3 +34,11 @@ export {
   WorkspaceUpdateBasesPayloadSchema,
   WorkspaceIsDirtyPayloadSchema,
 } from "./validation";
+
+export {
+  createSetupReadyHandler,
+  createSetupStartHandler,
+  createSetupRetryHandler,
+  createSetupQuitHandler,
+  type SetupEventEmitters,
+} from "./setup-handlers";

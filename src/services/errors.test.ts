@@ -7,6 +7,7 @@ import {
   CodeServerError,
   ProjectStoreError,
   OpenCodeError,
+  VscodeSetupError,
   isServiceError,
   type SerializedError,
 } from "./errors";
@@ -154,6 +155,55 @@ describe("ServiceError", () => {
   });
 });
 
+describe("VscodeSetupError", () => {
+  it("has correct type", () => {
+    const error = new VscodeSetupError("Setup failed");
+    expect(error.type).toBe("vscode-setup");
+  });
+
+  it("preserves message", () => {
+    const error = new VscodeSetupError("Setup failed");
+    expect(error.message).toBe("Setup failed");
+  });
+
+  it("preserves optional code", () => {
+    const error = new VscodeSetupError("Setup failed", "NETWORK_ERROR");
+    expect(error.code).toBe("NETWORK_ERROR");
+  });
+
+  it("is instanceof Error", () => {
+    const error = new VscodeSetupError("test");
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it("is instanceof ServiceError", () => {
+    const error = new VscodeSetupError("test");
+    expect(error).toBeInstanceOf(ServiceError);
+  });
+
+  it("serializes correctly", () => {
+    const error = new VscodeSetupError("Setup failed", "NETWORK_ERROR");
+    const json = error.toJSON();
+
+    expect(json).toEqual({
+      type: "vscode-setup",
+      message: "Setup failed",
+      code: "NETWORK_ERROR",
+    });
+  });
+
+  it("serializes without code when not provided", () => {
+    const error = new VscodeSetupError("Setup failed");
+    const json = error.toJSON();
+
+    expect(json).toEqual({
+      type: "vscode-setup",
+      message: "Setup failed",
+      code: undefined,
+    });
+  });
+});
+
 describe("ServiceError.fromJSON", () => {
   it("deserializes GitError", () => {
     const json: SerializedError = {
@@ -217,6 +267,20 @@ describe("ServiceError.fromJSON", () => {
     expect(error).toBeInstanceOf(OpenCodeError);
     expect(error.message).toBe("Connection failed");
     expect(error.code).toBe("CONNECTION_REFUSED");
+  });
+
+  it("deserializes VscodeSetupError", () => {
+    const json: SerializedError = {
+      type: "vscode-setup",
+      message: "Setup failed",
+      code: "NETWORK_ERROR",
+    };
+
+    const error = ServiceError.fromJSON(json);
+
+    expect(error).toBeInstanceOf(VscodeSetupError);
+    expect(error.message).toBe("Setup failed");
+    expect(error.code).toBe("NETWORK_ERROR");
   });
 
   it("roundtrips correctly", () => {

@@ -13,6 +13,9 @@ import type {
   WorkspaceSwitchedEvent,
   AgentStatusChangedEvent,
   AggregatedAgentStatus,
+  SetupProgress,
+  SetupErrorPayload,
+  SetupReadyResponse,
 } from "./ipc";
 
 /**
@@ -189,6 +192,49 @@ export interface Api {
    * @returns Unsubscribe function to remove the listener
    */
   onAgentStatusChanged(callback: (event: AgentStatusChangedEvent) => void): Unsubscribe;
+
+  // ============ Setup Commands ============
+
+  /**
+   * Check if VS Code setup is complete.
+   * Returns { ready: true } if setup done, { ready: false } if setup needed.
+   * If setup is needed, main process will start setup asynchronously.
+   */
+  setupReady(): Promise<SetupReadyResponse>;
+
+  /**
+   * Retry setup after a failure.
+   * Cleans vscode directory and re-runs setup.
+   */
+  setupRetry(): Promise<void>;
+
+  /**
+   * Quit the application (from setup error screen).
+   */
+  setupQuit(): Promise<void>;
+
+  // ============ Setup Events ============
+
+  /**
+   * Subscribe to setup progress events.
+   * @param callback - Called when setup progress updates
+   * @returns Unsubscribe function to remove the listener
+   */
+  onSetupProgress(callback: (progress: SetupProgress) => void): Unsubscribe;
+
+  /**
+   * Subscribe to setup complete event.
+   * @param callback - Called when setup completes successfully
+   * @returns Unsubscribe function to remove the listener
+   */
+  onSetupComplete(callback: () => void): Unsubscribe;
+
+  /**
+   * Subscribe to setup error events.
+   * @param callback - Called when setup fails
+   * @returns Unsubscribe function to remove the listener
+   */
+  onSetupError(callback: (error: SetupErrorPayload) => void): Unsubscribe;
 }
 
 declare global {

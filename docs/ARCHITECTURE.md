@@ -161,6 +161,7 @@ Services are pure Node.js for testability without Electron:
 | Project Store            | Persist open projects across sessions             | Implemented |
 | OpenCode Discovery       | Find running OpenCode instances                   | Implemented |
 | OpenCode Status Provider | SSE connections, status aggregation               | Implemented |
+| VS Code Setup Service    | First-run extension and config installation       | Implemented |
 
 ```
 Electron Main Process
@@ -175,7 +176,8 @@ Services are unit-testable without Electron runtime.
 
 | Component             | Purpose                                              |
 | --------------------- | ---------------------------------------------------- |
-| App                   | Main application component, IPC event handling       |
+| App                   | Mode router between setup and normal app modes       |
+| MainView              | Normal app mode container, IPC initialization        |
 | Sidebar               | Project list, workspace list, action buttons         |
 | EmptyState            | Displayed when no projects are open                  |
 | Dialog                | Base dialog component with focus trap, accessibility |
@@ -183,7 +185,43 @@ Services are unit-testable without Electron runtime.
 | RemoveWorkspaceDialog | Confirmation with uncommitted changes warning        |
 | BranchDropdown        | Searchable combobox for branch selection             |
 | ShortcutOverlay       | Keyboard shortcut hints (shown during shortcut mode) |
-| Stores                | projects, dialogs, shortcuts (Svelte 5 runes)        |
+| SetupScreen           | Setup progress display with indeterminate bar        |
+| SetupComplete         | Brief success message after setup completes          |
+| SetupError            | Error display with Retry and Quit buttons            |
+| Stores                | projects, dialogs, shortcuts, setup (Svelte 5 runes) |
+
+### Renderer Startup Flow
+
+The renderer uses a two-phase initialization to handle the setup/normal app mode split:
+
+```
+App.svelte (mode router)
+│
+├── onMount: await api.setupReady()
+│   └── Returns { ready: boolean }
+│
+├── ready: false (setup needed)
+│   ├── SetupScreen.svelte (progress bar, subscribes to setup:progress)
+│   ├── SetupComplete.svelte (brief success, emits oncomplete after 1.5s)
+│   └── SetupError.svelte (Retry/Quit buttons)
+│
+└── ready: true (setup complete)
+    └── MainView.svelte
+        │
+        └── onMount:
+            ├── listProjects()
+            ├── getAllAgentStatuses()
+            └── Domain event subscriptions (project/workspace/agent)
+```
+
+**Key Design Decisions:**
+
+1. **App.svelte owns global events**: Shortcut events and setup events work across modes
+2. **MainView.svelte owns domain events**: IPC calls only happen when setup is complete
+3. **Two-phase handler registration**: Main process registers `setup:ready` early; normal handlers after setup
+4. **IPC initialization timing**: `listProjects()` and `getAllAgentStatuses()` are called in MainView.onMount, not App.onMount
+
+See [VS Code Setup](#vs-code-setup) for the main process side of this flow.
 
 ### Dialog Overlay Mode
 
@@ -309,6 +347,69 @@ All URLs opened from code-server → external system browser:
 
 - Implemented via `setWindowOpenHandler` returning `{ action: 'deny' }`
 - Platform-specific: `xdg-open` (Linux), `open` (macOS), `start` (Windows)
+
+## VS Code Setup
+
+### First-Run Behavior
+
+On first launch (or when setup version changes), the application runs a blocking setup process:
+
+```
+app.whenReady()
+       │
+       ▼
+  isSetupComplete()?  ──YES──►  Normal startup (skip to code-server)
+       │ NO
+       ▼
+  cleanVscodeDir()     # Remove any partial state
+       │
+       ▼
+  Show SetupScreen     # Blocking UI with progress bar
+       │
+       ▼
+  Run setup steps:
+  1. installCustomExtensions()   # codehydra extension
+  2. installMarketplaceExtensions() # OpenCode extension
+  3. writeConfigFiles()          # settings.json, keybindings.json
+  4. writeCompletionMarker()     # .setup-completed
+       │
+       ▼
+  On success: Show "Setup complete!" (1.5s) → Continue to normal startup
+  On failure: Show error with Retry/Quit buttons
+```
+
+### Directory Structure
+
+```
+<app-data>/
+├── vscode/
+│   ├── .setup-completed           # JSON: { version: 1, completedAt: "ISO" }
+│   ├── extensions/
+│   │   ├── codehydra.vscode-0.0.1-universal/
+│   │   │   ├── package.json
+│   │   │   └── extension.js       # Auto-opens OpenCode terminal
+│   │   └── sst-dev.opencode-X.X.X-<platform>/
+│   └── user-data/
+│       └── User/
+│           ├── settings.json      # Dark theme, no telemetry, hidden menu
+│           └── keybindings.json   # Empty array
+├── runtime/                       # code-server runtime files
+└── projects/                      # Git worktrees
+```
+
+### Setup Versioning
+
+The `.setup-completed` marker contains a version number. When `CURRENT_SETUP_VERSION` is incremented (in `src/services/vscode-setup/types.ts`), existing installs will re-run setup on next launch, ensuring all users get updated extensions or config.
+
+### Codehydra Extension
+
+The custom codehydra extension runs on VS Code startup to:
+
+1. Close sidebars to maximize editor space
+2. Open OpenCode terminal automatically
+3. Clean up empty editor groups
+
+This provides an optimized layout for AI agent workflows.
 
 ## Keyboard Capture System
 

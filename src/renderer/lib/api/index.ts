@@ -33,6 +33,13 @@ export const {
   onShortcutEnable,
   onShortcutDisable,
   onAgentStatusChanged,
+  // Setup API methods
+  setupReady,
+  setupRetry,
+  setupQuit,
+  onSetupProgress,
+  onSetupComplete,
+  onSetupError,
 } = window.api;
 
 // Re-export types for convenience

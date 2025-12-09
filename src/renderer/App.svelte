@@ -1,44 +1,60 @@
+<!--
+  App.svelte
+  
+  Root application component that acts as a mode router between setup and normal app modes.
+  
+  Component Ownership Model:
+  - App.svelte: Mode routing, global keyboard events (shortcuts), setup event subscriptions
+  - MainView.svelte: Normal app state, IPC initialization, domain events (project/workspace/agent)
+  
+  App.svelte owns:
+  - <main> element with dynamic aria-label based on mode
+  - Shortcut event subscriptions (global - work in both modes)
+  - Setup event subscriptions (onSetupProgress, onSetupComplete, onSetupError)
+  - aria-live announcements for mode transitions
+  
+  MainView.svelte owns:
+  - IPC initialization (listProjects, getAllAgentStatuses)
+  - Domain event subscriptions (project/workspace/agent changes)
+  - setDialogMode sync with main process
+  - Sidebar, dialogs, ShortcutOverlay rendering
+-->
 <script lang="ts">
+  import { onMount } from "svelte";
   import * as api from "$lib/api";
   import {
-    projects,
-    activeWorkspacePath,
-    loadingState,
-    loadingError,
-    activeProject,
-    getAllWorkspaces,
-    setProjects,
-    addProject,
-    removeProject,
-    setActiveWorkspace,
-    setLoaded,
-    setError,
-    addWorkspace,
-    removeWorkspace,
-  } from "$lib/stores/projects.svelte.js";
-  import { dialogState, openCreateDialog, openRemoveDialog } from "$lib/stores/dialogs.svelte.js";
-  import {
-    shortcutModeActive,
     handleShortcutEnable,
     handleShortcutDisable,
     handleKeyDown,
     handleKeyUp,
     handleWindowBlur,
   } from "$lib/stores/shortcuts.svelte.js";
-  import { updateStatus, setAllStatuses } from "$lib/stores/agent-status.svelte.js";
-  import Sidebar from "$lib/components/Sidebar.svelte";
-  import CreateWorkspaceDialog from "$lib/components/CreateWorkspaceDialog.svelte";
-  import RemoveWorkspaceDialog from "$lib/components/RemoveWorkspaceDialog.svelte";
-  import ShortcutOverlay from "$lib/components/ShortcutOverlay.svelte";
-  import type { ProjectPath } from "$lib/api";
+  import {
+    setupState,
+    updateProgress,
+    completeSetup,
+    errorSetup,
+    resetSetup,
+  } from "$lib/stores/setup.svelte.js";
+  import MainView from "$lib/components/MainView.svelte";
+  import SetupScreen from "$lib/components/SetupScreen.svelte";
+  import SetupComplete from "$lib/components/SetupComplete.svelte";
+  import SetupError from "$lib/components/SetupError.svelte";
 
-  // Sync dialog state with main process z-order
-  $effect(() => {
-    const isDialogOpen = dialogState.value.type !== "closed";
-    void api.setDialogMode(isDialogOpen);
-  });
+  /**
+   * App mode discriminated union.
+   * - initializing: Checking setup status (shows loading state)
+   * - setup: Setup is needed (shows setup screens)
+   * - ready: Setup complete, normal app mode (shows MainView)
+   */
+  type AppMode = { type: "initializing" } | { type: "setup" } | { type: "ready" };
 
-  // Subscribe to shortcut events from main process
+  let appMode = $state<AppMode>({ type: "initializing" });
+
+  // Announcement message for screen readers (cleared after announcement)
+  let announceMessage = $state<string>("");
+
+  // Subscribe to shortcut events from main process (global - work in both modes)
   $effect(() => {
     const unsubEnable = api.onShortcutEnable(handleShortcutEnable);
     const unsubDisable = api.onShortcutDisable(handleShortcutDisable);
@@ -48,140 +64,173 @@
     };
   });
 
-  // Set up initialization and event subscriptions on mount
+  // Subscribe to setup events from main process
   $effect(() => {
-    // Track all subscriptions for cleanup
-    const subscriptions: (() => void)[] = [];
+    const unsubProgress = api.onSetupProgress((event) => {
+      updateProgress(event.message);
+    });
 
-    // Initialize - load projects
-    api
-      .listProjects()
-      .then((p) => {
-        setProjects(p);
-        setLoaded();
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Failed to load projects");
-      });
+    const unsubComplete = api.onSetupComplete(() => {
+      completeSetup();
+    });
 
-    // Initialize - load agent statuses
-    api
-      .getAllAgentStatuses()
-      .then((statuses) => {
-        setAllStatuses(statuses);
-      })
-      .catch(() => {
-        // Agent status is optional, don't fail if it doesn't work
-      });
+    const unsubError = api.onSetupError((event) => {
+      errorSetup(event.message);
+    });
 
-    // Subscribe to events
-    subscriptions.push(
-      api.onProjectOpened((event) => {
-        addProject(event.project);
-      })
-    );
-
-    subscriptions.push(
-      api.onProjectClosed((event) => {
-        removeProject(event.path);
-      })
-    );
-
-    subscriptions.push(
-      api.onWorkspaceCreated((event) => {
-        addWorkspace(event.projectPath, event.workspace);
-      })
-    );
-
-    subscriptions.push(
-      api.onWorkspaceRemoved((event) => {
-        removeWorkspace(event.projectPath, event.workspacePath);
-      })
-    );
-
-    subscriptions.push(
-      api.onWorkspaceSwitched((event) => {
-        setActiveWorkspace(event.workspacePath);
-      })
-    );
-
-    // Subscribe to agent status changes
-    subscriptions.push(
-      api.onAgentStatusChanged((event) => {
-        updateStatus(event.workspacePath, event.status);
-      })
-    );
-
-    // Cleanup all subscriptions on unmount
     return () => {
-      subscriptions.forEach((unsub) => unsub());
+      unsubProgress();
+      unsubComplete();
+      unsubError();
     };
   });
 
-  // Handle opening a project
-  async function handleOpenProject(): Promise<void> {
-    const path = await api.selectFolder();
-    if (path) {
-      await api.openProject(path);
+  // Check setup status on mount
+  onMount(async () => {
+    try {
+      const { ready } = await api.setupReady();
+      if (ready) {
+        appMode = { type: "ready" };
+      } else {
+        appMode = { type: "setup" };
+      }
+    } catch (error) {
+      // If setupReady fails, fall back to ready mode
+      console.error("Setup ready check failed:", error);
+      appMode = { type: "ready" };
     }
+  });
+
+  // Handle setup retry
+  function handleSetupRetry(): void {
+    resetSetup();
+    void api.setupRetry();
   }
 
-  // Handle closing a project
-  async function handleCloseProject(path: ProjectPath): Promise<void> {
-    await api.closeProject(path);
+  // Handle setup quit
+  function handleSetupQuit(): void {
+    void api.setupQuit();
   }
 
-  // Handle switching workspace
-  async function handleSwitchWorkspace(workspacePath: string): Promise<void> {
-    await api.switchWorkspace(workspacePath);
+  // Handle setup complete transition (after success screen timer)
+  function handleSetupCompleteTransition(): void {
+    appMode = { type: "ready" };
+    // Announce mode transition for screen readers
+    announceMessage = "Setup complete. Application ready.";
+    // Clear after 1 second so it doesn't repeat
+    setTimeout(() => {
+      announceMessage = "";
+    }, 1000);
   }
 
-  // Handle opening create dialog
-  function handleOpenCreateDialog(projectPath: string, triggerId: string): void {
-    openCreateDialog(projectPath, triggerId);
+  // Derive current step message for setup screen
+  function getCurrentStepMessage(): string {
+    if (appMode.type === "initializing") {
+      return "Loading...";
+    }
+    if (setupState.value.type === "progress") {
+      return setupState.value.message;
+    }
+    return "Initializing...";
   }
 
-  // Handle opening remove dialog
-  function handleOpenRemoveDialog(workspacePath: string, triggerId: string): void {
-    openRemoveDialog(workspacePath, triggerId);
+  // Get aria-label for main element based on mode
+  function getAriaLabel(): string {
+    return appMode.type === "ready" ? "Application workspace" : "Setup wizard";
   }
 </script>
 
 <svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} onblur={handleWindowBlur} />
 
-<main class="app">
-  <Sidebar
-    projects={projects.value}
-    activeWorkspacePath={activeWorkspacePath.value}
-    loadingState={loadingState.value}
-    loadingError={loadingError.value}
-    shortcutModeActive={shortcutModeActive.value}
-    onOpenProject={handleOpenProject}
-    onCloseProject={handleCloseProject}
-    onSwitchWorkspace={handleSwitchWorkspace}
-    onOpenCreateDialog={handleOpenCreateDialog}
-    onOpenRemoveDialog={handleOpenRemoveDialog}
-  />
+<!-- Screen reader announcements for mode transitions -->
+<div class="sr-only" aria-live="polite" aria-atomic="true">
+  {#if announceMessage}{announceMessage}{/if}
+</div>
+
+<main class="app" aria-label={getAriaLabel()}>
+  {#if appMode.type === "initializing"}
+    <!-- Loading state while checking setup status -->
+    <div class="setup-container">
+      <SetupScreen currentStep="Loading..." />
+    </div>
+  {:else if appMode.type === "setup"}
+    <!-- Setup mode - show setup screens based on setup state -->
+    <div class="setup-container">
+      {#if setupState.value.type === "error"}
+        <SetupError
+          errorMessage={setupState.value.errorMessage}
+          onretry={handleSetupRetry}
+          onquit={handleSetupQuit}
+        />
+      {:else if setupState.value.type === "complete"}
+        <SetupComplete oncomplete={handleSetupCompleteTransition} />
+      {:else}
+        <!-- loading or progress state -->
+        <SetupScreen currentStep={getCurrentStepMessage()} />
+      {/if}
+    </div>
+  {:else}
+    <!-- Ready mode - normal app with fade-in animation -->
+    <!-- Uses CSS animation that respects prefers-reduced-motion -->
+    <div class="main-view-container">
+      <MainView />
+    </div>
+  {/if}
 </main>
-
-{#if dialogState.value.type === "create"}
-  <CreateWorkspaceDialog open={true} projectPath={dialogState.value.projectPath} />
-{:else if dialogState.value.type === "remove"}
-  <RemoveWorkspaceDialog open={true} workspacePath={dialogState.value.workspacePath} />
-{/if}
-
-<ShortcutOverlay
-  active={shortcutModeActive.value}
-  workspaceCount={getAllWorkspaces().length}
-  hasActiveProject={activeProject.value !== undefined}
-  hasActiveWorkspace={activeWorkspacePath.value !== null}
-/>
 
 <style>
   .app {
     display: flex;
-    height: 100%;
+    width: 100vw;
+    height: 100vh;
     color: var(--ch-foreground);
     background: transparent; /* Allow VS Code to show through UI layer */
+  }
+
+  .setup-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    height: 100vh;
+    padding: 2rem;
+    color: var(--ch-foreground);
+    background-color: var(--ch-background);
+  }
+
+  .main-view-container {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    animation: fadeIn 200ms ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* Respect user's motion preferences */
+  @media (prefers-reduced-motion: reduce) {
+    .main-view-container {
+      animation: none;
+    }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

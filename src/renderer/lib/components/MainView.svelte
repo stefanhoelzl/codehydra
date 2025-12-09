@@ -1,0 +1,166 @@
+<!--
+  MainView.svelte
+  
+  Main application content component that renders when setup is complete.
+  Owns IPC initialization for domain events (projects, workspaces, agents).
+  
+  Note: This component renders inside App.svelte's <main> element.
+  It does NOT render its own <main> landmark - App.svelte owns that.
+  
+  Responsibilities:
+  - Initialize IPC calls on mount (listProjects, getAllAgentStatuses)
+  - Subscribe to domain events (project/workspace/agent changes)
+  - Sync dialog state with main process z-order
+  - Render Sidebar, dialogs, and ShortcutOverlay
+-->
+<script lang="ts">
+  import { onMount, tick } from "svelte";
+  import * as api from "$lib/api";
+  import {
+    projects,
+    activeWorkspacePath,
+    loadingState,
+    loadingError,
+    activeProject,
+    getAllWorkspaces,
+    setProjects,
+    addProject,
+    removeProject,
+    setActiveWorkspace,
+    setLoaded,
+    setError,
+    addWorkspace,
+    removeWorkspace,
+  } from "$lib/stores/projects.svelte.js";
+  import { dialogState, openCreateDialog, openRemoveDialog } from "$lib/stores/dialogs.svelte.js";
+  import { shortcutModeActive } from "$lib/stores/shortcuts.svelte.js";
+  import { updateStatus, setAllStatuses } from "$lib/stores/agent-status.svelte.js";
+  import { setupDomainEvents } from "$lib/utils/domain-events";
+  import Sidebar from "./Sidebar.svelte";
+  import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
+  import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
+  import ShortcutOverlay from "./ShortcutOverlay.svelte";
+  import type { ProjectPath } from "$lib/api";
+
+  // Container ref for focus management
+  let containerRef: HTMLElement;
+
+  // Sync dialog state with main process z-order
+  $effect(() => {
+    const isDialogOpen = dialogState.value.type !== "closed";
+    void api.setDialogMode(isDialogOpen);
+  });
+
+  // Focus first focusable element on mount for accessibility
+  onMount(async () => {
+    // Wait for DOM to settle before focusing
+    await tick();
+    const firstFocusable = containerRef?.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    firstFocusable?.focus();
+  });
+
+  // Initialize and subscribe to domain events on mount
+  $effect(() => {
+    // Initialize - load projects
+    api
+      .listProjects()
+      .then((p) => {
+        setProjects(p);
+        setLoaded();
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load projects");
+      });
+
+    // Initialize - load agent statuses
+    api
+      .getAllAgentStatuses()
+      .then((statuses) => {
+        setAllStatuses(statuses);
+      })
+      .catch(() => {
+        // Agent status is optional, don't fail if it doesn't work
+      });
+
+    // Subscribe to domain events using helper
+    const cleanup = setupDomainEvents(api, {
+      addProject,
+      removeProject,
+      addWorkspace,
+      removeWorkspace,
+      setActiveWorkspace,
+      updateAgentStatus: updateStatus,
+    });
+
+    // Cleanup subscriptions on unmount
+    return cleanup;
+  });
+
+  // Handle opening a project
+  async function handleOpenProject(): Promise<void> {
+    const path = await api.selectFolder();
+    if (path) {
+      await api.openProject(path);
+    }
+  }
+
+  // Handle closing a project
+  async function handleCloseProject(path: ProjectPath): Promise<void> {
+    await api.closeProject(path);
+  }
+
+  // Handle switching workspace
+  async function handleSwitchWorkspace(workspacePath: string): Promise<void> {
+    await api.switchWorkspace(workspacePath);
+  }
+
+  // Handle opening create dialog
+  function handleOpenCreateDialog(projectPath: string, triggerId: string): void {
+    openCreateDialog(projectPath, triggerId);
+  }
+
+  // Handle opening remove dialog
+  function handleOpenRemoveDialog(workspacePath: string, triggerId: string): void {
+    openRemoveDialog(workspacePath, triggerId);
+  }
+</script>
+
+<div class="main-view" bind:this={containerRef}>
+  <Sidebar
+    projects={projects.value}
+    activeWorkspacePath={activeWorkspacePath.value}
+    loadingState={loadingState.value}
+    loadingError={loadingError.value}
+    shortcutModeActive={shortcutModeActive.value}
+    onOpenProject={handleOpenProject}
+    onCloseProject={handleCloseProject}
+    onSwitchWorkspace={handleSwitchWorkspace}
+    onOpenCreateDialog={handleOpenCreateDialog}
+    onOpenRemoveDialog={handleOpenRemoveDialog}
+  />
+
+  {#if dialogState.value.type === "create"}
+    <CreateWorkspaceDialog open={true} projectPath={dialogState.value.projectPath} />
+  {:else if dialogState.value.type === "remove"}
+    <RemoveWorkspaceDialog open={true} workspacePath={dialogState.value.workspacePath} />
+  {/if}
+
+  <ShortcutOverlay
+    active={shortcutModeActive.value}
+    workspaceCount={getAllWorkspaces().length}
+    hasActiveProject={activeProject.value !== undefined}
+    hasActiveWorkspace={activeWorkspacePath.value !== null}
+  />
+</div>
+
+<style>
+  .main-view {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    color: var(--ch-foreground);
+    background: transparent; /* Allow VS Code to show through UI layer */
+  }
+</style>

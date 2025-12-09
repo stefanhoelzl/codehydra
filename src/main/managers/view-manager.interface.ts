@@ -74,4 +74,12 @@ export interface IViewManager {
    * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
    */
   setDialogMode(isOpen: boolean): void;
+
+  /**
+   * Updates the code-server port.
+   * Used after setup completes to update the port for origin checking.
+   *
+   * @param port - The new code-server port
+   */
+  updateCodeServerPort(port: number): void;
 }

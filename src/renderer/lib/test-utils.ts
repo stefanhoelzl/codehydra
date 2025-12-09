@@ -32,6 +32,11 @@ export function createMockApi(): Api {
     getAllAgentStatuses: vi.fn().mockResolvedValue({}),
     refreshAgentStatus: vi.fn().mockResolvedValue(undefined),
 
+    // Setup commands
+    setupReady: vi.fn().mockResolvedValue(undefined),
+    setupRetry: vi.fn().mockResolvedValue(undefined),
+    setupQuit: vi.fn().mockResolvedValue(undefined),
+
     // Event subscriptions return unsubscribe functions
     onProjectOpened: vi.fn(() => vi.fn()),
     onProjectClosed: vi.fn(() => vi.fn()),
@@ -41,5 +46,10 @@ export function createMockApi(): Api {
     onShortcutEnable: vi.fn(() => vi.fn()),
     onShortcutDisable: vi.fn(() => vi.fn()),
     onAgentStatusChanged: vi.fn(() => vi.fn()),
+
+    // Setup event subscriptions
+    onSetupProgress: vi.fn(() => vi.fn()),
+    onSetupComplete: vi.fn(() => vi.fn()),
+    onSetupError: vi.fn(() => vi.fn()),
   };
 }

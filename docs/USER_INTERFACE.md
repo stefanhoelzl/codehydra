@@ -72,6 +72,68 @@ When there are more workspaces than fit:
 
 ## User Flows
 
+### VS Code Setup (First Run Only)
+
+On first application launch, a setup screen appears before the main interface:
+
+**Setup Screen (in progress):**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│                                                                 │
+│                    Setting up VSCode...                         │
+│                                                                 │
+│                    Installing extensions...                     │
+│                                                                 │
+│              ┌─────────────────────────────────┐                │
+│              │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│                │
+│              └─────────────────────────────────┘                │
+│                   (indeterminate animation)                     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Setup Complete (shown briefly):**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│                         ✓ Setup complete!                       │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Setup Failed (with retry option):**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│                      Setup Failed                               │
+│                                                                 │
+│     Failed to install VSCode extensions.                        │
+│     Please check your internet connection.                      │
+│                                                                 │
+│     Error: <error message>                                      │
+│                                                                 │
+│              ┌────────────┐    ┌────────────┐                   │
+│              │   Retry    │    │    Quit    │                   │
+│              └────────────┘    └────────────┘                   │
+│                (focused)                                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+
+- Setup runs ONCE on first launch
+- Installs OpenCode extension from marketplace
+- Installs codehydra extension for workspace optimization
+- Writes VS Code settings (dark theme, no telemetry)
+- Shows success for 1.5 seconds before loading main app
+- On failure: Retry button re-attempts, Quit exits app
+- Subsequent launches skip setup (unless setup version changes)
+
 ### First Launch
 
 ```

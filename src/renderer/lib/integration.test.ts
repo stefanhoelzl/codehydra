@@ -96,6 +96,13 @@ const mockApi = vi.hoisted(() => ({
     return vi.fn();
   }),
   focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
+  // Setup API mocks
+  setupReady: vi.fn().mockResolvedValue({ ready: true }),
+  setupRetry: vi.fn().mockResolvedValue(undefined),
+  setupQuit: vi.fn().mockResolvedValue(undefined),
+  onSetupProgress: vi.fn((): Unsubscribe => vi.fn()),
+  onSetupComplete: vi.fn((): Unsubscribe => vi.fn()),
+  onSetupError: vi.fn((): Unsubscribe => vi.fn()),
 }));
 
 // Mock the API module
@@ -895,6 +902,131 @@ describe("Integration tests", () => {
 
       await waitFor(() => {
         expect(mockApi.switchWorkspace).toHaveBeenCalledWith(ws.path, false);
+      });
+    });
+  });
+
+  describe("setup flow integration", () => {
+    it("routes-to-mainview-when-ready-true: setupReady returns ready, MainView mounts and calls listProjects", async () => {
+      mockApi.setupReady.mockResolvedValue({ ready: true });
+      mockApi.listProjects.mockResolvedValue([]);
+
+      render(App);
+
+      // Wait for MainView to mount and call listProjects
+      await waitFor(() => {
+        expect(mockApi.listProjects).toHaveBeenCalled();
+      });
+
+      // Verify we're in normal app mode (empty state shown)
+      await waitFor(() => {
+        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+      });
+    });
+
+    it("routes-to-setupscreen-when-ready-false: setupReady returns not ready, SetupScreen shown", async () => {
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+
+      render(App);
+
+      // Wait for setup screen to appear
+      await waitFor(() => {
+        expect(screen.getByText("Setting up VSCode...")).toBeInTheDocument();
+      });
+
+      // Verify listProjects was NOT called (we're in setup mode)
+      expect(mockApi.listProjects).not.toHaveBeenCalled();
+    });
+
+    // Note: setup:complete event transition is tested in App.test.ts with proper mock setup
+    // The integration test focuses on the routing behavior verified above
+
+    it("does-not-call-listProjects-during-setup: IPC calls deferred until MainView mounts", async () => {
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+
+      render(App);
+
+      // Wait for setup screen
+      await waitFor(() => {
+        expect(screen.getByText("Setting up VSCode...")).toBeInTheDocument();
+      });
+
+      // Verify no domain IPC calls during setup
+      expect(mockApi.listProjects).not.toHaveBeenCalled();
+      expect(mockApi.getAllAgentStatuses).not.toHaveBeenCalled();
+    });
+
+    it("complete-event-triggers-mainview-mount-and-initialization: setup:complete triggers MainView mount", async () => {
+      // Start in setup mode
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.getAllAgentStatuses.mockResolvedValue({});
+
+      // Capture the setup complete callback
+      let setupCompleteCallback: (() => void) | null = null;
+      (
+        mockApi.onSetupComplete as unknown as {
+          mockImplementation: (fn: (cb: () => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        setupCompleteCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      // Wait for setup screen to appear
+      await waitFor(() => {
+        expect(screen.getByText("Setting up VSCode...")).toBeInTheDocument();
+        expect(setupCompleteCallback).not.toBeNull();
+      });
+
+      // Verify IPC hasn't been called yet
+      expect(mockApi.listProjects).not.toHaveBeenCalled();
+
+      // Simulate setup complete event
+      setupCompleteCallback!();
+
+      // Wait for SetupComplete screen to show
+      await waitFor(() => {
+        expect(screen.getByText("Setup complete!")).toBeInTheDocument();
+      });
+
+      // The SetupComplete timer will transition to MainView
+      // After transition, MainView should call listProjects
+      await waitFor(
+        () => {
+          expect(mockApi.listProjects).toHaveBeenCalled();
+        },
+        { timeout: 3000 }
+      ); // Allow time for the 1.5s success screen
+    });
+
+    it("handlers-registered-before-setupReady-returns: normal handlers available when setup is complete", async () => {
+      // This test verifies that when setupReady returns { ready: true },
+      // the IPC handlers that MainView needs are already registered.
+      // We can verify this by checking that listProjects succeeds.
+      mockApi.setupReady.mockResolvedValue({ ready: true });
+      const mockProjects = [
+        {
+          path: asProjectPath("/test/project"),
+          name: "my-project",
+          workspaces: [],
+        },
+      ];
+      mockApi.listProjects.mockResolvedValue(mockProjects);
+      mockApi.getAllAgentStatuses.mockResolvedValue({});
+
+      render(App);
+
+      // Wait for MainView to mount and successfully call IPC
+      await waitFor(() => {
+        expect(mockApi.listProjects).toHaveBeenCalled();
+      });
+
+      // Verify the project loaded successfully (no handler-not-registered error)
+      await waitFor(() => {
+        expect(screen.getByText("my-project")).toBeInTheDocument();
       });
     });
   });

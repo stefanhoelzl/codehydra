@@ -3,7 +3,15 @@
  * Provides factory functions for creating mock domain objects.
  */
 
-import type { Project, Workspace, BaseInfo, ProjectPath } from "@shared/ipc";
+import type {
+  Project,
+  Workspace,
+  BaseInfo,
+  ProjectPath,
+  SetupProgress,
+  SetupErrorPayload,
+  SetupReadyResponse,
+} from "@shared/ipc";
 
 /**
  * Creates a mock Workspace with sensible defaults.
@@ -42,4 +50,33 @@ export function createMockBaseInfo(overrides: Partial<BaseInfo> = {}): BaseInfo 
     isRemote: false,
     ...overrides,
   };
+}
+
+/**
+ * Creates a mock SetupReadyResponse.
+ * @param ready - Whether setup is complete (default: true)
+ */
+export function createMockSetupReadyResponse(ready = true): SetupReadyResponse {
+  return { ready };
+}
+
+/**
+ * Creates a mock SetupProgress event.
+ * @param step - The setup step name
+ * @param message - The progress message
+ */
+export function createMockSetupProgress(
+  step: SetupProgress["step"],
+  message: string
+): SetupProgress {
+  return { step, message };
+}
+
+/**
+ * Creates a mock SetupErrorPayload.
+ * @param message - The error message
+ * @param code - The error code (default: "unknown")
+ */
+export function createMockSetupErrorPayload(message: string, code = "unknown"): SetupErrorPayload {
+  return { message, code };
 }

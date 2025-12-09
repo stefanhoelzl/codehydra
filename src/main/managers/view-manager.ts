@@ -39,6 +39,7 @@ export class ViewManager implements IViewManager {
   private readonly config: ViewManagerConfig;
   private readonly uiView: WebContentsView;
   private readonly shortcutController: ShortcutController;
+  private codeServerPort: number;
   /**
    * Map of workspace paths to their WebContentsViews.
    *
@@ -61,6 +62,7 @@ export class ViewManager implements IViewManager {
     this.config = config;
     this.uiView = uiView;
     this.shortcutController = shortcutController;
+    this.codeServerPort = config.codeServerPort;
 
     // Subscribe to resize events
     this.unsubscribeResize = this.windowManager.onResize(() => {
@@ -106,8 +108,8 @@ export class ViewManager implements IViewManager {
     const viewManager = new ViewManager(windowManager, config, uiView, shortcutController);
     viewManagerHolder.instance = viewManager;
 
-    // Initial bounds update
-    viewManager.updateBounds();
+    // Don't call updateBounds() here - let the resize event from maximize() trigger it.
+    // On Linux, maximize() is async and bounds aren't available immediately.
 
     return viewManager;
   }
@@ -156,7 +158,7 @@ export class ViewManager implements IViewManager {
 
     // Configure navigation handler to prevent navigation away from code-server
     view.webContents.on("will-navigate", (event, navigationUrl) => {
-      const codeServerOrigin = `http://localhost:${this.config.codeServerPort}`;
+      const codeServerOrigin = `http://localhost:${this.codeServerPort}`;
       if (!navigationUrl.startsWith(codeServerOrigin)) {
         event.preventDefault();
         openExternal(navigationUrl);
@@ -335,6 +337,16 @@ export class ViewManager implements IViewManager {
     } catch {
       // Ignore errors during z-order change - window may be closing
     }
+  }
+
+  /**
+   * Updates the code-server port.
+   * Used after setup completes to update the port for origin checking.
+   *
+   * @param port - The new code-server port
+   */
+  updateCodeServerPort(port: number): void {
+    this.codeServerPort = port;
   }
 
   /**

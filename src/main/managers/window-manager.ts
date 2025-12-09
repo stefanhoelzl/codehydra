@@ -30,10 +30,24 @@ export class WindowManager {
 
     // Set up resize event handler
     this.window.on("resize", () => {
-      for (const callback of this.resizeCallbacks) {
-        callback();
-      }
+      this.notifyResizeCallbacks();
     });
+
+    // On Linux, maximize/unmaximize may not trigger resize event,
+    // so we need to listen for these separately
+    this.window.on("maximize", () => {
+      this.notifyResizeCallbacks();
+    });
+
+    this.window.on("unmaximize", () => {
+      this.notifyResizeCallbacks();
+    });
+  }
+
+  private notifyResizeCallbacks(): void {
+    for (const callback of this.resizeCallbacks) {
+      callback();
+    }
   }
 
   /**

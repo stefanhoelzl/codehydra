@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { IpcChannels } from "./ipc";
+import { IpcChannels, type SetupReadyResponse } from "./ipc";
 
 describe("IpcChannels", () => {
   describe("SHORTCUT_ENABLE", () => {
@@ -15,6 +15,21 @@ describe("IpcChannels", () => {
   describe("SHORTCUT_DISABLE", () => {
     it("exists with correct channel name", () => {
       expect(IpcChannels.SHORTCUT_DISABLE).toBe("shortcut:disable");
+    });
+  });
+
+  describe("Setup channels", () => {
+    it("has SETUP_READY channel", () => {
+      expect(IpcChannels.SETUP_READY).toBe("setup:ready");
+    });
+
+    it("has SetupReadyResponse type with ready boolean", () => {
+      // Type-level test: verify SetupReadyResponse has the expected shape
+      const response: SetupReadyResponse = { ready: true };
+      expect(response.ready).toBe(true);
+
+      const response2: SetupReadyResponse = { ready: false };
+      expect(response2.ready).toBe(false);
     });
   });
 

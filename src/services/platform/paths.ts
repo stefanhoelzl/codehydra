@@ -47,6 +47,38 @@ export function getDataProjectsDir(): string {
 }
 
 /**
+ * Get the directory for VS Code configuration and extensions.
+ * @returns `<dataRoot>/vscode/`
+ */
+export function getVscodeDir(): string {
+  return join(getDataRootDir(), "vscode");
+}
+
+/**
+ * Get the directory for VS Code extensions.
+ * @returns `<dataRoot>/vscode/extensions/`
+ */
+export function getVscodeExtensionsDir(): string {
+  return join(getVscodeDir(), "extensions");
+}
+
+/**
+ * Get the directory for VS Code user data.
+ * @returns `<dataRoot>/vscode/user-data/`
+ */
+export function getVscodeUserDataDir(): string {
+  return join(getVscodeDir(), "user-data");
+}
+
+/**
+ * Get the path to the VS Code setup completion marker file.
+ * @returns `<dataRoot>/vscode/.setup-completed`
+ */
+export function getVscodeSetupMarkerPath(): string {
+  return join(getVscodeDir(), ".setup-completed");
+}
+
+/**
  * Generate a directory name for a project based on its path.
  * Format: `<folder-name>-<8-char-sha256-hash>`
  *

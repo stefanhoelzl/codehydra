@@ -3,7 +3,7 @@
  * Initializes all components and manages the application lifecycle.
  */
 
-import { app, Menu, dialog } from "electron";
+import { app, Menu, dialog, ipcMain } from "electron";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
@@ -12,8 +12,12 @@ import {
   ProjectStore,
   getDataRootDir,
   getDataProjectsDir,
+  getVscodeExtensionsDir,
+  getVscodeUserDataDir,
   type CodeServerConfig,
 } from "../services";
+import { VscodeSetupService } from "../services/vscode-setup";
+import { ExecaProcessRunner } from "../services/platform/process";
 import {
   DiscoveryService,
   AgentStatusManager,
@@ -24,7 +28,8 @@ import {
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { AppState } from "./app-state";
-import { registerAllHandlers } from "./ipc/handlers";
+import { registerAllHandlers, createSetupRetryHandler, createSetupQuitHandler } from "./ipc";
+import { IpcChannels, type SetupProgress, type SetupErrorPayload } from "../shared/ipc";
 
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 
@@ -35,8 +40,8 @@ function createCodeServerConfig(): CodeServerConfig {
   const dataRoot = getDataRootDir();
   return {
     runtimeDir: nodePath.join(dataRoot, "runtime"),
-    extensionsDir: nodePath.join(dataRoot, "extensions"),
-    userDataDir: nodePath.join(dataRoot, "user-data"),
+    extensionsDir: getVscodeExtensionsDir(),
+    userDataDir: getVscodeUserDataDir(),
   };
 }
 
@@ -50,13 +55,64 @@ let agentStatusManager: AgentStatusManager | null = null;
 let scanInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Initializes the application.
+ * Setup service for first-run configuration.
  */
-async function initialize(): Promise<void> {
-  // 1. Disable application menu
-  Menu.setApplicationMenu(null);
+let vscodeSetupService: VscodeSetupService | null = null;
 
-  // 2. Start code-server
+/**
+ * Guard flag to prevent multiple concurrent setup processes.
+ * Used by runSetupProcess() to ensure only one setup runs at a time.
+ */
+let setupInProgress = false;
+
+/**
+ * Flag to track if services have been started.
+ * Prevents double-initialization when both bootstrap and setup flow might call startServices.
+ */
+let servicesStarted = false;
+
+/**
+ * Emits setup progress event to renderer.
+ */
+function emitSetupProgress(progress: SetupProgress): void {
+  if (viewManager) {
+    viewManager.getUIView().webContents.send(IpcChannels.SETUP_PROGRESS, progress);
+  }
+}
+
+/**
+ * Emits setup complete event to renderer.
+ */
+function emitSetupComplete(): void {
+  if (viewManager) {
+    viewManager.getUIView().webContents.send(IpcChannels.SETUP_COMPLETE);
+  }
+}
+
+/**
+ * Emits setup error event to renderer.
+ */
+function emitSetupError(error: SetupErrorPayload): void {
+  if (viewManager) {
+    viewManager.getUIView().webContents.send(IpcChannels.SETUP_ERROR, error);
+  }
+}
+
+/**
+ * Starts all application services after setup completes.
+ * This is the second phase of the two-phase startup:
+ * bootstrap() → startServices()
+ *
+ * CRITICAL: Must be called BEFORE emitting setup:complete to renderer.
+ * This ensures IPC handlers are registered before MainView mounts.
+ */
+async function startServices(): Promise<void> {
+  // Guard against double initialization
+  if (servicesStarted) return;
+  if (!windowManager || !viewManager) return;
+  servicesStarted = true;
+
+  // Start code-server
   const config = createCodeServerConfig();
 
   // Ensure required directories exist
@@ -76,25 +132,18 @@ async function initialize(): Promise<void> {
       "Code Server Error",
       `Failed to start code-server: ${message}\n\nThe application will run in degraded mode.`
     );
-    // Don't exit - allow app to run in degraded mode
   }
 
-  const port = codeServerManager.port() ?? 0;
+  const port = codeServerManager?.port() ?? 0;
 
-  // 3. Create WindowManager
-  windowManager = WindowManager.create();
+  // Update ViewManager with code-server port
+  viewManager.updateCodeServerPort(port);
 
-  // 4. Create ViewManager
-  viewManager = ViewManager.create(windowManager, {
-    uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
-    codeServerPort: port,
-  });
-
-  // 5. Create ProjectStore and AppState
+  // Create ProjectStore and AppState
   const projectStore = new ProjectStore(getDataProjectsDir());
   appState = new AppState(projectStore, viewManager, port);
 
-  // 6. Initialize OpenCode services
+  // Initialize OpenCode services
   const portScanner = new SiPortScanner();
   const processTree = new PidtreeProvider();
   const instanceProbe = new HttpInstanceProbe();
@@ -112,16 +161,18 @@ async function initialize(): Promise<void> {
   appState.setAgentStatusManager(agentStatusManager);
 
   // Wire up code-server PID changes to discovery service
-  codeServerManager.onPidChanged((pid) => {
-    if (discoveryService) {
-      discoveryService.setCodeServerPid(pid);
-    }
-  });
+  if (codeServerManager) {
+    codeServerManager.onPidChanged((pid) => {
+      if (discoveryService) {
+        discoveryService.setCodeServerPid(pid);
+      }
+    });
 
-  // Set initial PID if code-server is already running
-  const currentPid = codeServerManager.pid();
-  if (currentPid !== null) {
-    discoveryService.setCodeServerPid(currentPid);
+    // Set initial PID if code-server is already running
+    const currentPid = codeServerManager.pid();
+    if (currentPid !== null) {
+      discoveryService.setCodeServerPid(currentPid);
+    }
   }
 
   // Start scan interval (1s) - DiscoveryService handles its own concurrency
@@ -131,28 +182,199 @@ async function initialize(): Promise<void> {
     }
   }, 1000);
 
-  // 7. Register IPC handlers
+  // Register IPC handlers
   registerAllHandlers(appState, viewManager);
 
-  // 8. Load UI layer HTML
-  const uiView = viewManager.getUIView();
-  await uiView.webContents.loadFile(nodePath.join(__dirname, "../renderer/index.html"));
-
-  // 9. Open DevTools in development only (detached to avoid interfering with UI layer)
-  if (!app.isPackaged) {
-    uiView.webContents.openDevTools({ mode: "detach" });
-  }
-
-  // 10. Load persisted projects
+  // Load persisted projects
   await appState.loadPersistedProjects();
 
-  // 11. Set first workspace active if any projects loaded
+  // Set first workspace active if any projects loaded
   const projects = appState.getAllProjects();
   if (projects.length > 0) {
     const firstWorkspace = projects[0]?.workspaces[0];
     if (firstWorkspace) {
       viewManager.setActiveWorkspace(firstWorkspace.path);
     }
+  }
+}
+
+/**
+ * Creates setup event emitters for the setup process.
+ *
+ * CRITICAL: emitComplete is async and waits for startServices() to complete
+ * before emitting setup:complete to the renderer. This ensures that all
+ * IPC handlers are registered before MainView mounts and calls them.
+ */
+function createSetupEmitters(): {
+  emitProgress: (progress: SetupProgress) => void;
+  emitComplete: () => Promise<void>;
+  emitError: (error: SetupErrorPayload) => void;
+} {
+  return {
+    emitProgress: emitSetupProgress,
+    emitComplete: async () => {
+      // CRITICAL: Start services FIRST, so IPC handlers are registered
+      await startServices();
+      // THEN emit setup:complete to renderer - MainView can now safely call IPC
+      emitSetupComplete();
+    },
+    emitError: emitSetupError,
+  };
+}
+
+/**
+ * Runs the setup process: clean, setup, emit events.
+ * Called after setup:ready returns { ready: false }.
+ *
+ * Uses setupInProgress guard to prevent multiple concurrent setup processes
+ * if setupReady() is called rapidly multiple times.
+ */
+async function runSetupProcess(): Promise<void> {
+  if (!vscodeSetupService) return;
+
+  // Guard: prevent multiple concurrent setup processes
+  if (setupInProgress) {
+    return; // Already running, ignore duplicate calls
+  }
+  setupInProgress = true;
+
+  const emitters = createSetupEmitters();
+
+  try {
+    // Clean any partial setup state first
+    await vscodeSetupService.cleanVscodeDir();
+
+    // Run setup with progress callbacks
+    const result = await vscodeSetupService.setup((progress) => {
+      emitters.emitProgress(progress);
+    });
+
+    if (result.success) {
+      await emitters.emitComplete();
+    } else {
+      emitters.emitError({
+        message: result.error.message,
+        code: result.error.code ?? result.error.type,
+      });
+    }
+  } catch (error) {
+    emitters.emitError({
+      message: error instanceof Error ? error.message : String(error),
+      code: "unknown",
+    });
+  } finally {
+    setupInProgress = false;
+  }
+}
+
+/**
+ * Registers the setup:ready handler that checks status and triggers setup if needed.
+ * This handler is registered EARLY, before any mode branching.
+ *
+ * IMPORTANT: If setup is complete, this handler ensures startServices() has run
+ * before returning. This handles edge cases where the setup marker appeared
+ * between bootstrap()'s check and this handler's check.
+ */
+function registerSetupReadyHandler(): void {
+  if (!vscodeSetupService) return;
+
+  const setupService = vscodeSetupService;
+
+  // Handler that checks status and triggers setup if needed
+  ipcMain.handle(IpcChannels.SETUP_READY, async () => {
+    const isComplete = await setupService.isSetupComplete();
+
+    if (!isComplete) {
+      // Trigger setup asynchronously after returning response
+      // This allows renderer to display SetupScreen before setup events arrive
+      setImmediate(() => {
+        void runSetupProcess();
+      });
+      return { ready: false };
+    }
+
+    // Setup is complete - ensure services are started before returning.
+    // This handles edge cases where setupComplete was false in bootstrap()
+    // but the marker appeared before this handler was called.
+    await startServices();
+    return { ready: true };
+  });
+}
+
+/**
+ * Registers setup retry and quit handlers.
+ * These handlers are registered along with setup:ready.
+ */
+function registerSetupRetryAndQuitHandlers(): void {
+  if (!vscodeSetupService) return;
+
+  const emitters = createSetupEmitters();
+
+  ipcMain.handle(IpcChannels.SETUP_RETRY, createSetupRetryHandler(vscodeSetupService, emitters));
+  ipcMain.handle(
+    IpcChannels.SETUP_QUIT,
+    createSetupQuitHandler(() => app.quit())
+  );
+}
+
+/**
+ * Bootstraps the application.
+ *
+ * This is the first phase of the two-phase startup:
+ * bootstrap() → startServices()
+ *
+ * The initialization flow is:
+ * 1. Create VscodeSetupService (needed for setup:ready handler)
+ * 2. Create WindowManager and ViewManager
+ * 3. Register setup:ready handler (ALWAYS - this is the entry point for renderer)
+ * 4. Register setup:retry and setup:quit handlers
+ * 5. Load UI (renderer will call setupReady() in onMount)
+ * 6. Handler returns { ready: true/false }
+ *    - If ready: renderer shows MainView, main registers normal handlers
+ *    - If not ready: renderer shows SetupScreen, main runs setup asynchronously
+ */
+async function bootstrap(): Promise<void> {
+  // 1. Disable application menu
+  Menu.setApplicationMenu(null);
+
+  // 2. Create VscodeSetupService early (needed for setup:ready handler)
+  const processRunner = new ExecaProcessRunner();
+  vscodeSetupService = new VscodeSetupService(processRunner, "code-server");
+
+  // 3. Check if setup is already complete (determines code-server startup)
+  const setupComplete = await vscodeSetupService.isSetupComplete();
+
+  // 4. Create WindowManager
+  windowManager = WindowManager.create();
+
+  // 5. Create ViewManager with port=0 initially
+  // Port will be updated when startServices() runs
+  viewManager = ViewManager.create(windowManager, {
+    uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
+    codeServerPort: 0,
+  });
+
+  // 6. Register setup:ready handler EARLY (before loading UI)
+  // This handler is ALWAYS registered and returns { ready: boolean }
+  registerSetupReadyHandler();
+
+  // 7. Register setup:retry and setup:quit handlers
+  registerSetupRetryAndQuitHandlers();
+
+  // 8. If setup is complete, start services immediately
+  // This is done BEFORE loading UI so handlers are ready when MainView mounts
+  if (setupComplete) {
+    await startServices();
+  }
+
+  // 9. Load UI layer HTML
+  // Renderer will call setupReady() in onMount and route based on response
+  const uiView = viewManager.getUIView();
+  await uiView.webContents.loadFile(nodePath.join(__dirname, "../renderer/index.html"));
+
+  // 10. Open DevTools in development only
+  if (!app.isPackaged) {
+    uiView.webContents.openDevTools({ mode: "detach" });
   }
 }
 
@@ -195,7 +417,7 @@ async function cleanup(): Promise<void> {
 }
 
 // App lifecycle handlers
-app.whenReady().then(initialize).catch(console.error);
+app.whenReady().then(bootstrap).catch(console.error);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
@@ -205,7 +427,7 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (windowManager === null) {
-    void initialize().catch(console.error);
+    void bootstrap().catch(console.error);
   }
 });
 

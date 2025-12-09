@@ -6,7 +6,13 @@
  * Serialized error format for IPC transport.
  */
 export interface SerializedError {
-  readonly type: "git" | "workspace" | "code-server" | "project-store" | "opencode";
+  readonly type:
+    | "git"
+    | "workspace"
+    | "code-server"
+    | "project-store"
+    | "opencode"
+    | "vscode-setup";
   readonly message: string;
   readonly code?: string;
 }
@@ -72,6 +78,8 @@ export abstract class ServiceError extends Error {
         return new ProjectStoreError(json.message, json.code);
       case "opencode":
         return new OpenCodeError(json.message, json.code);
+      case "vscode-setup":
+        return new VscodeSetupError(json.message, json.code);
     }
   }
 }
@@ -109,6 +117,13 @@ export class ProjectStoreError extends ServiceError {
  */
 export class OpenCodeError extends ServiceError {
   readonly type = "opencode" as const;
+}
+
+/**
+ * Error from VS Code setup operations.
+ */
+export class VscodeSetupError extends ServiceError {
+  readonly type = "vscode-setup" as const;
 }
 
 /**

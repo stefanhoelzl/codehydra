@@ -47,6 +47,10 @@ export {
   getDataRootDir,
   getDataProjectsDir,
   getProjectWorkspacesDir,
+  getVscodeDir,
+  getVscodeExtensionsDir,
+  getVscodeUserDataDir,
+  getVscodeSetupMarkerPath,
   sanitizeWorkspaceName,
   unsanitizeWorkspaceName,
   encodePathForUrl,
@@ -54,6 +58,20 @@ export {
 } from "./platform/paths";
 export { findAvailablePort, spawnProcess } from "./platform/process";
 export type { SpawnProcessOptions } from "./platform/process";
+
+// VSCode setup
+export { VscodeSetupService, CURRENT_SETUP_VERSION } from "./vscode-setup";
+export type {
+  IVscodeSetup,
+  SetupResult,
+  SetupError,
+  SetupStep,
+  SetupProgress,
+  ProgressCallback,
+  SetupMarker,
+  ProcessRunner,
+  ProcessResult,
+} from "./vscode-setup";
 
 /**
  * Factory function to create a GitWorktreeProvider with a SimpleGitClient.

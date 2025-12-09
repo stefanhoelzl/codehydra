@@ -52,6 +52,13 @@ const mockApi = vi.hoisted(() => ({
   onShortcutEnable: vi.fn(() => vi.fn()),
   onShortcutDisable: vi.fn(() => vi.fn()),
   onAgentStatusChanged: vi.fn(() => vi.fn()),
+  // Setup API methods
+  setupReady: vi.fn().mockResolvedValue({ ready: true }),
+  setupRetry: vi.fn().mockResolvedValue(undefined),
+  setupQuit: vi.fn().mockResolvedValue(undefined),
+  onSetupProgress: vi.fn(() => vi.fn()),
+  onSetupComplete: vi.fn(() => vi.fn()),
+  onSetupError: vi.fn(() => vi.fn()),
 }));
 
 // Mock the API module before any imports use it
@@ -63,6 +70,8 @@ import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
+import * as setupStore from "$lib/stores/setup.svelte.js";
+import type { SetupProgress, SetupErrorPayload } from "@shared/ipc";
 
 describe("App component", () => {
   beforeEach(() => {
@@ -72,10 +81,13 @@ describe("App component", () => {
     dialogsStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
+    setupStore.resetSetup();
     // Default to returning empty projects
     mockApi.listProjects.mockResolvedValue([]);
     // Default to returning empty agent statuses
     mockApi.getAllAgentStatuses.mockResolvedValue({});
+    // Default to setup complete (ready mode)
+    mockApi.setupReady.mockResolvedValue({ ready: true });
   });
 
   afterEach(() => {
@@ -349,11 +361,14 @@ describe("App component", () => {
     it("should-render-shortcut-overlay-component: ShortcutOverlay is rendered", async () => {
       render(App);
 
-      // The overlay should always be in the DOM (hidden when inactive)
-      // Find the shortcut overlay by its unique class
-      const overlay = document.querySelector(".shortcut-overlay");
-      expect(overlay).toBeInTheDocument();
-      expect(overlay).toHaveAttribute("role", "status");
+      // Wait for normal app mode to be active (after listProjects resolves)
+      await waitFor(() => {
+        // The overlay should be in the DOM when in normal app mode (hidden when inactive)
+        // Find the shortcut overlay by its unique class
+        const overlay = document.querySelector(".shortcut-overlay");
+        expect(overlay).toBeInTheDocument();
+        expect(overlay).toHaveAttribute("role", "status");
+      });
     });
 
     it("should-pass-active-prop-to-overlay: overlay shows when shortcut mode active", async () => {
@@ -662,6 +677,227 @@ describe("App component", () => {
       unmount();
 
       expect(unsubAgentStatus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("setup flow handling", () => {
+    it("calls setupReady on mount", async () => {
+      render(App);
+
+      await waitFor(() => {
+        expect(mockApi.setupReady).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("subscribes to setup events on mount", async () => {
+      render(App);
+
+      await waitFor(() => {
+        expect(mockApi.onSetupProgress).toHaveBeenCalledTimes(1);
+        expect(mockApi.onSetupComplete).toHaveBeenCalledTimes(1);
+        expect(mockApi.onSetupError).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("unsubscribes from setup events on unmount", async () => {
+      const unsubProgress = vi.fn();
+      const unsubComplete = vi.fn();
+      const unsubError = vi.fn();
+      mockApi.onSetupProgress.mockReturnValue(unsubProgress);
+      mockApi.onSetupComplete.mockReturnValue(unsubComplete);
+      mockApi.onSetupError.mockReturnValue(unsubError);
+
+      const { unmount } = render(App);
+
+      await waitFor(() => {
+        expect(mockApi.onSetupProgress).toHaveBeenCalled();
+      });
+
+      unmount();
+
+      expect(unsubProgress).toHaveBeenCalledTimes(1);
+      expect(unsubComplete).toHaveBeenCalledTimes(1);
+      expect(unsubError).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows SetupScreen when in loading state", async () => {
+      // Keep loading state by never resolving listProjects
+      mockApi.listProjects.mockReturnValue(new Promise(() => {}));
+
+      render(App);
+
+      // Should show setup screen with loading indicator
+      await waitFor(() => {
+        expect(screen.getByText("Setting up VSCode...")).toBeInTheDocument();
+      });
+    });
+
+    it("updates setup screen on progress event", async () => {
+      // Setup mode - setupReady returns { ready: false }
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+
+      let progressCallback: ((event: SetupProgress) => void) | null = null;
+      (
+        mockApi.onSetupProgress as unknown as {
+          mockImplementation: (fn: (cb: (event: SetupProgress) => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        progressCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(progressCallback).not.toBeNull();
+      });
+
+      // Simulate progress event
+      progressCallback!({ step: "extensions", message: "Installing OpenCode extension..." });
+
+      await waitFor(() => {
+        expect(screen.getByText("Installing OpenCode extension...")).toBeInTheDocument();
+      });
+    });
+
+    it("shows SetupComplete on complete event", async () => {
+      // Setup mode - setupReady returns { ready: false }
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+
+      let completeCallback: (() => void) | null = null;
+      (
+        mockApi.onSetupComplete as unknown as {
+          mockImplementation: (fn: (cb: () => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        completeCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(completeCallback).not.toBeNull();
+      });
+
+      // Simulate complete event
+      completeCallback!();
+
+      await waitFor(() => {
+        expect(screen.getByText("Setup complete!")).toBeInTheDocument();
+      });
+    });
+
+    it("shows SetupError on error event", async () => {
+      // Setup mode - setupReady returns { ready: false }
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+
+      let errorCallback: ((event: SetupErrorPayload) => void) | null = null;
+      (
+        mockApi.onSetupError as unknown as {
+          mockImplementation: (fn: (cb: (event: SetupErrorPayload) => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        errorCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(errorCallback).not.toBeNull();
+      });
+
+      // Simulate error event
+      errorCallback!({ message: "Network error", code: "network" });
+
+      await waitFor(() => {
+        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
+        expect(screen.getByText("Error: Network error")).toBeInTheDocument();
+      });
+    });
+
+    it("calls setupRetry when Retry button clicked on error screen", async () => {
+      // Setup mode - setupReady returns { ready: false }
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+
+      let errorCallback: ((event: SetupErrorPayload) => void) | null = null;
+      (
+        mockApi.onSetupError as unknown as {
+          mockImplementation: (fn: (cb: (event: SetupErrorPayload) => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        errorCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(errorCallback).not.toBeNull();
+      });
+
+      // Trigger error state
+      errorCallback!({ message: "Failed", code: "network" });
+
+      await waitFor(() => {
+        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
+      });
+
+      // Click retry button
+      const retryButton = screen.getByRole("button", { name: "Retry" });
+      retryButton.click();
+
+      expect(mockApi.setupRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls setupQuit when Quit button clicked on error screen", async () => {
+      // Setup mode - setupReady returns { ready: false }
+      mockApi.setupReady.mockResolvedValue({ ready: false });
+
+      let errorCallback: ((event: SetupErrorPayload) => void) | null = null;
+      (
+        mockApi.onSetupError as unknown as {
+          mockImplementation: (fn: (cb: (event: SetupErrorPayload) => void) => Unsubscribe) => void;
+        }
+      ).mockImplementation((cb) => {
+        errorCallback = cb;
+        return vi.fn();
+      });
+
+      render(App);
+
+      await waitFor(() => {
+        expect(errorCallback).not.toBeNull();
+      });
+
+      // Trigger error state
+      errorCallback!({ message: "Failed", code: "network" });
+
+      await waitFor(() => {
+        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
+      });
+
+      // Click quit button
+      const quitButton = screen.getByRole("button", { name: "Quit" });
+      quitButton.click();
+
+      expect(mockApi.setupQuit).toHaveBeenCalledTimes(1);
+    });
+
+    it("transitions to normal app after listProjects succeeds", async () => {
+      // Normal mode - listProjects returns immediately
+      mockApi.listProjects.mockResolvedValue([]);
+
+      render(App);
+
+      // Should show Sidebar (normal app)
+      await waitFor(() => {
+        expect(screen.getByRole("navigation", { name: "Projects" })).toBeInTheDocument();
+      });
+
+      // Should NOT show setup screen
+      expect(screen.queryByText("Setting up VSCode...")).not.toBeInTheDocument();
     });
   });
 });

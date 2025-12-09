@@ -64,3 +64,49 @@ export function spawnProcess(
 
   return execa(command, args, execaOptions);
 }
+
+/**
+ * Result of running a process command.
+ * Compatible with vscode-setup ProcessResult interface.
+ */
+export interface ProcessResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number | null;
+}
+
+/**
+ * Interface for running external processes.
+ * Allows dependency injection for testing.
+ */
+export interface ProcessRunner {
+  run(command: string, args: readonly string[]): Promise<ProcessResult>;
+}
+
+/**
+ * Process runner implementation using execa.
+ */
+export class ExecaProcessRunner implements ProcessRunner {
+  async run(command: string, args: readonly string[]): Promise<ProcessResult> {
+    try {
+      const result = await execa(command, [...args], {
+        cleanup: true,
+        encoding: "utf8",
+        reject: false, // Don't throw on non-zero exit
+      });
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      };
+    } catch (error) {
+      // Handle ENOENT (binary not found) and other spawn errors
+      const err = error as NodeJS.ErrnoException;
+      return {
+        stdout: "",
+        stderr: err.message,
+        exitCode: null,
+      };
+    }
+  }
+}

@@ -128,6 +128,40 @@ export interface AgentGetStatusPayload {
   readonly workspacePath: string;
 }
 
+// ============ Setup Types ============
+
+/**
+ * Setup steps for progress tracking.
+ * NOTE: Mirrors services/vscode-setup/types.ts SetupStep.
+ */
+export type SetupStep = "extensions" | "config" | "finalize";
+
+/**
+ * Progress information for setup UI updates.
+ * NOTE: Mirrors services/vscode-setup/types.ts SetupProgress.
+ */
+export interface SetupProgress {
+  readonly step: SetupStep;
+  readonly message: string;
+}
+
+/**
+ * Error information for setup failures.
+ */
+export interface SetupErrorPayload {
+  readonly message: string;
+  readonly code: string;
+}
+
+/**
+ * Response from setup:ready command.
+ * Check if VS Code setup is complete.
+ * Returns ready=true if setup done, ready=false if setup needed.
+ */
+export interface SetupReadyResponse {
+  readonly ready: boolean;
+}
+
 // ============ Payload Types ============
 
 export interface ProjectOpenPayload {
@@ -221,6 +255,11 @@ export interface IpcCommands {
     response: Record<string, AggregatedAgentStatus>;
   };
   "agent:refresh": { payload: void; response: void };
+  // Setup commands (renderer → main)
+  /** Check if VS Code setup is complete. Returns ready=true if setup done, ready=false if setup needed. */
+  "setup:ready": { payload: void; response: SetupReadyResponse };
+  "setup:retry": { payload: void; response: void };
+  "setup:quit": { payload: void; response: void };
 }
 
 export interface IpcEvents {
@@ -230,6 +269,10 @@ export interface IpcEvents {
   "workspace:removed": WorkspaceRemovedEvent;
   "workspace:switched": WorkspaceSwitchedEvent;
   "agent:status-changed": AgentStatusChangedEvent;
+  // Setup events (main → renderer)
+  "setup:progress": SetupProgress;
+  "setup:complete": void;
+  "setup:error": SetupErrorPayload;
 }
 
 // ============ IPC Channel Names ============
@@ -261,4 +304,11 @@ export const IpcChannels = {
   // Shortcut events (main → renderer)
   SHORTCUT_ENABLE: "shortcut:enable",
   SHORTCUT_DISABLE: "shortcut:disable",
+  // Setup channels
+  SETUP_READY: "setup:ready",
+  SETUP_RETRY: "setup:retry",
+  SETUP_QUIT: "setup:quit",
+  SETUP_PROGRESS: "setup:progress",
+  SETUP_COMPLETE: "setup:complete",
+  SETUP_ERROR: "setup:error",
 } as const satisfies Record<string, string>;

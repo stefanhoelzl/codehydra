@@ -211,6 +211,98 @@ describe("paths module", () => {
     });
   });
 
+  describe("getVscodeDir", () => {
+    it("returns vscode subdirectory of data root in development", async () => {
+      process.env.NODE_ENV = "development";
+      const { getVscodeDir } = await import("./paths");
+
+      const result = getVscodeDir();
+
+      expect(result).toMatch(/app-data[/\\]vscode$/);
+    });
+
+    it("returns vscode subdirectory of data root in production on Linux", async () => {
+      process.env.NODE_ENV = "production";
+      vi.stubGlobal("process", {
+        ...process,
+        platform: "linux",
+        env: { ...process.env, NODE_ENV: "production", HOME: "/home/user" },
+      });
+      const { getVscodeDir } = await import("./paths");
+
+      const result = getVscodeDir();
+
+      expect(result).toBe("/home/user/.local/share/codehydra/vscode");
+    });
+
+    it("returns vscode subdirectory of data root in production on macOS", async () => {
+      process.env.NODE_ENV = "production";
+      vi.stubGlobal("process", {
+        ...process,
+        platform: "darwin",
+        env: { ...process.env, NODE_ENV: "production", HOME: "/Users/user" },
+      });
+      const { getVscodeDir } = await import("./paths");
+
+      const result = getVscodeDir();
+
+      expect(result).toBe("/Users/user/Library/Application Support/Codehydra/vscode");
+    });
+
+    it("returns vscode subdirectory of data root in production on Windows", async () => {
+      process.env.NODE_ENV = "production";
+      vi.stubGlobal("process", {
+        ...process,
+        platform: "win32",
+        env: {
+          ...process.env,
+          NODE_ENV: "production",
+          APPDATA: "C:\\Users\\user\\AppData\\Roaming",
+        },
+      });
+      const { getVscodeDir } = await import("./paths");
+
+      const result = getVscodeDir();
+
+      expect(result).toMatch(
+        /C:[/\\]Users[/\\]user[/\\]AppData[/\\]Roaming[/\\]Codehydra[/\\]vscode/
+      );
+    });
+  });
+
+  describe("getVscodeExtensionsDir", () => {
+    it("returns extensions subdirectory of vscode dir", async () => {
+      process.env.NODE_ENV = "development";
+      const { getVscodeExtensionsDir } = await import("./paths");
+
+      const result = getVscodeExtensionsDir();
+
+      expect(result).toMatch(/app-data[/\\]vscode[/\\]extensions$/);
+    });
+  });
+
+  describe("getVscodeUserDataDir", () => {
+    it("returns user-data subdirectory of vscode dir", async () => {
+      process.env.NODE_ENV = "development";
+      const { getVscodeUserDataDir } = await import("./paths");
+
+      const result = getVscodeUserDataDir();
+
+      expect(result).toMatch(/app-data[/\\]vscode[/\\]user-data$/);
+    });
+  });
+
+  describe("getVscodeSetupMarkerPath", () => {
+    it("returns .setup-completed path in vscode dir", async () => {
+      process.env.NODE_ENV = "development";
+      const { getVscodeSetupMarkerPath } = await import("./paths");
+
+      const result = getVscodeSetupMarkerPath();
+
+      expect(result).toMatch(/app-data[/\\]vscode[/\\]\.setup-completed$/);
+    });
+  });
+
   describe("encodePathForUrl", () => {
     it("encodes spaces", async () => {
       const { encodePathForUrl } = await import("./paths");

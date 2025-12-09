@@ -43,6 +43,9 @@ describe("renderer API layer", () => {
         getAgentStatus: vi.fn().mockResolvedValue({ status: "none", counts: { idle: 0, busy: 0 } }),
         getAllAgentStatuses: vi.fn().mockResolvedValue({}),
         refreshAgentStatus: vi.fn().mockResolvedValue(undefined),
+        setupReady: vi.fn().mockResolvedValue(undefined),
+        setupRetry: vi.fn().mockResolvedValue(undefined),
+        setupQuit: vi.fn().mockResolvedValue(undefined),
         onProjectOpened: vi.fn(() => vi.fn()),
         onProjectClosed: vi.fn(() => vi.fn()),
         onWorkspaceCreated: vi.fn(() => vi.fn()),
@@ -51,6 +54,9 @@ describe("renderer API layer", () => {
         onShortcutEnable: vi.fn(() => vi.fn()),
         onShortcutDisable: vi.fn(() => vi.fn()),
         onAgentStatusChanged: vi.fn(() => vi.fn()),
+        onSetupProgress: vi.fn(() => vi.fn()),
+        onSetupComplete: vi.fn(() => vi.fn()),
+        onSetupError: vi.fn(() => vi.fn()),
       };
       window.api = mockApi;
     });
@@ -108,6 +114,9 @@ describe("renderer API layer", () => {
         getAgentStatus: vi.fn().mockResolvedValue({ status: "none", counts: { idle: 0, busy: 0 } }),
         getAllAgentStatuses: vi.fn().mockResolvedValue({}),
         refreshAgentStatus: vi.fn().mockResolvedValue(undefined),
+        setupReady: vi.fn().mockResolvedValue(undefined),
+        setupRetry: vi.fn().mockResolvedValue(undefined),
+        setupQuit: vi.fn().mockResolvedValue(undefined),
         onProjectOpened: vi.fn(() => vi.fn()),
         onProjectClosed: vi.fn(() => vi.fn()),
         onWorkspaceCreated: vi.fn(() => vi.fn()),
@@ -116,6 +125,9 @@ describe("renderer API layer", () => {
         onShortcutEnable: vi.fn(() => vi.fn()),
         onShortcutDisable: vi.fn(() => vi.fn()),
         onAgentStatusChanged: vi.fn(() => vi.fn()),
+        onSetupProgress: vi.fn(() => vi.fn()),
+        onSetupComplete: vi.fn(() => vi.fn()),
+        onSetupError: vi.fn(() => vi.fn()),
       };
       window.api = mockApi;
 
