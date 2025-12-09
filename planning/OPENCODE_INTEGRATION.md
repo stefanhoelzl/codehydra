@@ -1,6 +1,6 @@
 ---
-status: CLEANUP
-last_updated: 2024-12-08
+status: COMPLETED
+last_updated: 2025-12-09
 reviewers:
   - review-typescript
   - review-electron
@@ -691,19 +691,19 @@ Use `vi.useFakeTimers()` for testing:
 
 ### Manual Testing Checklist
 
-- [ ] Start app with no OpenCode running → indicators show grey
-- [ ] Open OpenCode in a workspace → indicator turns green
-- [ ] Start an agent task → indicator turns red and pulses
-- [ ] Agent completes task → indicator turns green
-- [ ] Multiple agents: some idle, some busy → mixed indicator (gradient)
-- [ ] Close OpenCode → indicator returns to grey
-- [ ] Multiple OpenCode instances in same workspace → counts aggregate
-- [ ] Restart code-server → discovery recovers (event-driven)
-- [ ] Hover indicator → tooltip shows after 500ms
-- [ ] Tab to workspace row → tooltip shows on focus
-- [ ] Press Escape → tooltip dismisses
-- [ ] Enable reduced motion in OS → pulse animation disabled
-- [ ] Screen reader announces status changes
+- [x] Start app with no OpenCode running → indicators show grey
+- [x] Open OpenCode in a workspace → indicator turns green
+- [x] Start an agent task → indicator turns red and pulses
+- [x] Agent completes task → indicator turns green
+- [x] Multiple agents: some idle, some busy → mixed indicator (gradient)
+- [x] Close OpenCode → indicator returns to grey
+- [x] Multiple OpenCode instances in same workspace → counts aggregate
+- [x] Restart code-server → discovery recovers (event-driven)
+- [x] Hover indicator → tooltip shows after 500ms
+- [x] Tab to workspace row → tooltip shows on focus
+- [x] Press Escape → tooltip dismisses
+- [x] Enable reduced motion in OS → pulse animation disabled
+- [x] Screen reader announces status changes
 
 ## Dependencies
 
