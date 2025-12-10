@@ -164,13 +164,19 @@ async function startServices(): Promise<void> {
     await codeServerManager.ensureRunning();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    dialog.showErrorBox(
-      "Code Server Error",
-      `Failed to start code-server: ${message}\n\nThe application will run in degraded mode.`
-    );
+    await dialog.showMessageBox({
+      type: "error",
+      title: "Code Server Error",
+      message: "Failed to start code-server",
+      detail: `${message}\n\nThe application cannot continue without code-server.`,
+      buttons: ["Quit"],
+    });
+    app.quit();
+    return;
   }
 
-  const port = codeServerManager?.port() ?? 0;
+  // Port is guaranteed to be set after successful ensureRunning()
+  const port = codeServerManager.port()!;
 
   // Update ViewManager with code-server port
   viewManager.updateCodeServerPort(port);
