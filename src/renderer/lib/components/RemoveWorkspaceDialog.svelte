@@ -109,11 +109,11 @@
   {/snippet}
 
   {#snippet actions()}
-    <button type="button" class="cancel-button" onclick={handleCancel} disabled={isSubmitting}>
-      Cancel
-    </button>
     <button type="button" class="ok-button" onclick={handleSubmit} disabled={isSubmitting}>
       {isSubmitting ? "Removing..." : "Remove"}
+    </button>
+    <button type="button" class="cancel-button" onclick={handleCancel} disabled={isSubmitting}>
+      Cancel
     </button>
   {/snippet}
 </Dialog>

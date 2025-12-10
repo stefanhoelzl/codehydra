@@ -137,9 +137,6 @@
   {/snippet}
 
   {#snippet actions()}
-    <button type="button" class="cancel-button" onclick={handleCancel} disabled={isSubmitting}>
-      Cancel
-    </button>
     <button
       type="button"
       class="ok-button"
@@ -147,6 +144,9 @@
       disabled={!isFormValid || isSubmitting}
     >
       {isSubmitting ? "Creating..." : "Create"}
+    </button>
+    <button type="button" class="cancel-button" onclick={handleCancel} disabled={isSubmitting}>
+      Cancel
     </button>
   {/snippet}
 </Dialog>

@@ -143,7 +143,8 @@
 
   .dialog-actions {
     display: flex;
-    justify-content: flex-end;
+    flex-direction: row-reverse;
+    justify-content: flex-start;
     gap: 8px;
   }
 </style>
