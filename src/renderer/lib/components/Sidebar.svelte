@@ -84,104 +84,111 @@
     <h2>PROJECTS</h2>
   </header>
 
-  {#if loadingState === "loading"}
-    <div class="loading-state" role="status">
-      <span class="loading-spinner">&#9673;</span> Loading projects...
-    </div>
-  {:else if loadingState === "error"}
-    <div class="error-state" role="alert">
-      <p>{loadingError ?? "An error occurred"}</p>
-    </div>
-  {:else if projects.length === 0}
-    <EmptyState {onOpenProject} {shortcutModeActive} />
-  {:else}
-    <ul class="project-list">
-      {#each projects as project, projectIndex (project.path)}
-        <li class="project-item">
-          <div class="project-header">
-            <span class="project-name" title={project.path}>{project.name}</span>
-            <div class="project-actions">
-              <button
-                type="button"
-                class="action-btn"
-                id={`add-ws-${project.path}`}
-                aria-label="Add workspace"
-                onclick={() => handleAddWorkspace(project.path)}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                class="action-btn"
-                id={`close-project-${project.path}`}
-                aria-label="Close project"
-                onclick={() => onCloseProject(project.path)}
-              >
-                &times;
-              </button>
-            </div>
-          </div>
-          <ul class="workspace-list">
-            {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
-              {@const globalIndex = getWorkspaceGlobalIndex(projects, projectIndex, workspaceIndex)}
-              {@const displayIndex = formatIndexDisplay(globalIndex)}
-              {@const shortcutHint = getShortcutHint(globalIndex)}
-              {@const agentStatus = getStatus(workspace.path)}
-              <li
-                class="workspace-item"
-                class:active={workspace.path === activeWorkspacePath}
-                aria-current={workspace.path === activeWorkspacePath ? "true" : undefined}
-              >
+  <div class="sidebar-content">
+    {#if loadingState === "loading"}
+      <div class="loading-state" role="status">
+        <span class="loading-spinner">&#9673;</span> Loading projects...
+      </div>
+    {:else if loadingState === "error"}
+      <div class="error-state" role="alert">
+        <p>{loadingError ?? "An error occurred"}</p>
+      </div>
+    {:else if projects.length === 0}
+      <EmptyState />
+    {:else}
+      <ul class="project-list">
+        {#each projects as project, projectIndex (project.path)}
+          <li class="project-item">
+            <div class="project-header">
+              <span class="project-name" title={project.path}>{project.name}</span>
+              <div class="project-actions">
                 <button
                   type="button"
-                  class="workspace-btn"
-                  aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
-                  onclick={() => onSwitchWorkspace(workspace.path)}
+                  class="action-btn"
+                  id={`add-ws-${project.path}`}
+                  aria-label="Add workspace"
+                  onclick={() => handleAddWorkspace(project.path)}
                 >
-                  {#if shortcutModeActive}
-                    <span
-                      class="shortcut-index"
-                      class:shortcut-index--dimmed={displayIndex === null}
-                      aria-hidden="true"
-                    >
-                      {displayIndex ?? "·"}
-                    </span>
-                  {/if}
-                  {workspace.name}
+                  +
                 </button>
                 <button
                   type="button"
-                  class="action-btn remove-btn"
-                  id={`remove-ws-${workspace.path}`}
-                  aria-label="Remove workspace"
-                  onclick={() => handleRemoveWorkspace(workspace.path)}
+                  class="action-btn"
+                  id={`close-project-${project.path}`}
+                  aria-label="Close project"
+                  onclick={() => onCloseProject(project.path)}
                 >
                   &times;
                 </button>
-                <AgentStatusIndicator
-                  idleCount={agentStatus.counts.idle}
-                  busyCount={agentStatus.counts.busy}
-                />
-              </li>
-            {/each}
-          </ul>
-        </li>
-      {/each}
-    </ul>
-    <div class="sidebar-footer">
-      <button
-        type="button"
-        class="open-project-btn"
-        aria-label={"Open Project" + (shortcutModeActive ? " - Press O" : "")}
-        onclick={onOpenProject}
-      >
-        {#if shortcutModeActive}
-          <span class="shortcut-index" aria-hidden="true">O</span>
-        {/if}
-        Open Project
-      </button>
-    </div>
-  {/if}
+              </div>
+            </div>
+            <ul class="workspace-list">
+              {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
+                {@const globalIndex = getWorkspaceGlobalIndex(
+                  projects,
+                  projectIndex,
+                  workspaceIndex
+                )}
+                {@const displayIndex = formatIndexDisplay(globalIndex)}
+                {@const shortcutHint = getShortcutHint(globalIndex)}
+                {@const agentStatus = getStatus(workspace.path)}
+                <li
+                  class="workspace-item"
+                  class:active={workspace.path === activeWorkspacePath}
+                  aria-current={workspace.path === activeWorkspacePath ? "true" : undefined}
+                >
+                  <button
+                    type="button"
+                    class="workspace-btn"
+                    aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
+                    onclick={() => onSwitchWorkspace(workspace.path)}
+                  >
+                    {#if shortcutModeActive}
+                      <span
+                        class="shortcut-index"
+                        class:shortcut-index--dimmed={displayIndex === null}
+                        aria-hidden="true"
+                      >
+                        {displayIndex ?? "·"}
+                      </span>
+                    {/if}
+                    {workspace.name}
+                  </button>
+                  <button
+                    type="button"
+                    class="action-btn remove-btn"
+                    id={`remove-ws-${workspace.path}`}
+                    aria-label="Remove workspace"
+                    onclick={() => handleRemoveWorkspace(workspace.path)}
+                  >
+                    &times;
+                  </button>
+                  <AgentStatusIndicator
+                    idleCount={agentStatus.counts.idle}
+                    busyCount={agentStatus.counts.busy}
+                  />
+                </li>
+              {/each}
+            </ul>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+
+  <div class="sidebar-footer">
+    <button
+      type="button"
+      class="open-project-btn"
+      aria-label={"Open Project" + (shortcutModeActive ? " - Press O" : "")}
+      onclick={onOpenProject}
+    >
+      {#if shortcutModeActive}
+        <span class="shortcut-index" aria-hidden="true">O</span>
+      {/if}
+      Open Project
+    </button>
+  </div>
 </nav>
 
 <style>
@@ -233,11 +240,15 @@
     color: var(--ch-error-fg);
   }
 
+  .sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+  }
+
   .project-list {
     list-style: none;
     padding: 0;
     margin: 0;
-    flex: 1;
   }
 
   .project-item {

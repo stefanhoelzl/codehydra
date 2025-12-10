@@ -381,6 +381,15 @@ describe("Sidebar component", () => {
       // The "O" hint should not be present
       expect(screen.queryByText("O")).not.toBeInTheDocument();
     });
+
+    it("should-show-O-on-open-project-button-in-empty-state-when-shortcut-mode-active", () => {
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [], shortcutModeActive: true },
+      });
+
+      // The button should contain "O" hint even when no projects
+      expect(screen.getByText("O")).toBeInTheDocument();
+    });
   });
 
   describe("agent status indicator", () => {
