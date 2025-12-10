@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   createGitWorktreeProvider,
   type IWorkspaceProvider,
+  type PathProvider,
   type ProjectStore,
   type Workspace,
   urlForFolder,
@@ -32,14 +33,21 @@ interface OpenProject {
 export class AppState {
   private readonly projectStore: ProjectStore;
   private readonly viewManager: IViewManager;
+  private readonly pathProvider: PathProvider;
   private readonly codeServerPort: number;
   private readonly openProjects: Map<string, OpenProject> = new Map();
   private discoveryService: DiscoveryService | null = null;
   private agentStatusManager: AgentStatusManager | null = null;
 
-  constructor(projectStore: ProjectStore, viewManager: IViewManager, codeServerPort: number) {
+  constructor(
+    projectStore: ProjectStore,
+    viewManager: IViewManager,
+    pathProvider: PathProvider,
+    codeServerPort: number
+  ) {
     this.projectStore = projectStore;
     this.viewManager = viewManager;
+    this.pathProvider = pathProvider;
     this.codeServerPort = codeServerPort;
   }
 
@@ -81,7 +89,8 @@ export class AppState {
    */
   async openProject(projectPath: string): Promise<Project> {
     // Create workspace provider (validates it's a git repo)
-    const provider = await createGitWorktreeProvider(projectPath);
+    const workspacesDir = this.pathProvider.getProjectWorkspacesDir(projectPath);
+    const provider = await createGitWorktreeProvider(projectPath, workspacesDir);
 
     // Discover existing workspaces (excludes main directory)
     const workspaces = await provider.discover();

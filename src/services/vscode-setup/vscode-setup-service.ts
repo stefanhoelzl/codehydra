@@ -5,13 +5,7 @@
 
 import { readFile, rm, mkdir, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  getDataRootDir,
-  getVscodeDir,
-  getVscodeExtensionsDir,
-  getVscodeUserDataDir,
-  getVscodeSetupMarkerPath,
-} from "../platform/paths";
+import type { PathProvider } from "../platform/path-provider";
 import { VscodeSetupError } from "../errors";
 import {
   CURRENT_SETUP_VERSION,
@@ -28,10 +22,16 @@ import {
  */
 export class VscodeSetupService implements IVscodeSetup {
   private readonly processRunner: ProcessRunner;
+  private readonly pathProvider: PathProvider;
   private readonly codeServerBinaryPath: string;
 
-  constructor(processRunner: ProcessRunner, codeServerBinaryPath: string) {
+  constructor(
+    processRunner: ProcessRunner,
+    pathProvider: PathProvider,
+    codeServerBinaryPath: string
+  ) {
     this.processRunner = processRunner;
+    this.pathProvider = pathProvider;
     this.codeServerBinaryPath = codeServerBinaryPath;
   }
 
@@ -89,8 +89,8 @@ export class VscodeSetupService implements IVscodeSetup {
    * @throws VscodeSetupError if path is not under app data directory (security validation)
    */
   async cleanVscodeDir(): Promise<void> {
-    const vscodeDir = getVscodeDir();
-    const appDataRoot = getDataRootDir();
+    const vscodeDir = this.pathProvider.vscodeDir;
+    const appDataRoot = this.pathProvider.dataRootDir;
 
     // Security: Validate path is under app data directory
     if (!vscodeDir.startsWith(appDataRoot)) {
@@ -117,7 +117,10 @@ export class VscodeSetupService implements IVscodeSetup {
   async installCustomExtensions(onProgress?: ProgressCallback): Promise<void> {
     onProgress?.({ step: "extensions", message: "Installing codehydra extension..." });
 
-    const extensionDir = join(getVscodeExtensionsDir(), "codehydra.vscode-0.0.1-universal");
+    const extensionDir = join(
+      this.pathProvider.vscodeExtensionsDir,
+      "codehydra.vscode-0.0.1-universal"
+    );
     const packageJsonPath = join(extensionDir, "package.json");
 
     // Check if extension already exists (idempotency)
@@ -188,7 +191,7 @@ module.exports = { activate, deactivate };
   async writeConfigFiles(onProgress?: ProgressCallback): Promise<void> {
     onProgress?.({ step: "config", message: "Writing configuration..." });
 
-    const userDir = join(getVscodeUserDataDir(), "User");
+    const userDir = join(this.pathProvider.vscodeUserDataDir, "User");
     await mkdir(userDir, { recursive: true });
 
     // VS Code settings
@@ -219,7 +222,11 @@ module.exports = { activate, deactivate };
       completedAt: new Date().toISOString(),
     };
 
-    await writeFile(getVscodeSetupMarkerPath(), JSON.stringify(marker, null, 2), "utf-8");
+    await writeFile(
+      this.pathProvider.vscodeSetupMarkerPath,
+      JSON.stringify(marker, null, 2),
+      "utf-8"
+    );
   }
 
   /**
@@ -234,7 +241,7 @@ module.exports = { activate, deactivate };
       "--install-extension",
       "sst-dev.opencode",
       "--extensions-dir",
-      getVscodeExtensionsDir(),
+      this.pathProvider.vscodeExtensionsDir,
     ]);
     const result = await proc.wait();
 
@@ -270,7 +277,7 @@ module.exports = { activate, deactivate };
    */
   private async readMarker(): Promise<SetupMarker | null> {
     try {
-      const content = await readFile(getVscodeSetupMarkerPath(), "utf-8");
+      const content = await readFile(this.pathProvider.vscodeSetupMarkerPath, "utf-8");
       const marker = JSON.parse(content) as SetupMarker;
       // Validate marker structure
       if (typeof marker.version === "number" && typeof marker.completedAt === "string") {

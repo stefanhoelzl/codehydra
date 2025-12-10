@@ -8,19 +8,12 @@ import {
   type ProcessResult,
 } from "./types";
 import type { SpawnedProcess } from "../platform/process";
+import type { PathProvider } from "../platform/path-provider";
+import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import * as fs from "node:fs/promises";
 
 // Mock fs/promises
 vi.mock("node:fs/promises");
-
-// Mock paths module
-vi.mock("../platform/paths", () => ({
-  getDataRootDir: vi.fn(() => "/mock"),
-  getVscodeDir: vi.fn(() => "/mock/vscode"),
-  getVscodeExtensionsDir: vi.fn(() => "/mock/vscode/extensions"),
-  getVscodeUserDataDir: vi.fn(() => "/mock/vscode/user-data"),
-  getVscodeSetupMarkerPath: vi.fn(() => "/mock/vscode/.setup-completed"),
-}));
 
 /**
  * Create a mock SpawnedProcess with controllable wait() result.
@@ -35,12 +28,20 @@ function createMockSpawnedProcess(result: ProcessResult): SpawnedProcess {
 
 describe("VscodeSetupService", () => {
   let mockProcessRunner: ProcessRunner;
+  let mockPathProvider: PathProvider;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockProcessRunner = {
       run: vi.fn(),
     };
+    mockPathProvider = createMockPathProvider({
+      dataRootDir: "/mock",
+      vscodeDir: "/mock/vscode",
+      vscodeExtensionsDir: "/mock/vscode/extensions",
+      vscodeUserDataDir: "/mock/vscode/user-data",
+      vscodeSetupMarkerPath: "/mock/vscode/.setup-completed",
+    });
   });
 
   describe("isSetupComplete", () => {
@@ -51,7 +52,11 @@ describe("VscodeSetupService", () => {
       };
       vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(marker));
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.isSetupComplete();
 
       expect(result).toBe(true);
@@ -63,7 +68,11 @@ describe("VscodeSetupService", () => {
       error.code = "ENOENT";
       vi.mocked(fs.readFile).mockRejectedValue(error);
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.isSetupComplete();
 
       expect(result).toBe(false);
@@ -76,7 +85,11 @@ describe("VscodeSetupService", () => {
       };
       vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(marker));
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.isSetupComplete();
 
       expect(result).toBe(false);
@@ -85,7 +98,11 @@ describe("VscodeSetupService", () => {
     it("returns false when marker has invalid JSON", async () => {
       vi.mocked(fs.readFile).mockResolvedValue("invalid json");
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.isSetupComplete();
 
       expect(result).toBe(false);
@@ -96,7 +113,11 @@ describe("VscodeSetupService", () => {
     it("removes the vscode directory", async () => {
       vi.mocked(fs.rm).mockResolvedValue(undefined);
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await service.cleanVscodeDir();
 
       expect(fs.rm).toHaveBeenCalledWith("/mock/vscode", { recursive: true, force: true });
@@ -107,7 +128,11 @@ describe("VscodeSetupService", () => {
       error.code = "ENOENT";
       vi.mocked(fs.rm).mockRejectedValue(error);
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       // Should not throw
       await expect(service.cleanVscodeDir()).resolves.toBeUndefined();
     });
@@ -117,17 +142,26 @@ describe("VscodeSetupService", () => {
       error.code = "EACCES";
       vi.mocked(fs.rm).mockRejectedValue(error);
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await expect(service.cleanVscodeDir()).rejects.toThrow("EACCES");
     });
 
     it("validates path is under app data directory", async () => {
-      // Mock getVscodeDir to return a path outside app data
-      const paths = await import("../platform/paths");
-      vi.mocked(paths.getVscodeDir).mockReturnValue("/outside/path/vscode");
-      vi.mocked(paths.getDataRootDir).mockReturnValue("/mock/app-data");
+      // Create PathProvider with vscodeDir outside of dataRootDir
+      const invalidPathProvider = createMockPathProvider({
+        dataRootDir: "/mock/app-data",
+        vscodeDir: "/outside/path/vscode",
+      });
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        invalidPathProvider,
+        "/mock/code-server"
+      );
       await expect(service.cleanVscodeDir()).rejects.toThrow("path-validation");
     });
   });
@@ -142,7 +176,11 @@ describe("VscodeSetupService", () => {
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       const progressCallback = vi.fn();
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await service.installCustomExtensions(progressCallback);
 
       // Verify directory created
@@ -178,7 +216,11 @@ describe("VscodeSetupService", () => {
       vi.mocked(fs.mkdir).mockResolvedValue(undefined);
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await service.installCustomExtensions();
       await service.installCustomExtensions();
 
@@ -199,7 +241,11 @@ describe("VscodeSetupService", () => {
       );
       const progressCallback = vi.fn();
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await service.installMarketplaceExtensions(progressCallback);
 
       expect(mockProcessRunner.run).toHaveBeenCalledWith("/mock/code-server", [
@@ -224,7 +270,11 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.installMarketplaceExtensions();
 
       expect(result).toEqual({
@@ -246,7 +296,11 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.installMarketplaceExtensions();
 
       expect(result).toEqual({
@@ -266,7 +320,11 @@ describe("VscodeSetupService", () => {
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       const progressCallback = vi.fn();
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await service.writeConfigFiles(progressCallback);
 
       // Verify directory created
@@ -302,7 +360,11 @@ describe("VscodeSetupService", () => {
         }
       });
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await service.writeConfigFiles();
 
       const settings = JSON.parse(writtenSettings);
@@ -321,7 +383,11 @@ describe("VscodeSetupService", () => {
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       const progressCallback = vi.fn();
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       await service.writeCompletionMarker(progressCallback);
 
       // Verify marker written
@@ -366,7 +432,11 @@ describe("VscodeSetupService", () => {
       );
 
       const progressCallback = vi.fn();
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.setup(progressCallback);
 
       expect(result).toEqual({ success: true });
@@ -394,7 +464,11 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(mockProcessRunner, "/mock/code-server");
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server"
+      );
       const result = await service.setup();
 
       expect(result.success).toBe(false);

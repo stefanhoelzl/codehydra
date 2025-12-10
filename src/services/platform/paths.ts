@@ -1,92 +1,20 @@
 /**
  * Platform-specific path utilities for the application.
+ *
+ * NOTE: Build-mode-dependent path functions have been moved to PathProvider.
+ * Use DefaultPathProvider (or inject PathProvider) for paths like:
+ * - dataRootDir
+ * - projectsDir
+ * - vscodeDir, vscodeExtensionsDir, vscodeUserDataDir
+ * - vscodeSetupMarkerPath
+ * - electronDataDir
+ * - getProjectWorkspacesDir()
+ *
+ * This file contains only pure utility functions with no build-mode dependencies.
  */
 
 import { createHash } from "crypto";
-import { join, basename } from "path";
-
-/**
- * Get the root directory for application data.
- *
- * - Development: `./app-data/` relative to process.cwd()
- * - Production Linux: `~/.local/share/codehydra/`
- * - Production macOS: `~/Library/Application Support/Codehydra/`
- * - Production Windows: `%APPDATA%\Codehydra\`
- */
-export function getDataRootDir(): string {
-  if (process.env.NODE_ENV !== "production") {
-    return join(process.cwd(), "app-data");
-  }
-
-  switch (process.platform) {
-    case "darwin": {
-      const home = process.env.HOME;
-      if (!home) throw new Error("HOME environment variable not set");
-      return join(home, "Library", "Application Support", "Codehydra");
-    }
-    case "win32": {
-      const appData = process.env.APPDATA;
-      if (!appData) throw new Error("APPDATA environment variable not set");
-      return join(appData, "Codehydra");
-    }
-    case "linux":
-    default: {
-      const home = process.env.HOME;
-      if (!home) throw new Error("HOME environment variable not set");
-      return join(home, ".local", "share", "codehydra");
-    }
-  }
-}
-
-/**
- * Get the directory where project data is stored.
- * @returns `<dataRoot>/projects/`
- */
-export function getDataProjectsDir(): string {
-  return join(getDataRootDir(), "projects");
-}
-
-/**
- * Get the directory for VS Code configuration and extensions.
- * @returns `<dataRoot>/vscode/`
- */
-export function getVscodeDir(): string {
-  return join(getDataRootDir(), "vscode");
-}
-
-/**
- * Get the directory for VS Code extensions.
- * @returns `<dataRoot>/vscode/extensions/`
- */
-export function getVscodeExtensionsDir(): string {
-  return join(getVscodeDir(), "extensions");
-}
-
-/**
- * Get the directory for VS Code user data.
- * @returns `<dataRoot>/vscode/user-data/`
- */
-export function getVscodeUserDataDir(): string {
-  return join(getVscodeDir(), "user-data");
-}
-
-/**
- * Get the path to the VS Code setup completion marker file.
- * @returns `<dataRoot>/vscode/.setup-completed`
- */
-export function getVscodeSetupMarkerPath(): string {
-  return join(getVscodeDir(), ".setup-completed");
-}
-
-/**
- * Get the directory for Electron/Chrome data (session, cache, etc.).
- * Used to isolate Electron's data from system defaults to avoid conflicts
- * when running nested CodeHydra instances.
- * @returns `<dataRoot>/electron/`
- */
-export function getElectronDataDir(): string {
-  return join(getDataRootDir(), "electron");
-}
+import { basename } from "path";
 
 /**
  * Generate a directory name for a project based on its path.
@@ -99,15 +27,6 @@ export function projectDirName(projectPath: string): string {
   const folderName = basename(projectPath);
   const hash = createHash("sha256").update(projectPath).digest("hex").substring(0, 8);
   return `${folderName}-${hash}`;
-}
-
-/**
- * Get the workspaces directory for a project.
- * @param projectPath Absolute path to the project
- * @returns `<projectsDir>/<name>-<hash>/workspaces/`
- */
-export function getProjectWorkspacesDir(projectPath: string): string {
-  return join(getDataProjectsDir(), projectDirName(projectPath), "workspaces");
 }
 
 /**

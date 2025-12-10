@@ -10,12 +10,10 @@ import nodePath from "node:path";
 import {
   CodeServerManager,
   ProjectStore,
-  getDataRootDir,
-  getDataProjectsDir,
-  getVscodeExtensionsDir,
-  getVscodeUserDataDir,
-  getElectronDataDir,
+  DefaultPathProvider,
   type CodeServerConfig,
+  type PathProvider,
+  type BuildInfo,
 } from "../services";
 import { VscodeSetupService } from "../services/vscode-setup";
 import { ExecaProcessRunner } from "../services/platform/process";
@@ -31,8 +29,16 @@ import { ViewManager } from "./managers/view-manager";
 import { AppState } from "./app-state";
 import { registerAllHandlers, createSetupRetryHandler, createSetupQuitHandler } from "./ipc";
 import { IpcChannels, type SetupProgress, type SetupErrorPayload } from "../shared/ipc";
+import { ElectronBuildInfo } from "./build-info";
+import { NodePlatformInfo } from "./platform-info";
 
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
+
+// Module-level instances - created before app.whenReady()
+// These are created early because redirectElectronDataPaths() needs pathProvider
+const buildInfo: BuildInfo = new ElectronBuildInfo();
+const platformInfo = new NodePlatformInfo();
+const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
 /**
  * Redirect Electron's data paths to isolate from system defaults.
@@ -42,7 +48,7 @@ const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
  * CRITICAL: Must be called BEFORE app.whenReady()
  */
 function redirectElectronDataPaths(): void {
-  const electronDir = getElectronDataDir();
+  const electronDir = pathProvider.electronDataDir;
   ["userData", "sessionData", "logs", "crashDumps"].forEach((name) => {
     app.setPath(name, nodePath.join(electronDir, name));
   });
@@ -70,14 +76,13 @@ if (process.env.CODEHYDRA_DISABLE_HARDWARE_ACCELERATION === "true") {
 }
 
 /**
- * Creates the code-server configuration.
+ * Creates the code-server configuration using pathProvider.
  */
 function createCodeServerConfig(): CodeServerConfig {
-  const dataRoot = getDataRootDir();
   return {
-    runtimeDir: nodePath.join(dataRoot, "runtime"),
-    extensionsDir: getVscodeExtensionsDir(),
-    userDataDir: getVscodeUserDataDir(),
+    runtimeDir: nodePath.join(pathProvider.dataRootDir, "runtime"),
+    extensionsDir: pathProvider.vscodeExtensionsDir,
+    userDataDir: pathProvider.vscodeUserDataDir,
   };
 }
 
@@ -193,8 +198,8 @@ async function startServices(): Promise<void> {
   viewManager.updateCodeServerPort(port);
 
   // Create ProjectStore and AppState
-  const projectStore = new ProjectStore(getDataProjectsDir());
-  appState = new AppState(projectStore, viewManager, port);
+  const projectStore = new ProjectStore(pathProvider.projectsDir);
+  appState = new AppState(projectStore, viewManager, pathProvider, port);
 
   // Initialize OpenCode services
   const portScanner = new SiPortScanner();
@@ -393,7 +398,7 @@ async function bootstrap(): Promise<void> {
   // 2. Create VscodeSetupService early (needed for setup:ready handler)
   // Store processRunner in module-level variable for reuse by CodeServerManager
   processRunner = new ExecaProcessRunner();
-  vscodeSetupService = new VscodeSetupService(processRunner, "code-server");
+  vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, "code-server");
 
   // 3. Check if setup is already complete (determines code-server startup)
   const setupComplete = await vscodeSetupService.isSetupComplete();
@@ -433,7 +438,7 @@ async function bootstrap(): Promise<void> {
   // 11. Open DevTools in development only
   // Note: DevTools not auto-opened to avoid z-order issues on Linux.
   // Use Ctrl+Shift+I to open manually when needed (opens detached).
-  if (!app.isPackaged) {
+  if (buildInfo.isDevelopment) {
     uiView.webContents.on("before-input-event", (event, input) => {
       if (input.control && input.shift && input.key === "I") {
         if (uiView.webContents.isDevToolsOpened()) {

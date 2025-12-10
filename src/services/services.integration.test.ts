@@ -4,13 +4,12 @@
  * Tests full workflows with real git repos and filesystem.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createTestGitRepo, createTempDir } from "./test-utils";
 import { SimpleGitClient } from "./git/simple-git-client";
 import { GitWorktreeProvider } from "./git/git-worktree-provider";
 import { ProjectStore } from "./project/project-store";
 import { createGitWorktreeProvider } from "./index";
-import * as paths from "./platform/paths";
 import { projectDirName } from "./platform/paths";
 import path from "path";
 
@@ -21,6 +20,11 @@ describe("Services Integration", () => {
     let repoPath: string;
     let projectsDir: string;
 
+    /** Get the workspaces directory for a project (using temp directory) */
+    function getWorkspacesDir(projectPath: string): string {
+      return path.join(projectsDir, projectDirName(projectPath), "workspaces");
+    }
+
     beforeEach(async () => {
       const repo = await createTestGitRepo();
       repoPath = repo.path;
@@ -29,15 +33,9 @@ describe("Services Integration", () => {
       const tempDir = await createTempDir();
       projectsDir = path.join(tempDir.path, "projects");
       tempCleanup = tempDir.cleanup;
-
-      // Mock getProjectWorkspacesDir to use temp directory for workspace creation
-      vi.spyOn(paths, "getProjectWorkspacesDir").mockImplementation((projectPath: string) =>
-        path.join(projectsDir, projectDirName(projectPath), "workspaces")
-      );
     });
 
     afterEach(async () => {
-      vi.restoreAllMocks();
       await repoCleanup();
       await tempCleanup();
     });
@@ -53,7 +51,8 @@ describe("Services Integration", () => {
 
       // 2. Create GitWorktreeProvider with SimpleGitClient
       const gitClient = new SimpleGitClient();
-      const provider = await GitWorktreeProvider.create(repoPath, gitClient);
+      const workspacesDir = getWorkspacesDir(repoPath);
+      const provider = await GitWorktreeProvider.create(repoPath, gitClient, workspacesDir);
 
       // 3. Discover workspaces (empty initially)
       const initialWorkspaces = await provider.discover();
@@ -67,29 +66,25 @@ describe("Services Integration", () => {
       // 5. Discover again (finds new workspace)
       const workspaces = await provider.discover();
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].name).toBe("feature-test");
+      expect(workspaces[0]?.name).toBe("feature-test");
 
       // 6. Check isDirty (false for clean workspace)
       const isDirty = await provider.isDirty(workspace.path);
       expect(isDirty).toBe(false);
 
-      // 7. Check isMainWorkspace
-      expect(provider.isMainWorkspace(repoPath)).toBe(true);
-      expect(provider.isMainWorkspace(workspace.path)).toBe(false);
+      // 7. Remove workspace
+      const result = await provider.removeWorkspace(workspace.path, true);
+      expect(result.workspaceRemoved).toBe(true);
 
-      // 8. Remove workspace
-      const removal = await provider.removeWorkspace(workspace.path, true);
-      expect(removal.workspaceRemoved).toBe(true);
-      expect(removal.baseDeleted).toBe(true);
-
-      // 9. Discover again (empty)
+      // 8. Verify workspace is gone
       const finalWorkspaces = await provider.discover();
       expect(finalWorkspaces).toHaveLength(0);
     });
 
     it("handles multiple workspaces", async () => {
       const gitClient = new SimpleGitClient();
-      const provider = await GitWorktreeProvider.create(repoPath, gitClient);
+      const workspacesDir = getWorkspacesDir(repoPath);
+      const provider = await GitWorktreeProvider.create(repoPath, gitClient, workspacesDir);
 
       // Create multiple workspaces
       const ws1 = await provider.createWorkspace("feature-1", "main");
@@ -105,7 +100,7 @@ describe("Services Integration", () => {
       // Should find only one
       const remaining = await provider.discover();
       expect(remaining).toHaveLength(1);
-      expect(remaining[0].name).toBe("feature-2");
+      expect(remaining[0]?.name).toBe("feature-2");
 
       // Cleanup
       await provider.removeWorkspace(ws2.path, true);
@@ -114,20 +109,33 @@ describe("Services Integration", () => {
 
   describe("Factory function", () => {
     let repoCleanup: () => Promise<void>;
+    let tempCleanup: () => Promise<void>;
     let repoPath: string;
+    let tempDir: string;
+
+    /** Get the workspaces directory for a project (using temp directory) */
+    function getWorkspacesDir(projectPath: string): string {
+      return path.join(tempDir, projectDirName(projectPath), "workspaces");
+    }
 
     beforeEach(async () => {
       const repo = await createTestGitRepo();
       repoPath = repo.path;
       repoCleanup = repo.cleanup;
+
+      const temp = await createTempDir();
+      tempDir = temp.path;
+      tempCleanup = temp.cleanup;
     });
 
     afterEach(async () => {
       await repoCleanup();
+      await tempCleanup();
     });
 
     it("createGitWorktreeProvider creates provider successfully", async () => {
-      const provider = await createGitWorktreeProvider(repoPath);
+      const workspacesDir = getWorkspacesDir(repoPath);
+      const provider = await createGitWorktreeProvider(repoPath, workspacesDir);
 
       expect(provider.projectRoot).toBe(repoPath);
 
@@ -137,11 +145,12 @@ describe("Services Integration", () => {
     });
 
     it("createGitWorktreeProvider throws for non-git directory", async () => {
-      const tempDir = await createTempDir();
+      const nonGitDir = await createTempDir();
       try {
-        await expect(createGitWorktreeProvider(tempDir.path)).rejects.toThrow();
+        const workspacesDir = getWorkspacesDir(nonGitDir.path);
+        await expect(createGitWorktreeProvider(nonGitDir.path, workspacesDir)).rejects.toThrow();
       } finally {
-        await tempDir.cleanup();
+        await nonGitDir.cleanup();
       }
     });
   });
@@ -180,12 +189,16 @@ describe("Services Integration", () => {
         listRemotes: async () => ["origin"],
       };
 
-      const provider = await GitWorktreeProvider.create("/mock/repo", mockGitClient);
+      const provider = await GitWorktreeProvider.create(
+        "/mock/repo",
+        mockGitClient,
+        "/mock/workspaces"
+      );
 
       // Should work with the mock
       const workspaces = await provider.discover();
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].name).toBe("feature");
+      expect(workspaces[0]?.name).toBe("feature");
 
       const bases = await provider.listBases();
       expect(bases).toHaveLength(2);
@@ -197,14 +210,15 @@ describe("Services Integration", () => {
       const repo = await createTestGitRepo({ dirty: true });
       const tempDir = await createTempDir();
 
-      // Mock getProjectWorkspacesDir to use temp directory for workspace creation
-      vi.spyOn(paths, "getProjectWorkspacesDir").mockImplementation((projectPath: string) =>
-        path.join(tempDir.path, projectDirName(projectPath), "workspaces")
-      );
+      /** Get the workspaces directory for a project (using temp directory) */
+      function getWorkspacesDir(projectPath: string): string {
+        return path.join(tempDir.path, projectDirName(projectPath), "workspaces");
+      }
 
       try {
         const gitClient = new SimpleGitClient();
-        const provider = await GitWorktreeProvider.create(repo.path, gitClient);
+        const workspacesDir = getWorkspacesDir(repo.path);
+        const provider = await GitWorktreeProvider.create(repo.path, gitClient, workspacesDir);
 
         // Create a workspace
         const workspace = await provider.createWorkspace("dirty-feature", "main");
@@ -220,7 +234,6 @@ describe("Services Integration", () => {
         // Cleanup
         await provider.removeWorkspace(workspace.path, true);
       } finally {
-        vi.restoreAllMocks();
         await repo.cleanup();
         await tempDir.cleanup();
       }

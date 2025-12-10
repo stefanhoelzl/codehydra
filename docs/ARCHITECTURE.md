@@ -172,6 +172,34 @@ App Services (pure Node.js)
 Services are unit-testable without Electron runtime.
 ```
 
+### Build Mode and Path Abstraction
+
+The application uses dependency injection to abstract build mode detection and path resolution, enabling testability and separation between Electron main process and pure Node.js services.
+
+**Interfaces (defined in `src/services/platform/`):**
+
+| Interface      | Purpose                                    |
+| -------------- | ------------------------------------------ |
+| `BuildInfo`    | Build mode detection (`isDevelopment`)     |
+| `PlatformInfo` | Platform detection (`platform`, `homeDir`) |
+| `PathProvider` | Application path resolution                |
+
+**Implementations:**
+
+| Class                 | Location        | Description                                  |
+| --------------------- | --------------- | -------------------------------------------- |
+| `ElectronBuildInfo`   | `src/main/`     | Uses `app.isPackaged`                        |
+| `NodePlatformInfo`    | `src/main/`     | Uses `process.platform`, `os.homedir()`      |
+| `DefaultPathProvider` | `src/services/` | Computes paths from BuildInfo + PlatformInfo |
+
+**Instantiation Order (in `src/main/index.ts`):**
+
+1. Module level (before `app.whenReady()`):
+   - Create `ElectronBuildInfo`, `NodePlatformInfo`, `DefaultPathProvider`
+   - Call `redirectElectronDataPaths(pathProvider)` - requires paths early
+2. In `bootstrap()`:
+   - Pass `pathProvider` to services via constructor DI
+
 ### Frontend Components (Svelte 5)
 
 | Component             | Purpose                                              |

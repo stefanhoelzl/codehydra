@@ -7,7 +7,7 @@ import type { IGitClient } from "./git-client";
 import type { IWorkspaceProvider } from "./workspace-provider";
 import type { BaseInfo, RemovalResult, UpdateBasesResult, Workspace } from "./types";
 import { WorkspaceError } from "../errors";
-import { getProjectWorkspacesDir, sanitizeWorkspaceName } from "../platform/paths";
+import { sanitizeWorkspaceName } from "../platform/paths";
 
 /**
  * Implementation of IWorkspaceProvider using git worktrees.
@@ -16,10 +16,12 @@ import { getProjectWorkspacesDir, sanitizeWorkspaceName } from "../platform/path
 export class GitWorktreeProvider implements IWorkspaceProvider {
   readonly projectRoot: string;
   private readonly gitClient: IGitClient;
+  private readonly workspacesDir: string;
 
-  private constructor(projectRoot: string, gitClient: IGitClient) {
+  private constructor(projectRoot: string, gitClient: IGitClient, workspacesDir: string) {
     this.projectRoot = projectRoot;
     this.gitClient = gitClient;
+    this.workspacesDir = workspacesDir;
   }
 
   /**
@@ -28,13 +30,23 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
    *
    * @param projectRoot Absolute path to the git repository
    * @param gitClient Git client to use for operations
+   * @param workspacesDir Directory where worktrees will be created (from PathProvider.getProjectWorkspacesDir)
    * @returns Promise resolving to a new GitWorktreeProvider
    * @throws WorkspaceError if path is invalid or not a git repository
    */
-  static async create(projectRoot: string, gitClient: IGitClient): Promise<GitWorktreeProvider> {
+  static async create(
+    projectRoot: string,
+    gitClient: IGitClient,
+    workspacesDir: string
+  ): Promise<GitWorktreeProvider> {
     // Validate absolute path
     if (!path.isAbsolute(projectRoot)) {
       throw new WorkspaceError(`Path must be absolute: ${projectRoot}`);
+    }
+
+    // Validate workspacesDir is absolute
+    if (!path.isAbsolute(workspacesDir)) {
+      throw new WorkspaceError(`workspacesDir must be absolute: ${workspacesDir}`);
     }
 
     // Validate it's a git repository
@@ -51,7 +63,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       throw new WorkspaceError(`Failed to validate repository: ${message}`);
     }
 
-    return new GitWorktreeProvider(projectRoot, gitClient);
+    return new GitWorktreeProvider(projectRoot, gitClient, workspacesDir);
   }
 
   async discover(): Promise<readonly Workspace[]> {
@@ -99,9 +111,8 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     // Sanitize the name for filesystem (/ -> %)
     const sanitizedName = sanitizeWorkspaceName(name);
 
-    // Compute the worktree path
-    const workspacesDir = getProjectWorkspacesDir(this.projectRoot);
-    const worktreePath = path.join(workspacesDir, sanitizedName);
+    // Compute the worktree path using the configured workspaces directory
+    const worktreePath = path.join(this.workspacesDir, sanitizedName);
 
     // Create the branch
     try {

@@ -42,21 +42,26 @@ export type { ProjectConfig } from "./project/types";
 export { CURRENT_PROJECT_VERSION } from "./project/types";
 export { ProjectStore } from "./project/project-store";
 
-// Platform utilities
+// Platform utilities (pure functions - no build-mode dependencies)
 export {
-  getDataRootDir,
-  getDataProjectsDir,
-  getProjectWorkspacesDir,
-  getVscodeDir,
-  getVscodeExtensionsDir,
-  getVscodeUserDataDir,
-  getVscodeSetupMarkerPath,
-  getElectronDataDir,
   sanitizeWorkspaceName,
   unsanitizeWorkspaceName,
   encodePathForUrl,
   projectDirName,
 } from "./platform/paths";
+
+// Build info abstraction
+export type { BuildInfo } from "./platform/build-info";
+export { createMockBuildInfo } from "./platform/build-info.test-utils";
+
+// Platform info abstraction
+export type { PlatformInfo } from "./platform/platform-info";
+export { createMockPlatformInfo } from "./platform/platform-info.test-utils";
+
+// Path provider abstraction
+export type { PathProvider } from "./platform/path-provider";
+export { DefaultPathProvider } from "./platform/path-provider";
+export { createMockPathProvider } from "./platform/path-provider.test-utils";
 
 // Process utilities
 export { findAvailablePort, ExecaProcessRunner } from "./platform/process";
@@ -85,15 +90,18 @@ export type {
  * Factory function to create a GitWorktreeProvider with a SimpleGitClient.
  *
  * @param projectRoot Absolute path to the git repository
+ * @param workspacesDir Directory where worktrees will be created. Callers must obtain this
+ *   from `PathProvider.getProjectWorkspacesDir(projectRoot)` to ensure consistent worktree placement.
  * @returns Promise resolving to an IWorkspaceProvider
  * @throws WorkspaceError if path is invalid or not a git repository
  */
 export async function createGitWorktreeProvider(
-  projectRoot: string
+  projectRoot: string,
+  workspacesDir: string
 ): Promise<import("./git/workspace-provider").IWorkspaceProvider> {
   const { GitWorktreeProvider } = await import("./git/git-worktree-provider");
   const { SimpleGitClient } = await import("./git/simple-git-client");
 
   const gitClient = new SimpleGitClient();
-  return GitWorktreeProvider.create(projectRoot, gitClient);
+  return GitWorktreeProvider.create(projectRoot, gitClient, workspacesDir);
 }

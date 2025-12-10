@@ -3,6 +3,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import type { IViewManager } from "./managers/view-manager.interface";
+import { createMockPathProvider, type PathProvider } from "../services";
+
+// WORKSPACES_DIR used in mock pathProvider for workspace creation
+const WORKSPACES_DIR = "/test/workspaces";
+
+// Mock PathProvider - created fresh in beforeEach
+let mockPathProvider: PathProvider;
 
 // Mock services
 const { mockProjectStore, mockWorkspaceProvider, mockViewManager, mockCreateGitWorktreeProvider } =
@@ -91,6 +98,10 @@ describe("AppState", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockProjectStore.loadAllProjects.mockResolvedValue([]);
+    // Create mock PathProvider with getProjectWorkspacesDir returning consistent path
+    mockPathProvider = createMockPathProvider({
+      dataRootDir: WORKSPACES_DIR,
+    });
   });
 
   afterEach(() => {
@@ -102,6 +113,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -114,18 +126,24 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
       await appState.openProject("/project");
 
-      expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith("/project");
+      // createGitWorktreeProvider is called with projectPath and workspacesDir from pathProvider
+      expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith(
+        "/project",
+        mockPathProvider.getProjectWorkspacesDir("/project")
+      );
     });
 
     it("discovers workspaces from git worktrees", async () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -138,6 +156,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -153,6 +172,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -167,6 +187,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -179,6 +200,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -199,6 +221,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -214,6 +237,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -229,6 +253,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -242,6 +267,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -255,6 +281,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -270,6 +297,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -283,6 +311,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -295,6 +324,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -311,6 +341,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -324,6 +355,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -336,6 +368,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -354,13 +387,18 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
       await appState.loadPersistedProjects();
 
       expect(mockProjectStore.loadAllProjects).toHaveBeenCalled();
-      expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith("/project");
+      // createGitWorktreeProvider is called with projectPath and workspacesDir from pathProvider
+      expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith(
+        "/project",
+        mockPathProvider.getProjectWorkspacesDir("/project")
+      );
     });
 
     it("skips invalid projects", async () => {
@@ -371,6 +409,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -386,6 +425,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -399,6 +439,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 
@@ -419,6 +460,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
       appState.setAgentStatusManager(
@@ -446,6 +488,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
       appState.setAgentStatusManager(
@@ -467,6 +510,7 @@ describe("AppState", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
+        mockPathProvider,
         8080
       );
 

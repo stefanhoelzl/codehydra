@@ -289,8 +289,26 @@ class DiscoveryService {
 // Services owned and wired in main process
 // Example from bootstrap() and startServices():
 const processRunner = new ExecaProcessRunner();
-vscodeSetupService = new VscodeSetupService(processRunner, "code-server");
+vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, "code-server");
 codeServerManager = new CodeServerManager(config, processRunner);
+```
+
+**BuildInfo/PathProvider Pattern:**
+
+```typescript
+// Main process creates implementations at module level
+const buildInfo = new ElectronBuildInfo();
+const platformInfo = new NodePlatformInfo();
+const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+// Services receive PathProvider via constructor
+const vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, "code-server");
+
+// Tests use mock factories
+const mockPathProvider = createMockPathProvider({
+  vscodeDir: "/test/vscode",
+});
+const service = new VscodeSetupService(mockRunner, mockPathProvider, "code-server");
 ```
 
 ### ProcessRunner Pattern

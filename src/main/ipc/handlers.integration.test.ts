@@ -7,11 +7,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { IpcMainInvokeEvent } from "electron";
 import { createTestGitRepo, createTempDir } from "../../services/test-utils";
-import { ProjectStore } from "../../services/project/project-store";
+import { ProjectStore, createMockPathProvider, type PathProvider } from "../../services";
+import { projectDirName } from "../../services/platform/paths";
 import { AppState } from "../app-state";
 import type { IViewManager } from "../managers/view-manager.interface";
-import * as paths from "../../services/platform/paths";
-import { projectDirName } from "../../services/platform/paths";
 import path from "path";
 
 // Mock electron - need BrowserWindow for emitEvent
@@ -83,6 +82,7 @@ describe("IPC Integration Tests", () => {
   let projectsDir: string;
   let projectStore: ProjectStore;
   let viewManager: ReturnType<typeof createMockViewManager>;
+  let pathProvider: PathProvider;
   let appState: AppState;
 
   beforeEach(async () => {
@@ -96,15 +96,18 @@ describe("IPC Integration Tests", () => {
     projectsDir = tempDir.path;
     tempCleanup = tempDir.cleanup;
 
-    // Mock getProjectWorkspacesDir to use temp directory for workspace creation
-    vi.spyOn(paths, "getProjectWorkspacesDir").mockImplementation((projectPath: string) =>
-      path.join(projectsDir, projectDirName(projectPath), "workspaces")
-    );
+    // Create mock PathProvider that returns correct workspaces dir for any project
+    pathProvider = createMockPathProvider({
+      projectsDir,
+      // Override getProjectWorkspacesDir to use temp directory for workspace creation
+      getProjectWorkspacesDir: (projectPath: string) =>
+        path.join(projectsDir, projectDirName(projectPath), "workspaces"),
+    });
 
     // Create instances
     projectStore = new ProjectStore(projectsDir);
     viewManager = createMockViewManager();
-    appState = new AppState(projectStore, viewManager, 8080);
+    appState = new AppState(projectStore, viewManager, pathProvider, 8080);
   });
 
   afterEach(async () => {
