@@ -273,38 +273,14 @@ export class OpenCodeClient implements IDisposable {
         this.handleDisconnect();
       };
 
+      // OpenCode sends all events as unnamed SSE events with a "type" field in the JSON payload.
+      // Example: data: {"type":"session.status","properties":{"sessionID":"...","status":{"type":"busy"}}}
+      //
+      // This is NOT the named event format (event: session.status\ndata: ...) that would
+      // trigger addEventListener(). Therefore, we must use onmessage to receive all events.
       this.eventSource.onmessage = (event) => {
         this.handleMessage(event);
       };
-
-      // Listen for specific event types
-      this.eventSource.addEventListener("session.status", (event) => {
-        const parsed = this.parseSSEEvent("session.status", event.data);
-        if (parsed) this.emitSessionEvent(parsed);
-      });
-
-      this.eventSource.addEventListener("session.deleted", (event) => {
-        const parsed = this.parseSSEEvent("session.deleted", event.data);
-        if (parsed) this.emitSessionEvent(parsed);
-      });
-
-      this.eventSource.addEventListener("session.idle", (event) => {
-        const parsed = this.parseSSEEvent("session.idle", event.data);
-        if (parsed) this.emitSessionEvent(parsed);
-      });
-
-      this.eventSource.addEventListener("session.created", (event) => {
-        this.handleSessionCreated(event.data);
-      });
-
-      // Listen for permission events
-      this.eventSource.addEventListener("permission.updated", (event) => {
-        this.handlePermissionUpdated(event.data);
-      });
-
-      this.eventSource.addEventListener("permission.replied", (event) => {
-        this.handlePermissionReplied(event.data);
-      });
     } catch {
       this.handleDisconnect();
     }
@@ -336,31 +312,86 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Parse an SSE event into a SessionStatus.
-   * Exposed for testing.
+   * Handle incoming SSE message.
+   * Parses the OpenCode wire format and dispatches to appropriate handlers.
+   *
+   * OpenCode wire format: { type: "event.name", properties: { ... } }
    */
-  private parseSSEEvent(eventType: string, data: string): SessionStatus | null {
+  private handleMessage(event: MessageEvent): void {
     try {
-      const parsed = JSON.parse(data) as { id?: string; status?: string };
+      const data = JSON.parse(event.data as string) as {
+        type?: string;
+        properties?: {
+          sessionID?: string;
+          status?: { type?: string };
+          info?: { id?: string; parentID?: string };
+          id?: string;
+          type?: string;
+          title?: string;
+          permissionID?: string;
+          response?: string;
+        };
+      };
 
-      if (typeof parsed.id !== "string") return null;
+      if (!data.type) return;
 
-      switch (eventType) {
+      // Dispatch to appropriate handler based on event type
+      switch (data.type) {
         case "session.status":
-          if (parsed.status === "idle" || parsed.status === "busy") {
-            return { type: parsed.status, sessionId: parsed.id };
-          }
-          return null;
+          this.handleSessionStatus(data.properties);
+          break;
+        case "session.created":
+          this.handleSessionCreated(data.properties);
+          break;
         case "session.idle":
-          return { type: "idle", sessionId: parsed.id };
+          this.handleSessionIdle(data.properties);
+          break;
         case "session.deleted":
-          return { type: "deleted", sessionId: parsed.id };
-        default:
-          return null;
+          this.handleSessionDeleted(data.properties);
+          break;
+        case "permission.updated":
+          this.handlePermissionUpdated(data.properties);
+          break;
+        case "permission.replied":
+          this.handlePermissionReplied(data.properties);
+          break;
       }
     } catch {
-      return null;
+      // Ignore parse errors
     }
+  }
+
+  /**
+   * Handle session.status events.
+   */
+  private handleSessionStatus(properties?: {
+    sessionID?: string;
+    status?: { type?: string };
+  }): void {
+    if (!properties?.sessionID || !properties?.status?.type) return;
+
+    const statusType = properties.status.type;
+    // Map "retry" to "busy"
+    if (statusType === "idle" || statusType === "busy" || statusType === "retry") {
+      const mappedType = statusType === "retry" ? "busy" : statusType;
+      this.emitSessionEvent({ type: mappedType, sessionId: properties.sessionID });
+    }
+  }
+
+  /**
+   * Handle session.idle events.
+   */
+  private handleSessionIdle(properties?: { sessionID?: string }): void {
+    if (!properties?.sessionID) return;
+    this.emitSessionEvent({ type: "idle", sessionId: properties.sessionID });
+  }
+
+  /**
+   * Handle session.deleted events.
+   */
+  private handleSessionDeleted(properties?: { sessionID?: string }): void {
+    if (!properties?.sessionID) return;
+    this.emitSessionEvent({ type: "deleted", sessionId: properties.sessionID });
   }
 
   /**
@@ -387,23 +418,15 @@ export class OpenCodeClient implements IDisposable {
    * Handle session.created events.
    * Adds new root sessions to the tracking set.
    */
-  private handleSessionCreated(data: string): void {
-    try {
-      const parsed = JSON.parse(data) as {
-        info?: { id?: string; parentID?: string };
-      };
+  private handleSessionCreated(properties?: { info?: { id?: string; parentID?: string } }): void {
+    const sessionInfo = properties?.info;
+    if (!sessionInfo || typeof sessionInfo.id !== "string") return;
 
-      const sessionInfo = parsed.info;
-      if (!sessionInfo || typeof sessionInfo.id !== "string") return;
-
-      // Only track root sessions (those without parentID)
-      if (!sessionInfo.parentID) {
-        this.rootSessionIds.add(sessionInfo.id);
-        // Emit idle status for new root session
-        this.emitSessionEvent({ type: "idle", sessionId: sessionInfo.id });
-      }
-    } catch {
-      // Ignore parse errors
+    // Only track root sessions (those without parentID)
+    if (!sessionInfo.parentID) {
+      this.rootSessionIds.add(sessionInfo.id);
+      // Emit idle status for new root session
+      this.emitSessionEvent({ type: "idle", sessionId: sessionInfo.id });
     }
   }
 
@@ -411,20 +434,19 @@ export class OpenCodeClient implements IDisposable {
    * Handle permission.updated events.
    * Only emits for root sessions.
    */
-  private handlePermissionUpdated(data: string): void {
-    try {
-      const parsed = JSON.parse(data) as unknown;
+  private handlePermissionUpdated(properties?: {
+    id?: string;
+    sessionID?: string;
+    type?: string;
+    title?: string;
+  }): void {
+    if (!isPermissionUpdatedEvent(properties)) return;
 
-      if (!isPermissionUpdatedEvent(parsed)) return;
+    // Only emit for root sessions
+    if (!this.rootSessionIds.has(properties.sessionID)) return;
 
-      // Only emit for root sessions
-      if (!this.rootSessionIds.has(parsed.sessionID)) return;
-
-      for (const listener of this.permissionListeners) {
-        listener({ type: "permission.updated", event: parsed });
-      }
-    } catch {
-      // Ignore parse errors
+    for (const listener of this.permissionListeners) {
+      listener({ type: "permission.updated", event: properties });
     }
   }
 
@@ -432,130 +454,18 @@ export class OpenCodeClient implements IDisposable {
    * Handle permission.replied events.
    * Only emits for root sessions.
    */
-  private handlePermissionReplied(data: string): void {
-    try {
-      const parsed = JSON.parse(data) as unknown;
+  private handlePermissionReplied(properties?: {
+    sessionID?: string;
+    permissionID?: string;
+    response?: string;
+  }): void {
+    if (!isPermissionRepliedEvent(properties)) return;
 
-      if (!isPermissionRepliedEvent(parsed)) return;
+    // Only emit for root sessions
+    if (!this.rootSessionIds.has(properties.sessionID)) return;
 
-      // Only emit for root sessions
-      if (!this.rootSessionIds.has(parsed.sessionID)) return;
-
-      for (const listener of this.permissionListeners) {
-        listener({ type: "permission.replied", event: parsed });
-      }
-    } catch {
-      // Ignore parse errors
-    }
-  }
-
-  private handleMessage(event: MessageEvent): void {
-    try {
-      const data = JSON.parse(event.data as string) as {
-        type?: string;
-        properties?: {
-          sessionID?: string;
-          status?: { type?: string };
-          info?: { id?: string; parentID?: string };
-          // Permission event properties
-          id?: string;
-          type?: string;
-          title?: string;
-          permissionID?: string;
-          response?: string;
-        };
-      };
-
-      if (!data.type) return;
-
-      // Handle session.created specially - needs info.parentID check
-      if (data.type === "session.created") {
-        const sessionInfo = data.properties?.info;
-        if (sessionInfo && typeof sessionInfo.id === "string" && !sessionInfo.parentID) {
-          this.rootSessionIds.add(sessionInfo.id);
-          this.emitSessionEvent({ type: "idle", sessionId: sessionInfo.id });
-        }
-        return;
-      }
-
-      // Handle permission events
-      if (data.type === "permission.updated") {
-        const props = data.properties;
-        if (
-          props &&
-          typeof props.id === "string" &&
-          typeof props.sessionID === "string" &&
-          typeof props.type === "string" &&
-          typeof props.title === "string"
-        ) {
-          // Only emit for root sessions
-          if (!this.rootSessionIds.has(props.sessionID)) return;
-
-          for (const listener of this.permissionListeners) {
-            listener({
-              type: "permission.updated",
-              event: {
-                id: props.id,
-                sessionID: props.sessionID,
-                type: props.type,
-                title: props.title,
-              },
-            });
-          }
-        }
-        return;
-      }
-
-      if (data.type === "permission.replied") {
-        const props = data.properties;
-        if (
-          props &&
-          typeof props.sessionID === "string" &&
-          typeof props.permissionID === "string" &&
-          (props.response === "once" || props.response === "always" || props.response === "reject")
-        ) {
-          // Only emit for root sessions
-          if (!this.rootSessionIds.has(props.sessionID)) return;
-
-          for (const listener of this.permissionListeners) {
-            listener({
-              type: "permission.replied",
-              event: {
-                sessionID: props.sessionID,
-                permissionID: props.permissionID,
-                response: props.response,
-              },
-            });
-          }
-        }
-        return;
-      }
-
-      if (!data.properties?.sessionID) return;
-
-      let sessionEvent: SessionStatus | null = null;
-
-      switch (data.type) {
-        case "session.status": {
-          const statusType = data.properties.status?.type;
-          if (statusType === "idle" || statusType === "busy") {
-            sessionEvent = { type: statusType, sessionId: data.properties.sessionID };
-          }
-          break;
-        }
-        case "session.idle":
-          sessionEvent = { type: "idle", sessionId: data.properties.sessionID };
-          break;
-        case "session.deleted":
-          sessionEvent = { type: "deleted", sessionId: data.properties.sessionID };
-          break;
-      }
-
-      if (sessionEvent) {
-        this.emitSessionEvent(sessionEvent);
-      }
-    } catch {
-      // Ignore parse errors for non-session events
+    for (const listener of this.permissionListeners) {
+      listener({ type: "permission.replied", event: properties });
     }
   }
 

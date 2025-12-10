@@ -383,8 +383,8 @@ describe("OpenCodeClient", () => {
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
-      // Simulate session.created event for root session
-      client["handleSessionCreated"](JSON.stringify({ info: { id: "new-root", title: "New" } }));
+      // Simulate session.created event for root session (now takes object, not JSON string)
+      client["handleSessionCreated"]({ info: { id: "new-root" } });
 
       expect(client.isRootSession("new-root")).toBe(true);
       // Should emit idle status for new root session
@@ -401,50 +401,645 @@ describe("OpenCodeClient", () => {
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
-      // Simulate session.created event for child session
-      client["handleSessionCreated"](
-        JSON.stringify({ info: { id: "new-child", title: "Child", parentID: "some-parent" } })
-      );
+      // Simulate session.created event for child session (now takes object, not JSON string)
+      client["handleSessionCreated"]({ info: { id: "new-child", parentID: "some-parent" } });
 
       expect(client.isRootSession("new-child")).toBe(false);
       expect(listener).not.toHaveBeenCalled();
     });
+
+    it("ignores malformed properties", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify([]), { status: 200 })
+      );
+
+      const listener = vi.fn();
+      client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
+      client.onSessionEvent(listener);
+
+      // Missing info
+      client["handleSessionCreated"](undefined);
+      client["handleSessionCreated"]({});
+      client["handleSessionCreated"]({ info: {} });
+
+      expect(listener).not.toHaveBeenCalled();
+    });
   });
 
-  describe("parseSSEEvent", () => {
-    it("parses session.status event", () => {
-      client = new OpenCodeClient(8080);
-      const result = client["parseSSEEvent"]("session.status", '{"id":"s1","status":"busy"}');
+  describe("handleMessage", () => {
+    describe("session.status events", () => {
+      it("emits idle status for root sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
 
-      expect(result).toEqual({ type: "busy", sessionId: "s1" });
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        // Simulate SSE event in OpenCode wire format
+        const event = {
+          data: JSON.stringify({
+            type: "session.status",
+            properties: { sessionID: "ses-123", status: { type: "idle" } },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "ses-123" });
+      });
+
+      it("emits busy status for root sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.status",
+            properties: { sessionID: "ses-123", status: { type: "busy" } },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({ type: "busy", sessionId: "ses-123" });
+      });
+
+      it("maps retry status to busy", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.status",
+            properties: { sessionID: "ses-123", status: { type: "retry" } },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({ type: "busy", sessionId: "ses-123" });
+      });
+
+      it("ignores events for non-root sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(
+            JSON.stringify([
+              { id: "parent-1", directory: "/test", title: "Parent" },
+              { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
+            ]),
+            { status: 200 }
+          )
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.status",
+            properties: { sessionID: "child-1", status: { type: "busy" } },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it("ignores events with missing sessionID", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.status",
+            properties: { status: { type: "busy" } },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it("ignores events with missing status", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.status",
+            properties: { sessionID: "ses-123" },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
     });
 
-    it("parses session.idle event", () => {
-      client = new OpenCodeClient(8080);
-      const result = client["parseSSEEvent"]("session.idle", '{"id":"s1"}');
+    describe("session.created events", () => {
+      it("adds root session and emits idle", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([]), { status: 200 })
+        );
 
-      expect(result).toEqual({ type: "idle", sessionId: "s1" });
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.created",
+            properties: { info: { id: "new-root" } },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(client.isRootSession("new-root")).toBe(true);
+        expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "new-root" });
+      });
+
+      it("ignores child sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([]), { status: 200 })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.created",
+            properties: { info: { id: "child-1", parentID: "parent-1" } },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(client.isRootSession("child-1")).toBe(false);
+        expect(listener).not.toHaveBeenCalled();
+      });
     });
 
-    it("parses session.deleted event", () => {
-      client = new OpenCodeClient(8080);
-      const result = client["parseSSEEvent"]("session.deleted", '{"id":"s1"}');
+    describe("session.idle events", () => {
+      it("emits idle status for root sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
 
-      expect(result).toEqual({ type: "deleted", sessionId: "s1" });
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.idle",
+            properties: { sessionID: "ses-123" },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "ses-123" });
+      });
+
+      it("ignores non-root sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(
+            JSON.stringify([
+              { id: "parent-1", directory: "/test", title: "Parent" },
+              { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
+            ]),
+            { status: 200 }
+          )
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.idle",
+            properties: { sessionID: "child-1" },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
     });
 
-    it("returns null for unknown event types", () => {
-      client = new OpenCodeClient(8080);
-      const result = client["parseSSEEvent"]("unknown.event", '{"id":"s1"}');
+    describe("session.deleted events", () => {
+      it("emits deleted and removes from root set", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
 
-      expect(result).toBeNull();
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        expect(client.isRootSession("ses-123")).toBe(true);
+
+        const event = {
+          data: JSON.stringify({
+            type: "session.deleted",
+            properties: { sessionID: "ses-123" },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({ type: "deleted", sessionId: "ses-123" });
+        expect(client.isRootSession("ses-123")).toBe(false);
+      });
     });
 
-    it("returns null for malformed JSON", () => {
-      client = new OpenCodeClient(8080);
-      const result = client["parseSSEEvent"]("session.status", "not json");
+    describe("permission.updated events", () => {
+      it("emits for root sessions with valid structure", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
 
-      expect(result).toBeNull();
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.updated",
+            properties: {
+              id: "perm-456",
+              sessionID: "ses-123",
+              type: "bash",
+              title: "Run command",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({
+          type: "permission.updated",
+          event: {
+            id: "perm-456",
+            sessionID: "ses-123",
+            type: "bash",
+            title: "Run command",
+          },
+        });
+      });
+
+      it("ignores non-root sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(
+            JSON.stringify([
+              { id: "parent-1", directory: "/test", title: "Parent" },
+              { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
+            ]),
+            { status: 200 }
+          )
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.updated",
+            properties: {
+              id: "perm-456",
+              sessionID: "child-1",
+              type: "bash",
+              title: "Run command",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it("ignores malformed events", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        // Missing required fields
+        const event = {
+          data: JSON.stringify({
+            type: "permission.updated",
+            properties: { id: "perm-456" },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("permission.replied events", () => {
+      it("handles once response", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.replied",
+            properties: {
+              sessionID: "ses-123",
+              permissionID: "perm-456",
+              response: "once",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({
+          type: "permission.replied",
+          event: {
+            sessionID: "ses-123",
+            permissionID: "perm-456",
+            response: "once",
+          },
+        });
+      });
+
+      it("handles always response", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.replied",
+            properties: {
+              sessionID: "ses-123",
+              permissionID: "perm-456",
+              response: "always",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({
+          type: "permission.replied",
+          event: {
+            sessionID: "ses-123",
+            permissionID: "perm-456",
+            response: "always",
+          },
+        });
+      });
+
+      it("handles reject response", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.replied",
+            properties: {
+              sessionID: "ses-123",
+              permissionID: "perm-456",
+              response: "reject",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).toHaveBeenCalledWith({
+          type: "permission.replied",
+          event: {
+            sessionID: "ses-123",
+            permissionID: "perm-456",
+            response: "reject",
+          },
+        });
+      });
+
+      it("ignores non-root sessions", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(
+            JSON.stringify([
+              { id: "parent-1", directory: "/test", title: "Parent" },
+              { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
+            ]),
+            { status: 200 }
+          )
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.replied",
+            properties: {
+              sessionID: "child-1",
+              permissionID: "perm-456",
+              response: "once",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it("ignores invalid response types", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.replied",
+            properties: {
+              sessionID: "ses-123",
+              permissionID: "perm-456",
+              response: "invalid",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("error handling", () => {
+      it("ignores invalid JSON", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = { data: "not valid json" } as MessageEvent;
+
+        // Should not throw
+        expect(() => client["handleMessage"](event)).not.toThrow();
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it("ignores unknown event types", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "unknown.event",
+            properties: { sessionID: "ses-123" },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it("ignores events without type field", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+            status: 200,
+          })
+        );
+
+        const listener = vi.fn();
+        client = new OpenCodeClient(8080);
+        await client.fetchRootSessions();
+        client.onSessionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            properties: { sessionID: "ses-123" },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
     });
   });
 });
@@ -683,15 +1278,13 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      // Simulate permission.updated event via internal handler
-      client["handlePermissionUpdated"](
-        JSON.stringify({
-          id: "perm-456",
-          sessionID: "ses-123",
-          type: "bash",
-          title: "Run command",
-        })
-      );
+      // Simulate permission.updated event via internal handler (now takes object, not JSON string)
+      client["handlePermissionUpdated"]({
+        id: "perm-456",
+        sessionID: "ses-123",
+        type: "bash",
+        title: "Run command",
+      });
 
       expect(listener).toHaveBeenCalledWith({
         type: "permission.updated",
@@ -720,15 +1313,13 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      // Try to emit permission event for child session
-      client["handlePermissionUpdated"](
-        JSON.stringify({
-          id: "perm-456",
-          sessionID: "child-1",
-          type: "bash",
-          title: "Run command",
-        })
-      );
+      // Try to emit permission event for child session (now takes object, not JSON string)
+      client["handlePermissionUpdated"]({
+        id: "perm-456",
+        sessionID: "child-1",
+        type: "bash",
+        title: "Run command",
+      });
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -745,13 +1336,13 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      // Send malformed event (missing required fields)
-      client["handlePermissionUpdated"](JSON.stringify({ id: "perm-456" }));
+      // Send malformed event (missing required fields) (now takes object, not JSON string)
+      client["handlePermissionUpdated"]({ id: "perm-456" });
 
       expect(listener).not.toHaveBeenCalled();
     });
 
-    it("ignores invalid JSON", async () => {
+    it("ignores undefined properties", async () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
@@ -763,7 +1354,7 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      client["handlePermissionUpdated"]("not json");
+      client["handlePermissionUpdated"](undefined);
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -782,13 +1373,12 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      client["handlePermissionReplied"](
-        JSON.stringify({
-          sessionID: "ses-123",
-          permissionID: "perm-456",
-          response: "once",
-        })
-      );
+      // Now takes object, not JSON string
+      client["handlePermissionReplied"]({
+        sessionID: "ses-123",
+        permissionID: "perm-456",
+        response: "once",
+      });
 
       expect(listener).toHaveBeenCalledWith({
         type: "permission.replied",
@@ -816,13 +1406,12 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      client["handlePermissionReplied"](
-        JSON.stringify({
-          sessionID: "child-1",
-          permissionID: "perm-456",
-          response: "once",
-        })
-      );
+      // Now takes object, not JSON string
+      client["handlePermissionReplied"]({
+        sessionID: "child-1",
+        permissionID: "perm-456",
+        response: "once",
+      });
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -839,7 +1428,8 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      client["handlePermissionReplied"](JSON.stringify({ sessionID: "ses-123" }));
+      // Now takes object, not JSON string
+      client["handlePermissionReplied"]({ sessionID: "ses-123" });
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -860,14 +1450,13 @@ describe("Permission Event Emission", () => {
 
       unsubscribe();
 
-      client["handlePermissionUpdated"](
-        JSON.stringify({
-          id: "perm-456",
-          sessionID: "ses-123",
-          type: "bash",
-          title: "Run command",
-        })
-      );
+      // Now takes object, not JSON string
+      client["handlePermissionUpdated"]({
+        id: "perm-456",
+        sessionID: "ses-123",
+        type: "bash",
+        title: "Run command",
+      });
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -886,331 +1475,15 @@ describe("Permission Event Emission", () => {
 
       client.dispose();
 
-      client["handlePermissionUpdated"](
-        JSON.stringify({
-          id: "perm-456",
-          sessionID: "ses-123",
-          type: "bash",
-          title: "Run command",
-        })
-      );
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-  });
-});
-
-describe("handleMessage permission events", () => {
-  let client: OpenCodeClient;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    client?.dispose();
-  });
-
-  describe("permission.updated via handleMessage", () => {
-    it("processes permission.updated events from generic message handler", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
-          status: 200,
-        })
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      // Simulate SSE event via handleMessage (the format OpenCode sends)
-      const messageEvent = {
-        data: JSON.stringify({
-          type: "permission.updated",
-          properties: {
-            id: "perm-456",
-            sessionID: "ses-123",
-            type: "bash",
-            title: "Run command",
-          },
-        }),
-      } as MessageEvent;
-
-      client["handleMessage"](messageEvent);
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.updated",
-        event: {
-          id: "perm-456",
-          sessionID: "ses-123",
-          type: "bash",
-          title: "Run command",
-        },
-      });
-    });
-
-    it("ignores permission.updated for non-root sessions via handleMessage", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(
-          JSON.stringify([
-            { id: "parent-1", directory: "/test", title: "Parent" },
-            { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
-          ]),
-          { status: 200 }
-        )
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      const messageEvent = {
-        data: JSON.stringify({
-          type: "permission.updated",
-          properties: {
-            id: "perm-456",
-            sessionID: "child-1",
-            type: "bash",
-            title: "Run command",
-          },
-        }),
-      } as MessageEvent;
-
-      client["handleMessage"](messageEvent);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("ignores malformed permission.updated via handleMessage", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
-          status: 200,
-        })
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      // Missing required fields
-      const messageEvent = {
-        data: JSON.stringify({
-          type: "permission.updated",
-          properties: {
-            id: "perm-456",
-            sessionID: "ses-123",
-            // missing type and title
-          },
-        }),
-      } as MessageEvent;
-
-      client["handleMessage"](messageEvent);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("permission.replied via handleMessage", () => {
-    it("processes permission.replied events from generic message handler", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
-          status: 200,
-        })
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      const messageEvent = {
-        data: JSON.stringify({
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "once",
-          },
-        }),
-      } as MessageEvent;
-
-      client["handleMessage"](messageEvent);
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.replied",
-        event: {
-          sessionID: "ses-123",
-          permissionID: "perm-456",
-          response: "once",
-        },
-      });
-    });
-
-    it("handles all response types via handleMessage", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
-          status: 200,
-        })
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      // Test "always" response
-      client["handleMessage"]({
-        data: JSON.stringify({
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-1",
-            response: "always",
-          },
-        }),
-      } as MessageEvent);
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.replied",
-        event: {
-          sessionID: "ses-123",
-          permissionID: "perm-1",
-          response: "always",
-        },
+      // Now takes object, not JSON string
+      client["handlePermissionUpdated"]({
+        id: "perm-456",
+        sessionID: "ses-123",
+        type: "bash",
+        title: "Run command",
       });
 
-      // Test "reject" response
-      client["handleMessage"]({
-        data: JSON.stringify({
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-2",
-            response: "reject",
-          },
-        }),
-      } as MessageEvent);
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.replied",
-        event: {
-          sessionID: "ses-123",
-          permissionID: "perm-2",
-          response: "reject",
-        },
-      });
-    });
-
-    it("ignores permission.replied for non-root sessions via handleMessage", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(
-          JSON.stringify([
-            { id: "parent-1", directory: "/test", title: "Parent" },
-            { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
-          ]),
-          { status: 200 }
-        )
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      const messageEvent = {
-        data: JSON.stringify({
-          type: "permission.replied",
-          properties: {
-            sessionID: "child-1",
-            permissionID: "perm-456",
-            response: "once",
-          },
-        }),
-      } as MessageEvent;
-
-      client["handleMessage"](messageEvent);
-
       expect(listener).not.toHaveBeenCalled();
     });
-
-    it("ignores malformed permission.replied via handleMessage", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
-          status: 200,
-        })
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      // Missing permissionID
-      const messageEvent = {
-        data: JSON.stringify({
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            response: "once",
-          },
-        }),
-      } as MessageEvent;
-
-      client["handleMessage"](messageEvent);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("ignores invalid response type via handleMessage", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
-          status: 200,
-        })
-      );
-
-      const listener = vi.fn();
-      client = new OpenCodeClient(8080);
-      await client.fetchRootSessions();
-      client.onPermissionEvent(listener);
-
-      const messageEvent = {
-        data: JSON.stringify({
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "invalid_response",
-          },
-        }),
-      } as MessageEvent;
-
-      client["handleMessage"](messageEvent);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  it("ignores invalid JSON in handleMessage", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
-        status: 200,
-      })
-    );
-
-    const listener = vi.fn();
-    client = new OpenCodeClient(8080);
-    await client.fetchRootSessions();
-    client.onPermissionEvent(listener);
-
-    const messageEvent = {
-      data: "not valid json",
-    } as MessageEvent;
-
-    // Should not throw
-    expect(() => client["handleMessage"](messageEvent)).not.toThrow();
-    expect(listener).not.toHaveBeenCalled();
   });
 });

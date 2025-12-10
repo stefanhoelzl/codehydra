@@ -318,7 +318,16 @@ Supporting modules:
 ### Status Update Flow
 
 1. **SSE Connection**: `OpenCodeClient` connects to `/event` endpoint
-2. **Event Parsing**: Receives `session.status`, `session.deleted`, `session.idle`, `permission.updated`, `permission.replied` events
+2. **Event Parsing**: OpenCode sends **unnamed SSE events** (no `event:` prefix in the stream) with the event type embedded in the JSON payload:
+   ```
+   data: {"type":"session.status","properties":{"sessionID":"...","status":{"type":"busy"}}}
+   ```
+   The `onmessage` handler receives all events and dispatches by type:
+   - `session.status` → status changes (idle/busy/retry, where retry maps to busy)
+   - `session.created` → new root session tracking
+   - `session.idle` → explicit idle notification
+   - `session.deleted` → session cleanup and removal from tracking
+   - `permission.updated` / `permission.replied` → permission state tracking
 3. **Permission Tracking**: `OpenCodeProvider` tracks pending permissions per session
 4. **Aggregation**: `AgentStatusManager` counts idle/busy sessions per workspace
 5. **Callback**: Status change triggers callback (NOT direct IPC)

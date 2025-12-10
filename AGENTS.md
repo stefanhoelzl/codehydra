@@ -206,6 +206,16 @@ client.dispose(); // Full cleanup, stops reconnection
 // Stops reconnecting after dispose()
 ```
 
+**SSE Wire Format:**
+
+OpenCode sends **unnamed SSE events** with the event type embedded in the JSON payload:
+
+```
+data: {"type":"session.status","properties":{"sessionID":"ses-123","status":{"type":"busy"}}}
+```
+
+This differs from named SSE events which would use `event: session.status` prefix in the stream. Therefore, `OpenCodeClient` uses the `onmessage` handler (not `addEventListener`) to receive all events and dispatches based on the `type` field.
+
 ### Callback Pattern (NOT Direct IPC)
 
 Services emit events via callbacks; IPC wiring happens at boundary:
