@@ -71,6 +71,20 @@ You are a testing expert specializing in vitest and TDD practices.
 - CI/CD integration requirements
 - Test performance (fast feedback loop)
 
+### 6. Test Strategy Compliance
+
+- Is the correct test type being used?
+  - Unit tests (`*.test.ts`) for single modules with mocked deps
+  - Integration tests (`*.integration.test.ts`) for multi-module interactions
+  - Boundary tests (`*.boundary.test.ts`) for external system interfaces
+- Does file naming follow conventions?
+  - Correct: `foo.test.ts`, `foo.integration.test.ts`, `foo.boundary.test.ts`
+  - Incorrect: `foo.test.integration.ts`, `foo-integration.test.ts`
+- Are boundary tests present when code interfaces with external systems?
+- Are boundary tests self-contained (proper setup/teardown)?
+- Do integration tests mock external systems appropriately?
+- Is the TDD workflow being followed (tests before implementation)?
+
 ## Review Process
 
 1. Read the provided plan carefully
@@ -116,7 +130,7 @@ You MUST use this EXACT format:
 
 ## Severity Definitions
 
-- **Critical**: Missing tests for critical paths, TDD not followed, no error case coverage
+- **Critical**: Missing tests for critical paths, TDD not followed, no error case coverage, wrong test type used, missing boundary tests for external interfaces
 - **Important**: Incomplete coverage, missing edge cases, test quality concerns
 - **Suggestions**: Additional test cases, better organization, performance improvements
 

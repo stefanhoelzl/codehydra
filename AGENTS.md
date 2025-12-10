@@ -24,6 +24,7 @@
 | Migration Plan   | planning/ELECTRON_MIGRATION.md | Phase details, implementation workflow  |
 | Architecture     | docs/ARCHITECTURE.md           | System design, component relationships  |
 | UI Specification | docs/USER_INTERFACE.md         | User flows, mockups, keyboard shortcuts |
+| Testing Strategy | docs/TESTING.md                | Test types, conventions, commands       |
 
 **Important**: Files in `planning/` are **historical records** that reflect the state at the time of planning/implementation. They may not reflect the current application state. To understand current state, read source code and `docs/` files. Read `planning/` files for design decision context and rationale.
 
@@ -591,6 +592,34 @@ git merge --ff-only <worktree-branch>
 - ESLint warnings treated as errors
 - Prettier enforced formatting
 - All tests must pass
+
+## Testing Requirements
+
+See `docs/TESTING.md` for the complete testing strategy.
+
+### Quick Reference
+
+| Code Change                                   | Required Tests               |
+| --------------------------------------------- | ---------------------------- |
+| New module/function                           | Unit tests (TDD)             |
+| Module interactions                           | Integration tests (TDD)      |
+| External interface (Git, HTTP, fs, processes) | Boundary tests               |
+| Bug fix                                       | Test that reproduces the bug |
+
+### TDD Workflow
+
+1. **RED**: Write failing test first
+2. **GREEN**: Write minimal code to pass
+3. **REFACTOR**: Clean up while keeping tests green
+
+### Test Commands
+
+| Command                 | Use Case                              |
+| ----------------------- | ------------------------------------- |
+| `npm test`              | Run all tests                         |
+| `npm run test:unit`     | Quick feedback during TDD             |
+| `npm run test:boundary` | When developing external interfaces   |
+| `npm run validate`      | Pre-commit check (unit + integration) |
 
 ## CRITICAL: No Ignore Comments
 
