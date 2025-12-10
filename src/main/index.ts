@@ -14,6 +14,7 @@ import {
   getDataProjectsDir,
   getVscodeExtensionsDir,
   getVscodeUserDataDir,
+  getElectronDataDir,
   type CodeServerConfig,
 } from "../services";
 import { VscodeSetupService } from "../services/vscode-setup";
@@ -32,6 +33,23 @@ import { registerAllHandlers, createSetupRetryHandler, createSetupQuitHandler } 
 import { IpcChannels, type SetupProgress, type SetupErrorPayload } from "../shared/ipc";
 
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Redirect Electron's data paths to isolate from system defaults.
+ * This prevents conflicts when running nested CodeHydra instances
+ * (e.g., running CodeHydra inside a code-server terminal).
+ *
+ * CRITICAL: Must be called BEFORE app.whenReady()
+ */
+function redirectElectronDataPaths(): void {
+  const electronDir = getElectronDataDir();
+  ["userData", "sessionData", "logs", "crashDumps"].forEach((name) => {
+    app.setPath(name, nodePath.join(electronDir, name));
+  });
+}
+
+// Redirect Electron data paths before app is ready
+redirectElectronDataPaths();
 
 /**
  * Creates the code-server configuration.

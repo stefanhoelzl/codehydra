@@ -79,6 +79,16 @@ export function getVscodeSetupMarkerPath(): string {
 }
 
 /**
+ * Get the directory for Electron/Chrome data (session, cache, etc.).
+ * Used to isolate Electron's data from system defaults to avoid conflicts
+ * when running nested CodeHydra instances.
+ * @returns `<dataRoot>/electron/`
+ */
+export function getElectronDataDir(): string {
+  return join(getDataRootDir(), "electron");
+}
+
+/**
  * Generate a directory name for a project based on its path.
  * Format: `<folder-name>-<8-char-sha256-hash>`
  *

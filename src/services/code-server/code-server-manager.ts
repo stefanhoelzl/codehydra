@@ -159,8 +159,22 @@ export class CodeServerManager {
 
     // Spawn the process
     try {
+      // Create clean environment without VS Code/code-server variables.
+      // When running inside a code-server terminal, these env vars can
+      // interfere with the nested code-server instance. Removing them
+      // allows code-server to start as a standalone server.
+      const cleanEnv = { ...process.env };
+
+      // Remove all VSCODE_* variables - they interfere with nested code-server
+      for (const key of Object.keys(cleanEnv)) {
+        if (key.startsWith("VSCODE_")) {
+          delete cleanEnv[key];
+        }
+      }
+
       this.process = spawnProcess("code-server", args, {
         cwd: this.config.runtimeDir,
+        env: cleanEnv,
       });
 
       // Get the PID

@@ -51,6 +51,7 @@ export {
   getVscodeExtensionsDir,
   getVscodeUserDataDir,
   getVscodeSetupMarkerPath,
+  getElectronDataDir,
   sanitizeWorkspaceName,
   unsanitizeWorkspaceName,
   encodePathForUrl,

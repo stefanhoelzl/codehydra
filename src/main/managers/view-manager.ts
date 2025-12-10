@@ -36,7 +36,6 @@ export interface ViewManagerConfig {
  */
 export class ViewManager implements IViewManager {
   private readonly windowManager: WindowManager;
-  private readonly config: ViewManagerConfig;
   private readonly uiView: WebContentsView;
   private readonly shortcutController: ShortcutController;
   private codeServerPort: number;
@@ -54,15 +53,14 @@ export class ViewManager implements IViewManager {
 
   private constructor(
     windowManager: WindowManager,
-    config: ViewManagerConfig,
+    codeServerPort: number,
     uiView: WebContentsView,
     shortcutController: ShortcutController
   ) {
     this.windowManager = windowManager;
-    this.config = config;
     this.uiView = uiView;
     this.shortcutController = shortcutController;
-    this.codeServerPort = config.codeServerPort;
+    this.codeServerPort = codeServerPort;
 
     // Subscribe to resize events
     this.unsubscribeResize = this.windowManager.onResize(() => {
@@ -105,7 +103,12 @@ export class ViewManager implements IViewManager {
       getUIWebContents: () => viewManagerHolder.instance?.getUIWebContents() ?? null,
     });
 
-    const viewManager = new ViewManager(windowManager, config, uiView, shortcutController);
+    const viewManager = new ViewManager(
+      windowManager,
+      config.codeServerPort,
+      uiView,
+      shortcutController
+    );
     viewManagerHolder.instance = viewManager;
 
     // Don't call updateBounds() here - let the resize event from maximize() trigger it.

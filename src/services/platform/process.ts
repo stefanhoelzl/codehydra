@@ -2,7 +2,7 @@
  * Process spawning utilities.
  */
 
-import { execa, type Options as ExecaOptions, type ResultPromise } from "execa";
+import { execa, type ResultPromise } from "execa";
 import { createServer } from "net";
 
 /**
@@ -51,18 +51,18 @@ export function spawnProcess(
   args: string[],
   options: SpawnProcessOptions = {}
 ): ResultPromise {
-  const execaOptions: ExecaOptions = {
+  return execa(command, args, {
     cleanup: true,
-    cwd: options.cwd,
-    env: options.env,
-    timeout: options.timeout,
+    ...(options.cwd && { cwd: options.cwd }),
+    // When custom env is provided, disable extendEnv so that deleted keys
+    // from the custom env are actually removed (not inherited from process.env)
+    ...(options.env && { env: options.env, extendEnv: false }),
+    ...(options.timeout && { timeout: options.timeout }),
     // Capture output as strings
     encoding: "utf8",
     // Don't reject on non-zero exit (we handle this ourselves)
     reject: true,
-  };
-
-  return execa(command, args, execaOptions);
+  });
 }
 
 /**
