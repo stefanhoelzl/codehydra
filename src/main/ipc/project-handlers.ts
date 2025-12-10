@@ -34,7 +34,7 @@ export function createProjectCloseHandler(
   appState: Pick<AppState, "closeProject">
 ): (event: IpcMainInvokeEvent, payload: ProjectClosePayload) => Promise<void> {
   return async (_event, payload) => {
-    appState.closeProject(payload.path);
+    await appState.closeProject(payload.path);
     emitEvent("project:closed", { path: payload.path as ProjectPath });
   };
 }

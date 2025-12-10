@@ -119,11 +119,11 @@ export class AppState {
 
   /**
    * Closes a project.
-   * Destroys all workspace views and cleans up state.
+   * Destroys all workspace views, cleans up state, and removes from persistent storage.
    *
    * @param projectPath - Path to the project to close
    */
-  closeProject(projectPath: string): void {
+  async closeProject(projectPath: string): Promise<void> {
     const openProject = this.openProjects.get(projectPath);
     if (!openProject) {
       return;
@@ -136,6 +136,13 @@ export class AppState {
 
     // Remove from state
     this.openProjects.delete(projectPath);
+
+    // Remove from persistent storage (fail silently)
+    try {
+      await this.projectStore.removeProject(projectPath);
+    } catch {
+      // Fail silently as per requirements
+    }
   }
 
   /**

@@ -218,7 +218,7 @@ describe("AppState", () => {
       );
 
       await appState.openProject("/project");
-      appState.closeProject("/project");
+      await appState.closeProject("/project");
 
       expect(mockViewManager.destroyWorkspaceView).toHaveBeenCalledWith(
         "/project/.worktrees/feature-1"
@@ -233,9 +233,35 @@ describe("AppState", () => {
       );
 
       await appState.openProject("/project");
-      appState.closeProject("/project");
+      await appState.closeProject("/project");
 
       expect(appState.getProject("/project")).toBeUndefined();
+    });
+
+    it("removes project from persistent storage", async () => {
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        8080
+      );
+
+      await appState.openProject("/project");
+      await appState.closeProject("/project");
+
+      expect(mockProjectStore.removeProject).toHaveBeenCalledWith("/project");
+    });
+
+    it("does nothing for non-existent project", async () => {
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        8080
+      );
+
+      await appState.closeProject("/nonexistent");
+
+      expect(mockViewManager.destroyWorkspaceView).not.toHaveBeenCalled();
+      expect(mockProjectStore.removeProject).not.toHaveBeenCalled();
     });
   });
 
