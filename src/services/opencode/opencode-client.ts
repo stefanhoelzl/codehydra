@@ -15,6 +15,7 @@ import {
   type SessionStatus,
   type SessionStatusResponse,
   type SessionStatusValue,
+  type ClientStatus,
   type IDisposable,
   type Unsubscribe,
   type PermissionUpdatedEvent,
@@ -58,6 +59,11 @@ export function isPermissionRepliedEvent(value: unknown): value is PermissionRep
 export type SessionEventCallback = (event: SessionStatus) => void;
 
 /**
+ * Callback for status changes.
+ */
+export type StatusChangedCallback = (status: ClientStatus) => void;
+
+/**
  * Permission event payload.
  */
 export type PermissionEvent =
@@ -82,13 +88,18 @@ export function isValidSessionStatus(value: unknown): value is SessionStatusValu
 
 /**
  * Type guard for SessionStatusResponse.
- * OpenCode returns an object keyed by session ID.
+ * OpenCode returns an array of SessionStatusValue objects.
  */
 export function isSessionStatusResponse(value: unknown): value is SessionStatusResponse {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (!Array.isArray(value)) return false;
 
-  const obj = value as Record<string, unknown>;
-  return Object.values(obj).every((v) => isValidSessionStatus(v));
+  return value.every(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      "type" in item &&
+      (item.type === "idle" || item.type === "busy" || item.type === "retry")
+  );
 }
 
 /**
@@ -115,6 +126,7 @@ export class OpenCodeClient implements IDisposable {
   private readonly baseUrl: string;
   private readonly listeners = new Set<SessionEventCallback>();
   private readonly permissionListeners = new Set<PermissionEventCallback>();
+  private readonly statusListeners = new Set<StatusChangedCallback>();
   private eventSource: EventSource | null = null;
   private disposed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -126,6 +138,19 @@ export class OpenCodeClient implements IDisposable {
    * Only events for these sessions are emitted.
    */
   private readonly rootSessionIds = new Set<string>();
+
+  /**
+   * Current aggregated status for this port.
+   * Simplified model: 1 agent per port.
+   */
+  private _currentStatus: ClientStatus = "idle";
+
+  /**
+   * Get the current status for this client.
+   */
+  get currentStatus(): ClientStatus {
+    return this._currentStatus;
+  }
 
   constructor(port: number) {
     this.baseUrl = `http://localhost:${port}`;
@@ -188,9 +213,35 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Get current session statuses.
+   * Subscribe to session events.
    */
-  async getSessionStatuses(): Promise<Result<SessionStatus[], OpenCodeError>> {
+  onSessionEvent(callback: SessionEventCallback): Unsubscribe {
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
+  }
+
+  /**
+   * Subscribe to permission events.
+   */
+  onPermissionEvent(callback: PermissionEventCallback): Unsubscribe {
+    this.permissionListeners.add(callback);
+    return () => this.permissionListeners.delete(callback);
+  }
+
+  /**
+   * Subscribe to status changes.
+   */
+  onStatusChanged(callback: StatusChangedCallback): Unsubscribe {
+    this.statusListeners.add(callback);
+    return () => this.statusListeners.delete(callback);
+  }
+
+  /**
+   * Get current status from the API.
+   * Fetches /session/status and aggregates to a single ClientStatus.
+   * Empty array or all idle → "idle", any busy/retry → "busy"
+   */
+  async getStatus(): Promise<Result<ClientStatus, OpenCodeError>> {
     const url = `${this.baseUrl}/session/status`;
 
     try {
@@ -211,21 +262,11 @@ export class OpenCodeClient implements IDisposable {
         return err(new OpenCodeError("Invalid response structure", "INVALID_RESPONSE"));
       }
 
-      // Only return statuses for root sessions
-      // Response is object format: { sessionId: { type: "idle" | "busy" | "retry" } }
-      const statuses: SessionStatus[] = [];
-      for (const [sessionId, statusValue] of Object.entries(data)) {
-        if (this.rootSessionIds.has(sessionId)) {
-          // Map "retry" to "busy" for our internal status representation
-          const statusType = statusValue.type === "retry" ? "busy" : statusValue.type;
-          statuses.push({
-            type: statusType,
-            sessionId,
-          });
-        }
-      }
+      // Aggregate: empty array OR all idle → "idle", any busy/retry → "busy"
+      const hasBusy = data.some((s) => s.type === "busy" || s.type === "retry");
+      const status: ClientStatus = hasBusy ? "busy" : "idle";
 
-      return ok(statuses);
+      return ok(status);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return err(new OpenCodeError("Request timeout", "TIMEOUT"));
@@ -240,22 +281,6 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Subscribe to session events.
-   */
-  onSessionEvent(callback: SessionEventCallback): Unsubscribe {
-    this.listeners.add(callback);
-    return () => this.listeners.delete(callback);
-  }
-
-  /**
-   * Subscribe to permission events.
-   */
-  onPermissionEvent(callback: PermissionEventCallback): Unsubscribe {
-    this.permissionListeners.add(callback);
-    return () => this.permissionListeners.delete(callback);
-  }
-
-  /**
    * Connect to SSE event stream.
    */
   connect(): void {
@@ -267,6 +292,13 @@ export class OpenCodeClient implements IDisposable {
       this.eventSource.onopen = () => {
         // Reset reconnect delay on successful connection
         this.reconnectDelay = 1000;
+
+        // Re-fetch current status after reconnection to sync state
+        void this.getStatus().then((result) => {
+          if (result.ok) {
+            this.updateCurrentStatus(result.value);
+          }
+        });
       };
 
       this.eventSource.onerror = () => {
@@ -309,6 +341,7 @@ export class OpenCodeClient implements IDisposable {
     this.disconnect();
     this.listeners.clear();
     this.permissionListeners.clear();
+    this.statusListeners.clear();
   }
 
   /**
@@ -375,6 +408,9 @@ export class OpenCodeClient implements IDisposable {
     if (statusType === "idle" || statusType === "busy" || statusType === "retry") {
       const mappedType = statusType === "retry" ? "busy" : statusType;
       this.emitSessionEvent({ type: mappedType, sessionId: properties.sessionID });
+
+      // Update current status and emit if changed
+      this.updateCurrentStatus(mappedType);
     }
   }
 
@@ -384,6 +420,21 @@ export class OpenCodeClient implements IDisposable {
   private handleSessionIdle(properties?: { sessionID?: string }): void {
     if (!properties?.sessionID) return;
     this.emitSessionEvent({ type: "idle", sessionId: properties.sessionID });
+
+    // Update current status to idle
+    this.updateCurrentStatus("idle");
+  }
+
+  /**
+   * Update current status and emit if changed.
+   */
+  private updateCurrentStatus(newStatus: ClientStatus): void {
+    if (this._currentStatus !== newStatus) {
+      this._currentStatus = newStatus;
+      for (const listener of this.statusListeners) {
+        listener(newStatus);
+      }
+    }
   }
 
   /**

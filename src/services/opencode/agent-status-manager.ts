@@ -1,10 +1,10 @@
 /**
  * Agent Status Manager - owns status aggregation and workspace lifecycle.
- * Manages OpenCode providers and aggregates session statuses.
+ * Manages OpenCode providers and aggregates port-based statuses.
  */
 
 import type { WorkspacePath, AgentStatusCounts, AggregatedAgentStatus } from "../../shared/ipc";
-import type { IDisposable, Unsubscribe, SessionStatus } from "./types";
+import type { IDisposable, Unsubscribe, ClientStatus } from "./types";
 import { OpenCodeClient, type PermissionEvent } from "./opencode-client";
 import type { DiscoveryService } from "./discovery-service";
 
@@ -18,21 +18,30 @@ export type StatusChangedCallback = (
 
 /**
  * Per-workspace provider that manages OpenCode client connections.
+ * Uses port-based status tracking (1 agent per port).
  */
 class OpenCodeProvider implements IDisposable {
   private readonly clients = new Map<number, OpenCodeClient>();
-  private readonly sessionStatuses = new Map<string, SessionStatus>();
-  private readonly listeners = new Set<(status: SessionStatus) => void>();
+  /**
+   * Port-based status tracking.
+   * Map<port, ClientStatus>
+   */
+  private readonly clientStatuses = new Map<number, ClientStatus>();
+  /**
+   * Session to port mapping for permission correlation.
+   * Map<sessionId, port>
+   */
+  private readonly sessionToPort = new Map<string, number>();
   /**
    * Pending permissions per session.
    * Map<sessionId, Set<permissionId>>
-   * Sessions with pending permissions should display as idle (green indicator).
+   * Ports with pending permissions should display as idle (green indicator).
    */
   private readonly pendingPermissions = new Map<string, Set<string>>();
   /**
-   * Callbacks to notify when permission state changes.
+   * Callbacks to notify when status changes.
    */
-  private readonly permissionChangeListeners = new Set<() => void>();
+  private readonly statusChangeListeners = new Set<() => void>();
 
   /**
    * Sync clients with discovered ports.
@@ -46,9 +55,14 @@ class OpenCodeProvider implements IDisposable {
       if (!ports.has(port)) {
         client.dispose();
         this.clients.delete(port);
-        // Clear pending permissions for this client's sessions when it disconnects
-        // (SSE reconnection safety - permission state should be re-discovered)
-        this.pendingPermissions.clear();
+        this.clientStatuses.delete(port);
+        // Clear session mappings and permissions for sessions on this port
+        for (const [sessionId, sessionPort] of this.sessionToPort) {
+          if (sessionPort === port) {
+            this.sessionToPort.delete(sessionId);
+            this.pendingPermissions.delete(sessionId);
+          }
+        }
       }
     }
 
@@ -56,7 +70,11 @@ class OpenCodeProvider implements IDisposable {
     for (const port of ports) {
       if (!this.clients.has(port)) {
         const client = new OpenCodeClient(port);
-        client.onSessionEvent((event) => this.handleSessionEvent(event));
+        // Subscribe to status changes from client
+        client.onStatusChanged((status) => this.handleStatusChanged(port, status));
+        // Subscribe to session events for permission correlation
+        client.onSessionEvent((event) => this.handleSessionEvent(port, event));
+        // Subscribe to permission events
         client.onPermissionEvent((event) => this.handlePermissionEvent(event));
         this.clients.set(port, client);
         newPorts.add(port);
@@ -67,13 +85,6 @@ class OpenCodeProvider implements IDisposable {
   }
 
   /**
-   * Get current session statuses.
-   */
-  getSessionStatuses(): Map<string, SessionStatus> {
-    return new Map(this.sessionStatuses);
-  }
-
-  /**
    * Check if provider has any connected clients.
    */
   hasClients(): boolean {
@@ -81,27 +92,29 @@ class OpenCodeProvider implements IDisposable {
   }
 
   /**
-   * Get adjusted session counts.
-   * When connected (has clients) but no sessions, returns { idle: 1, busy: 0 }
-   * This ensures the indicator shows green when OpenCode is running.
-   * Sessions with pending permissions count as idle (waiting for user).
+   * Get effective counts accounting for permission state.
+   * Ports with pending permissions count as idle (waiting for user).
    */
-  getAdjustedCounts(): { idle: number; busy: number } {
+  getEffectiveCounts(): { idle: number; busy: number } {
     let idle = 0;
     let busy = 0;
 
-    for (const [sessionId, status] of this.sessionStatuses.entries()) {
-      // Sessions with pending permissions count as idle (waiting for user)
-      if (this.pendingPermissions.has(sessionId)) {
+    for (const [port, status] of this.clientStatuses.entries()) {
+      // Check if any session on this port has pending permission
+      const hasPermissionPending = [...this.sessionToPort.entries()]
+        .filter(([, p]) => p === port)
+        .some(([sessionId]) => this.pendingPermissions.has(sessionId));
+
+      if (hasPermissionPending) {
         idle++;
-      } else if (status.type === "idle") {
+      } else if (status === "idle") {
         idle++;
-      } else if (status.type === "busy") {
+      } else {
         busy++;
       }
     }
 
-    // IMPORTANT: When connected but no sessions, show as "1 idle" (green indicator)
+    // IMPORTANT: When connected but no client statuses yet, show as "1 idle" (green indicator)
     if (this.clients.size > 0 && idle === 0 && busy === 0) {
       idle = 1;
     }
@@ -126,26 +139,24 @@ class OpenCodeProvider implements IDisposable {
   }
 
   /**
-   * Fetch initial session statuses from all clients.
-   * Only returns statuses for root sessions (without parentID).
+   * Fetch initial status from all clients.
+   * Uses the new getStatus() API that returns aggregated ClientStatus.
    */
   async fetchStatuses(): Promise<void> {
-    for (const client of this.clients.values()) {
-      const result = await client.getSessionStatuses();
+    for (const [port, client] of this.clients.entries()) {
+      const result = await client.getStatus();
       if (result.ok) {
-        for (const status of result.value) {
-          this.sessionStatuses.set(status.sessionId, status);
-        }
+        this.clientStatuses.set(port, result.value);
       }
     }
   }
 
   /**
-   * Subscribe to session events.
+   * Subscribe to status changes.
    */
-  onSessionEvent(callback: (status: SessionStatus) => void): Unsubscribe {
-    this.listeners.add(callback);
-    return () => this.listeners.delete(callback);
+  onStatusChange(callback: () => void): Unsubscribe {
+    this.statusChangeListeners.add(callback);
+    return () => this.statusChangeListeners.delete(callback);
   }
 
   dispose(): void {
@@ -153,23 +164,31 @@ class OpenCodeProvider implements IDisposable {
       client.dispose();
     }
     this.clients.clear();
-    this.sessionStatuses.clear();
-    this.listeners.clear();
+    this.clientStatuses.clear();
+    this.sessionToPort.clear();
     this.pendingPermissions.clear();
-    this.permissionChangeListeners.clear();
+    this.statusChangeListeners.clear();
   }
 
-  private handleSessionEvent(event: SessionStatus): void {
+  /**
+   * Handle status change from a client.
+   */
+  private handleStatusChanged(port: number, status: ClientStatus): void {
+    this.clientStatuses.set(port, status);
+    this.notifyStatusChange();
+  }
+
+  /**
+   * Handle session events from a client.
+   * Updates sessionToPort mapping for permission correlation.
+   */
+  private handleSessionEvent(port: number, event: { type: string; sessionId: string }): void {
     if (event.type === "deleted") {
-      this.sessionStatuses.delete(event.sessionId);
-      // Also clear pending permissions for deleted session
+      this.sessionToPort.delete(event.sessionId);
       this.pendingPermissions.delete(event.sessionId);
     } else {
-      this.sessionStatuses.set(event.sessionId, event);
-    }
-
-    for (const listener of this.listeners) {
-      listener(event);
+      // Map session to port for permission correlation
+      this.sessionToPort.set(event.sessionId, port);
     }
   }
 
@@ -189,7 +208,7 @@ class OpenCodeProvider implements IDisposable {
       this.pendingPermissions.get(sessionId)?.add(permissionId);
 
       // Notify listeners that status may have changed
-      this.notifyPermissionChange();
+      this.notifyStatusChange();
     } else if (event.type === "permission.replied") {
       // Remove permission from pending set
       const sessionId = event.event.sessionID;
@@ -204,25 +223,17 @@ class OpenCodeProvider implements IDisposable {
       }
 
       // Notify listeners that status may have changed
-      this.notifyPermissionChange();
+      this.notifyStatusChange();
     }
   }
 
   /**
-   * Notify permission change listeners.
+   * Notify status change listeners.
    */
-  private notifyPermissionChange(): void {
-    for (const listener of this.permissionChangeListeners) {
+  private notifyStatusChange(): void {
+    for (const listener of this.statusChangeListeners) {
       listener();
     }
-  }
-
-  /**
-   * Subscribe to permission state changes.
-   */
-  onPermissionChange(callback: () => void): Unsubscribe {
-    this.permissionChangeListeners.add(callback);
-    return () => this.permissionChangeListeners.delete(callback);
   }
 }
 
@@ -251,9 +262,8 @@ export class AgentStatusManager implements IDisposable {
     }
 
     const provider = new OpenCodeProvider();
-    provider.onSessionEvent(() => this.updateStatus(path));
-    // Subscribe to permission changes to update status when permission state changes
-    provider.onPermissionChange(() => this.updateStatus(path));
+    // Subscribe to status changes (includes permission changes)
+    provider.onStatusChange(() => this.updateStatus(path));
 
     // Get current ports for this workspace
     const ports = this.discoveryService.getPortsForWorkspace(path);
@@ -262,7 +272,7 @@ export class AgentStatusManager implements IDisposable {
     // Initialize new clients (fetch root sessions + connect SSE)
     await provider.initializeNewClients(newPorts);
 
-    // Fetch initial statuses (only root sessions)
+    // Fetch initial statuses from all clients
     await provider.fetchStatuses();
 
     this.providers.set(path, provider);
@@ -336,8 +346,8 @@ export class AgentStatusManager implements IDisposable {
       return;
     }
 
-    // Use adjusted counts that account for "connected but no sessions"
-    const counts = provider.getAdjustedCounts();
+    // Use effective counts that account for permissions and port status
+    const counts = provider.getEffectiveCounts();
     const status = this.aggregateStatus(counts);
 
     const previousStatus = this.statuses.get(path);

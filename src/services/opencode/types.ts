@@ -66,9 +66,15 @@ export interface SessionStatusValue {
 
 /**
  * Response from OpenCode /session/status endpoint.
- * OpenCode returns an object keyed by session ID.
+ * OpenCode returns an array of status values (not keyed by session ID).
  */
-export type SessionStatusResponse = Record<string, SessionStatusValue>;
+export type SessionStatusResponse = readonly SessionStatusValue[];
+
+/**
+ * Client status - simplified to just idle or busy.
+ * Used for port-based status tracking (1 agent per port).
+ */
+export type ClientStatus = "idle" | "busy";
 
 /**
  * Full session data from OpenCode /session endpoint.
