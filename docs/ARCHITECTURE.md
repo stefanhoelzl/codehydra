@@ -318,12 +318,39 @@ Supporting modules:
 ### Status Update Flow
 
 1. **SSE Connection**: `OpenCodeClient` connects to `/event` endpoint
-2. **Event Parsing**: Receives `session.status`, `session.deleted`, `session.idle` events
-3. **Aggregation**: `AgentStatusManager` counts idle/busy sessions per workspace
-4. **Callback**: Status change triggers callback (NOT direct IPC)
-5. **IPC Emit**: Handler subscribes to callback, emits `agent:status-changed`
-6. **Store Update**: Renderer receives event, updates `agentStatusStore`
-7. **UI Update**: `AgentStatusIndicator` component reflects new state
+2. **Event Parsing**: Receives `session.status`, `session.deleted`, `session.idle`, `permission.updated`, `permission.replied` events
+3. **Permission Tracking**: `OpenCodeProvider` tracks pending permissions per session
+4. **Aggregation**: `AgentStatusManager` counts idle/busy sessions per workspace
+5. **Callback**: Status change triggers callback (NOT direct IPC)
+6. **IPC Emit**: Handler subscribes to callback, emits `agent:status-changed`
+7. **Store Update**: Renderer receives event, updates `agentStatusStore`
+8. **UI Update**: `AgentStatusIndicator` component reflects new state
+
+### Permission State Override
+
+Sessions waiting for user permission are displayed as "idle" (green indicator) rather than "busy":
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      OpenCodeProvider                            │
+│                                                                  │
+│  sessionStatuses: Map<sessionId, SessionStatus>                  │
+│  pendingPermissions: Map<sessionId, Set<permissionId>>          │
+│                                                                  │
+│  getAdjustedCounts():                                           │
+│    for each session:                                            │
+│      if pendingPermissions.has(sessionId) → count as idle       │
+│      else if status.type === "idle" → count as idle             │
+│      else if status.type === "busy" → count as busy             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Event handling:**
+
+- `permission.updated`: Adds permission to `pendingPermissions` Set
+- `permission.replied`: Removes permission from `pendingPermissions` Set
+- `session.deleted`: Clears pending permissions for that session
+- SSE disconnect: Clears all pending permissions (reconnection safety)
 
 ### IPC Channels
 

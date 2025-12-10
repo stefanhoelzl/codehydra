@@ -57,18 +57,18 @@ export interface PathResponse {
 }
 
 /**
- * Individual session in the session status response.
+ * Individual session status value in the response.
+ * Uses 'type' property for status value.
  */
-export interface SessionInfo {
-  readonly id: string;
-  readonly status: "idle" | "busy";
+export interface SessionStatusValue {
+  readonly type: "idle" | "busy" | "retry";
 }
 
 /**
  * Response from OpenCode /session/status endpoint.
- * OpenCode returns a direct array of session info objects.
+ * OpenCode returns an object keyed by session ID.
  */
-export type SessionStatusResponse = readonly SessionInfo[];
+export type SessionStatusResponse = Record<string, SessionStatusValue>;
 
 /**
  * Full session data from OpenCode /session endpoint.
@@ -101,7 +101,12 @@ export type SessionStatus =
 /**
  * SSE event types from OpenCode.
  */
-export type OpenCodeEventType = "session.status" | "session.deleted" | "session.idle";
+export type OpenCodeEventType =
+  | "session.status"
+  | "session.deleted"
+  | "session.idle"
+  | "permission.updated"
+  | "permission.replied";
 
 /**
  * SSE event payload from OpenCode.
@@ -110,6 +115,27 @@ export interface OpenCodeEvent {
   readonly type: OpenCodeEventType;
   readonly sessionId: string;
   readonly status?: "idle" | "busy";
+}
+
+/**
+ * Permission request event from OpenCode.
+ * Emitted when a session requests user permission.
+ */
+export interface PermissionUpdatedEvent {
+  readonly id: string; // permission ID
+  readonly sessionID: string; // session requesting permission
+  readonly type: string; // permission type (e.g., "bash")
+  readonly title: string; // human-readable description
+}
+
+/**
+ * Permission response event from OpenCode.
+ * Emitted when user responds to a permission request.
+ */
+export interface PermissionRepliedEvent {
+  readonly sessionID: string;
+  readonly permissionID: string;
+  readonly response: "once" | "always" | "reject";
 }
 
 // ============ Error Types ============

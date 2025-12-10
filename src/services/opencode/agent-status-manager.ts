@@ -5,7 +5,7 @@
 
 import type { WorkspacePath, AgentStatusCounts, AggregatedAgentStatus } from "../../shared/ipc";
 import type { IDisposable, Unsubscribe, SessionStatus } from "./types";
-import { OpenCodeClient } from "./opencode-client";
+import { OpenCodeClient, type PermissionEvent } from "./opencode-client";
 import type { DiscoveryService } from "./discovery-service";
 
 /**
@@ -23,6 +23,16 @@ class OpenCodeProvider implements IDisposable {
   private readonly clients = new Map<number, OpenCodeClient>();
   private readonly sessionStatuses = new Map<string, SessionStatus>();
   private readonly listeners = new Set<(status: SessionStatus) => void>();
+  /**
+   * Pending permissions per session.
+   * Map<sessionId, Set<permissionId>>
+   * Sessions with pending permissions should display as idle (green indicator).
+   */
+  private readonly pendingPermissions = new Map<string, Set<string>>();
+  /**
+   * Callbacks to notify when permission state changes.
+   */
+  private readonly permissionChangeListeners = new Set<() => void>();
 
   /**
    * Sync clients with discovered ports.
@@ -36,6 +46,9 @@ class OpenCodeProvider implements IDisposable {
       if (!ports.has(port)) {
         client.dispose();
         this.clients.delete(port);
+        // Clear pending permissions for this client's sessions when it disconnects
+        // (SSE reconnection safety - permission state should be re-discovered)
+        this.pendingPermissions.clear();
       }
     }
 
@@ -44,6 +57,7 @@ class OpenCodeProvider implements IDisposable {
       if (!this.clients.has(port)) {
         const client = new OpenCodeClient(port);
         client.onSessionEvent((event) => this.handleSessionEvent(event));
+        client.onPermissionEvent((event) => this.handlePermissionEvent(event));
         this.clients.set(port, client);
         newPorts.add(port);
       }
@@ -70,14 +84,21 @@ class OpenCodeProvider implements IDisposable {
    * Get adjusted session counts.
    * When connected (has clients) but no sessions, returns { idle: 1, busy: 0 }
    * This ensures the indicator shows green when OpenCode is running.
+   * Sessions with pending permissions count as idle (waiting for user).
    */
   getAdjustedCounts(): { idle: number; busy: number } {
     let idle = 0;
     let busy = 0;
 
-    for (const status of this.sessionStatuses.values()) {
-      if (status.type === "idle") idle++;
-      else if (status.type === "busy") busy++;
+    for (const [sessionId, status] of this.sessionStatuses.entries()) {
+      // Sessions with pending permissions count as idle (waiting for user)
+      if (this.pendingPermissions.has(sessionId)) {
+        idle++;
+      } else if (status.type === "idle") {
+        idle++;
+      } else if (status.type === "busy") {
+        busy++;
+      }
     }
 
     // IMPORTANT: When connected but no sessions, show as "1 idle" (green indicator)
@@ -134,11 +155,15 @@ class OpenCodeProvider implements IDisposable {
     this.clients.clear();
     this.sessionStatuses.clear();
     this.listeners.clear();
+    this.pendingPermissions.clear();
+    this.permissionChangeListeners.clear();
   }
 
   private handleSessionEvent(event: SessionStatus): void {
     if (event.type === "deleted") {
       this.sessionStatuses.delete(event.sessionId);
+      // Also clear pending permissions for deleted session
+      this.pendingPermissions.delete(event.sessionId);
     } else {
       this.sessionStatuses.set(event.sessionId, event);
     }
@@ -146,6 +171,58 @@ class OpenCodeProvider implements IDisposable {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+
+  /**
+   * Handle permission events from clients.
+   * Tracks pending permissions to override busy status.
+   */
+  private handlePermissionEvent(event: PermissionEvent): void {
+    if (event.type === "permission.updated") {
+      // Add permission to pending set
+      const sessionId = event.event.sessionID;
+      const permissionId = event.event.id;
+
+      if (!this.pendingPermissions.has(sessionId)) {
+        this.pendingPermissions.set(sessionId, new Set());
+      }
+      this.pendingPermissions.get(sessionId)?.add(permissionId);
+
+      // Notify listeners that status may have changed
+      this.notifyPermissionChange();
+    } else if (event.type === "permission.replied") {
+      // Remove permission from pending set
+      const sessionId = event.event.sessionID;
+      const permissionId = event.event.permissionID;
+
+      const permissions = this.pendingPermissions.get(sessionId);
+      if (permissions) {
+        permissions.delete(permissionId);
+        if (permissions.size === 0) {
+          this.pendingPermissions.delete(sessionId);
+        }
+      }
+
+      // Notify listeners that status may have changed
+      this.notifyPermissionChange();
+    }
+  }
+
+  /**
+   * Notify permission change listeners.
+   */
+  private notifyPermissionChange(): void {
+    for (const listener of this.permissionChangeListeners) {
+      listener();
+    }
+  }
+
+  /**
+   * Subscribe to permission state changes.
+   */
+  onPermissionChange(callback: () => void): Unsubscribe {
+    this.permissionChangeListeners.add(callback);
+    return () => this.permissionChangeListeners.delete(callback);
   }
 }
 
@@ -175,6 +252,8 @@ export class AgentStatusManager implements IDisposable {
 
     const provider = new OpenCodeProvider();
     provider.onSessionEvent(() => this.updateStatus(path));
+    // Subscribe to permission changes to update status when permission state changes
+    provider.onPermissionChange(() => this.updateStatus(path));
 
     // Get current ports for this workspace
     const ports = this.discoveryService.getPortsForWorkspace(path);

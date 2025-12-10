@@ -214,12 +214,13 @@ describe("AgentStatusManager", () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
         const urlStr = url.toString();
         if (urlStr.includes("/session/status")) {
+          // New object format
           return Promise.resolve(
             new Response(
-              JSON.stringify([
-                { id: "session-1", status: "idle" },
-                { id: "session-2", status: "busy" },
-              ]),
+              JSON.stringify({
+                "session-1": { type: "idle" },
+                "session-2": { type: "busy" },
+              }),
               { status: 200 }
             )
           );
@@ -272,3 +273,6 @@ describe("AgentStatusManager", () => {
     });
   });
 });
+
+// Note: OpenCodeProvider is a private class, so we test permission tracking
+// through the AgentStatusManager integration tests in services.integration.test.ts
