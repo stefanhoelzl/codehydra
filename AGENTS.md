@@ -228,6 +228,19 @@ agentStatusManager.onStatusChanged((path, status, counts) => {
 - Scripts: `npm run dev`, `npm run build`, `npm test`, `npm run lint`
 - Use `npm install <package>` for dependencies (never edit package.json manually)
 
+## Git Worktree Merge Workflow
+
+When merging a worktree branch into `main`:
+
+1. **Always use fast-forward merge** - never create merge commits
+2. **Switch to the directory where `main` is checked out** (typically the root repo)
+3. **Run the merge there**
+
+```bash
+cd /path/to/main/checkout
+git merge --ff-only <worktree-branch>
+```
+
 ## Code Quality Standards
 
 - TypeScript strict mode, no `any`, no implicit types
