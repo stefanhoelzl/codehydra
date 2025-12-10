@@ -10,6 +10,9 @@ import { createTestGitRepo, createTempDir } from "../../services/test-utils";
 import { ProjectStore } from "../../services/project/project-store";
 import { AppState } from "../app-state";
 import type { IViewManager } from "../managers/view-manager.interface";
+import * as paths from "../../services/platform/paths";
+import { projectDirName } from "../../services/platform/paths";
+import path from "path";
 
 // Mock electron - need BrowserWindow for emitEvent
 vi.mock("electron", () => ({
@@ -93,6 +96,11 @@ describe("IPC Integration Tests", () => {
     projectsDir = tempDir.path;
     tempCleanup = tempDir.cleanup;
 
+    // Mock getProjectWorkspacesDir to use temp directory for workspace creation
+    vi.spyOn(paths, "getProjectWorkspacesDir").mockImplementation((projectPath: string) =>
+      path.join(projectsDir, projectDirName(projectPath), "workspaces")
+    );
+
     // Create instances
     projectStore = new ProjectStore(projectsDir);
     viewManager = createMockViewManager();
@@ -100,6 +108,7 @@ describe("IPC Integration Tests", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await repoCleanup();
     await tempCleanup();
   });

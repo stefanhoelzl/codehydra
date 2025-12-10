@@ -4,12 +4,14 @@
  * Tests full workflows with real git repos and filesystem.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestGitRepo, createTempDir } from "./test-utils";
 import { SimpleGitClient } from "./git/simple-git-client";
 import { GitWorktreeProvider } from "./git/git-worktree-provider";
 import { ProjectStore } from "./project/project-store";
 import { createGitWorktreeProvider } from "./index";
+import * as paths from "./platform/paths";
+import { projectDirName } from "./platform/paths";
 import path from "path";
 
 describe("Services Integration", () => {
@@ -27,9 +29,15 @@ describe("Services Integration", () => {
       const tempDir = await createTempDir();
       projectsDir = path.join(tempDir.path, "projects");
       tempCleanup = tempDir.cleanup;
+
+      // Mock getProjectWorkspacesDir to use temp directory for workspace creation
+      vi.spyOn(paths, "getProjectWorkspacesDir").mockImplementation((projectPath: string) =>
+        path.join(projectsDir, projectDirName(projectPath), "workspaces")
+      );
     });
 
     afterEach(async () => {
+      vi.restoreAllMocks();
       await repoCleanup();
       await tempCleanup();
     });
@@ -187,6 +195,12 @@ describe("Services Integration", () => {
   describe("Error handling", () => {
     it("handles workspace with uncommitted changes", async () => {
       const repo = await createTestGitRepo({ dirty: true });
+      const tempDir = await createTempDir();
+
+      // Mock getProjectWorkspacesDir to use temp directory for workspace creation
+      vi.spyOn(paths, "getProjectWorkspacesDir").mockImplementation((projectPath: string) =>
+        path.join(tempDir.path, projectDirName(projectPath), "workspaces")
+      );
 
       try {
         const gitClient = new SimpleGitClient();
@@ -206,7 +220,9 @@ describe("Services Integration", () => {
         // Cleanup
         await provider.removeWorkspace(workspace.path, true);
       } finally {
+        vi.restoreAllMocks();
         await repo.cleanup();
+        await tempDir.cleanup();
       }
     });
   });
