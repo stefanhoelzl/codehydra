@@ -10,7 +10,8 @@
         "runOn": "folderOpen"
       },
       "presentation": {
-        "reveal": "silent"
+        "reveal": "silent",
+        "close": true
       }
     },
     {
@@ -23,7 +24,8 @@
         "runOn": "folderOpen"
       },
       "presentation": {
-        "reveal": "silent"
+        "reveal": "silent",
+        "close": true
       }
     }
   ]
