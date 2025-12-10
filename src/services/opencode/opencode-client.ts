@@ -1,10 +1,9 @@
 /**
  * OpenCode client for communicating with OpenCode instances.
- * Handles HTTP requests and SSE connections.
+ * Handles HTTP requests and SSE connections via injected network interfaces.
  */
 
-import { EventSource } from "eventsource";
-import { fetchWithTimeout } from "../platform/http";
+import type { HttpClient, SseClient, SseConnection } from "../platform/network";
 import { OpenCodeError } from "../errors";
 import {
   ok,
@@ -121,17 +120,17 @@ function isSessionListResponse(value: unknown): value is SessionListResponse {
 
 /**
  * Client for communicating with a single OpenCode instance.
+ *
+ * Uses injected HttpClient and SseClient for network operations,
+ * enabling dependency injection and easier testing.
  */
 export class OpenCodeClient implements IDisposable {
   private readonly baseUrl: string;
   private readonly listeners = new Set<SessionEventCallback>();
   private readonly permissionListeners = new Set<PermissionEventCallback>();
   private readonly statusListeners = new Set<StatusChangedCallback>();
-  private eventSource: EventSource | null = null;
+  private sseConnection: SseConnection | null = null;
   private disposed = false;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconnectDelay = 1000;
-  private readonly maxReconnectDelay = 30000;
 
   /**
    * Set of root session IDs (sessions without a parentID).
@@ -152,7 +151,11 @@ export class OpenCodeClient implements IDisposable {
     return this._currentStatus;
   }
 
-  constructor(port: number) {
+  constructor(
+    port: number,
+    private readonly httpClient: HttpClient,
+    private readonly sseClient: SseClient
+  ) {
     this.baseUrl = `http://localhost:${port}`;
   }
 
@@ -164,7 +167,7 @@ export class OpenCodeClient implements IDisposable {
     const url = `${this.baseUrl}/session`;
 
     try {
-      const response = await fetchWithTimeout(url);
+      const response = await this.httpClient.fetch(url);
 
       if (!response.ok) {
         return err(new OpenCodeError(`HTTP ${response.status}`, "REQUEST_FAILED"));
@@ -245,7 +248,7 @@ export class OpenCodeClient implements IDisposable {
     const url = `${this.baseUrl}/session/status`;
 
     try {
-      const response = await fetchWithTimeout(url);
+      const response = await this.httpClient.fetch(url);
 
       if (!response.ok) {
         return err(new OpenCodeError(`HTTP ${response.status}`, "REQUEST_FAILED"));
@@ -282,54 +285,38 @@ export class OpenCodeClient implements IDisposable {
 
   /**
    * Connect to SSE event stream.
+   * Reconnection is handled by the SseClient.
    */
   connect(): void {
-    if (this.disposed || this.eventSource) return;
+    if (this.disposed || this.sseConnection) return;
 
-    try {
-      this.eventSource = new EventSource(`${this.baseUrl}/event`);
+    this.sseConnection = this.sseClient.createSseConnection(`${this.baseUrl}/event`);
 
-      this.eventSource.onopen = () => {
-        // Reset reconnect delay on successful connection
-        this.reconnectDelay = 1000;
+    // Set up message handler
+    this.sseConnection.onMessage((data: string) => {
+      this.handleRawMessage(data);
+    });
 
+    // Set up state change handler - re-sync status on reconnect
+    this.sseConnection.onStateChange((connected: boolean) => {
+      if (connected) {
         // Re-fetch current status after reconnection to sync state
         void this.getStatus().then((result) => {
           if (result.ok) {
             this.updateCurrentStatus(result.value);
           }
         });
-      };
-
-      this.eventSource.onerror = () => {
-        this.handleDisconnect();
-      };
-
-      // OpenCode sends all events as unnamed SSE events with a "type" field in the JSON payload.
-      // Example: data: {"type":"session.status","properties":{"sessionID":"...","status":{"type":"busy"}}}
-      //
-      // This is NOT the named event format (event: session.status\ndata: ...) that would
-      // trigger addEventListener(). Therefore, we must use onmessage to receive all events.
-      this.eventSource.onmessage = (event) => {
-        this.handleMessage(event);
-      };
-    } catch {
-      this.handleDisconnect();
-    }
+      }
+    });
   }
 
   /**
    * Disconnect from SSE event stream.
    */
   disconnect(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    if (this.sseConnection) {
+      this.sseConnection.disconnect();
+      this.sseConnection = null;
     }
   }
 
@@ -345,14 +332,14 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Handle incoming SSE message.
+   * Handle incoming raw SSE message data.
    * Parses the OpenCode wire format and dispatches to appropriate handlers.
    *
    * OpenCode wire format: { type: "event.name", properties: { ... } }
    */
-  private handleMessage(event: MessageEvent): void {
+  private handleRawMessage(data: string): void {
     try {
-      const data = JSON.parse(event.data as string) as {
+      const parsed = JSON.parse(data) as {
         type?: string;
         properties?: {
           sessionID?: string;
@@ -366,32 +353,41 @@ export class OpenCodeClient implements IDisposable {
         };
       };
 
-      if (!data.type) return;
+      if (!parsed.type) return;
 
       // Dispatch to appropriate handler based on event type
-      switch (data.type) {
+      switch (parsed.type) {
         case "session.status":
-          this.handleSessionStatus(data.properties);
+          this.handleSessionStatus(parsed.properties);
           break;
         case "session.created":
-          this.handleSessionCreated(data.properties);
+          this.handleSessionCreated(parsed.properties);
           break;
         case "session.idle":
-          this.handleSessionIdle(data.properties);
+          this.handleSessionIdle(parsed.properties);
           break;
         case "session.deleted":
-          this.handleSessionDeleted(data.properties);
+          this.handleSessionDeleted(parsed.properties);
           break;
         case "permission.updated":
-          this.handlePermissionUpdated(data.properties);
+          this.handlePermissionUpdated(parsed.properties);
           break;
         case "permission.replied":
-          this.handlePermissionReplied(data.properties);
+          this.handlePermissionReplied(parsed.properties);
           break;
       }
     } catch {
       // Ignore parse errors
     }
+  }
+
+  /**
+   * Handle incoming SSE message.
+   * Accepts MessageEvent for simulating SSE events in tests.
+   * @internal
+   */
+  handleMessage(event: MessageEvent): void {
+    this.handleRawMessage(event.data as string);
   }
 
   /**
@@ -524,21 +520,5 @@ export class OpenCodeClient implements IDisposable {
     for (const listener of this.permissionListeners) {
       listener({ type: "permission.replied", event: properties });
     }
-  }
-
-  private handleDisconnect(): void {
-    this.disconnect();
-
-    if (this.disposed) return;
-
-    // Exponential backoff reconnection
-    this.reconnectTimer = setTimeout(() => {
-      if (!this.disposed) {
-        this.connect();
-      }
-    }, this.reconnectDelay);
-
-    // Increase delay for next attempt (capped at max)
-    this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
   }
 }

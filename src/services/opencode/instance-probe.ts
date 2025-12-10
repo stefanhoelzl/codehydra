@@ -3,7 +3,7 @@
  * Probes a port to determine if it's running an OpenCode instance.
  */
 
-import { fetchWithTimeout } from "../platform/http";
+import { type HttpClient } from "../platform/network";
 import { ok, err, type Result, type ProbeError, type PathResponse } from "./types";
 
 /**
@@ -38,7 +38,10 @@ function isPathResponse(value: unknown): value is PathResponse {
 export class HttpInstanceProbe implements InstanceProbe {
   private readonly timeout: number;
 
-  constructor(timeout = 5000) {
+  constructor(
+    private readonly httpClient: HttpClient,
+    timeout = 5000
+  ) {
     this.timeout = timeout;
   }
 
@@ -47,7 +50,7 @@ export class HttpInstanceProbe implements InstanceProbe {
     const url = `http://localhost:${port}/path`;
 
     try {
-      const response = await fetchWithTimeout(url, { timeout: this.timeout });
+      const response = await this.httpClient.fetch(url, { timeout: this.timeout });
 
       if (!response.ok) {
         return err({

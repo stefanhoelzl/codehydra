@@ -4,7 +4,8 @@
  */
 
 import type { CodeServerConfig, InstanceState } from "./types";
-import { findAvailablePort, type ProcessRunner, type SpawnedProcess } from "../platform/process";
+import type { ProcessRunner, SpawnedProcess } from "../platform/process";
+import type { HttpClient, PortManager } from "../platform/network";
 import { encodePathForUrl } from "../platform/paths";
 import { CodeServerError } from "../errors";
 
@@ -45,6 +46,8 @@ export function urlForFolder(port: number, folderPath: string): string {
 export class CodeServerManager {
   private readonly config: CodeServerConfig;
   private readonly processRunner: ProcessRunner;
+  private readonly httpClient: HttpClient;
+  private readonly portManager: PortManager;
   private state: InstanceState = "stopped";
   private currentPort: number | null = null;
   private currentPid: number | null = null;
@@ -52,9 +55,16 @@ export class CodeServerManager {
   private startPromise: Promise<number> | null = null;
   private readonly pidListeners = new Set<PidChangedCallback>();
 
-  constructor(config: CodeServerConfig, processRunner: ProcessRunner) {
+  constructor(
+    config: CodeServerConfig,
+    processRunner: ProcessRunner,
+    httpClient: HttpClient,
+    portManager: PortManager
+  ) {
     this.config = config;
     this.processRunner = processRunner;
+    this.httpClient = httpClient;
+    this.portManager = portManager;
   }
 
   /**
@@ -142,7 +152,7 @@ export class CodeServerManager {
 
   private async doStart(): Promise<number> {
     // Find an available port
-    const port = await findAvailablePort();
+    const port = await this.portManager.findFreePort();
     this.currentPort = port;
 
     // Build command arguments
@@ -228,19 +238,14 @@ export class CodeServerManager {
    * Check if the server is responding to health checks.
    */
   private async checkHealth(port: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      // Dynamic import to avoid mocking issues
-      import("http").then(({ get }) => {
-        const req = get(`http://localhost:${port}/healthz`, (res) => {
-          resolve(res.statusCode === 200);
-        });
-        req.on("error", () => resolve(false));
-        req.setTimeout(1000, () => {
-          req.destroy();
-          resolve(false);
-        });
+    try {
+      const response = await this.httpClient.fetch(`http://localhost:${port}/healthz`, {
+        timeout: 1000,
       });
-    });
+      return response.status === 200;
+    } catch {
+      return false;
+    }
   }
 
   private sleep(ms: number): Promise<void> {

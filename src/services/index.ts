@@ -64,13 +64,26 @@ export { DefaultPathProvider } from "./platform/path-provider";
 export { createMockPathProvider } from "./platform/path-provider.test-utils";
 
 // Process utilities
-export { findAvailablePort, ExecaProcessRunner } from "./platform/process";
+export { ExecaProcessRunner } from "./platform/process";
 export type {
   ProcessRunner,
   ProcessResult,
   ProcessOptions,
   SpawnedProcess,
 } from "./platform/process";
+
+// Network layer
+export { DefaultNetworkLayer } from "./platform/network";
+export type {
+  HttpClient,
+  HttpRequestOptions,
+  SseClient,
+  SseConnection,
+  SseConnectionOptions,
+  PortManager,
+  ListeningPort,
+  NetworkLayerConfig,
+} from "./platform/network";
 
 // VSCode setup
 export { VscodeSetupService, CURRENT_SETUP_VERSION } from "./vscode-setup";

@@ -3,29 +3,6 @@
  */
 
 import { execa } from "execa";
-import { createServer } from "net";
-
-/**
- * Find an available port on the system.
- * Uses the Node.js net module to bind to port 0, which the OS assigns an available port.
- *
- * @returns Promise resolving to an available port number
- */
-export async function findAvailablePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, () => {
-      const address = server.address();
-      if (address && typeof address === "object") {
-        const { port } = address;
-        server.close(() => resolve(port));
-      } else {
-        server.close(() => reject(new Error("Failed to get port from server address")));
-      }
-    });
-    server.on("error", reject);
-  });
-}
 
 export interface ProcessOptions {
   /** Working directory for the process */

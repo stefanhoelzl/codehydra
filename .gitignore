@@ -6,6 +6,9 @@ dist/
 out/
 .vite/
 
+# Test coverage
+coverage/
+
 # Development data
 app-data/
 

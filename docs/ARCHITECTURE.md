@@ -154,14 +154,113 @@ The application uses a **hybrid visibility approach**:
 
 Services are pure Node.js for testability without Electron:
 
-| Service                  | Responsibility                                    | Status      |
-| ------------------------ | ------------------------------------------------- | ----------- |
-| Git Worktree Provider    | Discover worktrees (not main dir), create, remove | Implemented |
-| Code-Server Manager      | Start/stop code-server, port management           | Implemented |
-| Project Store            | Persist open projects across sessions             | Implemented |
-| OpenCode Discovery       | Find running OpenCode instances                   | Implemented |
-| OpenCode Status Provider | SSE connections, status aggregation               | Implemented |
-| VS Code Setup Service    | First-run extension and config installation       | Implemented |
+| Service                  | Responsibility                                                  | Status      |
+| ------------------------ | --------------------------------------------------------------- | ----------- |
+| Git Worktree Provider    | Discover worktrees (not main dir), create, remove               | Implemented |
+| Code-Server Manager      | Start/stop code-server, port management                         | Implemented |
+| Project Store            | Persist open projects across sessions                           | Implemented |
+| OpenCode Discovery       | Find running OpenCode instances                                 | Implemented |
+| OpenCode Status Provider | SSE connections, status aggregation                             | Implemented |
+| VS Code Setup Service    | First-run extension and config installation                     | Implemented |
+| NetworkLayer             | HTTP, SSE, port operations (HttpClient, SseClient, PortManager) | Implemented |
+
+### NetworkLayer Pattern
+
+NetworkLayer provides unified interfaces for all localhost network operations, designed following the Interface Segregation Principle. Consumers depend only on the specific interface(s) they need.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Focused Interfaces                               │
+│  ┌───────────────────┐ ┌───────────────────┐ ┌───────────────────────┐  │
+│  │    HttpClient     │ │     SseClient     │ │     PortManager       │  │
+│  │  fetch(url, opts) │ │ createSseConn()   │ │  findFreePort()       │  │
+│  │                   │ │                   │ │  getListeningPorts()  │  │
+│  └───────────────────┘ └───────────────────┘ └───────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       DefaultNetworkLayer                                │
+│            implements HttpClient, SseClient, PortManager                 │
+│                                                                          │
+│  Single class that implements all interfaces for convenience.            │
+│  Consumers inject only the interface(s) they need.                       │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Interface Responsibilities:**
+
+| Interface     | Methods                                 | Purpose                         | Used By                                          |
+| ------------- | --------------------------------------- | ------------------------------- | ------------------------------------------------ |
+| `HttpClient`  | `fetch(url, options)`                   | HTTP GET with timeout support   | OpenCodeClient, InstanceProbe, CodeServerManager |
+| `SseClient`   | `createSseConnection(url, options)`     | SSE with auto-reconnection      | OpenCodeClient                                   |
+| `PortManager` | `findFreePort()`, `getListeningPorts()` | Port discovery and availability | CodeServerManager, DiscoveryService              |
+
+**Dependency Injection:**
+
+```typescript
+// DefaultNetworkLayer implements all three interfaces
+const networkLayer = new DefaultNetworkLayer();
+
+// Inject only the interface(s) each consumer needs
+const instanceProbe = new HttpInstanceProbe(networkLayer); // HttpClient only
+const codeServerManager = new CodeServerManager(config, runner, networkLayer, networkLayer); // HttpClient + PortManager
+const openCodeClient = new OpenCodeClient(port, networkLayer, networkLayer); // HttpClient + SseClient
+```
+
+**SSE Auto-Reconnection:**
+
+The SseClient provides automatic reconnection with exponential backoff:
+
+- Initial delay: 1 second
+- Backoff: doubles each retry (1s → 2s → 4s → 8s → ...)
+- Maximum delay: 30 seconds
+- Resets to 1s after successful connection
+
+```typescript
+const conn = sseClient.createSseConnection("http://localhost:8080/events");
+
+conn.onMessage((data) => {
+  // Raw string data - consumer handles JSON parsing
+  const parsed = JSON.parse(data);
+});
+
+conn.onStateChange((connected) => {
+  if (connected) {
+    // Application-specific: re-sync state after reconnect
+    void this.syncStatus();
+  }
+});
+
+// Cleanup
+conn.disconnect();
+```
+
+**Testing with Mock Utilities:**
+
+The module provides factory functions for creating mock implementations:
+
+| Factory                     | Returns         | Purpose                             |
+| --------------------------- | --------------- | ----------------------------------- |
+| `createMockHttpClient()`    | `HttpClient`    | Mock HTTP responses or errors       |
+| `createMockSseClient()`     | `SseClient`     | Mock SSE connection behavior        |
+| `createMockPortManager()`   | `PortManager`   | Mock port availability and scanning |
+| `createMockSseConnection()` | `SseConnection` | Controllable SSE connection handle  |
+
+```typescript
+import { createMockHttpClient, createMockPortManager } from "../platform/network.test-utils";
+
+const mockHttpClient = createMockHttpClient({
+  response: new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+});
+
+const mockPortManager = createMockPortManager({
+  findFreePort: { port: 9999 },
+  getListeningPorts: { ports: [{ port: 8080, pid: 1234 }] },
+});
+
+const service = new SomeService(mockHttpClient, mockPortManager);
+```
 
 ```
 Electron Main Process

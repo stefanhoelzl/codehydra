@@ -5,23 +5,36 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DiscoveryService, type DiscoveryServiceDependencies } from "./discovery-service";
-import type { PortScanner } from "./port-scanner";
+import type { PortManager, ListeningPort } from "../platform/network";
 import type { ProcessTreeProvider } from "./process-tree";
 import type { InstanceProbe } from "./instance-probe";
 import { ok, err } from "./types";
 
+/**
+ * Create a mock PortManager with controllable behavior.
+ * Unlike createMockPortManager from test-utils, this allows
+ * changing return values between calls via vi.fn().
+ */
+function createSpyPortManager(): PortManager & {
+  getListeningPorts: ReturnType<typeof vi.fn>;
+  findFreePort: ReturnType<typeof vi.fn>;
+} {
+  return {
+    getListeningPorts: vi.fn().mockResolvedValue([] as readonly ListeningPort[]),
+    findFreePort: vi.fn().mockResolvedValue(8080),
+  };
+}
+
 describe("DiscoveryService", () => {
   let service: DiscoveryService;
-  let mockPortScanner: PortScanner;
+  let mockPortManager: ReturnType<typeof createSpyPortManager>;
   let mockProcessTree: ProcessTreeProvider;
   let mockInstanceProbe: InstanceProbe;
 
   beforeEach(() => {
     vi.useFakeTimers();
 
-    mockPortScanner = {
-      scan: vi.fn().mockResolvedValue(ok([])),
-    };
+    mockPortManager = createSpyPortManager();
 
     mockProcessTree = {
       getDescendantPids: vi.fn().mockResolvedValue(new Set<number>()),
@@ -32,7 +45,7 @@ describe("DiscoveryService", () => {
     };
 
     const deps: DiscoveryServiceDependencies = {
-      portScanner: mockPortScanner,
+      portManager: mockPortManager,
       processTree: mockProcessTree,
       instanceProbe: mockInstanceProbe,
     };
@@ -44,6 +57,12 @@ describe("DiscoveryService", () => {
     service.dispose();
     vi.useRealTimers();
     vi.resetAllMocks();
+  });
+
+  describe("constructor", () => {
+    it("accepts PortManager", () => {
+      expect(service).toBeDefined();
+    });
   });
 
   describe("setCodeServerPid", () => {
@@ -58,7 +77,7 @@ describe("DiscoveryService", () => {
       // Setup: discover a port first
       service.setCodeServerPid(1000);
       vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-      vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+      mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
       vi.mocked(mockInstanceProbe.probe).mockResolvedValue(ok("/workspace/a"));
 
       await service.scan();
@@ -89,12 +108,10 @@ describe("DiscoveryService", () => {
     it("returns ports for known workspace", async () => {
       service.setCodeServerPid(1000);
       vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000, 3000]));
-      vi.mocked(mockPortScanner.scan).mockResolvedValue(
-        ok([
-          { port: 8080, pid: 2000 },
-          { port: 9090, pid: 3000 },
-        ])
-      );
+      mockPortManager.getListeningPorts.mockResolvedValue([
+        { port: 8080, pid: 2000 },
+        { port: 9090, pid: 3000 },
+      ]);
       vi.mocked(mockInstanceProbe.probe)
         .mockResolvedValueOnce(ok("/workspace/a"))
         .mockResolvedValueOnce(ok("/workspace/a"));
@@ -115,7 +132,7 @@ describe("DiscoveryService", () => {
 
       service.setCodeServerPid(1000);
       vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-      vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+      mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
       vi.mocked(mockInstanceProbe.probe).mockResolvedValue(ok("/workspace/a"));
 
       await service.scan();
@@ -131,7 +148,7 @@ describe("DiscoveryService", () => {
 
       service.setCodeServerPid(1000);
       vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-      vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+      mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
       vi.mocked(mockInstanceProbe.probe).mockResolvedValue(ok("/workspace/a"));
 
       await service.scan();
@@ -152,16 +169,14 @@ describe("DiscoveryService", () => {
 
 describe("DiscoveryService scan", () => {
   let service: DiscoveryService;
-  let mockPortScanner: PortScanner;
+  let mockPortManager: ReturnType<typeof createSpyPortManager>;
   let mockProcessTree: ProcessTreeProvider;
   let mockInstanceProbe: InstanceProbe;
 
   beforeEach(() => {
     vi.useFakeTimers();
 
-    mockPortScanner = {
-      scan: vi.fn().mockResolvedValue(ok([])),
-    };
+    mockPortManager = createSpyPortManager();
 
     mockProcessTree = {
       getDescendantPids: vi.fn().mockResolvedValue(new Set<number>()),
@@ -172,7 +187,7 @@ describe("DiscoveryService scan", () => {
     };
 
     service = new DiscoveryService({
-      portScanner: mockPortScanner,
+      portManager: mockPortManager,
       processTree: mockProcessTree,
       instanceProbe: mockInstanceProbe,
     });
@@ -188,18 +203,26 @@ describe("DiscoveryService scan", () => {
     const result = await service.scan();
 
     expect(result.ok).toBe(true);
-    expect(mockPortScanner.scan).not.toHaveBeenCalled();
+    expect(mockPortManager.getListeningPorts).not.toHaveBeenCalled();
+  });
+
+  it("uses portManager.getListeningPorts()", async () => {
+    service.setCodeServerPid(1000);
+    vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
+    mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
+
+    await service.scan();
+
+    expect(mockPortManager.getListeningPorts).toHaveBeenCalled();
   });
 
   it("scans ports and filters by descendant PIDs", async () => {
     service.setCodeServerPid(1000);
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000, 3000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(
-      ok([
-        { port: 8080, pid: 2000 }, // descendant - should probe
-        { port: 9090, pid: 4000 }, // not descendant - should skip
-      ])
-    );
+    mockPortManager.getListeningPorts.mockResolvedValue([
+      { port: 8080, pid: 2000 }, // descendant - should probe
+      { port: 9090, pid: 4000 }, // not descendant - should skip
+    ]);
 
     await service.scan();
 
@@ -211,7 +234,7 @@ describe("DiscoveryService scan", () => {
   it("caches non-OpenCode ports to avoid re-probing", async () => {
     service.setCodeServerPid(1000);
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+    mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
     vi.mocked(mockInstanceProbe.probe).mockResolvedValue(
       err({ code: "NOT_OPENCODE", message: "Not an OpenCode instance" })
     );
@@ -230,7 +253,7 @@ describe("DiscoveryService scan", () => {
 
     // First scan: port 8080 with PID 2000 (not OpenCode)
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+    mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
     vi.mocked(mockInstanceProbe.probe).mockResolvedValue(
       err({ code: "NOT_OPENCODE", message: "Not an OpenCode instance" })
     );
@@ -240,7 +263,7 @@ describe("DiscoveryService scan", () => {
 
     // Second scan: same port but different PID (port was reused)
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([3000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 3000 }]));
+    mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 3000 }]);
     vi.mocked(mockInstanceProbe.probe).mockResolvedValue(ok("/workspace/b"));
 
     await service.scan();
@@ -254,7 +277,7 @@ describe("DiscoveryService scan", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
       return new Set([2000]);
     });
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([]));
+    mockPortManager.getListeningPorts.mockResolvedValue([]);
 
     // Start two concurrent scans
     const scan1 = service.scan();
@@ -273,12 +296,10 @@ describe("DiscoveryService scan", () => {
     expect(result1.ok).toBe(true);
   });
 
-  it("handles port scanner errors", async () => {
+  it("handles port manager errors", async () => {
     service.setCodeServerPid(1000);
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(
-      err({ code: "NETSTAT_FAILED", message: "Command failed" })
-    );
+    mockPortManager.getListeningPorts.mockRejectedValue(new Error("Command failed"));
 
     const result = await service.scan();
 
@@ -294,7 +315,7 @@ describe("DiscoveryService scan", () => {
 
     service.setCodeServerPid(1000);
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+    mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
     vi.mocked(mockInstanceProbe.probe).mockResolvedValue(ok("/workspace/a"));
 
     await service.scan();
@@ -308,7 +329,7 @@ describe("DiscoveryService scan", () => {
 
     service.setCodeServerPid(1000);
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+    mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
     vi.mocked(mockInstanceProbe.probe).mockResolvedValue(ok("/workspace/a"));
 
     // First scan - add port
@@ -316,7 +337,7 @@ describe("DiscoveryService scan", () => {
     listener.mockClear();
 
     // Second scan - port gone
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([]));
+    mockPortManager.getListeningPorts.mockResolvedValue([]);
 
     await service.scan();
 
@@ -326,7 +347,7 @@ describe("DiscoveryService scan", () => {
   it("cleans up stale cache entries on TTL expiry", async () => {
     service.setCodeServerPid(1000);
     vi.mocked(mockProcessTree.getDescendantPids).mockResolvedValue(new Set([2000]));
-    vi.mocked(mockPortScanner.scan).mockResolvedValue(ok([{ port: 8080, pid: 2000 }]));
+    mockPortManager.getListeningPorts.mockResolvedValue([{ port: 8080, pid: 2000 }]);
     vi.mocked(mockInstanceProbe.probe).mockResolvedValue(
       err({ code: "NOT_OPENCODE", message: "Not an OpenCode instance" })
     );

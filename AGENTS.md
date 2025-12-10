@@ -280,7 +280,7 @@ Services use constructor DI for testability (NOT singletons):
 // Service with injected dependencies
 class DiscoveryService {
   constructor(
-    private readonly portScanner: PortScanner,
+    private readonly portManager: PortManager,
     private readonly processTree: ProcessTreeProvider,
     private readonly instanceProbe: InstanceProbe
   ) {}
@@ -288,9 +288,68 @@ class DiscoveryService {
 
 // Services owned and wired in main process
 // Example from bootstrap() and startServices():
+const networkLayer = new DefaultNetworkLayer();
 const processRunner = new ExecaProcessRunner();
 vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, "code-server");
-codeServerManager = new CodeServerManager(config, processRunner);
+codeServerManager = new CodeServerManager(config, processRunner, networkLayer, networkLayer);
+```
+
+### NetworkLayer Pattern
+
+`NetworkLayer` provides unified interfaces for all localhost network operations, split by Interface Segregation Principle:
+
+| Interface     | Methods                                 | Used By                                              |
+| ------------- | --------------------------------------- | ---------------------------------------------------- |
+| `HttpClient`  | `fetch(url, options)`                   | OpenCodeClient, HttpInstanceProbe, CodeServerManager |
+| `SseClient`   | `createSseConnection(url, options)`     | OpenCodeClient                                       |
+| `PortManager` | `findFreePort()`, `getListeningPorts()` | CodeServerManager, DiscoveryService                  |
+
+```typescript
+// DefaultNetworkLayer implements all three interfaces
+const networkLayer = new DefaultNetworkLayer();
+
+// Inject only the interface(s) each consumer needs
+const instanceProbe = new HttpInstanceProbe(networkLayer); // HttpClient
+const codeServerManager = new CodeServerManager(config, runner, networkLayer, networkLayer); // HttpClient + PortManager
+```
+
+**SSE Connection with Auto-Reconnection:**
+
+```typescript
+const conn = sseClient.createSseConnection("http://localhost:8080/events");
+
+conn.onMessage((data) => {
+  // Raw string data - consumer handles parsing
+  const parsed = JSON.parse(data);
+});
+
+conn.onStateChange((connected) => {
+  if (connected) {
+    // Application-specific: re-sync state after reconnect
+    void this.syncStatus();
+  }
+});
+
+// Cleanup
+conn.disconnect();
+```
+
+**Testing with Mock Clients:**
+
+```typescript
+import {
+  createMockHttpClient,
+  createMockSseClient,
+  createMockPortManager,
+} from "../platform/network.test-utils";
+
+// Create mock with controllable behavior
+const mockHttpClient = createMockHttpClient({
+  response: new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+});
+
+// Inject into service
+const service = new SomeService(mockHttpClient);
 ```
 
 **BuildInfo/PathProvider Pattern:**

@@ -7,22 +7,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AgentStatusManager } from "./agent-status-manager";
 import type { DiscoveryService } from "./discovery-service";
 import type { WorkspacePath } from "../../shared/ipc";
-
-// Mock the eventsource package (used by OpenCodeClient)
-vi.mock("eventsource", () => {
-  const mockEventSource = vi.fn().mockImplementation(() => ({
-    close: vi.fn(),
-    addEventListener: vi.fn(),
-    onopen: null,
-    onerror: null,
-    onmessage: null,
-  }));
-  return { EventSource: mockEventSource };
-});
+import type { HttpClient, SseClient } from "../platform/network";
+import {
+  createMockHttpClient,
+  createMockSseClient,
+  createMockSseConnection,
+} from "../platform/network.test-utils";
 
 describe("AgentStatusManager", () => {
   let manager: AgentStatusManager;
   let mockDiscoveryService: DiscoveryService;
+  let mockHttpClient: HttpClient;
+  let mockSseClient: SseClient;
   let instancesChangedCallback: ((workspace: string, ports: Set<number>) => void) | null;
 
   beforeEach(() => {
@@ -42,7 +38,12 @@ describe("AgentStatusManager", () => {
       dispose: vi.fn(),
     } as unknown as DiscoveryService;
 
-    manager = new AgentStatusManager(mockDiscoveryService);
+    // Create mock network clients
+    const mockSseConnection = createMockSseConnection();
+    mockSseClient = createMockSseClient({ connection: mockSseConnection });
+    mockHttpClient = createMockHttpClient();
+
+    manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
   });
 
   afterEach(() => {
@@ -76,10 +77,11 @@ describe("AgentStatusManager", () => {
     });
 
     it("gets ports from discovery service", async () => {
-      // Mock fetch for /session call (root sessions discovery)
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(JSON.stringify([]), { status: 200 })
-      );
+      // Mock HttpClient for /session call (root sessions discovery)
+      mockHttpClient = createMockHttpClient({
+        response: new Response(JSON.stringify([]), { status: 200 }),
+      });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
@@ -88,10 +90,11 @@ describe("AgentStatusManager", () => {
     });
 
     it("shows idle status when connected but no sessions", async () => {
-      // Mock fetch to return empty arrays for both /session and /session/status
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+      // Mock HttpClient to return empty arrays for both /session and /session/status
+      mockHttpClient = createMockHttpClient({
+        response: new Response(JSON.stringify([]), { status: 200 }),
+      });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       // Return ports so provider has clients
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
@@ -106,8 +109,6 @@ describe("AgentStatusManager", () => {
       expect(status.status).toBe("idle");
       expect(status.counts.idle).toBe(1);
       expect(status.counts.busy).toBe(0);
-
-      fetchSpy.mockRestore();
     });
 
     it("shows none status when no clients connected", async () => {
@@ -210,23 +211,25 @@ describe("AgentStatusManager", () => {
     });
 
     it("fetches statuses from new clients and updates status", async () => {
-      // Mock fetch for both /session (root sessions) and /session/status calls
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("/session/status")) {
-          // New array format - returns busy status
-          return Promise.resolve(new Response(JSON.stringify([{ type: "busy" }]), { status: 200 }));
-        } else if (urlStr.endsWith("/session")) {
-          // Return root sessions (no parentID)
-          return Promise.resolve(
-            new Response(
+      // Mock HttpClient for both /session (root sessions) and /session/status calls
+      let fetchCallCount = 0;
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          fetchCallCount++;
+          if (url.includes("/session/status")) {
+            // New array format - returns busy status
+            return new Response(JSON.stringify([{ type: "busy" }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            // Return root sessions (no parentID)
+            return new Response(
               JSON.stringify([{ id: "session-1", directory: "/test", title: "Session 1" }]),
               { status: 200 }
-            )
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       const listener = vi.fn();
       manager.onStatusChanged(listener);
@@ -234,17 +237,14 @@ describe("AgentStatusManager", () => {
       // Initialize workspace with no ports
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
       listener.mockClear();
-      fetchSpy.mockClear();
+      fetchCallCount = 0;
 
       // Simulate discovery service finding new ports
       instancesChangedCallback?.("/test/workspace", new Set([8080]));
 
       // Wait for async fetchStatuses to complete
       await vi.waitFor(() => {
-        expect(fetchSpy).toHaveBeenCalledWith(
-          "http://localhost:8080/session/status",
-          expect.any(Object)
-        );
+        expect(fetchCallCount).toBeGreaterThan(0);
       });
 
       // Wait for status update notification
@@ -257,26 +257,27 @@ describe("AgentStatusManager", () => {
       expect(status.status).toBe("busy");
       expect(status.counts.idle).toBe(0);
       expect(status.counts.busy).toBe(1);
-
-      fetchSpy.mockRestore();
     });
   });
 
   describe("port-based aggregation", () => {
     it("single port idle returns { idle: 1, busy: 0 }", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("/session/status")) {
-          return Promise.resolve(new Response(JSON.stringify([{ type: "idle" }]), { status: 200 }));
-        } else if (urlStr.endsWith("/session")) {
-          return Promise.resolve(
-            new Response(JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]), {
-              status: 200,
-            })
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes("/session/status")) {
+            return new Response(JSON.stringify([{ type: "idle" }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            return new Response(
+              JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]),
+              {
+                status: 200,
+              }
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
 
@@ -286,24 +287,25 @@ describe("AgentStatusManager", () => {
       expect(status.counts.idle).toBe(1);
       expect(status.counts.busy).toBe(0);
       expect(status.status).toBe("idle");
-
-      fetchSpy.mockRestore();
     });
 
     it("single port busy returns { idle: 0, busy: 1 }", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("/session/status")) {
-          return Promise.resolve(new Response(JSON.stringify([{ type: "busy" }]), { status: 200 }));
-        } else if (urlStr.endsWith("/session")) {
-          return Promise.resolve(
-            new Response(JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]), {
-              status: 200,
-            })
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes("/session/status")) {
+            return new Response(JSON.stringify([{ type: "busy" }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            return new Response(
+              JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]),
+              {
+                status: 200,
+              }
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
 
@@ -313,27 +315,28 @@ describe("AgentStatusManager", () => {
       expect(status.counts.idle).toBe(0);
       expect(status.counts.busy).toBe(1);
       expect(status.status).toBe("busy");
-
-      fetchSpy.mockRestore();
     });
 
     it("multiple ports aggregate independently", async () => {
       // Port 8080 returns idle, port 9090 returns busy
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes(":8080/session/status")) {
-          return Promise.resolve(new Response(JSON.stringify([{ type: "idle" }]), { status: 200 }));
-        } else if (urlStr.includes(":9090/session/status")) {
-          return Promise.resolve(new Response(JSON.stringify([{ type: "busy" }]), { status: 200 }));
-        } else if (urlStr.endsWith("/session")) {
-          return Promise.resolve(
-            new Response(JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]), {
-              status: 200,
-            })
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes(":8080/session/status")) {
+            return new Response(JSON.stringify([{ type: "idle" }]), { status: 200 });
+          } else if (url.includes(":9090/session/status")) {
+            return new Response(JSON.stringify([{ type: "busy" }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            return new Response(
+              JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]),
+              {
+                status: 200,
+              }
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080, 9090]));
 
@@ -343,24 +346,25 @@ describe("AgentStatusManager", () => {
       expect(status.counts.idle).toBe(1);
       expect(status.counts.busy).toBe(1);
       expect(status.status).toBe("mixed");
-
-      fetchSpy.mockRestore();
     });
 
     it("port removal clears associated status", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("/session/status")) {
-          return Promise.resolve(new Response(JSON.stringify([{ type: "busy" }]), { status: 200 }));
-        } else if (urlStr.endsWith("/session")) {
-          return Promise.resolve(
-            new Response(JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]), {
-              status: 200,
-            })
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes("/session/status")) {
+            return new Response(JSON.stringify([{ type: "busy" }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            return new Response(
+              JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]),
+              {
+                status: 200,
+              }
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
 
@@ -382,26 +386,25 @@ describe("AgentStatusManager", () => {
       expect(status.status).toBe("none");
       expect(status.counts.idle).toBe(0);
       expect(status.counts.busy).toBe(0);
-
-      fetchSpy.mockRestore();
     });
 
     it("maps retry status to busy", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("/session/status")) {
-          return Promise.resolve(
-            new Response(JSON.stringify([{ type: "retry" }]), { status: 200 })
-          );
-        } else if (urlStr.endsWith("/session")) {
-          return Promise.resolve(
-            new Response(JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]), {
-              status: 200,
-            })
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes("/session/status")) {
+            return new Response(JSON.stringify([{ type: "retry" }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            return new Response(
+              JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]),
+              {
+                status: 200,
+              }
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
 
@@ -410,8 +413,6 @@ describe("AgentStatusManager", () => {
       const status = manager.getStatus("/test/workspace" as WorkspacePath);
       expect(status.counts.busy).toBe(1);
       expect(status.status).toBe("busy");
-
-      fetchSpy.mockRestore();
     });
 
     // Note: The following permission-related tests verify behavior through OpenCodeClient
@@ -422,21 +423,24 @@ describe("AgentStatusManager", () => {
     it("permission events are handled via OpenCodeClient callbacks", async () => {
       // This test verifies that the manager properly subscribes to client permission events
       // by checking that the status updates when ports are added with sessions
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("/session/status")) {
-          // Initially idle
-          return Promise.resolve(new Response(JSON.stringify([{ type: "idle" }]), { status: 200 }));
-        } else if (urlStr.endsWith("/session")) {
-          // Return a root session
-          return Promise.resolve(
-            new Response(JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]), {
-              status: 200,
-            })
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes("/session/status")) {
+            // Initially idle
+            return new Response(JSON.stringify([{ type: "idle" }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            // Return a root session
+            return new Response(
+              JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]),
+              {
+                status: 200,
+              }
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
 
@@ -447,40 +451,36 @@ describe("AgentStatusManager", () => {
       expect(status.status).toBe("idle");
       expect(status.counts.idle).toBe(1);
       expect(status.counts.busy).toBe(0);
-
-      fetchSpy.mockRestore();
     });
 
     it("multiple ports track status independently", async () => {
       // This test verifies that each port maintains its own status
       // Port isolation for permissions is implemented at the client/provider level
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes(":8080/session/status")) {
-          return Promise.resolve(new Response(JSON.stringify([{ type: "idle" }]), { status: 200 }));
-        } else if (urlStr.includes(":9090/session/status")) {
-          return Promise.resolve(new Response(JSON.stringify([{ type: "busy" }]), { status: 200 }));
-        } else if (urlStr.includes(":8080/session")) {
-          return Promise.resolve(
-            new Response(
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes(":8080/session/status")) {
+            return new Response(JSON.stringify([{ type: "idle" }]), { status: 200 });
+          } else if (url.includes(":9090/session/status")) {
+            return new Response(JSON.stringify([{ type: "busy" }]), { status: 200 });
+          } else if (url.includes(":8080/session")) {
+            return new Response(
               JSON.stringify([{ id: "ses-X", directory: "/test", title: "Session X" }]),
               {
                 status: 200,
               }
-            )
-          );
-        } else if (urlStr.includes(":9090/session")) {
-          return Promise.resolve(
-            new Response(
+            );
+          } else if (url.includes(":9090/session")) {
+            return new Response(
               JSON.stringify([{ id: "ses-Y", directory: "/test", title: "Session Y" }]),
               {
                 status: 200,
               }
-            )
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       // Two ports for the same workspace
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080, 9090]));
@@ -492,8 +492,6 @@ describe("AgentStatusManager", () => {
       expect(status.counts.idle).toBe(1);
       expect(status.counts.busy).toBe(1);
       expect(status.status).toBe("mixed");
-
-      fetchSpy.mockRestore();
     });
 
     it("regression: no accumulation over many status change cycles", async () => {
@@ -501,22 +499,25 @@ describe("AgentStatusManager", () => {
       // regardless of how many status changes occur (no session accumulation bug)
       // This test verifies via fetch status responses since SSE mock is complex
       let statusCallCount = 0;
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
-        const urlStr = url.toString();
-        if (urlStr.includes("/session/status")) {
-          // Alternate between idle and busy on each call
-          statusCallCount++;
-          const status = statusCallCount % 2 === 0 ? "busy" : "idle";
-          return Promise.resolve(new Response(JSON.stringify([{ type: status }]), { status: 200 }));
-        } else if (urlStr.endsWith("/session")) {
-          return Promise.resolve(
-            new Response(JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]), {
-              status: 200,
-            })
-          );
-        }
-        return Promise.resolve(new Response("", { status: 404 }));
+      mockHttpClient = createMockHttpClient({
+        implementation: async (url) => {
+          if (url.includes("/session/status")) {
+            // Alternate between idle and busy on each call
+            statusCallCount++;
+            const status = statusCallCount % 2 === 0 ? "busy" : "idle";
+            return new Response(JSON.stringify([{ type: status }]), { status: 200 });
+          } else if (url.endsWith("/session")) {
+            return new Response(
+              JSON.stringify([{ id: "ses-1", directory: "/test", title: "Test" }]),
+              {
+                status: 200,
+              }
+            );
+          }
+          return new Response("", { status: 404 });
+        },
       });
+      manager = new AgentStatusManager(mockDiscoveryService, mockHttpClient, mockSseClient);
 
       vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
 
@@ -529,8 +530,6 @@ describe("AgentStatusManager", () => {
       // The key assertion: count should be exactly 1 for a single port
       // regardless of how many times we query
       expect(status.counts.idle + status.counts.busy).toBe(1);
-
-      fetchSpy.mockRestore();
     });
   });
 });

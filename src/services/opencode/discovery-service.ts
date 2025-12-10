@@ -4,7 +4,7 @@
  * and probes to identify OpenCode instances.
  */
 
-import type { PortScanner } from "./port-scanner";
+import type { PortManager } from "../platform/network";
 import type { ProcessTreeProvider } from "./process-tree";
 import type { InstanceProbe } from "./instance-probe";
 import {
@@ -21,7 +21,7 @@ import {
  * Dependencies for DiscoveryService.
  */
 export interface DiscoveryServiceDependencies {
-  readonly portScanner: PortScanner;
+  readonly portManager: PortManager;
   readonly processTree: ProcessTreeProvider;
   readonly instanceProbe: InstanceProbe;
 }
@@ -41,7 +41,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
  * Regular class with constructor DI - NOT a singleton.
  */
 export class DiscoveryService implements IDisposable {
-  private readonly portScanner: PortScanner;
+  private readonly portManager: PortManager;
   private readonly processTree: ProcessTreeProvider;
   private readonly instanceProbe: InstanceProbe;
 
@@ -53,7 +53,7 @@ export class DiscoveryService implements IDisposable {
   private readonly listeners = new Set<InstancesChangedCallback>();
 
   constructor(deps: DiscoveryServiceDependencies) {
-    this.portScanner = deps.portScanner;
+    this.portManager = deps.portManager;
     this.processTree = deps.processTree;
     this.instanceProbe = deps.instanceProbe;
   }
@@ -109,18 +109,20 @@ export class DiscoveryService implements IDisposable {
       // Get descendant PIDs once
       const descendants = await this.processTree.getDescendantPids(this.codeServerPid);
 
-      // Scan for listening ports
-      const portsResult = await this.portScanner.scan();
-      if (!portsResult.ok) {
+      // Scan for listening ports using PortManager
+      let listeningPorts: readonly { port: number; pid: number }[];
+      try {
+        listeningPorts = await this.portManager.getListeningPorts();
+      } catch (error) {
         return err({
           code: "PORT_SCAN_FAILED",
-          message: portsResult.error.message,
-          cause: portsResult.error,
+          message: error instanceof Error ? error.message : "Unknown error",
+          cause: error,
         });
       }
 
       // Filter ports by descendant PIDs
-      const candidatePorts = portsResult.value.filter((p) => descendants.has(p.pid));
+      const candidatePorts = listeningPorts.filter((p) => descendants.has(p.pid));
 
       // Track current scan's discovered ports
       const currentPorts = new Map<string, Set<number>>();

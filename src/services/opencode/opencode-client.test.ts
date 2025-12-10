@@ -12,25 +12,27 @@ import {
   isSessionStatusResponse,
 } from "./opencode-client";
 import type { SessionStatus } from "./types";
-
-// Mock the eventsource package
-vi.mock("eventsource", () => {
-  const mockEventSource = vi.fn().mockImplementation(() => ({
-    close: vi.fn(),
-    addEventListener: vi.fn(),
-    onopen: null,
-    onerror: null,
-    onmessage: null,
-  }));
-  return { EventSource: mockEventSource };
-});
+import {
+  createMockHttpClient,
+  createMockSseClient,
+  createMockSseConnection,
+} from "../platform/network.test-utils";
+import type { HttpClient, SseClient, SseConnection } from "../platform/network";
 
 describe("OpenCodeClient", () => {
   let client: OpenCodeClient;
+  let mockHttpClient: HttpClient;
+  let mockSseClient: SseClient;
+  let mockSseConnection: SseConnection;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+
+    // Create default mocks
+    mockSseConnection = createMockSseConnection();
+    mockSseClient = createMockSseClient({ connection: mockSseConnection });
+    mockHttpClient = createMockHttpClient();
   });
 
   afterEach(() => {
@@ -39,13 +41,36 @@ describe("OpenCodeClient", () => {
     vi.restoreAllMocks();
   });
 
+  /**
+   * Helper to create a client with mock dependencies.
+   * Pass a custom httpClient to configure specific responses for tests.
+   */
+  function createClient(
+    port = 8080,
+    customHttpClient?: HttpClient,
+    customSseClient?: SseClient
+  ): OpenCodeClient {
+    return new OpenCodeClient(
+      port,
+      customHttpClient ?? mockHttpClient,
+      customSseClient ?? mockSseClient
+    );
+  }
+
+  /**
+   * Helper to create a mock HttpClient that returns a specific response.
+   */
+  function createHttpClientWithResponse(response: Response): HttpClient {
+    return createMockHttpClient({ response });
+  }
+
   describe("getStatus", () => {
     it("returns idle for empty array response", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([]), { status: 200 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(true);
@@ -55,11 +80,11 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns busy for array with busy status", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ type: "busy" }]), { status: 200 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(true);
@@ -69,11 +94,11 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns idle for array with only idle status", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ type: "idle" }]), { status: 200 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(true);
@@ -83,11 +108,11 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns busy for mixed array (any busy = busy)", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ type: "idle" }, { type: "busy" }]), { status: 200 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(true);
@@ -97,11 +122,11 @@ describe("OpenCodeClient", () => {
     });
 
     it("maps retry to busy", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ type: "retry" }]), { status: 200 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(true);
@@ -111,25 +136,26 @@ describe("OpenCodeClient", () => {
     });
 
     it("uses correct URL", async () => {
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+      let calledUrl = "";
+      const httpClient = createMockHttpClient({
+        implementation: async (url) => {
+          calledUrl = url;
+          return new Response(JSON.stringify([]), { status: 200 });
+        },
+      });
 
-      client = new OpenCodeClient(3000);
+      client = createClient(3000, httpClient);
       await client.getStatus();
 
-      expect(fetchSpy).toHaveBeenCalledWith(
-        "http://localhost:3000/session/status",
-        expect.any(Object)
-      );
+      expect(calledUrl).toBe("http://localhost:3000/session/status");
     });
 
     it("returns error on HTTP 500", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const httpClient = createHttpClientWithResponse(
         new Response("Internal Server Error", { status: 500 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(false);
@@ -139,9 +165,11 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns error on timeout", async () => {
-      vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("Aborted", "AbortError"));
+      const httpClient = createMockHttpClient({
+        error: new DOMException("Aborted", "AbortError"),
+      });
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(false);
@@ -151,9 +179,9 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns error on malformed JSON", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not json", { status: 200 }));
+      const httpClient = createHttpClientWithResponse(new Response("not json", { status: 200 }));
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(false);
@@ -163,11 +191,11 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns error on invalid structure", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify({ wrong: "structure" }), { status: 200 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.getStatus();
 
       expect(result.ok).toBe(false);
@@ -180,14 +208,14 @@ describe("OpenCodeClient", () => {
   describe("onStatusChanged", () => {
     it("fires callback when root session status changes", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onStatusChanged(listener);
 
@@ -206,7 +234,7 @@ describe("OpenCodeClient", () => {
 
     it("does not fire callback for child session status changes", async () => {
       // Register parent as root, child has parentID
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "parent-1", directory: "/test", title: "Parent" },
@@ -217,7 +245,7 @@ describe("OpenCodeClient", () => {
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onStatusChanged(listener);
 
@@ -237,14 +265,14 @@ describe("OpenCodeClient", () => {
 
     it("does not fire callback when status unchanged", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onStatusChanged(listener);
 
@@ -266,14 +294,14 @@ describe("OpenCodeClient", () => {
 
     it("returns unsubscribe function", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       const unsubscribe = client.onStatusChanged(listener);
 
@@ -294,19 +322,19 @@ describe("OpenCodeClient", () => {
 
   describe("currentStatus", () => {
     it("starts as idle", () => {
-      client = new OpenCodeClient(8080);
+      client = createClient(8080);
       expect(client.currentStatus).toBe("idle");
     });
 
     it("updates on SSE session.status event for root session", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
 
       const event = {
@@ -322,7 +350,7 @@ describe("OpenCodeClient", () => {
 
     it("does not update on SSE session.status event for child session", async () => {
       // Register parent as root, child has parentID
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "parent-1", directory: "/test", title: "Parent" },
@@ -332,7 +360,7 @@ describe("OpenCodeClient", () => {
         )
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
 
       // Child session goes busy - should NOT update currentStatus
@@ -350,13 +378,13 @@ describe("OpenCodeClient", () => {
 
     it("updates on SSE session.idle event for root session", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
 
       // First set to busy
@@ -383,7 +411,7 @@ describe("OpenCodeClient", () => {
 
     it("does not update on SSE session.idle event for child session", async () => {
       // Register parent as root, child has parentID
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "parent-1", directory: "/test", title: "Parent" },
@@ -393,7 +421,7 @@ describe("OpenCodeClient", () => {
         )
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
 
       // Set parent to busy first
@@ -421,13 +449,13 @@ describe("OpenCodeClient", () => {
 
     it("maps retry to busy for root session", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
 
       const event = {
@@ -446,17 +474,18 @@ describe("OpenCodeClient", () => {
     it("onopen handler calls getStatus() to re-fetch status", async () => {
       // This test verifies the onopen handler behavior by directly testing
       // the integration: when SSE connects, getStatus should be called.
-      // Since mock EventSource callbacks are hard to trigger, we test the
-      // underlying behavior: that getStatus returns correct status and
-      // updates currentStatus when called.
+      // We mock the HttpClient to track getStatus calls.
 
-      // Mock fetch to return busy status
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(JSON.stringify([{ type: "busy" }]), { status: 200 }));
+      let fetchCallCount = 0;
+      const httpClient = createMockHttpClient({
+        implementation: async () => {
+          fetchCallCount++;
+          return new Response(JSON.stringify([{ type: "busy" }]), { status: 200 });
+        },
+      });
 
       const statusListener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       client.onStatusChanged(statusListener);
 
       // Initial status is idle
@@ -472,32 +501,35 @@ describe("OpenCodeClient", () => {
         expect(result.value).toBe("busy");
       }
 
-      // Verify fetch was called with status endpoint
-      expect(fetchSpy).toHaveBeenCalledWith(
-        "http://localhost:8080/session/status",
-        expect.any(Object)
-      );
+      // Verify HttpClient.fetch was called
+      expect(fetchCallCount).toBeGreaterThan(0);
 
-      // Also verify EventSource was instantiated when connect() is called
+      // connect() creates SSE connection via mock SseClient
       client.connect();
-      const { EventSource } = await import("eventsource");
-      expect(vi.mocked(EventSource)).toHaveBeenCalledWith("http://localhost:8080/event");
+    });
 
-      fetchSpy.mockRestore();
+    it("connect() creates SSE connection with correct URL", () => {
+      const createSseConnectionSpy = vi.fn().mockReturnValue(mockSseConnection);
+      const sseClientWithSpy = { createSseConnection: createSseConnectionSpy };
+
+      client = createClient(8080, mockHttpClient, sseClientWithSpy);
+      client.connect();
+
+      expect(createSseConnectionSpy).toHaveBeenCalledWith("http://localhost:8080/event");
     });
   });
 
   describe("event handling", () => {
     it("emits session.status events for root sessions", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "test-session", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
@@ -510,7 +542,7 @@ describe("OpenCodeClient", () => {
 
     it("does not emit events for child sessions", async () => {
       // Register parent as root, child has parentID
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "parent-session", directory: "/test", title: "Parent" },
@@ -521,7 +553,7 @@ describe("OpenCodeClient", () => {
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
@@ -539,14 +571,14 @@ describe("OpenCodeClient", () => {
     });
 
     it("emits session.deleted events and removes from root set", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "test-session", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
@@ -559,14 +591,14 @@ describe("OpenCodeClient", () => {
     });
 
     it("emits session.idle events for root sessions", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "test-session", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
@@ -577,14 +609,14 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns unsubscribe function", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "test-session", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       const unsubscribe = client.onSessionEvent(listener);
 
@@ -599,13 +631,13 @@ describe("OpenCodeClient", () => {
 
   describe("lifecycle", () => {
     it("can be disposed", () => {
-      client = new OpenCodeClient(8080);
+      client = createClient(8080);
       expect(() => client.dispose()).not.toThrow();
     });
 
     it("clears listeners on dispose", () => {
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080);
       client.onSessionEvent(listener);
 
       client.dispose();
@@ -619,7 +651,7 @@ describe("OpenCodeClient", () => {
 
   describe("fetchRootSessions", () => {
     it("returns only root sessions", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "root-1", directory: "/test", title: "Root 1" },
@@ -630,7 +662,7 @@ describe("OpenCodeClient", () => {
         )
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.fetchRootSessions();
 
       expect(result.ok).toBe(true);
@@ -641,7 +673,7 @@ describe("OpenCodeClient", () => {
     });
 
     it("registers root sessions for filtering", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "root-1", directory: "/test", title: "Root" },
@@ -651,7 +683,7 @@ describe("OpenCodeClient", () => {
         )
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
 
       expect(client.isRootSession("root-1")).toBe(true);
@@ -659,11 +691,11 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns error on invalid response", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify({ wrong: "structure" }), { status: 200 })
       );
 
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       const result = await client.fetchRootSessions();
 
       expect(result.ok).toBe(false);
@@ -673,12 +705,12 @@ describe("OpenCodeClient", () => {
   describe("handleSessionCreated", () => {
     it("adds new root session to tracking set", async () => {
       // Initialize with empty session list
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([]), { status: 200 })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
@@ -691,12 +723,12 @@ describe("OpenCodeClient", () => {
     });
 
     it("does not add child session to tracking set", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([]), { status: 200 })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
@@ -708,12 +740,12 @@ describe("OpenCodeClient", () => {
     });
 
     it("ignores malformed properties", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([]), { status: 200 })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onSessionEvent(listener);
 
@@ -729,14 +761,14 @@ describe("OpenCodeClient", () => {
   describe("handleMessage", () => {
     describe("session.status events", () => {
       it("emits idle status for root sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -754,14 +786,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("emits busy status for root sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -778,14 +810,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("maps retry status to busy", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -802,7 +834,7 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores events for non-root sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(
             JSON.stringify([
               { id: "parent-1", directory: "/test", title: "Parent" },
@@ -813,7 +845,7 @@ describe("OpenCodeClient", () => {
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -830,14 +862,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores events with missing sessionID", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -854,14 +886,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores events with missing status", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -880,12 +912,12 @@ describe("OpenCodeClient", () => {
 
     describe("session.created events", () => {
       it("adds root session and emits idle", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([]), { status: 200 })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -903,12 +935,12 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores child sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([]), { status: 200 })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -928,14 +960,14 @@ describe("OpenCodeClient", () => {
 
     describe("session.idle events", () => {
       it("emits idle status for root sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -952,7 +984,7 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores non-root sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(
             JSON.stringify([
               { id: "parent-1", directory: "/test", title: "Parent" },
@@ -963,7 +995,7 @@ describe("OpenCodeClient", () => {
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -982,14 +1014,14 @@ describe("OpenCodeClient", () => {
 
     describe("session.deleted events", () => {
       it("emits deleted and removes from root set", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -1011,14 +1043,14 @@ describe("OpenCodeClient", () => {
 
     describe("permission.updated events", () => {
       it("emits for root sessions with valid structure", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1048,7 +1080,7 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores non-root sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(
             JSON.stringify([
               { id: "parent-1", directory: "/test", title: "Parent" },
@@ -1059,7 +1091,7 @@ describe("OpenCodeClient", () => {
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1081,14 +1113,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores malformed events", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1108,14 +1140,14 @@ describe("OpenCodeClient", () => {
 
     describe("permission.replied events", () => {
       it("handles once response", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1143,14 +1175,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("handles always response", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1178,14 +1210,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("handles reject response", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1213,7 +1245,7 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores non-root sessions", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(
             JSON.stringify([
               { id: "parent-1", directory: "/test", title: "Parent" },
@@ -1224,7 +1256,7 @@ describe("OpenCodeClient", () => {
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1245,14 +1277,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores invalid response types", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onPermissionEvent(listener);
 
@@ -1275,14 +1307,14 @@ describe("OpenCodeClient", () => {
 
     describe("error handling", () => {
       it("ignores invalid JSON", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -1294,14 +1326,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores unknown event types", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -1318,14 +1350,14 @@ describe("OpenCodeClient", () => {
       });
 
       it("ignores events without type field", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        const httpClient = createHttpClientWithResponse(
           new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
             status: 200,
           })
         );
 
         const listener = vi.fn();
-        client = new OpenCodeClient(8080);
+        client = createClient(8080, httpClient);
         await client.fetchRootSessions();
         client.onSessionEvent(listener);
 
@@ -1583,9 +1615,28 @@ describe("isSessionStatusResponse", () => {
 
 describe("Permission Event Emission", () => {
   let client: OpenCodeClient;
+  let mockHttpClient: HttpClient;
+  let mockSseClient: SseClient;
+
+  /**
+   * Helper to create a client with mock dependencies.
+   */
+  function createClient(port = 8080, customHttpClient?: HttpClient): OpenCodeClient {
+    return new OpenCodeClient(port, customHttpClient ?? mockHttpClient, mockSseClient);
+  }
+
+  /**
+   * Helper to create a mock HttpClient that returns a specific response.
+   */
+  function createHttpClientWithResponse(response: Response): HttpClient {
+    return createMockHttpClient({ response });
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
+    const mockSseConnection = createMockSseConnection();
+    mockSseClient = createMockSseClient({ connection: mockSseConnection });
+    mockHttpClient = createMockHttpClient();
   });
 
   afterEach(() => {
@@ -1595,14 +1646,14 @@ describe("Permission Event Emission", () => {
   describe("permission.updated", () => {
     it("emits event for root session", async () => {
       // Register root session first
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
@@ -1626,7 +1677,7 @@ describe("Permission Event Emission", () => {
     });
 
     it("ignores child sessions", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "parent-1", directory: "/test", title: "Parent" },
@@ -1637,7 +1688,7 @@ describe("Permission Event Emission", () => {
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
@@ -1653,14 +1704,14 @@ describe("Permission Event Emission", () => {
     });
 
     it("ignores malformed events", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
@@ -1671,14 +1722,14 @@ describe("Permission Event Emission", () => {
     });
 
     it("ignores undefined properties", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
@@ -1690,14 +1741,14 @@ describe("Permission Event Emission", () => {
 
   describe("permission.replied", () => {
     it("emits event for root session", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
@@ -1719,7 +1770,7 @@ describe("Permission Event Emission", () => {
     });
 
     it("ignores child sessions", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(
           JSON.stringify([
             { id: "parent-1", directory: "/test", title: "Parent" },
@@ -1730,7 +1781,7 @@ describe("Permission Event Emission", () => {
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
@@ -1745,14 +1796,14 @@ describe("Permission Event Emission", () => {
     });
 
     it("ignores malformed events", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
@@ -1765,14 +1816,14 @@ describe("Permission Event Emission", () => {
 
   describe("subscription", () => {
     it("returns unsubscribe function", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       const unsubscribe = client.onPermissionEvent(listener);
 
@@ -1790,14 +1841,14 @@ describe("Permission Event Emission", () => {
     });
 
     it("clears listeners on dispose", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      const httpClient = createHttpClientWithResponse(
         new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
           status: 200,
         })
       );
 
       const listener = vi.fn();
-      client = new OpenCodeClient(8080);
+      client = createClient(8080, httpClient);
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 

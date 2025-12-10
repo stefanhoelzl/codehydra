@@ -7,6 +7,7 @@ import type { WorkspacePath, AgentStatusCounts, AggregatedAgentStatus } from "..
 import type { IDisposable, Unsubscribe, ClientStatus } from "./types";
 import { OpenCodeClient, type PermissionEvent } from "./opencode-client";
 import type { DiscoveryService } from "./discovery-service";
+import type { HttpClient, SseClient } from "../platform/network";
 
 /**
  * Callback for status changes.
@@ -22,6 +23,13 @@ export type StatusChangedCallback = (
  */
 class OpenCodeProvider implements IDisposable {
   private readonly clients = new Map<number, OpenCodeClient>();
+  private readonly httpClient: HttpClient;
+  private readonly sseClient: SseClient;
+
+  constructor(httpClient: HttpClient, sseClient: SseClient) {
+    this.httpClient = httpClient;
+    this.sseClient = sseClient;
+  }
   /**
    * Port-based status tracking.
    * Map<port, ClientStatus>
@@ -69,7 +77,7 @@ class OpenCodeProvider implements IDisposable {
     // Add clients for new ports (don't connect yet - need to fetch root sessions first)
     for (const port of ports) {
       if (!this.clients.has(port)) {
-        const client = new OpenCodeClient(port);
+        const client = new OpenCodeClient(port, this.httpClient, this.sseClient);
         // Subscribe to status changes from client
         client.onStatusChanged((status) => this.handleStatusChanged(port, status));
         // Subscribe to session events for permission correlation
@@ -245,8 +253,16 @@ export class AgentStatusManager implements IDisposable {
   private readonly statuses = new Map<WorkspacePath, AggregatedAgentStatus>();
   private readonly listeners = new Set<StatusChangedCallback>();
   private discoveryUnsubscribe: Unsubscribe | null = null;
+  private readonly httpClient: HttpClient;
+  private readonly sseClient: SseClient;
 
-  constructor(private readonly discoveryService: DiscoveryService) {
+  constructor(
+    private readonly discoveryService: DiscoveryService,
+    httpClient: HttpClient,
+    sseClient: SseClient
+  ) {
+    this.httpClient = httpClient;
+    this.sseClient = sseClient;
     // Subscribe to discovery service for port changes
     this.discoveryUnsubscribe = discoveryService.onInstancesChanged((workspace, ports) => {
       this.handleInstancesChanged(workspace as WorkspacePath, ports);
@@ -261,7 +277,7 @@ export class AgentStatusManager implements IDisposable {
       return;
     }
 
-    const provider = new OpenCodeProvider();
+    const provider = new OpenCodeProvider(this.httpClient, this.sseClient);
     // Subscribe to status changes (includes permission changes)
     provider.onStatusChange(() => this.updateStatus(path));
 

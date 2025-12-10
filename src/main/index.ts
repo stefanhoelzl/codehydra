@@ -11,6 +11,7 @@ import {
   CodeServerManager,
   ProjectStore,
   DefaultPathProvider,
+  DefaultNetworkLayer,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -20,7 +21,6 @@ import { ExecaProcessRunner } from "../services/platform/process";
 import {
   DiscoveryService,
   AgentStatusManager,
-  SiPortScanner,
   PidtreeProvider,
   HttpInstanceProbe,
 } from "../services/opencode";
@@ -174,7 +174,10 @@ async function startServices(): Promise<void> {
     throw new Error("ProcessRunner not initialized - startServices called before bootstrap");
   }
 
-  codeServerManager = new CodeServerManager(config, processRunner);
+  // Create shared network layer for all network operations
+  const networkLayer = new DefaultNetworkLayer();
+
+  codeServerManager = new CodeServerManager(config, processRunner, networkLayer, networkLayer);
 
   try {
     await codeServerManager.ensureRunning();
@@ -202,17 +205,16 @@ async function startServices(): Promise<void> {
   appState = new AppState(projectStore, viewManager, pathProvider, port);
 
   // Initialize OpenCode services
-  const portScanner = new SiPortScanner();
   const processTree = new PidtreeProvider();
-  const instanceProbe = new HttpInstanceProbe();
+  const instanceProbe = new HttpInstanceProbe(networkLayer);
 
   discoveryService = new DiscoveryService({
-    portScanner,
+    portManager: networkLayer,
     processTree,
     instanceProbe,
   });
 
-  agentStatusManager = new AgentStatusManager(discoveryService);
+  agentStatusManager = new AgentStatusManager(discoveryService, networkLayer, networkLayer);
 
   // Inject services into AppState
   appState.setDiscoveryService(discoveryService);

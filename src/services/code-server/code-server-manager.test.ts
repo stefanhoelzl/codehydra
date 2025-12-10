@@ -1,23 +1,14 @@
 // @vitest-environment node
 /**
  * Unit tests for CodeServerManager.
- * Uses mocked execa for process spawning tests.
+ * Uses mocked dependencies for process spawning and network tests.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CodeServerManager, urlForFolder } from "./code-server-manager";
 import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
-
-// Mock the process module - only findAvailablePort is mocked
-// ProcessRunner is injected via DI, so spawnProcess is no longer needed
-vi.mock("../platform/process", () => ({
-  findAvailablePort: vi.fn().mockResolvedValue(8080),
-}));
-
-// Mock http module for health checks
-vi.mock("http", () => ({
-  get: vi.fn(),
-}));
+import { createMockHttpClient, createMockPortManager } from "../platform/network.test-utils";
+import type { HttpClient, PortManager, HttpRequestOptions } from "../platform/network";
 
 describe("urlForFolder", () => {
   it("generates correct URL with folder path", () => {
@@ -55,17 +46,28 @@ describe("urlForFolder", () => {
 describe("CodeServerManager", () => {
   let manager: CodeServerManager;
   let mockProcessRunner: ReturnType<typeof createMockProcessRunner>;
+  let mockHttpClient: HttpClient;
+  let mockPortManager: PortManager;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockProcessRunner = createMockProcessRunner();
+    // Mock HttpClient that returns 200 for health checks
+    mockHttpClient = createMockHttpClient({
+      response: new Response("", { status: 200 }),
+    });
+    mockPortManager = createMockPortManager({
+      findFreePort: { port: 8080 },
+    });
     manager = new CodeServerManager(
       {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
       },
-      mockProcessRunner
+      mockProcessRunner,
+      mockHttpClient,
+      mockPortManager
     );
   });
 
@@ -76,6 +78,23 @@ describe("CodeServerManager", () => {
     } catch {
       // Ignore errors during cleanup
     }
+  });
+
+  describe("constructor", () => {
+    it("accepts HttpClient and PortManager", () => {
+      const httpClient = createMockHttpClient();
+      const portManager = createMockPortManager();
+      const processRunner = createMockProcessRunner();
+      const config = {
+        runtimeDir: "/tmp/code-server-runtime",
+        extensionsDir: "/tmp/code-server-extensions",
+        userDataDir: "/tmp/code-server-user-data",
+      };
+
+      const instance = new CodeServerManager(config, processRunner, httpClient, portManager);
+
+      expect(instance).toBeInstanceOf(CodeServerManager);
+    });
   });
 
   describe("initial state", () => {
@@ -117,19 +136,32 @@ describe("CodeServerManager", () => {
   });
 
   describe("ensureRunning", () => {
+    it("uses portManager.findFreePort()", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
+      mockHttpClient = { fetch: fetchMock };
+      const findFreePortMock = vi.fn().mockResolvedValue(9999);
+      mockPortManager = {
+        findFreePort: findFreePortMock,
+        getListeningPorts: vi.fn().mockResolvedValue([]),
+      };
+      manager = new CodeServerManager(
+        {
+          runtimeDir: "/tmp/code-server-runtime",
+          extensionsDir: "/tmp/code-server-extensions",
+          userDataDir: "/tmp/code-server-user-data",
+        },
+        mockProcessRunner,
+        mockHttpClient,
+        mockPortManager
+      );
+
+      const port = await manager.ensureRunning();
+
+      expect(findFreePortMock).toHaveBeenCalled();
+      expect(port).toBe(9999);
+    });
+
     it("returns same port when already running", async () => {
-      const { get } = await import("http");
-
-      // Mock successful health check
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
-
       // First call starts the server
       const port1 = await manager.ensureRunning();
 
@@ -141,18 +173,6 @@ describe("CodeServerManager", () => {
     });
 
     it("returns same port for concurrent calls", async () => {
-      const { get } = await import("http");
-
-      // Mock health check with delay to simulate startup time
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 50);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
-
       // Start two concurrent calls
       const [port1, port2] = await Promise.all([manager.ensureRunning(), manager.ensureRunning()]);
 
@@ -162,20 +182,114 @@ describe("CodeServerManager", () => {
     });
   });
 
+  describe("health check", () => {
+    it("uses httpClient.fetch() with 1s timeout", async () => {
+      let capturedOptions: HttpRequestOptions | undefined;
+      mockHttpClient = createMockHttpClient({
+        implementation: async (_url: string, options?: HttpRequestOptions) => {
+          capturedOptions = options;
+          return new Response("", { status: 200 });
+        },
+      });
+      manager = new CodeServerManager(
+        {
+          runtimeDir: "/tmp/code-server-runtime",
+          extensionsDir: "/tmp/code-server-extensions",
+          userDataDir: "/tmp/code-server-user-data",
+        },
+        mockProcessRunner,
+        mockHttpClient,
+        mockPortManager
+      );
+
+      await manager.ensureRunning();
+
+      expect(capturedOptions?.timeout).toBe(1000);
+    });
+
+    it("returns true on 200 status", async () => {
+      mockHttpClient = createMockHttpClient({
+        response: new Response("", { status: 200 }),
+      });
+      manager = new CodeServerManager(
+        {
+          runtimeDir: "/tmp/code-server-runtime",
+          extensionsDir: "/tmp/code-server-extensions",
+          userDataDir: "/tmp/code-server-user-data",
+        },
+        mockProcessRunner,
+        mockHttpClient,
+        mockPortManager
+      );
+
+      // Should complete successfully (health check passed)
+      const port = await manager.ensureRunning();
+
+      expect(port).toBe(8080);
+      expect(manager.isRunning()).toBe(true);
+    });
+
+    it("returns false on non-200 status (retries until success)", async () => {
+      let callCount = 0;
+      mockHttpClient = createMockHttpClient({
+        implementation: async () => {
+          callCount++;
+          // First few calls return 503, then 200
+          if (callCount < 3) {
+            return new Response("", { status: 503 });
+          }
+          return new Response("", { status: 200 });
+        },
+      });
+      manager = new CodeServerManager(
+        {
+          runtimeDir: "/tmp/code-server-runtime",
+          extensionsDir: "/tmp/code-server-extensions",
+          userDataDir: "/tmp/code-server-user-data",
+        },
+        mockProcessRunner,
+        mockHttpClient,
+        mockPortManager
+      );
+
+      const port = await manager.ensureRunning();
+
+      expect(port).toBe(8080);
+      expect(callCount).toBeGreaterThanOrEqual(3);
+    });
+
+    it("returns false on network error", async () => {
+      let callCount = 0;
+      mockHttpClient = createMockHttpClient({
+        implementation: async () => {
+          callCount++;
+          // First few calls throw, then succeed
+          if (callCount < 3) {
+            throw new Error("Connection refused");
+          }
+          return new Response("", { status: 200 });
+        },
+      });
+      manager = new CodeServerManager(
+        {
+          runtimeDir: "/tmp/code-server-runtime",
+          extensionsDir: "/tmp/code-server-extensions",
+          userDataDir: "/tmp/code-server-user-data",
+        },
+        mockProcessRunner,
+        mockHttpClient,
+        mockPortManager
+      );
+
+      const port = await manager.ensureRunning();
+
+      expect(port).toBe(8080);
+      expect(callCount).toBeGreaterThanOrEqual(3);
+    });
+  });
+
   describe("onPidChanged", () => {
     it("calls callback when PID changes during startup", async () => {
-      const { get } = await import("http");
-
-      // Mock successful health check
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
-
       const callback = vi.fn();
       manager.onPidChanged(callback);
 
@@ -185,18 +299,6 @@ describe("CodeServerManager", () => {
     });
 
     it("calls callback with null when server stops", async () => {
-      const { get } = await import("http");
-
-      // Mock successful health check
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
-
       const callback = vi.fn();
       manager.onPidChanged(callback);
 
@@ -209,18 +311,6 @@ describe("CodeServerManager", () => {
     });
 
     it("returns unsubscribe function", async () => {
-      const { get } = await import("http");
-
-      // Mock successful health check
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
-
       const callback = vi.fn();
       const unsubscribe = manager.onPidChanged(callback);
 
@@ -233,18 +323,6 @@ describe("CodeServerManager", () => {
     });
 
     it("supports multiple listeners", async () => {
-      const { get } = await import("http");
-
-      // Mock successful health check
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
-
       const callback1 = vi.fn();
       const callback2 = vi.fn();
       manager.onPidChanged(callback1);
@@ -259,18 +337,6 @@ describe("CodeServerManager", () => {
 
   describe("stop", () => {
     it("transitions state correctly", async () => {
-      const { get } = await import("http");
-
-      // Mock successful health check
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
-
       // Start the server
       await manager.ensureRunning();
       expect(manager.getState()).toBe("running");
@@ -299,18 +365,19 @@ describe("CodeServerManager", () => {
  * Tests for CodeServerManager with ProcessRunner DI.
  * These tests verify the new interface using dependency injection.
  */
-describe("CodeServerManager (with ProcessRunner DI)", () => {
+describe("CodeServerManager (with full DI)", () => {
   describe("constructor", () => {
-    it("accepts ProcessRunner as second parameter", () => {
+    it("accepts all four dependencies", () => {
       const processRunner = createMockProcessRunner();
+      const httpClient = createMockHttpClient();
+      const portManager = createMockPortManager();
       const config = {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
       };
 
-      // This should compile and work once the constructor is updated
-      const manager = new CodeServerManager(config, processRunner);
+      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
 
       expect(manager).toBeInstanceOf(CodeServerManager);
     });
@@ -318,24 +385,17 @@ describe("CodeServerManager (with ProcessRunner DI)", () => {
     it("uses provided ProcessRunner for spawning processes", async () => {
       const mockProc = createMockSpawnedProcess({ pid: 99999 });
       const processRunner = createMockProcessRunner(mockProc);
+      const httpClient = createMockHttpClient({
+        response: new Response("", { status: 200 }),
+      });
+      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
       };
 
-      const manager = new CodeServerManager(config, processRunner);
-
-      // Mock successful health check
-      const { get } = await import("http");
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
+      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
 
       await manager.ensureRunning();
 
@@ -357,24 +417,17 @@ describe("CodeServerManager (with ProcessRunner DI)", () => {
         waitResult: { exitCode: 0, stdout: "", stderr: "" },
       });
       const processRunner = createMockProcessRunner(mockProc);
+      const httpClient = createMockHttpClient({
+        response: new Response("", { status: 200 }),
+      });
+      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
       };
 
-      const manager = new CodeServerManager(config, processRunner);
-
-      // Mock successful health check
-      const { get } = await import("http");
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
+      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
 
       await manager.ensureRunning();
       await manager.stop();
@@ -402,24 +455,17 @@ describe("CodeServerManager (with ProcessRunner DI)", () => {
         },
       });
       const processRunner = createMockProcessRunner(mockProc);
+      const httpClient = createMockHttpClient({
+        response: new Response("", { status: 200 }),
+      });
+      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
       };
 
-      const manager = new CodeServerManager(config, processRunner);
-
-      // Mock successful health check
-      const { get } = await import("http");
-      vi.mocked(get).mockImplementation((_url: unknown, callback: unknown) => {
-        const cb = callback as (res: { statusCode: number }) => void;
-        setTimeout(() => cb({ statusCode: 200 }), 0);
-        return {
-          on: vi.fn().mockReturnThis(),
-          setTimeout: vi.fn().mockReturnThis(),
-        } as never;
-      });
+      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
 
       await manager.ensureRunning();
       await manager.stop();
