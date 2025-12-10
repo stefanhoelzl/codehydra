@@ -305,6 +305,10 @@
     background: var(--ch-list-active-bg);
   }
 
+  .workspace-item:hover {
+    background: var(--ch-input-bg);
+  }
+
   .workspace-item:focus-within {
     outline: 1px solid var(--ch-focus-border);
     outline-offset: -1px;
@@ -323,10 +327,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     border-radius: 2px;
-  }
-
-  .workspace-btn:hover {
-    background: var(--ch-input-bg);
   }
 
   .workspace-item .remove-btn {
