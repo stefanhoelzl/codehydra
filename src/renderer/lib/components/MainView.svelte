@@ -185,14 +185,30 @@
     hasActiveProject={activeProject.value !== undefined}
     hasActiveWorkspace={activeWorkspacePath.value !== null}
   />
+
+  <!-- Backdrop shown only when no workspace is active, to avoid white background -->
+  {#if activeWorkspacePath.value === null}
+    <div class="empty-backdrop" aria-hidden="true"></div>
+  {/if}
 </div>
 
 <style>
   .main-view {
+    position: relative;
     display: flex;
     width: 100vw;
     height: 100vh;
     color: var(--ch-foreground);
     background: transparent; /* Allow VS Code to show through UI layer */
+  }
+
+  .empty-backdrop {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: var(--ch-sidebar-width);
+    background: var(--ch-background);
+    z-index: -1;
   }
 </style>

@@ -140,6 +140,49 @@ describe("MainView component", () => {
         expect(overlay).toBeInTheDocument();
       });
     });
+
+    it("renders empty-backdrop when no workspace is active", async () => {
+      render(MainView);
+
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      // No active workspace = backdrop should be visible
+      const backdrop = document.querySelector(".empty-backdrop");
+      expect(backdrop).toBeInTheDocument();
+    });
+
+    it("hides empty-backdrop when a workspace is active", async () => {
+      const projectWithWorkspace: Project[] = [
+        {
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [
+            {
+              path: asWorkspacePath("/test/.worktrees/feature"),
+              name: "feature",
+              branch: "feature",
+            },
+          ],
+        },
+      ];
+      mockApi.listProjects.mockResolvedValue(projectWithWorkspace);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      // Simulate workspace switch to activate a workspace
+      projectsStore.setActiveWorkspace("/test/.worktrees/feature");
+
+      await waitFor(() => {
+        const backdrop = document.querySelector(".empty-backdrop");
+        expect(backdrop).not.toBeInTheDocument();
+      });
+    });
   });
 
   describe("IPC initialization", () => {

@@ -21,6 +21,13 @@ const MIN_WIDTH = 800;
 const MIN_HEIGHT = 600;
 
 /**
+ * Default background color for views (VS Code dark theme).
+ * Used to prevent white flash while content loads.
+ * Matches --ch-background fallback in variables.css.
+ */
+const VIEW_BACKGROUND_COLOR = "#1e1e1e";
+
+/**
  * Configuration for creating a ViewManager.
  */
 export interface ViewManagerConfig {
@@ -152,6 +159,9 @@ export class ViewManager implements IViewManager {
         sandbox: true,
       },
     });
+
+    // Set dark background to prevent white flash while VS Code loads
+    view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
 
     // Configure window open handler to open external URLs
     view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
