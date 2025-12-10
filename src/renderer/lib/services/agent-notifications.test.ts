@@ -179,6 +179,70 @@ describe("AgentNotificationService", () => {
       expect(mockPlayChime).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("seedInitialCounts", () => {
+    it("allows chime on first status change after seeding", () => {
+      // Seed with initial busy state (simulating getAllAgentStatuses)
+      service.seedInitialCounts({
+        "/test": { idle: 0, busy: 2 },
+      });
+
+      // First status change event shows agent finished work
+      service.handleStatusChange("/test", { idle: 1, busy: 1 });
+
+      // Chime should trigger because we have seeded previous counts
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+    });
+
+    it("seeds multiple workspaces", () => {
+      service.seedInitialCounts({
+        "/workspace-a": { idle: 0, busy: 1 },
+        "/workspace-b": { idle: 0, busy: 2 },
+      });
+
+      // Both workspaces finish work
+      service.handleStatusChange("/workspace-a", { idle: 1, busy: 0 });
+      service.handleStatusChange("/workspace-b", { idle: 2, busy: 0 });
+
+      // Both should trigger chimes
+      expect(mockPlayChime).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not trigger chime when idle count does not increase after seeding", () => {
+      service.seedInitialCounts({
+        "/test": { idle: 2, busy: 0 },
+      });
+
+      // Agent goes busy (idle decreases)
+      service.handleStatusChange("/test", { idle: 1, busy: 1 });
+
+      expect(mockPlayChime).not.toHaveBeenCalled();
+    });
+
+    it("handles empty statuses object", () => {
+      service.seedInitialCounts({});
+
+      // Without seeding, first event should not trigger chime
+      service.handleStatusChange("/test", { idle: 1, busy: 0 });
+
+      expect(mockPlayChime).not.toHaveBeenCalled();
+    });
+
+    it("overwrites existing counts when seeding", () => {
+      // First establish some state
+      service.handleStatusChange("/test", { idle: 5, busy: 0 });
+
+      // Seed overwrites with new state
+      service.seedInitialCounts({
+        "/test": { idle: 0, busy: 2 },
+      });
+
+      // Now idle increases from 0 to 1 (not from 5)
+      service.handleStatusChange("/test", { idle: 1, busy: 1 });
+
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe("playChimeSound", () => {

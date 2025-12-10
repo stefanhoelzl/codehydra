@@ -71,6 +71,19 @@ export class AgentNotificationService {
   reset(): void {
     this.previousCounts.clear();
   }
+
+  /**
+   * Seed the service with initial counts from existing statuses.
+   * This establishes the baseline for detecting when idle counts increase.
+   * Should be called after loading initial agent statuses.
+   *
+   * @param statuses - Record of workspace paths to their counts
+   */
+  seedInitialCounts(statuses: Record<string, AgentStatusCounts>): void {
+    for (const [workspacePath, counts] of Object.entries(statuses)) {
+      this.previousCounts.set(workspacePath, { ...counts });
+    }
+  }
 }
 
 // Audio context singleton

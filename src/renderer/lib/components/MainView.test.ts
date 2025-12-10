@@ -62,6 +62,29 @@ const mockApi = vi.hoisted(() => ({
 // Mock the API module before any imports use it
 vi.mock("$lib/api", () => mockApi);
 
+// Mock AgentNotificationService for testing chime behavior
+const { mockSeedInitialCounts, mockHandleStatusChange, MockAgentNotificationService } = vi.hoisted(
+  () => {
+    const mockSeedInitialCounts = vi.fn();
+    const mockHandleStatusChange = vi.fn();
+
+    class MockAgentNotificationService {
+      seedInitialCounts = mockSeedInitialCounts;
+      handleStatusChange = mockHandleStatusChange;
+      removeWorkspace = vi.fn();
+      setEnabled = vi.fn();
+      isEnabled = vi.fn().mockReturnValue(true);
+      reset = vi.fn();
+    }
+
+    return { mockSeedInitialCounts, mockHandleStatusChange, MockAgentNotificationService };
+  }
+);
+
+vi.mock("$lib/services/agent-notifications", () => ({
+  AgentNotificationService: MockAgentNotificationService,
+}));
+
 // Import after mock setup
 import MainView from "./MainView.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
@@ -81,6 +104,9 @@ describe("MainView component", () => {
     mockApi.listProjects.mockResolvedValue([]);
     // Default to returning empty agent statuses
     mockApi.getAllAgentStatuses.mockResolvedValue({});
+    // Reset notification service mocks
+    mockSeedInitialCounts.mockReset();
+    mockHandleStatusChange.mockReset();
   });
 
   afterEach(() => {
@@ -267,6 +293,59 @@ describe("MainView component", () => {
       });
 
       expect(agentStatusStore.getStatus("/test/.worktrees/feature")).toEqual(newStatus);
+    });
+
+    it("seeds notification service with initial counts from getAllAgentStatuses", async () => {
+      const initialStatuses: Record<string, AggregatedAgentStatus> = {
+        "/test/.worktrees/feature": { status: "busy", counts: { idle: 0, busy: 2 } },
+        "/test/.worktrees/bugfix": { status: "idle", counts: { idle: 1, busy: 0 } },
+      };
+      mockApi.getAllAgentStatuses.mockResolvedValue(initialStatuses);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(mockSeedInitialCounts).toHaveBeenCalledWith({
+          "/test/.worktrees/feature": { idle: 0, busy: 2 },
+          "/test/.worktrees/bugfix": { idle: 1, busy: 0 },
+        });
+      });
+    });
+
+    it("notification service receives status changes for chime detection", async () => {
+      let agentStatusCallback: ((event: AgentStatusChangedEvent) => void) | null = null;
+      (
+        mockApi.onAgentStatusChanged as unknown as {
+          mockImplementation: (
+            fn: (cb: (event: AgentStatusChangedEvent) => void) => Unsubscribe
+          ) => void;
+        }
+      ).mockImplementation((cb) => {
+        agentStatusCallback = cb;
+        return vi.fn();
+      });
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(agentStatusCallback).not.toBeNull();
+      });
+
+      // Simulate agent status changed event (agent finished work)
+      const newStatus: AggregatedAgentStatus = {
+        status: "idle",
+        counts: { idle: 1, busy: 0 },
+      };
+      agentStatusCallback!({
+        workspacePath: asWorkspacePath("/test/.worktrees/feature"),
+        status: newStatus,
+      });
+
+      // Notification service should have been called to detect chime condition
+      expect(mockHandleStatusChange).toHaveBeenCalledWith("/test/.worktrees/feature", {
+        idle: 1,
+        busy: 0,
+      });
     });
   });
 

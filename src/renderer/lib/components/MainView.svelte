@@ -36,6 +36,7 @@
   import { shortcutModeActive } from "$lib/stores/shortcuts.svelte.js";
   import { updateStatus, setAllStatuses } from "$lib/stores/agent-status.svelte.js";
   import { setupDomainEvents } from "$lib/utils/domain-events";
+  import { AgentNotificationService } from "$lib/services/agent-notifications";
   import Sidebar from "./Sidebar.svelte";
   import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
@@ -53,6 +54,10 @@
 
   // Initialize and subscribe to domain events on mount
   onMount(() => {
+    // Create notification service for chime sounds when agents become idle
+    // This must be created before setupDomainEvents so we can seed it with initial statuses
+    const notificationService = new AgentNotificationService();
+
     // Initialize - load projects and optionally auto-open picker
     const initProjects = async (): Promise<void> => {
       try {
@@ -70,11 +75,16 @@
     };
     void initProjects();
 
-    // Initialize - load agent statuses
+    // Initialize - load agent statuses and seed notification service
     const initAgentStatuses = async (): Promise<void> => {
       try {
         const statuses = await api.getAllAgentStatuses();
         setAllStatuses(statuses);
+        // Seed notification service with initial counts so chimes work on first status change
+        const initialCounts = Object.fromEntries(
+          Object.entries(statuses).map(([path, status]) => [path, status.counts])
+        );
+        notificationService.seedInitialCounts(initialCounts);
       } catch {
         // Agent status is optional, don't fail if it doesn't work
       }
@@ -99,6 +109,10 @@
             openCreateDialog(project.path, null);
           }
         },
+      },
+      {
+        // Pass in our notification service so it receives status change events
+        notificationService,
       }
     );
 
