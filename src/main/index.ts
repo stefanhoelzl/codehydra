@@ -60,7 +60,11 @@ redirectElectronDataPaths();
  * - "GPU process exited unexpectedly: exit_code=133"
  *
  * This causes temporary black screens while the GPU process recovers.
- * Disabling GPU memory buffer video frames prevents these crashes.
+ *
+ * Flags applied:
+ * - disable-gpu-memory-buffer-video-frames: Prevents GPU memory buffer issues
+ * - disable-explicit-dma-fences: Disables explicit DMA fence synchronization
+ *   which is the root cause of eglDupNativeFenceFDANDROID errors
  *
  * References:
  * - https://github.com/electron/electron/issues/45862
@@ -69,6 +73,7 @@ redirectElectronDataPaths();
  */
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("disable-gpu-memory-buffer-video-frames");
+  app.commandLine.appendSwitch("disable-explicit-dma-fences");
 }
 
 /**
