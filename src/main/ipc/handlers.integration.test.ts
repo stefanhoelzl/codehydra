@@ -65,8 +65,11 @@ function createMockViewManager(): IViewManager & {
     setActiveWorkspace: vi.fn((workspacePath: string | null) => {
       activeWorkspace = workspacePath;
     }),
+    getActiveWorkspacePath: vi.fn(() => activeWorkspace),
     focusActiveWorkspace: vi.fn(),
     focusUI: vi.fn(),
+    setDialogMode: vi.fn(),
+    updateCodeServerPort: vi.fn(),
   };
 }
 
@@ -104,7 +107,7 @@ describe("IPC Integration Tests", () => {
   describe("open project → discovers workspaces → lists them via IPC", () => {
     it("opens project and lists it", async () => {
       const openHandler = createProjectOpenHandler(appState);
-      const listHandler = createProjectListHandler(appState);
+      const listHandler = createProjectListHandler(appState, viewManager);
 
       // Open project
       const project = await openHandler(mockEvent, { path: repoPath });
@@ -113,10 +116,10 @@ describe("IPC Integration Tests", () => {
       expect(project.workspaces).toHaveLength(0); // No worktrees initially
 
       // List projects
-      const projects = await listHandler(mockEvent, undefined);
+      const result = await listHandler(mockEvent, undefined);
 
-      expect(projects).toHaveLength(1);
-      expect(projects[0]?.path).toBe(repoPath);
+      expect(result.projects).toHaveLength(1);
+      expect(result.projects[0]?.path).toBe(repoPath);
     });
   });
 
@@ -156,7 +159,7 @@ describe("IPC Integration Tests", () => {
       expect(viewManager.activeWorkspace).toBe(workspace.path);
 
       // Cleanup: remove workspaces to avoid cleanup issues
-      const removeHandler = createWorkspaceRemoveHandler(appState);
+      const removeHandler = createWorkspaceRemoveHandler(appState, viewManager);
       await removeHandler(mockEvent, { workspacePath: workspace.path, deleteBranch: true });
       await removeHandler(mockEvent, { workspacePath: workspace2.path, deleteBranch: true });
     });
@@ -194,7 +197,7 @@ describe("IPC Integration Tests", () => {
       expect(viewManager.activeWorkspace).toBe(ws2.path);
 
       // Cleanup
-      const removeHandler = createWorkspaceRemoveHandler(appState);
+      const removeHandler = createWorkspaceRemoveHandler(appState, viewManager);
       await removeHandler(mockEvent, { workspacePath: ws1.path, deleteBranch: true });
       await removeHandler(mockEvent, { workspacePath: ws2.path, deleteBranch: true });
     });
@@ -204,7 +207,7 @@ describe("IPC Integration Tests", () => {
     it("removes workspace and cleans up view", async () => {
       const openHandler = createProjectOpenHandler(appState);
       const createHandler = createWorkspaceCreateHandler(appState, viewManager);
-      const removeHandler = createWorkspaceRemoveHandler(appState);
+      const removeHandler = createWorkspaceRemoveHandler(appState, viewManager);
 
       await openHandler(mockEvent, { path: repoPath });
 
@@ -234,7 +237,7 @@ describe("IPC Integration Tests", () => {
       const openHandler = createProjectOpenHandler(appState);
       const createHandler = createWorkspaceCreateHandler(appState, viewManager);
       const closeHandler = createProjectCloseHandler(appState);
-      const listHandler = createProjectListHandler(appState);
+      const listHandler = createProjectListHandler(appState, viewManager);
 
       // Open and create workspaces
       await openHandler(mockEvent, { path: repoPath });
@@ -258,15 +261,15 @@ describe("IPC Integration Tests", () => {
       expect(viewManager.createdViews.size).toBe(0);
 
       // Project should not be listed
-      const projects = await listHandler(mockEvent, undefined);
-      expect(projects).toHaveLength(0);
+      const result = await listHandler(mockEvent, undefined);
+      expect(result.projects).toHaveLength(0);
     });
   });
 
   describe("handles project with zero workspaces gracefully", () => {
     it("opens project with no workspaces", async () => {
       const openHandler = createProjectOpenHandler(appState);
-      const listHandler = createProjectListHandler(appState);
+      const listHandler = createProjectListHandler(appState, viewManager);
 
       // Open project (fresh repo has no worktrees)
       const project = await openHandler(mockEvent, { path: repoPath });
@@ -276,8 +279,8 @@ describe("IPC Integration Tests", () => {
       expect(viewManager.activeWorkspace).toBeNull();
 
       // Should still be listed
-      const projects = await listHandler(mockEvent, undefined);
-      expect(projects).toHaveLength(1);
+      const result = await listHandler(mockEvent, undefined);
+      expect(result.projects).toHaveLength(1);
     });
   });
 
@@ -286,7 +289,7 @@ describe("IPC Integration Tests", () => {
       const openHandler = createProjectOpenHandler(appState);
       const createHandler = createWorkspaceCreateHandler(appState, viewManager);
       const switchHandler = createWorkspaceSwitchHandler(appState, viewManager);
-      const removeHandler = createWorkspaceRemoveHandler(appState);
+      const removeHandler = createWorkspaceRemoveHandler(appState, viewManager);
 
       await openHandler(mockEvent, { path: repoPath });
 
@@ -348,7 +351,7 @@ describe("IPC Integration Tests", () => {
       const openHandler = createProjectOpenHandler(appState);
       const createHandler = createWorkspaceCreateHandler(appState, viewManager);
       const isDirtyHandler = createWorkspaceIsDirtyHandler(appState);
-      const removeHandler = createWorkspaceRemoveHandler(appState);
+      const removeHandler = createWorkspaceRemoveHandler(appState, viewManager);
 
       await openHandler(mockEvent, { path: repoPath });
 

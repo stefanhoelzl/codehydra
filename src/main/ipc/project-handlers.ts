@@ -4,11 +4,13 @@
 
 import { dialog, type IpcMainInvokeEvent } from "electron";
 import type { AppState } from "../app-state";
+import type { IViewManager } from "../managers/view-manager.interface";
 import type {
   Project,
   ProjectOpenPayload,
   ProjectClosePayload,
   ProjectPath,
+  ProjectListResponse,
 } from "../../shared/ipc";
 import { emitEvent } from "./handlers";
 
@@ -41,13 +43,17 @@ export function createProjectCloseHandler(
 
 /**
  * Creates a handler for project:list.
- * Returns all open projects.
+ * Returns all open projects and the currently active workspace path.
  */
 export function createProjectListHandler(
-  appState: Pick<AppState, "getAllProjects">
-): (event: IpcMainInvokeEvent, payload: void) => Promise<Project[]> {
+  appState: Pick<AppState, "getAllProjects">,
+  viewManager: Pick<IViewManager, "getActiveWorkspacePath">
+): (event: IpcMainInvokeEvent, payload: void) => Promise<ProjectListResponse> {
   return async () => {
-    return appState.getAllProjects();
+    return {
+      projects: appState.getAllProjects(),
+      activeWorkspacePath: viewManager.getActiveWorkspacePath(),
+    };
   };
 }
 

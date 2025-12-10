@@ -117,22 +117,45 @@ describe("project:list handler", () => {
     removeWorkspace: vi.fn(),
   };
 
+  const mockViewManager = {
+    getActiveWorkspacePath: vi.fn(),
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("returns all open projects", async () => {
+  it("returns all open projects and active workspace path", async () => {
     const projects: Project[] = [
       { path: "/test/repo1" as Project["path"], name: "repo1", workspaces: [] },
       { path: "/test/repo2" as Project["path"], name: "repo2", workspaces: [] },
     ];
     mockAppState.getAllProjects.mockReturnValue(projects);
+    mockViewManager.getActiveWorkspacePath.mockReturnValue("/test/repo1/.worktrees/ws1");
 
-    const handler = createProjectListHandler(mockAppState);
+    const handler = createProjectListHandler(mockAppState, mockViewManager);
     const result = await handler(mockEvent, undefined);
 
     expect(mockAppState.getAllProjects).toHaveBeenCalled();
-    expect(result).toEqual(projects);
+    expect(mockViewManager.getActiveWorkspacePath).toHaveBeenCalled();
+    expect(result).toEqual({
+      projects,
+      activeWorkspacePath: "/test/repo1/.worktrees/ws1",
+    });
+  });
+
+  it("returns null activeWorkspacePath when no workspace is active", async () => {
+    const projects: Project[] = [];
+    mockAppState.getAllProjects.mockReturnValue(projects);
+    mockViewManager.getActiveWorkspacePath.mockReturnValue(null);
+
+    const handler = createProjectListHandler(mockAppState, mockViewManager);
+    const result = await handler(mockEvent, undefined);
+
+    expect(result).toEqual({
+      projects,
+      activeWorkspacePath: null,
+    });
   });
 });
 

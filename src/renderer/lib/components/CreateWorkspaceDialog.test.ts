@@ -19,7 +19,7 @@ vi.mock("$lib/api", () => ({
   selectFolder: vi.fn().mockResolvedValue(null),
   openProject: vi.fn().mockResolvedValue(undefined),
   closeProject: vi.fn().mockResolvedValue(undefined),
-  listProjects: vi.fn().mockResolvedValue([]),
+  listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),
   createWorkspace: mockCreateWorkspace,
   removeWorkspace: vi.fn().mockResolvedValue(undefined),
   switchWorkspace: vi.fn().mockResolvedValue(undefined),

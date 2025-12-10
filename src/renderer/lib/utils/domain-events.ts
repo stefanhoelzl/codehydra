@@ -133,6 +133,8 @@ export function setupDomainEvents(
   unsubscribes.push(
     api.onWorkspaceCreated((event) => {
       stores.addWorkspace(event.projectPath, event.workspace);
+      // UI decides: newly created workspace should be selected
+      stores.setActiveWorkspace(event.workspace.path);
     })
   );
 

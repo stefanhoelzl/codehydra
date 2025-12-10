@@ -61,6 +61,7 @@ function createMockViewManager() {
     getWorkspaceView: vi.fn(),
     updateBounds: vi.fn(),
     setActiveWorkspace: vi.fn(),
+    getActiveWorkspacePath: vi.fn().mockReturnValue(null),
     focusActiveWorkspace: vi.fn(),
     focusUI: vi.fn(),
     destroy: vi.fn(),
@@ -141,6 +142,7 @@ describe("workspace:create handler", () => {
 describe("workspace:remove handler", () => {
   it("removes workspace and view", async () => {
     const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
     const mockProvider = createMockProvider();
 
     const project: Project = {
@@ -154,9 +156,11 @@ describe("workspace:remove handler", () => {
 
     mockAppState.findProjectForWorkspace.mockReturnValue(project);
     mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
+    mockAppState.getAllProjects.mockReturnValue([project]);
     mockProvider.removeWorkspace.mockResolvedValue({ workspaceRemoved: true, baseDeleted: false });
+    mockViewManager.getActiveWorkspacePath.mockReturnValue(null); // Not removing active workspace
 
-    const handler = createWorkspaceRemoveHandler(mockAppState);
+    const handler = createWorkspaceRemoveHandler(mockAppState, mockViewManager);
     const payload: WorkspaceRemovePayload = {
       workspacePath: "/test/repo/.worktrees/ws1",
       deleteBranch: false,
@@ -172,12 +176,51 @@ describe("workspace:remove handler", () => {
     expect(result).toEqual({ workspaceRemoved: true, baseDeleted: false });
   });
 
+  it("selects next workspace when removing active workspace", async () => {
+    const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
+    const mockProvider = createMockProvider();
+
+    const project: Project = {
+      path: "/test/repo" as ProjectPath,
+      name: "repo",
+      workspaces: [
+        { name: "ws1", path: "/test/repo/.worktrees/ws1", branch: "ws1" },
+        { name: "ws2", path: "/test/repo/.worktrees/ws2", branch: "ws2" },
+      ],
+    };
+
+    mockAppState.findProjectForWorkspace.mockReturnValue(project);
+    mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
+    // After removal, ws2 is still in the project
+    mockAppState.getAllProjects.mockReturnValue([
+      {
+        ...project,
+        workspaces: [{ name: "ws2", path: "/test/repo/.worktrees/ws2", branch: "ws2" }],
+      },
+    ]);
+    mockProvider.removeWorkspace.mockResolvedValue({ workspaceRemoved: true, baseDeleted: false });
+    mockViewManager.getActiveWorkspacePath.mockReturnValue("/test/repo/.worktrees/ws1"); // Removing active workspace
+
+    const handler = createWorkspaceRemoveHandler(mockAppState, mockViewManager);
+    const payload: WorkspaceRemovePayload = {
+      workspacePath: "/test/repo/.worktrees/ws1",
+      deleteBranch: false,
+    };
+
+    await handler(mockEvent, payload);
+
+    // Should select ws2 as the next workspace
+    expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith("/test/repo/.worktrees/ws2");
+  });
+
   it("throws WORKSPACE_NOT_FOUND for unknown workspace", async () => {
     const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
 
     mockAppState.findProjectForWorkspace.mockReturnValue(undefined);
 
-    const handler = createWorkspaceRemoveHandler(mockAppState);
+    const handler = createWorkspaceRemoveHandler(mockAppState, mockViewManager);
     const payload: WorkspaceRemovePayload = {
       workspacePath: "/unknown/workspace",
       deleteBranch: false,

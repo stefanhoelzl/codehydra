@@ -4,7 +4,6 @@
  */
 
 import type {
-  Project,
   BaseInfo,
   ProjectOpenedEvent,
   ProjectClosedEvent,
@@ -16,6 +15,7 @@ import type {
   SetupProgress,
   SetupErrorPayload,
   SetupReadyResponse,
+  ProjectListResponse,
 } from "./ipc";
 
 /**
@@ -49,10 +49,10 @@ export interface Api {
   closeProject(path: string): Promise<void>;
 
   /**
-   * List all open projects.
-   * @returns Array of open projects
+   * List all open projects and the active workspace path.
+   * @returns Projects and active workspace path
    */
-  listProjects(): Promise<Project[]>;
+  listProjects(): Promise<ProjectListResponse>;
 
   /**
    * Create a new workspace (git worktree) in a project.

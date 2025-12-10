@@ -8,6 +8,7 @@ import type {
   ProjectPath,
   AgentStatusChangedEvent,
   WorkspaceRemovedEvent,
+  WorkspaceCreatedEvent,
   WorkspacePath,
 } from "@shared/ipc";
 import { setupDomainEvents, type DomainEventApi, type DomainStores } from "./domain-events";
@@ -206,6 +207,39 @@ describe("setupDomainEvents", () => {
 
       // Verify order: store update first, then notification
       expect(callOrder).toEqual(["store", "notification"]);
+    });
+  });
+
+  describe("workspace creation", () => {
+    let workspaceCreatedCallback: ((event: WorkspaceCreatedEvent) => void) | null = null;
+
+    beforeEach(() => {
+      workspaceCreatedCallback = null;
+      mockApi.onWorkspaceCreated = vi.fn((cb) => {
+        workspaceCreatedCallback = cb;
+        return vi.fn();
+      });
+    });
+
+    it("adds workspace and sets it as active when created", () => {
+      setupDomainEvents(mockApi, mockStores);
+
+      const event: WorkspaceCreatedEvent = {
+        projectPath: "/test/project" as ProjectPath,
+        workspace: {
+          path: "/test/project/.worktrees/feature",
+          name: "feature",
+          branch: "feature",
+        },
+      };
+      workspaceCreatedCallback!(event);
+
+      // Verify workspace was added
+      expect(mockStores.addWorkspace).toHaveBeenCalledWith("/test/project", event.workspace);
+      // Verify it was set as active (UI decides new workspace should be selected)
+      expect(mockStores.setActiveWorkspace).toHaveBeenCalledWith(
+        "/test/project/.worktrees/feature"
+      );
     });
   });
 

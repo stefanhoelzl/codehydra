@@ -32,7 +32,7 @@ const mockApi = vi.hoisted(() => ({
   selectFolder: vi.fn().mockResolvedValue(null),
   openProject: vi.fn().mockResolvedValue(undefined),
   closeProject: vi.fn().mockResolvedValue(undefined),
-  listProjects: vi.fn().mockResolvedValue([]),
+  listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),
   createWorkspace: vi.fn().mockResolvedValue(undefined),
   removeWorkspace: vi.fn().mockResolvedValue(undefined),
   switchWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -83,7 +83,7 @@ describe("App component", () => {
     agentStatusStore.reset();
     setupStore.resetSetup();
     // Default to returning empty projects
-    mockApi.listProjects.mockResolvedValue([]);
+    mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
     // Default to returning empty agent statuses
     mockApi.getAllAgentStatuses.mockResolvedValue({});
     // Default to setup complete (ready mode)
@@ -160,7 +160,7 @@ describe("App component", () => {
           workspaces: [],
         },
       ];
-      mockApi.listProjects.mockResolvedValue(mockProjects);
+      mockApi.listProjects.mockResolvedValue({ projects: mockProjects, activeWorkspacePath: null });
 
       render(App);
 
@@ -265,7 +265,10 @@ describe("App component", () => {
         name: "existing",
         workspaces: [],
       };
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       let projectClosedCallback: ((event: ProjectClosedEvent) => void) | null = null;
       (
@@ -490,7 +493,7 @@ describe("App component", () => {
           ],
         },
       ];
-      mockApi.listProjects.mockResolvedValue(mockProjects);
+      mockApi.listProjects.mockResolvedValue({ projects: mockProjects, activeWorkspacePath: null });
 
       let shortcutEnableCallback: (() => void) | null = null;
       (
@@ -530,7 +533,7 @@ describe("App component", () => {
           workspaces: [{ path: "/test/.worktrees/ws1", name: "ws1", branch: "main" }],
         },
       ];
-      mockApi.listProjects.mockResolvedValue(mockProjects);
+      mockApi.listProjects.mockResolvedValue({ projects: mockProjects, activeWorkspacePath: null });
 
       let shortcutEnableCallback: (() => void) | null = null;
       (

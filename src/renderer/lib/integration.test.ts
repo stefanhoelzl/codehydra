@@ -53,7 +53,7 @@ const mockApi = vi.hoisted(() => ({
   selectFolder: vi.fn().mockResolvedValue(null),
   openProject: vi.fn().mockResolvedValue(undefined),
   closeProject: vi.fn().mockResolvedValue(undefined),
-  listProjects: vi.fn().mockResolvedValue([]),
+  listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),
   createWorkspace: vi.fn().mockResolvedValue(undefined),
   removeWorkspace: vi.fn().mockResolvedValue(undefined),
   switchWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -151,7 +151,7 @@ describe("Integration tests", () => {
     callbacks.onShortcutDisable = null;
 
     // Default mocks
-    mockApi.listProjects.mockResolvedValue([]);
+    mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
     mockApi.listBases.mockResolvedValue([
       { name: "main", isRemote: false },
       { name: "develop", isRemote: false },
@@ -170,7 +170,10 @@ describe("Integration tests", () => {
       const existingProject = createProject("existing", [
         createWorkspace("main", "/test/existing"),
       ]);
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       const projectPath = "/test/my-project";
       mockApi.selectFolder.mockResolvedValue(projectPath);
@@ -208,7 +211,7 @@ describe("Integration tests", () => {
 
     it("close project: click [×] → closeProject → project:closed event → project removed from sidebar", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -240,7 +243,7 @@ describe("Integration tests", () => {
       // This test focuses on the dialog opening and event handling
       // BranchDropdown interaction is tested separately in BranchDropdown.test.ts
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -279,7 +282,7 @@ describe("Integration tests", () => {
     it("remove workspace: click [×] → dialog opens → confirm → workspace:removed event → workspace removed from sidebar", async () => {
       const workspace = createWorkspace("feature-x", "/test/my-project");
       const project = createProject("my-project", [workspace]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -329,7 +332,7 @@ describe("Integration tests", () => {
       const ws1 = createWorkspace("main", "/test/my-project");
       const ws2 = createWorkspace("feature-x", "/test/my-project");
       const project = createProject("my-project", [ws1, ws2]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -367,7 +370,10 @@ describe("Integration tests", () => {
       const existingProject = createProject("existing", [
         createWorkspace("main", "/test/existing"),
       ]);
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       mockApi.selectFolder.mockResolvedValue(null);
 
@@ -408,7 +414,7 @@ describe("Integration tests", () => {
       // The full form validation and API error handling is tested in the component test
       // This integration test verifies the dialog opens and receives the project context
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -432,7 +438,7 @@ describe("Integration tests", () => {
     it("removeWorkspace rejects → error shown in dialog, form re-enabled", async () => {
       const workspace = createWorkspace("feature-x", "/test/my-project");
       const project = createProject("my-project", [workspace]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -469,7 +475,7 @@ describe("Integration tests", () => {
   describe("dialog z-order integration", () => {
     it("calls api.setDialogMode(true) when dialog opens", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -496,7 +502,7 @@ describe("Integration tests", () => {
 
     it("calls api.setDialogMode(false) when dialog closes", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -531,7 +537,7 @@ describe("Integration tests", () => {
 
     it("handles api.setDialogMode failure gracefully", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
       mockApi.setDialogMode.mockRejectedValue(new Error("IPC failed"));
 
       render(App);
@@ -558,7 +564,7 @@ describe("Integration tests", () => {
         createWorkspace("main", "/test/my-project"),
         createWorkspace("feature-x", "/test/my-project"),
       ]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -591,7 +597,7 @@ describe("Integration tests", () => {
       const ws1 = createWorkspace("main", "/test/my-project");
       const ws2 = createWorkspace("feature-x", "/test/my-project");
       const project = createProject("my-project", [ws1, ws2]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -678,7 +684,7 @@ describe("Integration tests", () => {
       const ws1 = createWorkspace("main", "/test/my-project");
       const ws2 = createWorkspace("feature", "/test/my-project");
       const project = createProject("my-project", [ws1, ws2]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -728,7 +734,7 @@ describe("Integration tests", () => {
         createWorkspace(`ws${i + 1}`, "/test/my-project")
       );
       const project = createProject("my-project", workspaces);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -764,7 +770,7 @@ describe("Integration tests", () => {
     it("should-open-dialog-and-hide-overlay: Alt+X → Enter → dialog opens, overlay hides", async () => {
       const ws = createWorkspace("main", "/test/my-project");
       const project = createProject("my-project", [ws]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -802,7 +808,7 @@ describe("Integration tests", () => {
       const ws1 = createWorkspace("first", "/test/my-project");
       const ws2 = createWorkspace("last", "/test/my-project");
       const project = createProject("my-project", [ws1, ws2]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -857,7 +863,7 @@ describe("Integration tests", () => {
     });
 
     it("should-handle-no-workspaces-gracefully: no workspaces → only O Open visible", async () => {
-      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
 
       render(App);
 
@@ -891,7 +897,7 @@ describe("Integration tests", () => {
     it("should-handle-single-workspace-gracefully: single workspace → navigate hints hidden, jump works for index 1", async () => {
       const ws = createWorkspace("only", "/test/my-project");
       const project = createProject("my-project", [ws]);
-      mockApi.listProjects.mockResolvedValue([project]);
+      mockApi.listProjects.mockResolvedValue({ projects: [project], activeWorkspacePath: null });
 
       render(App);
 
@@ -921,7 +927,7 @@ describe("Integration tests", () => {
   describe("onboarding flow", () => {
     it("complete-onboarding-flow: empty state → auto-open picker → select folder → project with 0 workspaces → auto-open create dialog", async () => {
       // Start with no projects (empty state)
-      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
 
       // Defer folder selection to simulate user selecting a folder
       let folderPromiseResolve: (value: string | null) => void = () => {};
@@ -970,7 +976,7 @@ describe("Integration tests", () => {
     });
 
     it("auto-open-picker-cancelled: empty state → picker cancelled → EmptyState shown", async () => {
-      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
       mockApi.selectFolder.mockResolvedValue(null); // User cancels
 
       render(App);
@@ -993,7 +999,10 @@ describe("Integration tests", () => {
       const existingProject = createProject("existing", [
         createWorkspace("main", "/test/existing"),
       ]);
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       render(App);
 
@@ -1036,7 +1045,7 @@ describe("Integration tests", () => {
   describe("setup flow integration", () => {
     it("routes-to-mainview-when-ready-true: setupReady returns ready, MainView mounts and calls listProjects", async () => {
       mockApi.setupReady.mockResolvedValue({ ready: true });
-      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
 
       render(App);
 
@@ -1086,7 +1095,7 @@ describe("Integration tests", () => {
     it("complete-event-triggers-mainview-mount-and-initialization: setup:complete triggers MainView mount", async () => {
       // Start in setup mode
       mockApi.setupReady.mockResolvedValue({ ready: false });
-      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
       mockApi.getAllAgentStatuses.mockResolvedValue({});
 
       // Capture the setup complete callback
@@ -1141,7 +1150,7 @@ describe("Integration tests", () => {
           workspaces: [],
         },
       ];
-      mockApi.listProjects.mockResolvedValue(mockProjects);
+      mockApi.listProjects.mockResolvedValue({ projects: mockProjects, activeWorkspacePath: null });
       mockApi.getAllAgentStatuses.mockResolvedValue({});
 
       render(App);

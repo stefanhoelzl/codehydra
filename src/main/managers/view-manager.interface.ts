@@ -58,6 +58,13 @@ export interface IViewManager {
   setActiveWorkspace(workspacePath: string | null): void;
 
   /**
+   * Gets the active workspace path.
+   *
+   * @returns The active workspace path or null if none
+   */
+  getActiveWorkspacePath(): string | null;
+
+  /**
    * Focuses the active workspace view.
    */
   focusActiveWorkspace(): void;

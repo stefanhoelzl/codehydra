@@ -203,9 +203,11 @@ describe("emitEvent", () => {
       getWorkspaceView: vi.fn(),
       updateBounds: vi.fn(),
       setActiveWorkspace: vi.fn(),
+      getActiveWorkspacePath: vi.fn().mockReturnValue(null),
       focusActiveWorkspace: vi.fn(),
       focusUI: vi.fn(),
       setDialogMode: vi.fn(),
+      updateCodeServerPort: vi.fn(),
     } satisfies IViewManager;
 
     // Create mock appState

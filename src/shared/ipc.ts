@@ -213,6 +213,15 @@ export interface ProjectOpenedEvent {
   readonly project: Project;
 }
 
+/**
+ * Response from project:list command.
+ * Returns all open projects and the currently active workspace path.
+ */
+export interface ProjectListResponse {
+  readonly projects: Project[];
+  readonly activeWorkspacePath: string | null;
+}
+
 export interface ProjectClosedEvent {
   readonly path: ProjectPath;
 }
@@ -236,7 +245,7 @@ export interface WorkspaceSwitchedEvent {
 export interface IpcCommands {
   "project:open": { payload: ProjectOpenPayload; response: Project };
   "project:close": { payload: ProjectClosePayload; response: void };
-  "project:list": { payload: void; response: Project[] };
+  "project:list": { payload: void; response: ProjectListResponse };
   "project:select-folder": { payload: void; response: string | null };
   "workspace:create": { payload: WorkspaceCreatePayload; response: Workspace };
   "workspace:remove": { payload: WorkspaceRemovePayload; response: RemovalResult };

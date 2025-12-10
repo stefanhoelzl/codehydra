@@ -30,7 +30,7 @@ const mockApi = vi.hoisted(() => ({
   selectFolder: vi.fn().mockResolvedValue(null),
   openProject: vi.fn().mockResolvedValue(undefined),
   closeProject: vi.fn().mockResolvedValue(undefined),
-  listProjects: vi.fn().mockResolvedValue([]),
+  listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),
   createWorkspace: vi.fn().mockResolvedValue(undefined),
   removeWorkspace: vi.fn().mockResolvedValue(undefined),
   switchWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -101,7 +101,7 @@ describe("MainView component", () => {
     shortcutsStore.reset();
     agentStatusStore.reset();
     // Default to returning empty projects
-    mockApi.listProjects.mockResolvedValue([]);
+    mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
     // Default to returning empty agent statuses
     mockApi.getAllAgentStatuses.mockResolvedValue({});
     // Reset notification service mocks
@@ -167,7 +167,10 @@ describe("MainView component", () => {
           ],
         },
       ];
-      mockApi.listProjects.mockResolvedValue(projectWithWorkspace);
+      mockApi.listProjects.mockResolvedValue({
+        projects: projectWithWorkspace,
+        activeWorkspacePath: null,
+      });
 
       render(MainView);
 
@@ -210,7 +213,7 @@ describe("MainView component", () => {
           workspaces: [],
         },
       ];
-      mockApi.listProjects.mockResolvedValue(mockProjects);
+      mockApi.listProjects.mockResolvedValue({ projects: mockProjects, activeWorkspacePath: null });
 
       render(MainView);
 
@@ -492,7 +495,7 @@ describe("MainView component", () => {
 
   describe("auto-open project picker", () => {
     it("auto-opens project picker on mount when projects array is empty", async () => {
-      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
       mockApi.selectFolder.mockResolvedValue(null);
 
       render(MainView);
@@ -508,7 +511,10 @@ describe("MainView component", () => {
         name: "test-project",
         workspaces: [],
       };
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       render(MainView);
 
@@ -523,7 +529,7 @@ describe("MainView component", () => {
     });
 
     it("returns to EmptyState when picker is cancelled", async () => {
-      mockApi.listProjects.mockResolvedValue([]);
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
       mockApi.selectFolder.mockResolvedValue(null);
 
       render(MainView);
@@ -565,7 +571,10 @@ describe("MainView component", () => {
           },
         ],
       };
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       render(MainView);
 
@@ -608,7 +617,10 @@ describe("MainView component", () => {
         name: "test-project",
         workspaces: [],
       };
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       render(MainView);
 
@@ -661,7 +673,10 @@ describe("MainView component", () => {
           },
         ],
       };
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       render(MainView);
 
@@ -714,7 +729,10 @@ describe("MainView component", () => {
           },
         ],
       };
-      mockApi.listProjects.mockResolvedValue([existingProject]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [existingProject],
+        activeWorkspacePath: null,
+      });
 
       render(MainView);
 

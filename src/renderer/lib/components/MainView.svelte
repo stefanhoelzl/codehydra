@@ -61,12 +61,16 @@
     // Initialize - load projects and optionally auto-open picker
     const initProjects = async (): Promise<void> => {
       try {
-        const p = await api.listProjects();
-        setProjects(p);
+        const result = await api.listProjects();
+        setProjects(result.projects);
+        // Set initial active workspace from main process state
+        if (result.activeWorkspacePath) {
+          setActiveWorkspace(result.activeWorkspacePath);
+        }
         setLoaded();
 
         // Auto-open project picker when no projects exist (first launch experience)
-        if (p.length === 0) {
+        if (result.projects.length === 0) {
           await handleOpenProject();
         }
       } catch (err: unknown) {

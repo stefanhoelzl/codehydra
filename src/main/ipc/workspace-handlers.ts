@@ -67,9 +67,14 @@ export function createWorkspaceCreateHandler(
 /**
  * Creates a handler for workspace:remove.
  * Removes a workspace and destroys its view.
+ * If the removed workspace was active, automatically selects the next workspace.
  */
 export function createWorkspaceRemoveHandler(
-  appState: Pick<AppState, "findProjectForWorkspace" | "getWorkspaceProvider" | "removeWorkspace">
+  appState: Pick<
+    AppState,
+    "findProjectForWorkspace" | "getWorkspaceProvider" | "removeWorkspace" | "getAllProjects"
+  >,
+  viewManager: Pick<IViewManager, "getActiveWorkspacePath" | "setActiveWorkspace">
 ): (event: IpcMainInvokeEvent, payload: WorkspaceRemovePayload) => Promise<RemovalResult> {
   return async (_event, payload) => {
     const project = appState.findProjectForWorkspace(payload.workspacePath);
@@ -82,20 +87,64 @@ export function createWorkspaceRemoveHandler(
       throw new WorkspaceError("Workspace provider not found", "PROVIDER_NOT_FOUND");
     }
 
+    // Check if we're removing the active workspace
+    const wasActive = viewManager.getActiveWorkspacePath() === payload.workspacePath;
+
     // Remove the workspace via git worktree
     const result = await provider.removeWorkspace(payload.workspacePath, payload.deleteBranch);
 
     // Remove workspace from app state (this also destroys the view)
     appState.removeWorkspace(project.path, payload.workspacePath);
 
-    // Emit event
+    // Emit removed event
     emitEvent("workspace:removed", {
       projectPath: project.path as ProjectPath,
       workspacePath: payload.workspacePath as WorkspacePath,
     });
 
+    // If the removed workspace was active, select the next workspace
+    if (wasActive) {
+      const nextWorkspacePath = findNextWorkspace(appState.getAllProjects(), project.path);
+      viewManager.setActiveWorkspace(nextWorkspacePath);
+
+      // Emit switched event so renderer updates
+      if (nextWorkspacePath) {
+        emitEvent("workspace:switched", {
+          workspacePath: nextWorkspacePath as WorkspacePath,
+        });
+      }
+    }
+
     return result;
   };
+}
+
+/**
+ * Finds the next workspace to select after removal.
+ * Priority: same project first, then other projects.
+ *
+ * @param projects - All open projects
+ * @param currentProjectPath - Path of the project that had a workspace removed
+ * @returns Path of the next workspace to select, or null if none available
+ */
+function findNextWorkspace(
+  projects: readonly { readonly path: string; readonly workspaces: readonly { path: string }[] }[],
+  currentProjectPath: string
+): string | null {
+  // First try to find a workspace in the same project
+  const currentProject = projects.find((p) => p.path === currentProjectPath);
+  if (currentProject && currentProject.workspaces.length > 0) {
+    return currentProject.workspaces[0]?.path ?? null;
+  }
+
+  // Otherwise find first workspace in any project
+  for (const project of projects) {
+    if (project.workspaces.length > 0) {
+      return project.workspaces[0]?.path ?? null;
+    }
+  }
+
+  return null;
 }
 
 /**

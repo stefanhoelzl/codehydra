@@ -169,7 +169,7 @@ export function registerAllHandlers(appState: AppState, viewManager: IViewManage
   // Project handlers
   registerHandler("project:open", ProjectOpenPayloadSchema, createProjectOpenHandler(appState));
   registerHandler("project:close", ProjectClosePayloadSchema, createProjectCloseHandler(appState));
-  registerHandler("project:list", null, createProjectListHandler(appState));
+  registerHandler("project:list", null, createProjectListHandler(appState, viewManager));
   registerHandler("project:select-folder", null, createProjectSelectFolderHandler());
 
   // Workspace handlers
@@ -181,7 +181,7 @@ export function registerAllHandlers(appState: AppState, viewManager: IViewManage
   registerHandler(
     "workspace:remove",
     WorkspaceRemovePayloadSchema,
-    createWorkspaceRemoveHandler(appState)
+    createWorkspaceRemoveHandler(appState, viewManager)
   );
   registerHandler(
     "workspace:switch",

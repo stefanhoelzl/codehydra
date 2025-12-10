@@ -308,6 +308,15 @@ export class ViewManager implements IViewManager {
   }
 
   /**
+   * Gets the active workspace path.
+   *
+   * @returns The active workspace path or null if none
+   */
+  getActiveWorkspacePath(): string | null {
+    return this.activeWorkspacePath;
+  }
+
+  /**
    * Focuses the active workspace view.
    */
   focusActiveWorkspace(): void {

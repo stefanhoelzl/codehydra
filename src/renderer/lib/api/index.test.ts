@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { expectTypeOf } from "vitest";
 import type { Api, Unsubscribe } from "@shared/electron-api";
-import type { Project } from "@shared/ipc";
+import type { ProjectListResponse } from "@shared/ipc";
 
 describe("renderer API layer", () => {
   // Store original window.api
@@ -31,7 +31,7 @@ describe("renderer API layer", () => {
         selectFolder: vi.fn().mockResolvedValue(null),
         openProject: vi.fn().mockResolvedValue(undefined),
         closeProject: vi.fn().mockResolvedValue(undefined),
-        listProjects: vi.fn().mockResolvedValue([]),
+        listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),
         createWorkspace: vi.fn().mockResolvedValue(undefined),
         removeWorkspace: vi.fn().mockResolvedValue(undefined),
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -102,7 +102,7 @@ describe("renderer API layer", () => {
         selectFolder: vi.fn().mockResolvedValue(null),
         openProject: vi.fn().mockResolvedValue(undefined),
         closeProject: vi.fn().mockResolvedValue(undefined),
-        listProjects: vi.fn().mockResolvedValue([]),
+        listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),
         createWorkspace: vi.fn().mockResolvedValue(undefined),
         removeWorkspace: vi.fn().mockResolvedValue(undefined),
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -136,7 +136,7 @@ describe("renderer API layer", () => {
       // Type-level tests using expectTypeOf
       expectTypeOf(api.openProject).parameter(0).toMatchTypeOf<string>();
       expectTypeOf(api.onProjectOpened).returns.toMatchTypeOf<Unsubscribe>();
-      expectTypeOf<typeof api.listProjects>().returns.resolves.toMatchTypeOf<Project[]>();
+      expectTypeOf<typeof api.listProjects>().returns.resolves.toMatchTypeOf<ProjectListResponse>();
     });
   });
 });
