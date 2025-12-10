@@ -409,8 +409,11 @@ export class OpenCodeClient implements IDisposable {
       const mappedType = statusType === "retry" ? "busy" : statusType;
       this.emitSessionEvent({ type: mappedType, sessionId: properties.sessionID });
 
-      // Update current status and emit if changed
-      this.updateCurrentStatus(mappedType);
+      // Only update current status for root sessions (main agents)
+      // This ensures notification chimes only play when main agents finish, not subagents
+      if (this.rootSessionIds.has(properties.sessionID)) {
+        this.updateCurrentStatus(mappedType);
+      }
     }
   }
 
@@ -421,8 +424,11 @@ export class OpenCodeClient implements IDisposable {
     if (!properties?.sessionID) return;
     this.emitSessionEvent({ type: "idle", sessionId: properties.sessionID });
 
-    // Update current status to idle
-    this.updateCurrentStatus("idle");
+    // Only update current status for root sessions (main agents)
+    // This ensures notification chimes only play when main agents finish, not subagents
+    if (this.rootSessionIds.has(properties.sessionID)) {
+      this.updateCurrentStatus("idle");
+    }
   }
 
   /**

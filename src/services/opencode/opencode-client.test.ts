@@ -178,13 +178,17 @@ describe("OpenCodeClient", () => {
   });
 
   describe("onStatusChanged", () => {
-    it("fires callback when status changes", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(JSON.stringify([]), { status: 200 })
+    it("fires callback when root session status changes", async () => {
+      // Register root session first
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+          status: 200,
+        })
       );
 
       const listener = vi.fn();
       client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
       client.onStatusChanged(listener);
 
       // Simulate SSE session.status event via handleMessage
@@ -200,13 +204,48 @@ describe("OpenCodeClient", () => {
       expect(listener).toHaveBeenCalledWith("busy");
     });
 
-    it("does not fire callback when status unchanged", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(JSON.stringify([]), { status: 200 })
+    it("does not fire callback for child session status changes", async () => {
+      // Register parent as root, child has parentID
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { id: "parent-1", directory: "/test", title: "Parent" },
+            { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
+          ]),
+          { status: 200 }
+        )
       );
 
       const listener = vi.fn();
       client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
+      client.onStatusChanged(listener);
+
+      // Simulate status change for child session
+      const event = {
+        data: JSON.stringify({
+          type: "session.status",
+          properties: { sessionID: "child-1", status: { type: "busy" } },
+        }),
+      } as MessageEvent;
+
+      client["handleMessage"](event);
+
+      // Should NOT fire for child sessions
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("does not fire callback when status unchanged", async () => {
+      // Register root session first
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+          status: 200,
+        })
+      );
+
+      const listener = vi.fn();
+      client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
       client.onStatusChanged(listener);
 
       // First status change to idle
@@ -226,8 +265,16 @@ describe("OpenCodeClient", () => {
     });
 
     it("returns unsubscribe function", async () => {
+      // Register root session first
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+          status: 200,
+        })
+      );
+
       const listener = vi.fn();
       client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
       const unsubscribe = client.onStatusChanged(listener);
 
       unsubscribe();
@@ -251,8 +298,16 @@ describe("OpenCodeClient", () => {
       expect(client.currentStatus).toBe("idle");
     });
 
-    it("updates on SSE session.status event", () => {
+    it("updates on SSE session.status event for root session", async () => {
+      // Register root session first
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+          status: 200,
+        })
+      );
+
       client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
 
       const event = {
         data: JSON.stringify({
@@ -265,8 +320,44 @@ describe("OpenCodeClient", () => {
       expect(client.currentStatus).toBe("busy");
     });
 
-    it("updates on SSE session.idle event", () => {
+    it("does not update on SSE session.status event for child session", async () => {
+      // Register parent as root, child has parentID
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { id: "parent-1", directory: "/test", title: "Parent" },
+            { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
+          ]),
+          { status: 200 }
+        )
+      );
+
       client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
+
+      // Child session goes busy - should NOT update currentStatus
+      const event = {
+        data: JSON.stringify({
+          type: "session.status",
+          properties: { sessionID: "child-1", status: { type: "busy" } },
+        }),
+      } as MessageEvent;
+      client["handleMessage"](event);
+
+      // Should still be idle (default)
+      expect(client.currentStatus).toBe("idle");
+    });
+
+    it("updates on SSE session.idle event for root session", async () => {
+      // Register root session first
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+          status: 200,
+        })
+      );
+
+      client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
 
       // First set to busy
       const busyEvent = {
@@ -290,8 +381,54 @@ describe("OpenCodeClient", () => {
       expect(client.currentStatus).toBe("idle");
     });
 
-    it("maps retry to busy", () => {
+    it("does not update on SSE session.idle event for child session", async () => {
+      // Register parent as root, child has parentID
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { id: "parent-1", directory: "/test", title: "Parent" },
+            { id: "child-1", directory: "/test", title: "Child", parentID: "parent-1" },
+          ]),
+          { status: 200 }
+        )
+      );
+
       client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
+
+      // Set parent to busy first
+      const busyEvent = {
+        data: JSON.stringify({
+          type: "session.status",
+          properties: { sessionID: "parent-1", status: { type: "busy" } },
+        }),
+      } as MessageEvent;
+      client["handleMessage"](busyEvent);
+      expect(client.currentStatus).toBe("busy");
+
+      // Child session goes idle - should NOT update currentStatus
+      const idleEvent = {
+        data: JSON.stringify({
+          type: "session.idle",
+          properties: { sessionID: "child-1" },
+        }),
+      } as MessageEvent;
+      client["handleMessage"](idleEvent);
+
+      // Should still be busy (parent is busy, child idle should be ignored)
+      expect(client.currentStatus).toBe("busy");
+    });
+
+    it("maps retry to busy for root session", async () => {
+      // Register root session first
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: "ses-123", directory: "/test", title: "Test" }]), {
+          status: 200,
+        })
+      );
+
+      client = new OpenCodeClient(8080);
+      await client.fetchRootSessions();
 
       const event = {
         data: JSON.stringify({
