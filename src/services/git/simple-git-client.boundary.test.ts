@@ -1,15 +1,21 @@
 // @vitest-environment node
 /**
- * Integration tests for SimpleGitClient.
+ * Boundary tests for SimpleGitClient.
  * These tests use real git repositories to verify the implementation.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SimpleGitClient } from "./simple-git-client";
 import { GitError } from "../errors";
-import { createTestGitRepo, createTempDir } from "../test-utils";
+import {
+  createTestGitRepo,
+  createCommitInRemote,
+  createTempDir,
+  withTempRepoWithRemote,
+} from "../test-utils";
 import { promises as fs } from "fs";
 import path from "path";
+import { simpleGit } from "simple-git";
 
 describe("SimpleGitClient", () => {
   let client: SimpleGitClient;
@@ -275,6 +281,38 @@ describe("SimpleGitClient", () => {
       // Fresh repo has no remotes
       await expect(client.fetch(repoPath)).resolves.not.toThrow();
     });
+
+    it("fetches from configured origin", async () => {
+      await withTempRepoWithRemote(async (path) => {
+        await expect(client.fetch(path)).resolves.not.toThrow();
+      });
+    });
+
+    it("fetches new commits from remote", async () => {
+      await withTempRepoWithRemote(async (path, remotePath) => {
+        // Create commit in remote
+        await createCommitInRemote(remotePath, "Remote commit");
+
+        await client.fetch(path);
+
+        // Verify remote ref is updated (origin/main has new commit)
+        const git = simpleGit(path);
+        const log = await git.log(["origin/main"]);
+        expect(log.latest?.message).toBe("Remote commit");
+      });
+    });
+
+    it("fetches with explicit remote name", async () => {
+      await withTempRepoWithRemote(async (path) => {
+        await expect(client.fetch(path, "origin")).resolves.not.toThrow();
+      });
+    });
+
+    it("throws GitError when fetching from non-existent remote", async () => {
+      await withTempRepoWithRemote(async (path) => {
+        await expect(client.fetch(path, "nonexistent")).rejects.toThrow(GitError);
+      });
+    });
   });
 
   describe("listRemotes", () => {
@@ -282,6 +320,26 @@ describe("SimpleGitClient", () => {
       const remotes = await client.listRemotes(repoPath);
 
       expect(remotes).toEqual([]);
+    });
+
+    it("returns configured remotes", async () => {
+      await withTempRepoWithRemote(async (path) => {
+        const remotes = await client.listRemotes(path);
+        expect(remotes).toEqual(["origin"]);
+      });
+    });
+
+    it("returns multiple remotes when configured", async () => {
+      await withTempRepoWithRemote(async (path) => {
+        // Add second remote
+        const git = simpleGit(path);
+        await git.addRemote("upstream", "../upstream.git");
+
+        const remotes = await client.listRemotes(path);
+        expect(remotes).toHaveLength(2);
+        expect(remotes).toContain("origin");
+        expect(remotes).toContain("upstream");
+      });
     });
   });
 });

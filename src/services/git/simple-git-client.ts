@@ -210,7 +210,8 @@ export class SimpleGitClient implements IGitClient {
       async () => {
         const git = this.getGit(repoPath);
         if (remote) {
-          await git.fetch(remote);
+          // Use array format to ensure remote is treated as remote name, not refspec
+          await git.fetch([remote]);
         } else {
           await git.fetch();
         }

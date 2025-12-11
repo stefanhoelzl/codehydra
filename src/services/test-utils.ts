@@ -120,3 +120,108 @@ export async function withTempDir(fn: (dirPath: string) => Promise<void>): Promi
     await cleanup();
   }
 }
+
+/**
+ * Result from creating a test git repo with a remote.
+ */
+export interface TestRepoWithRemoteResult {
+  /** Working repo path */
+  path: string;
+  /** Bare remote path */
+  remotePath: string;
+  /** Cleanup function that removes both directories */
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * Create a git repository with a local bare remote for testing.
+ * The remote is configured as 'origin' and main is pushed.
+ *
+ * Structure:
+ * - /tmp/codehydra-test-xxx/repo/      - Working directory
+ * - /tmp/codehydra-test-xxx/remote.git - Bare remote
+ *
+ * @returns Object with paths and cleanup function
+ */
+export async function createTestGitRepoWithRemote(): Promise<TestRepoWithRemoteResult> {
+  // Create parent temp directory
+  const parent = await mkdtemp(join(tmpdir(), "codehydra-test-"));
+  const repoPath = join(parent, "repo");
+  const remotePath = join(parent, "remote.git");
+
+  const { mkdir, writeFile } = await import("fs/promises");
+
+  // Create bare remote first
+  await mkdir(remotePath);
+  const remoteGit = simpleGit(remotePath);
+  await remoteGit.init(true); // bare=true
+
+  // Create working repo
+  await mkdir(repoPath);
+  const git = simpleGit(repoPath);
+  await git.init();
+  await git.addConfig("user.email", "test@test.com");
+  await git.addConfig("user.name", "Test User");
+
+  // Create initial commit
+  await writeFile(join(repoPath, "README.md"), "# Test Repository\n");
+  await git.add("README.md");
+  await git.commit("Initial commit");
+
+  // Add remote and push
+  await git.addRemote("origin", "../remote.git");
+  await git.push(["-u", "origin", "main"]);
+
+  return {
+    path: repoPath,
+    remotePath,
+    cleanup: async () => {
+      await rm(parent, { recursive: true, force: true });
+    },
+  };
+}
+
+/**
+ * Create a commit directly in a bare repository.
+ * This is useful for testing fetch operations.
+ *
+ * @param remotePath Path to the bare repository
+ * @param message Commit message
+ */
+export async function createCommitInRemote(remotePath: string, message: string): Promise<void> {
+  // Create a temporary clone, make a commit, push, cleanup
+  const tempClone = await mkdtemp(join(tmpdir(), "codehydra-clone-"));
+
+  try {
+    const git = simpleGit(tempClone);
+    await git.clone(remotePath, ".");
+    await git.addConfig("user.email", "test@test.com");
+    await git.addConfig("user.name", "Test User");
+
+    const { writeFile } = await import("fs/promises");
+    const filename = `file-${Date.now()}.txt`;
+    await writeFile(join(tempClone, filename), `Content: ${message}\n`);
+    await git.add(filename);
+    await git.commit(message);
+    await git.push();
+  } finally {
+    await rm(tempClone, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Run a test function with a temporary git repository and remote.
+ * Both are automatically cleaned up after the test, even if the test fails.
+ *
+ * @param fn Test function that receives the repo path and remote path
+ */
+export async function withTempRepoWithRemote(
+  fn: (repoPath: string, remotePath: string) => Promise<void>
+): Promise<void> {
+  const { path, remotePath, cleanup } = await createTestGitRepoWithRemote();
+  try {
+    await fn(path, remotePath);
+  } finally {
+    await cleanup();
+  }
+}

@@ -298,6 +298,49 @@ it("should work with repo", async () => {
 
 Convenience wrapper for temporary directories with automatic cleanup.
 
+### createTestGitRepoWithRemote()
+
+Creates a git repository with a local bare remote configured as `origin`.
+
+- **Returns**: `{ path: string, remotePath: string, cleanup: () => Promise<void> }`
+- **Structure**:
+  - `/tmp/codehydra-test-xxx/repo/` - Working directory
+  - `/tmp/codehydra-test-xxx/remote.git/` - Bare remote
+- **Features**:
+  - `origin` remote configured pointing to the bare repo
+  - `main` branch pushed to origin
+  - Single `cleanup()` removes both directories
+
+### withTempRepoWithRemote(fn)
+
+Convenience wrapper for repos with remotes that handles cleanup automatically.
+
+```typescript
+it("should fetch from origin", async () => {
+  await withTempRepoWithRemote(async (repoPath, remotePath) => {
+    // Test code here
+    // Both directories cleaned up automatically
+  });
+});
+```
+
+### createCommitInRemote(remotePath, message)
+
+Creates a commit directly in a bare repository. Useful for testing fetch operations.
+
+```typescript
+it("should fetch new commits", async () => {
+  const { path, remotePath, cleanup } = await createTestGitRepoWithRemote();
+  try {
+    await createCommitInRemote(remotePath, "New remote commit");
+    await client.fetch(path);
+    // Verify origin/main has the new commit
+  } finally {
+    await cleanup();
+  }
+});
+```
+
 ## Examples
 
 ### Unit Test Example
@@ -385,7 +428,7 @@ describe("IPC Integration Tests", () => {
 
 ### Boundary Test Example
 
-Reference: `src/services/git/simple-git-client.integration.test.ts` (to be renamed)
+Reference: `src/services/git/simple-git-client.boundary.test.ts`
 
 ```typescript
 // simple-git-client.boundary.test.ts
