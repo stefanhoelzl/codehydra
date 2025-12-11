@@ -1,9 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from "vitest";
 import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
-
-// Platform detection for signal tests (Unix only)
-const isWindows = process.platform === "win32";
+import {
+  isWindows,
+  spawnIgnoringSignals,
+  spawnLongRunning,
+  spawnWithOutput,
+  spawnWithExitCode,
+} from "./process.boundary-test-utils";
 
 // Default timeout for boundary tests
 const TEST_TIMEOUT = 5000;
@@ -82,7 +86,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "spawns a process and returns SpawnedProcess handle",
       async () => {
-        const proc = runner.run("echo", ["hello"]);
+        const proc = spawnWithOutput(runner, "hello");
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -100,7 +104,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "captures stdout from process",
       async () => {
-        const proc = runner.run("echo", ["test output"]);
+        const proc = spawnWithOutput(runner, "test output");
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -114,7 +118,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "captures stderr from process",
       async () => {
-        const proc = runner.run("sh", ["-c", "echo error >&2"]);
+        const proc = spawnWithOutput(runner, "", "error");
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -128,7 +132,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "provides exit code on completion",
       async () => {
-        const proc = runner.run("sh", ["-c", "exit 0"]);
+        const proc = spawnWithExitCode(runner, 0);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -142,7 +146,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "provides non-zero exit code on failure (no throw)",
       async () => {
-        const proc = runner.run("sh", ["-c", "exit 42"]);
+        const proc = spawnWithExitCode(runner, 42);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -156,7 +160,10 @@ describe("ExecaProcessRunner", () => {
     it(
       "supports custom working directory",
       async () => {
-        const proc = runner.run("pwd", [], { cwd: "/tmp" });
+        // Use Node.js to print cwd - cross-platform
+        const proc = runner.run(process.execPath, ["-e", "console.log(process.cwd())"], {
+          cwd: "/tmp",
+        });
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -170,7 +177,8 @@ describe("ExecaProcessRunner", () => {
     it(
       "supports environment variables",
       async () => {
-        const proc = runner.run("sh", ["-c", "echo $TEST_VAR"], {
+        // Use Node.js to print env var - cross-platform
+        const proc = runner.run(process.execPath, ["-e", "console.log(process.env.TEST_VAR)"], {
           env: { ...process.env, TEST_VAR: "test_value" },
         });
         runningProcesses.push(proc);
@@ -188,7 +196,7 @@ describe("ExecaProcessRunner", () => {
     it.skipIf(isWindows)(
       "terminates process with SIGTERM",
       async () => {
-        const proc = runner.run("sleep", ["30"]);
+        const proc = spawnLongRunning(runner, 30_000);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -206,7 +214,7 @@ describe("ExecaProcessRunner", () => {
     it.skipIf(isWindows)(
       "terminates process with SIGKILL",
       async () => {
-        const proc = runner.run("sleep", ["30"]);
+        const proc = spawnLongRunning(runner, 30_000);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -224,8 +232,8 @@ describe("ExecaProcessRunner", () => {
     it.skipIf(isWindows)(
       "SIGTERM to SIGKILL escalation for process that ignores SIGTERM",
       async () => {
-        // Spawn process that ignores SIGTERM using trap
-        const proc = runner.run("sh", ["-c", 'trap "" TERM; sleep 30']);
+        // Spawn process that ignores SIGTERM using trap (Unix-only utility)
+        const proc = spawnIgnoringSignals(runner);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -271,7 +279,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "kill() returns false when process already dead",
       async () => {
-        const proc = runner.run("echo", ["done"]);
+        const proc = spawnWithOutput(runner, "done");
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -286,7 +294,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "rapid sequential kill() calls are safe",
       async () => {
-        const proc = runner.run("sleep", ["30"]);
+        const proc = spawnLongRunning(runner, 30_000);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -312,7 +320,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "wait() with timeout returns running:true when process does not exit in time",
       async () => {
-        const proc = runner.run("sleep", ["30"]);
+        const proc = spawnLongRunning(runner, 30_000);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -329,7 +337,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "wait() with timeout returns result when process exits before timeout",
       async () => {
-        const proc = runner.run("echo", ["quick"]);
+        const proc = spawnWithOutput(runner, "quick");
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -345,7 +353,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "multiple wait() calls return cached result after process exits",
       async () => {
-        const proc = runner.run("echo", ["cached"]);
+        const proc = spawnWithOutput(runner, "cached");
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -360,7 +368,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "wait() after natural exit returns cached result immediately",
       async () => {
-        const proc = runner.run("echo", ["done"]);
+        const proc = spawnWithOutput(runner, "done");
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -384,7 +392,11 @@ describe("ExecaProcessRunner", () => {
     it(
       "concurrent wait() calls return same result",
       async () => {
-        const proc = runner.run("sh", ["-c", "sleep 0.1; echo concurrent"]);
+        // Use Node.js with a brief delay instead of shell sleep
+        const proc = runner.run(process.execPath, [
+          "-e",
+          'setTimeout(() => console.log("concurrent"), 100)',
+        ]);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -400,7 +412,7 @@ describe("ExecaProcessRunner", () => {
     it(
       "wait(0) returns running:true immediately for long process",
       async () => {
-        const proc = runner.run("sleep", ["30"]);
+        const proc = spawnLongRunning(runner, 30_000);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -419,9 +431,11 @@ describe("ExecaProcessRunner", () => {
     it(
       "wait() without timeout waits for process completion",
       async () => {
-        // Note: wait(Infinity) doesn't work as expected due to JavaScript's
-        // setTimeout truncating Infinity to 1ms. Use wait() without timeout instead.
-        const proc = runner.run("sh", ["-c", "sleep 0.1; echo completed"]);
+        // Use Node.js with a brief delay instead of shell sleep
+        const proc = runner.run(process.execPath, [
+          "-e",
+          'setTimeout(() => console.log("completed"), 100)',
+        ]);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -443,10 +457,12 @@ describe("ExecaProcessRunner", () => {
         process.env.BOUNDARY_TEST_VAR = "should_not_inherit";
 
         try {
-          // Spawn with custom env that excludes the variable
-          const proc = runner.run("sh", ["-c", "echo ${BOUNDARY_TEST_VAR:-EMPTY}"], {
-            env: { PATH: process.env.PATH },
-          });
+          // Spawn with custom env that excludes the variable - use Node.js
+          const proc = runner.run(
+            process.execPath,
+            ["-e", 'console.log(process.env.BOUNDARY_TEST_VAR || "EMPTY")'],
+            { env: { PATH: process.env.PATH } }
+          );
           runningProcesses.push(proc);
           trackProcess(proc);
 
@@ -463,9 +479,12 @@ describe("ExecaProcessRunner", () => {
     it(
       "empty string env values are preserved",
       async () => {
-        const proc = runner.run("sh", ["-c", 'echo ">${TEST_EMPTY}<"'], {
-          env: { ...process.env, TEST_EMPTY: "" },
-        });
+        // Use Node.js to check empty string env var
+        const proc = runner.run(
+          process.execPath,
+          ["-e", "console.log(`>${process.env.TEST_EMPTY}<`)"],
+          { env: { ...process.env, TEST_EMPTY: "" } }
+        );
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -480,7 +499,8 @@ describe("ExecaProcessRunner", () => {
       "special characters in env values are preserved",
       async () => {
         const specialValue = "foo$bar\"baz'qux";
-        const proc = runner.run("sh", ["-c", 'echo "$TEST_SPECIAL"'], {
+        // Use Node.js to print env var - handles special chars correctly
+        const proc = runner.run(process.execPath, ["-e", "console.log(process.env.TEST_SPECIAL)"], {
           env: { ...process.env, TEST_SPECIAL: specialValue },
         });
         runningProcesses.push(proc);
@@ -497,17 +517,19 @@ describe("ExecaProcessRunner", () => {
       "long env values are not truncated",
       async () => {
         const longValue = "x".repeat(2000); // 2KB string
-        const proc = runner.run("sh", ["-c", 'echo "$TEST_LONG" | wc -c'], {
-          env: { ...process.env, TEST_LONG: longValue },
-        });
+        // Use Node.js to get length - cross-platform
+        const proc = runner.run(
+          process.execPath,
+          ["-e", "console.log(process.env.TEST_LONG.length)"],
+          { env: { ...process.env, TEST_LONG: longValue } }
+        );
         runningProcesses.push(proc);
         trackProcess(proc);
 
         const result = await proc.wait();
 
-        // wc -c counts bytes including newline from echo
-        const byteCount = parseInt(result.stdout.trim(), 10);
-        expect(byteCount).toBe(2001); // 2000 chars + newline
+        const length = parseInt(result.stdout.trim(), 10);
+        expect(length).toBe(2000);
       },
       TEST_TIMEOUT
     );
@@ -592,13 +614,13 @@ describe("ExecaProcessRunner", () => {
   });
 
   describe("large output", () => {
-    it.skipIf(isWindows)(
+    it(
       "handles large stdout without hanging or truncation",
       async () => {
-        // Generate ~137KB of base64 output
-        const proc = runner.run("sh", [
-          "-c",
-          "dd if=/dev/zero bs=1024 count=100 2>/dev/null | base64",
+        // Generate ~137KB of base64 output using Node.js Buffer - cross-platform
+        const proc = runner.run(process.execPath, [
+          "-e",
+          'console.log(Buffer.alloc(100 * 1024, 0).toString("base64"))',
         ]);
         runningProcesses.push(proc);
         trackProcess(proc);

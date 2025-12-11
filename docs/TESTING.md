@@ -264,7 +264,9 @@ it("should retry after delay", async () => {
 
 ## Test Helpers
 
-All helpers are in `src/services/test-utils.ts`.
+### General Helpers
+
+All general helpers are in `src/services/test-utils.ts`.
 
 ### createTestGitRepo(options?)
 
@@ -340,6 +342,121 @@ it("should fetch new commits", async () => {
   }
 });
 ```
+
+### Boundary Test Utilities
+
+Cross-platform process spawning utilities for boundary tests. All utilities are in `src/services/platform/process.boundary-test-utils.ts`.
+
+**Purpose**: Avoid Unix-specific shell commands (`sleep`, `echo`, `sh -c`) that don't work on Windows. Uses Node.js as the process spawner (guaranteed available in test environment).
+
+**When to use**:
+
+- Use these utilities when testing process spawning, signals, or process trees
+- Use platform-specific commands only when testing platform-specific behavior (with `it.skipIf(isWindows)`)
+
+#### isWindows
+
+Platform detection constant for conditionally skipping tests.
+
+```typescript
+import { isWindows } from "../platform/process.boundary-test-utils";
+
+it.skipIf(isWindows)("Unix signal test", async () => {
+  // This test only runs on Unix
+});
+```
+
+#### spawnLongRunning(runner, durationMs?)
+
+Spawn a long-running process (no children).
+
+```typescript
+import { spawnLongRunning } from "../platform/process.boundary-test-utils";
+
+const proc = spawnLongRunning(runner, 30_000);
+// Process runs for 30 seconds, can be killed
+proc.kill("SIGTERM");
+await proc.wait();
+```
+
+#### spawnWithOutput(runner, stdout, stderr?)
+
+Spawn a process that outputs to stdout and optionally stderr. Handles special characters safely.
+
+```typescript
+import { spawnWithOutput } from "../platform/process.boundary-test-utils";
+
+const proc = spawnWithOutput(runner, "hello", "error message");
+const result = await proc.wait();
+// result.stdout = "hello\n"
+// result.stderr = "error message\n"
+```
+
+#### spawnWithExitCode(runner, exitCode)
+
+Spawn a process that exits with a specific code.
+
+```typescript
+import { spawnWithExitCode } from "../platform/process.boundary-test-utils";
+
+const proc = spawnWithExitCode(runner, 42);
+const result = await proc.wait();
+// result.exitCode = 42
+```
+
+#### spawnWithChildren(runner, childCount)
+
+Spawn a process that creates N child processes. Returns a handle with `waitForChildPids()` and `cleanup()` methods.
+
+**Note**: This utility uses a temp file internally for PID communication between the parent process and the test. The temp file is cleaned up automatically by `waitForChildPids()` or `cleanup()`.
+
+```typescript
+import {
+  spawnWithChildren,
+  type ProcessWithChildren,
+} from "../platform/process.boundary-test-utils";
+
+let spawned: ProcessWithChildren | null = null;
+
+afterEach(async () => {
+  if (spawned) {
+    await spawned.cleanup();
+    spawned = null;
+  }
+});
+
+it("tests process tree", async () => {
+  spawned = spawnWithChildren(runner, 2);
+  const childPids = await spawned.waitForChildPids();
+  // childPids = [12345, 12346] (readonly array)
+
+  const parentPid = spawned.process.pid;
+  // Test process tree operations...
+});
+```
+
+#### spawnIgnoringSignals(runner)
+
+**Unix-only** - Spawn a process that ignores SIGTERM (for testing signal escalation).
+
+```typescript
+import { spawnIgnoringSignals, isWindows } from "../platform/process.boundary-test-utils";
+
+it.skipIf(isWindows)("escalates SIGTERM to SIGKILL", async () => {
+  const proc = spawnIgnoringSignals(runner);
+  proc.kill("SIGTERM"); // Ignored
+  // ... wait ...
+  proc.kill("SIGKILL"); // Works
+  await proc.wait();
+});
+```
+
+**Platform Limitations**:
+
+| Platform | SIGTERM Behavior                              | Signal Trapping |
+| -------- | --------------------------------------------- | --------------- |
+| Unix     | Graceful termination, can be trapped          | Supported       |
+| Windows  | Calls TerminateProcess (like SIGKILL on Unix) | Not supported   |
 
 ## Examples
 
