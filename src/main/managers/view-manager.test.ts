@@ -180,6 +180,48 @@ describe("ViewManager", () => {
   });
 
   describe("createWorkspaceView", () => {
+    it("createWorkspaceView-not-attached: view created but NOT added to contentView", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Clear calls from create (UI view)
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      // Workspace view should NOT be added to contentView (detached by default)
+      expect(mockWindowManager.getWindow().contentView.addChildView).not.toHaveBeenCalled();
+    });
+
+    it("createWorkspaceView-url-not-loaded: loadURL not called on creation", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      // loadURL should NOT be called during creation (deferred to first activation)
+      expect(workspaceView?.webContents.loadURL).not.toHaveBeenCalled();
+    });
+
+    it("createWorkspaceView-stored: view accessible via getWorkspaceView", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      // View should be stored in map and retrievable
+      const view = manager.getWorkspaceView("/path/to/workspace");
+      expect(view).toBeDefined();
+      expect(view).toBe(MockWebContentsViewClass.mock.results[1]?.value);
+    });
+
     it("creates WebContentsView with security settings (no preload)", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
@@ -198,31 +240,66 @@ describe("ViewManager", () => {
       });
     });
 
-    it("loads the code-server URL", () => {
+    it("loads the code-server URL on first activation (lazy loading)", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
       });
 
       manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
-
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // URL is NOT loaded on creation (lazy loading)
+      expect(workspaceView?.webContents.loadURL).not.toHaveBeenCalled();
+
+      // URL is loaded on first activation
+      manager.setActiveWorkspace("/path/to/workspace");
       expect(workspaceView?.webContents.loadURL).toHaveBeenCalledWith(
         "http://localhost:8080/?folder=/path"
       );
     });
 
-    it("adds workspace view to window on top (normal state - workspace receives events)", () => {
+    it("does not reload URL on subsequent activations", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
       });
 
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // First activation - URL should be loaded
+      manager.setActiveWorkspace("/path/to/workspace1");
+      expect(workspaceView1?.webContents.loadURL).toHaveBeenCalledTimes(1);
+
+      // Switch to another workspace
+      manager.setActiveWorkspace("/path/to/workspace2");
+
+      // Clear loadURL call count
+      workspaceView1?.webContents.loadURL.mockClear();
+
+      // Re-activate first workspace - URL should NOT be reloaded
+      manager.setActiveWorkspace("/path/to/workspace1");
+      expect(workspaceView1?.webContents.loadURL).not.toHaveBeenCalled();
+    });
+
+    it("attaches workspace view to window on activation (detached by default)", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Clear calls from UI view creation
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
       manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
 
-      // Should be called twice: once for UI view, once for workspace view
-      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(2);
-      // Workspace view should be added without index (at end = on top)
+      // View is NOT added on creation (starts detached)
+      expect(mockWindowManager.getWindow().contentView.addChildView).not.toHaveBeenCalled();
+
+      // View is added on activation
+      manager.setActiveWorkspace("/path/to/workspace");
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(
         workspaceView
@@ -258,6 +335,84 @@ describe("ViewManager", () => {
   });
 
   describe("destroyWorkspaceView", () => {
+    it("destroyWorkspaceView-detached: destroying detached view doesn't throw", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create view (detached by default)
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      // Destroy detached view - should not throw
+      expect(() => manager.destroyWorkspaceView("/path/to/workspace")).not.toThrow();
+    });
+
+    it("destroyWorkspaceView-active: clears activeWorkspacePath and attachedWorkspacePath", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      // Activate the workspace (attaches it)
+      manager.setActiveWorkspace("/path/to/workspace");
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/workspace");
+
+      // Destroy the active workspace
+      manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Should clear active and attached state
+      expect(manager.getActiveWorkspacePath()).toBeNull();
+    });
+
+    it("destroyWorkspaceView-url-cleanup: removes URL from workspaceUrls map", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.destroyWorkspaceView("/path/to/workspace");
+
+      // View should be gone
+      expect(manager.getWorkspaceView("/path/to/workspace")).toBeUndefined();
+
+      // If we recreate a view with same path, it should work (URL map was cleaned)
+      expect(() => {
+        manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path2");
+      }).not.toThrow();
+    });
+
+    it("destroyWorkspaceView-loaded-cleanup: clears loadedWorkspaces tracking", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create and activate workspace (this loads the URL)
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      expect(workspaceView?.webContents.loadURL).toHaveBeenCalledTimes(1);
+
+      // Destroy the workspace
+      manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Recreate workspace with same path
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      const newWorkspaceView = MockWebContentsViewClass.mock.results[2]?.value;
+
+      // URL should be NOT loaded yet (lazy loading)
+      expect(newWorkspaceView?.webContents.loadURL).not.toHaveBeenCalled();
+
+      // Activate - URL should be loaded (loadedWorkspaces was cleaned up)
+      manager.setActiveWorkspace("/path/to/workspace");
+      expect(newWorkspaceView?.webContents.loadURL).toHaveBeenCalledTimes(1);
+    });
+
     it("removes view from window", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
@@ -403,6 +558,62 @@ describe("ViewManager", () => {
   });
 
   describe("updateBounds", () => {
+    it("updateBounds-only-active: only active workspace bounds updated", () => {
+      mockWindowManager.getBounds.mockReturnValue({ width: 1400, height: 900 });
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
+      const workspaceView2 = MockWebContentsViewClass.mock.results[2]?.value;
+
+      // Activate workspace1
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      // Clear all setBounds calls
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      uiView?.setBounds.mockClear();
+      workspaceView1?.setBounds.mockClear();
+      workspaceView2?.setBounds.mockClear();
+
+      // Update bounds
+      manager.updateBounds();
+
+      // Only UI view and active workspace should have setBounds called (O(1) not O(n))
+      expect(uiView?.setBounds).toHaveBeenCalled();
+      expect(workspaceView1?.setBounds).toHaveBeenCalled();
+      // Inactive workspace should NOT have setBounds called (it's detached)
+      expect(workspaceView2?.setBounds).not.toHaveBeenCalled();
+    });
+
+    it("updateBounds-detached-no-call: detached workspaces skip setBounds", () => {
+      mockWindowManager.getBounds.mockReturnValue({ width: 1400, height: 900 });
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create workspaces but don't activate any
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
+      const workspaceView2 = MockWebContentsViewClass.mock.results[2]?.value;
+
+      // Clear all setBounds calls
+      workspaceView1?.setBounds.mockClear();
+      workspaceView2?.setBounds.mockClear();
+
+      // Update bounds with no active workspace
+      manager.updateBounds();
+
+      // No workspace views should have setBounds called (all are detached)
+      expect(workspaceView1?.setBounds).not.toHaveBeenCalled();
+      expect(workspaceView2?.setBounds).not.toHaveBeenCalled();
+    });
+
     it("sets UI layer bounds to full window width", () => {
       mockWindowManager.getBounds.mockReturnValue({ width: 1400, height: 900 });
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
@@ -441,7 +652,7 @@ describe("ViewManager", () => {
       });
     });
 
-    it("sets inactive workspace bounds to zero", () => {
+    it("skips setBounds for inactive (detached) workspaces", () => {
       mockWindowManager.getBounds.mockReturnValue({ width: 1400, height: 900 });
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
@@ -451,15 +662,14 @@ describe("ViewManager", () => {
       manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
       manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
       manager.setActiveWorkspace("/path/to/workspace1");
-      manager.updateBounds();
 
       const inactiveView = MockWebContentsViewClass.mock.results[2]?.value;
-      expect(inactiveView?.setBounds).toHaveBeenCalledWith({
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      });
+      inactiveView?.setBounds.mockClear();
+
+      manager.updateBounds();
+
+      // Inactive workspace is detached, so setBounds is NOT called (not zero bounds)
+      expect(inactiveView?.setBounds).not.toHaveBeenCalled();
     });
 
     it("clamps bounds at minimum window size", () => {
@@ -486,6 +696,206 @@ describe("ViewManager", () => {
   });
 
   describe("setActiveWorkspace", () => {
+    it("setActiveWorkspace-first-activation: loads URL and attaches view", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // Clear calls from create
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // URL should be loaded on first activation
+      expect(workspaceView?.webContents.loadURL).toHaveBeenCalledWith(
+        "http://localhost:8080/?folder=/path"
+      );
+      // View should be attached
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(
+        workspaceView
+      );
+    });
+
+    it("setActiveWorkspace-attach-before-detach: new view attached before old detached", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
+      const workspaceView2 = MockWebContentsViewClass.mock.results[2]?.value;
+
+      // Activate first workspace
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      // Clear calls to track order
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+      mockWindowManager.getWindow().contentView.removeChildView.mockClear();
+
+      // Track call order
+      const callOrder: string[] = [];
+      mockWindowManager.getWindow().contentView.addChildView.mockImplementation(() => {
+        callOrder.push("add");
+      });
+      mockWindowManager.getWindow().contentView.removeChildView.mockImplementation(() => {
+        callOrder.push("remove");
+      });
+
+      // Switch to second workspace
+      manager.setActiveWorkspace("/path/to/workspace2");
+
+      // Verify: add (new view) before remove (old view)
+      expect(callOrder).toEqual(["add", "remove"]);
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(
+        workspaceView2
+      );
+      expect(mockWindowManager.getWindow().contentView.removeChildView).toHaveBeenCalledWith(
+        workspaceView1
+      );
+    });
+
+    it("setActiveWorkspace-detaches-previous: previous active gets removeChildView", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // Activate first workspace
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      // Clear calls from activation
+      mockWindowManager.getWindow().contentView.removeChildView.mockClear();
+
+      // Switch to second workspace
+      manager.setActiveWorkspace("/path/to/workspace2");
+
+      // Previous view should be detached
+      expect(mockWindowManager.getWindow().contentView.removeChildView).toHaveBeenCalledWith(
+        workspaceView1
+      );
+    });
+
+    it("setActiveWorkspace-same-noop: same workspace doesn't detach/reattach", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      // Activate workspace
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Clear calls
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+      mockWindowManager.getWindow().contentView.removeChildView.mockClear();
+
+      // Activate same workspace again
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Should not call addChildView or removeChildView
+      expect(mockWindowManager.getWindow().contentView.addChildView).not.toHaveBeenCalled();
+      expect(mockWindowManager.getWindow().contentView.removeChildView).not.toHaveBeenCalled();
+    });
+
+    it("setActiveWorkspace-null-detaches: null workspace detaches current", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // Activate workspace
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Clear calls
+      mockWindowManager.getWindow().contentView.removeChildView.mockClear();
+
+      // Set null workspace
+      manager.setActiveWorkspace(null);
+
+      // Current view should be detached
+      expect(mockWindowManager.getWindow().contentView.removeChildView).toHaveBeenCalledWith(
+        workspaceView
+      );
+    });
+
+    it("setActiveWorkspace-attach-error: handles addChildView error gracefully", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+
+      // Make addChildView throw only once
+      mockWindowManager.getWindow().contentView.addChildView.mockImplementationOnce(() => {
+        throw new Error("addChildView failed");
+      });
+
+      // Should not throw
+      expect(() => manager.setActiveWorkspace("/path/to/workspace")).not.toThrow();
+    });
+
+    it("setActiveWorkspace-detach-error: handles removeChildView error gracefully", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+
+      // Activate first workspace
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      // Make removeChildView throw only once
+      mockWindowManager.getWindow().contentView.removeChildView.mockImplementationOnce(() => {
+        throw new Error("removeChildView failed");
+      });
+
+      // Should not throw
+      expect(() => manager.setActiveWorkspace("/path/to/workspace2")).not.toThrow();
+    });
+
+    it("setActiveWorkspace-dialog-mode-zorder: UI stays on top when in dialog mode", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+
+      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
+      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+
+      // Enable dialog mode
+      manager.setDialogMode(true);
+
+      // Activate first workspace
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      // Clear calls
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      // Switch workspace while in dialog mode
+      manager.setActiveWorkspace("/path/to/workspace2");
+
+      // UI layer should be re-added to top (setDialogMode called again)
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(uiView);
+    });
+
     it("updates active workspace path", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
@@ -503,7 +913,7 @@ describe("ViewManager", () => {
       expect(lastCall?.[0].width).toBeGreaterThan(0);
     });
 
-    it("handles null active workspace", () => {
+    it("handles null active workspace (detaches view)", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
@@ -511,14 +921,18 @@ describe("ViewManager", () => {
 
       manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
       manager.setActiveWorkspace("/path/to/workspace");
-      manager.setActiveWorkspace(null);
-      manager.updateBounds();
 
-      // All workspaces should have zero bounds
+      // Clear mocks to track detach
+      mockWindowManager.getWindow().contentView.removeChildView.mockClear();
+
+      manager.setActiveWorkspace(null);
+
+      // Workspace should be detached (removeChildView called)
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
-      const setBoundsCalls = workspaceView?.setBounds.mock.calls ?? [];
-      const lastCall = setBoundsCalls[setBoundsCalls.length - 1];
-      expect(lastCall?.[0]).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+      expect(mockWindowManager.getWindow().contentView.removeChildView).toHaveBeenCalledWith(
+        workspaceView
+      );
+      expect(manager.getActiveWorkspacePath()).toBeNull();
     });
 
     it("focuses the workspace view by default", () => {
@@ -974,6 +1388,147 @@ describe("ViewManager", () => {
         webPreferences?: { preload?: string };
       };
       expect(workspaceViewConfig.webPreferences?.preload).toBeUndefined();
+    });
+  });
+
+  describe("View Detachment Integration Tests", () => {
+    it("integration-full-flow: create project → workspaces → switch → destroy", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create multiple workspaces (all detached by default)
+      manager.createWorkspaceView("/path/to/ws1", "http://localhost:8080/?folder=/ws1");
+      manager.createWorkspaceView("/path/to/ws2", "http://localhost:8080/?folder=/ws2");
+      manager.createWorkspaceView("/path/to/ws3", "http://localhost:8080/?folder=/ws3");
+
+      // Verify all views exist
+      expect(manager.getWorkspaceView("/path/to/ws1")).toBeDefined();
+      expect(manager.getWorkspaceView("/path/to/ws2")).toBeDefined();
+      expect(manager.getWorkspaceView("/path/to/ws3")).toBeDefined();
+
+      // Activate first workspace
+      manager.setActiveWorkspace("/path/to/ws1");
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws1");
+
+      // Switch to second workspace
+      manager.setActiveWorkspace("/path/to/ws2");
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws2");
+
+      // Destroy first workspace (now detached)
+      manager.destroyWorkspaceView("/path/to/ws1");
+      expect(manager.getWorkspaceView("/path/to/ws1")).toBeUndefined();
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws2"); // Still active
+
+      // Destroy active workspace
+      manager.destroyWorkspaceView("/path/to/ws2");
+      expect(manager.getActiveWorkspacePath()).toBeNull();
+
+      // Remaining workspace still accessible
+      expect(manager.getWorkspaceView("/path/to/ws3")).toBeDefined();
+
+      // Clean up
+      manager.destroy();
+    });
+
+    it("integration-dialog-mode: dialog overlay works with detached workspaces", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create and activate workspace
+      manager.createWorkspaceView("/path/to/ws1", "http://localhost:8080/?folder=/ws1");
+      manager.setActiveWorkspace("/path/to/ws1");
+
+      // Enter dialog mode
+      manager.setDialogMode(true);
+
+      // Verify workspace is still accessible
+      expect(manager.getWorkspaceView("/path/to/ws1")).toBeDefined();
+
+      // Create another workspace while in dialog mode
+      manager.createWorkspaceView("/path/to/ws2", "http://localhost:8080/?folder=/ws2");
+
+      // Switch workspace while in dialog mode
+      manager.setActiveWorkspace("/path/to/ws2");
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws2");
+
+      // Exit dialog mode
+      manager.setDialogMode(false);
+
+      // Workspace still works
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws2");
+
+      manager.destroy();
+    });
+
+    it("integration-rapid-switching: multiple workspace switches in sequence", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create workspaces
+      for (let i = 0; i < 5; i++) {
+        manager.createWorkspaceView(`/path/to/ws${i}`, `http://localhost:8080/?folder=/ws${i}`);
+      }
+
+      // Rapid switching - 10 times
+      const paths = [
+        "/path/to/ws0",
+        "/path/to/ws3",
+        "/path/to/ws1",
+        "/path/to/ws4",
+        "/path/to/ws2",
+      ];
+      for (let i = 0; i < 10; i++) {
+        const path = paths[i % paths.length]!;
+        manager.setActiveWorkspace(path);
+        expect(manager.getActiveWorkspacePath()).toBe(path);
+      }
+
+      // Final state should be correct
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws2");
+
+      // All views should still be accessible
+      for (let i = 0; i < 5; i++) {
+        expect(manager.getWorkspaceView(`/path/to/ws${i}`)).toBeDefined();
+      }
+
+      manager.destroy();
+    });
+
+    it("integration-multiple-cycles: view survives multiple attach/detach cycles", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView("/path/to/ws1", "http://localhost:8080/?folder=/ws1");
+      manager.createWorkspaceView("/path/to/ws2", "http://localhost:8080/?folder=/ws2");
+
+      // Cycle between workspaces many times
+      for (let i = 0; i < 20; i++) {
+        const path = i % 2 === 0 ? "/path/to/ws1" : "/path/to/ws2";
+        manager.setActiveWorkspace(path);
+        expect(manager.getActiveWorkspacePath()).toBe(path);
+      }
+
+      // Both views should still exist
+      expect(manager.getWorkspaceView("/path/to/ws1")).toBeDefined();
+      expect(manager.getWorkspaceView("/path/to/ws2")).toBeDefined();
+
+      // Deactivate all
+      manager.setActiveWorkspace(null);
+      expect(manager.getActiveWorkspacePath()).toBeNull();
+
+      // Re-activate should still work
+      manager.setActiveWorkspace("/path/to/ws1");
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws1");
+
+      manager.destroy();
     });
   });
 });

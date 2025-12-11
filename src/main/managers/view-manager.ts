@@ -55,7 +55,30 @@ export class ViewManager implements IViewManager {
    * 3. The validation happens at the IPC boundary, so paths here are already validated
    */
   private readonly workspaceViews: Map<string, WebContentsView> = new Map();
+  /**
+   * Map of workspace paths to their code-server URLs.
+   * URLs are stored during createWorkspaceView and loaded during first activation.
+   */
+  private readonly workspaceUrls: Map<string, string> = new Map();
   private activeWorkspacePath: string | null = null;
+  /**
+   * Tracks which workspace view is currently attached to the contentView.
+   * Used for explicit attachment state tracking (detach optimization).
+   */
+  private attachedWorkspacePath: string | null = null;
+  /**
+   * Tracks dialog mode state for z-order maintenance during workspace switches.
+   */
+  private isDialogMode = false;
+  /**
+   * Tracks which workspaces have had their URL loaded.
+   * Used to ensure URL is only loaded on first activation (lazy loading).
+   */
+  private readonly loadedWorkspaces: Set<string> = new Set();
+  /**
+   * Reentrant guard to prevent concurrent workspace changes.
+   */
+  private isChangingWorkspace = false;
   private readonly unsubscribeResize: Unsubscribe;
 
   private constructor(
@@ -188,20 +211,18 @@ export class ViewManager implements IViewManager {
       }
     });
 
-    // Load the URL
-    void view.webContents.loadURL(url);
+    // Store URL for lazy loading during first activation (NOT loaded now)
+    this.workspaceUrls.set(workspacePath, url);
 
-    // Add to window (on top of UI layer - normal state, workspace receives events)
-    this.windowManager.getWindow().contentView.addChildView(view);
-
-    // Store in map
+    // Store in map (view is NOT attached to contentView yet - detached by default)
     this.workspaceViews.set(workspacePath, view);
 
-    // Register with shortcut controller for Alt+X detection
+    // Register with shortcut controller for Alt+X detection (will work when view becomes active)
     this.shortcutController.registerView(view.webContents);
 
-    // Update bounds
-    this.updateBounds();
+    // Note: No addChildView() - view starts detached
+    // Note: No loadURL() - URL is loaded on first activation
+    // Note: No updateBounds() - detached views don't need bounds
 
     return view;
   }
@@ -220,12 +241,19 @@ export class ViewManager implements IViewManager {
     // Unregister from shortcut controller
     this.shortcutController.unregisterView(view.webContents);
 
-    // Remove from map first to ensure cleanup even if view is destroyed
+    // Remove from maps first to ensure cleanup even if view is destroyed
     this.workspaceViews.delete(workspacePath);
+    this.workspaceUrls.delete(workspacePath);
+    this.loadedWorkspaces.delete(workspacePath);
 
     // If this was the active workspace, clear it
     if (this.activeWorkspacePath === workspacePath) {
       this.activeWorkspacePath = null;
+    }
+
+    // If this was the attached workspace, clear it and detach from window
+    if (this.attachedWorkspacePath === workspacePath) {
+      this.attachedWorkspacePath = null;
     }
 
     try {
@@ -256,8 +284,11 @@ export class ViewManager implements IViewManager {
   }
 
   /**
-   * Updates all view bounds.
+   * Updates view bounds for UI layer and active workspace only.
    * Called on window resize.
+   *
+   * Note: Only the active workspace needs bounds updated (O(1) not O(n)).
+   * Inactive workspaces are detached from contentView and don't need bounds.
    */
   updateBounds(): void {
     const bounds = this.windowManager.getBounds();
@@ -274,45 +305,132 @@ export class ViewManager implements IViewManager {
       height,
     });
 
-    // Workspace views
-    for (const [path, view] of this.workspaceViews) {
-      if (path === this.activeWorkspacePath) {
-        // Active workspace: content area
-        view.setBounds({
+    // Only update active workspace bounds (O(1) - inactive views are detached)
+    if (this.activeWorkspacePath !== null) {
+      const activeView = this.workspaceViews.get(this.activeWorkspacePath);
+      if (activeView) {
+        activeView.setBounds({
           x: SIDEBAR_WIDTH,
           y: 0,
           width: width - SIDEBAR_WIDTH,
           height,
-        });
-      } else {
-        // Inactive workspace: zero bounds (hidden)
-        view.setBounds({
-          x: 0,
-          y: 0,
-          width: 0,
-          height: 0,
         });
       }
     }
   }
 
   /**
+   * Loads the URL for a workspace view if not already loaded.
+   * Called during first activation.
+   *
+   * @param workspacePath - Path to the workspace
+   */
+  private loadViewUrl(workspacePath: string): void {
+    // Skip if already loaded (ensures URL is only loaded on first activation)
+    if (this.loadedWorkspaces.has(workspacePath)) return;
+
+    const view = this.workspaceViews.get(workspacePath);
+    const url = this.workspaceUrls.get(workspacePath);
+
+    if (!view || !url) return;
+
+    void view.webContents.loadURL(url);
+    this.loadedWorkspaces.add(workspacePath);
+  }
+
+  /**
+   * Attaches a workspace view to the contentView.
+   * Handles errors gracefully.
+   *
+   * @param workspacePath - Path to the workspace
+   */
+  private attachView(workspacePath: string): void {
+    const view = this.workspaceViews.get(workspacePath);
+    if (!view) return;
+
+    try {
+      const window = this.windowManager.getWindow();
+      if (!window.isDestroyed()) {
+        window.contentView.addChildView(view);
+        this.attachedWorkspacePath = workspacePath;
+      }
+    } catch {
+      // Ignore errors during attach - window may be closing
+    }
+  }
+
+  /**
+   * Detaches a workspace view from the contentView.
+   * Handles errors gracefully.
+   *
+   * @param workspacePath - Path to the workspace
+   */
+  private detachView(workspacePath: string): void {
+    const view = this.workspaceViews.get(workspacePath);
+    if (!view) return;
+
+    try {
+      const window = this.windowManager.getWindow();
+      if (!window.isDestroyed()) {
+        window.contentView.removeChildView(view);
+      }
+    } catch {
+      // Ignore errors during detach - window may be closing
+    }
+
+    // Clear attachment state if this was the attached view
+    if (this.attachedWorkspacePath === workspacePath) {
+      this.attachedWorkspacePath = null;
+    }
+  }
+
+  /**
    * Sets the active workspace.
-   * Active workspace has full content bounds, others have zero bounds.
+   * Active workspace is attached with full content bounds, others are detached.
    * By default, focuses the workspace view so it receives keyboard input.
    *
    * @param workspacePath - Path to the workspace to activate, or null for none
    * @param focus - Whether to focus the workspace view (default: true)
    */
   setActiveWorkspace(workspacePath: string | null, focus: boolean = true): void {
-    this.activeWorkspacePath = workspacePath;
-    this.updateBounds();
+    // Reentrant guard
+    if (this.isChangingWorkspace) return;
 
-    if (focus && workspacePath) {
-      const view = this.workspaceViews.get(workspacePath);
-      if (view) {
-        view.webContents.focus();
+    // Same workspace is no-op
+    if (this.activeWorkspacePath === workspacePath) return;
+
+    try {
+      this.isChangingWorkspace = true;
+      const previousPath = this.activeWorkspacePath;
+
+      // Update state first
+      this.activeWorkspacePath = workspacePath;
+
+      // Attach new view FIRST (visual continuity - no gap)
+      if (workspacePath !== null) {
+        this.loadViewUrl(workspacePath);
+        this.attachView(workspacePath);
       }
+
+      // Then detach previous
+      if (previousPath !== null && previousPath !== workspacePath) {
+        this.detachView(previousPath);
+      }
+
+      // Maintain z-order if in dialog mode
+      if (this.isDialogMode) {
+        this.setDialogMode(true); // Re-apply to ensure UI on top
+      }
+
+      this.updateBounds();
+
+      // Focus after everything is set up
+      if (focus && workspacePath) {
+        const view = this.workspaceViews.get(workspacePath);
+        view?.webContents.focus();
+      }
+    } finally {
+      this.isChangingWorkspace = false;
     }
   }
 
@@ -354,6 +472,8 @@ export class ViewManager implements IViewManager {
    * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
    */
   setDialogMode(isOpen: boolean): void {
+    this.isDialogMode = isOpen;
+
     try {
       const window = this.windowManager.getWindow();
       if (window.isDestroyed()) return;

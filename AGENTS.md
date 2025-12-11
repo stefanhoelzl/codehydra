@@ -37,6 +37,26 @@
 | Shortcut Mode   | Keyboard-driven navigation activated by Alt+X, shows overlay with workspace actions (↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project) |
 | VS Code Setup   | First-run setup that installs extensions and config; runs once before code-server starts; marker at `<app-data>/vscode/.setup-completed`              |
 
+## View Detachment Pattern
+
+For GPU optimization, workspace views use **detachment** instead of zero-bounds hiding:
+
+| State    | contentView | URL Loaded | GPU Usage |
+| -------- | ----------- | ---------- | --------- |
+| Created  | Detached    | No         | None      |
+| Active   | Attached    | Yes        | Active    |
+| Inactive | Detached    | Yes        | None      |
+
+**Key behaviors:**
+
+- Views start **detached** (not in contentView) with **URL not loaded** (lazy loading)
+- On first activation: URL is loaded, view is attached to contentView
+- On subsequent activations: view is attached (URL already loaded)
+- On deactivation: view is detached (removed from contentView)
+- **Attach-before-detach**: New view is attached BEFORE old view is detached for visual continuity
+
+**Rationale**: With >5 workspaces, zero-bounds hiding still consumed GPU resources. Detaching views entirely eliminates GPU usage for inactive workspaces.
+
 ## Project Structure (after Phase 1)
 
 ```

@@ -23,9 +23,13 @@ export interface IViewManager {
   /**
    * Creates a new workspace view.
    *
+   * Creates the view but does NOT attach to contentView or load the URL.
+   * The view starts in a detached state to minimize GPU usage.
+   * URL is loaded lazily when the workspace is first activated via setActiveWorkspace.
+   *
    * @param workspacePath - Absolute path to the workspace directory
-   * @param url - URL to load in the view (code-server URL)
-   * @returns The created WebContentsView
+   * @param url - URL to load in the view (code-server URL) - stored for lazy loading
+   * @returns The created WebContentsView (detached, URL not loaded)
    */
   createWorkspaceView(workspacePath: string, url: string): WebContentsView;
 
@@ -51,7 +55,13 @@ export interface IViewManager {
 
   /**
    * Sets the active workspace.
-   * Active workspace has full content bounds, others have zero bounds.
+   *
+   * Active workspace is attached to contentView with full content bounds.
+   * Other workspaces are detached from contentView entirely (not attached, no GPU usage).
+   *
+   * On first activation, the workspace's URL is loaded (lazy loading).
+   * Attach happens BEFORE detach of previous view for visual continuity (no gap).
+   *
    * By default, focuses the workspace view so it receives keyboard input.
    *
    * @param workspacePath - Path to the workspace to activate, or null for none

@@ -74,46 +74,56 @@ Discovery finds worktrees in ANY location; creation only in managed location.
 
 ### View Management
 
-- **Create**: When workspace added, create WebContentsView
+- **Create**: When workspace added, create WebContentsView (detached, URL not loaded)
+- **Activate (first)**: Load URL, attach to contentView, set bounds
+- **Activate (subsequent)**: Attach to contentView, set bounds (URL already loaded)
+- **Hide**: Detach from contentView (not attached, no bounds needed)
 - **Destroy**: When workspace removed, destroy WebContentsView
-- **Show**: Set bounds to visible area, reorder for z-index
-- **Hide**: Set bounds to zero (width: 0, height: 0) - preserves VS Code state
-- **Z-order**: Controlled by `contentView.removeChildView(view)` then `contentView.addChildView(view)` (last added = front)
+- **Z-order**: Controlled by `contentView.addChildView(view)` (last added = front)
 
 ### View Lifecycle
 
 ```
-[not created] ──createWorkspaceView()──► [created/hidden]
-                                              │
-                                              │ bounds: (0, 0, 0, 0)
-                                              │
-                                      setActiveWorkspace()
-                                              │
-                                              ▼
-                                        [active/visible]
-                                              │
-                                              │ bounds: (SIDEBAR_WIDTH, 0, w, h)
-                                              │
-                                      setActiveWorkspace(other)
-                                              │
-                                              ▼
-                                           [hidden]
-                                              │
-                                      destroyWorkspaceView()
-                                              │
-                                              ▼
-                                         [destroyed]
+[not created] ──createWorkspaceView()──► [created/detached]
+                                               │
+                                               │ URL not loaded, not in contentView
+                                               │
+                                       setActiveWorkspace() [first time]
+                                               │
+                                               ▼
+                                      ┌────────────────────┐
+                                      │  [active/attached] │
+                                      │  URL loaded        │
+                                      │  bounds: content   │
+                                      └────────┬───────────┘
+                                               │
+                                       setActiveWorkspace(other/null)
+                                               │
+                                               ▼
+                                      ┌────────────────────┐
+                                      │  [detached]        │
+                                      │  URL loaded        │◄───────┐
+                                      │  not in contentView│        │
+                                      └────────┬───────────┘        │
+                                               │                    │
+                        ┌──────────────────────┼────────────────────┘
+                        │                      │
+              setActiveWorkspace()    destroyWorkspaceView()
+                        │                      │
+                        │                      ▼
+                        └──────────────► [destroyed]
 ```
 
-- **Hidden views** retain their VS Code state (no reload when shown again)
-- **Bounds-based hiding** (0x0) is more efficient than destroying/recreating views
+- **Detached views** retain their VS Code state (no reload when shown again)
+- **Detachment** (vs zero-bounds) reduces GPU usage when many workspaces are open
+- **Lazy URL loading** defers resource usage until workspace is first activated
 
 ### UI Layer State Machine
 
-The application uses a **hybrid visibility approach**:
+The application uses a **detachment-based visibility approach**:
 
-- **UI layer**: Always has full-window bounds. Visibility controlled by z-order.
-- **Workspace views**: Visibility controlled by bounds (active = content area, inactive = 0x0).
+- **UI layer**: Always attached with full-window bounds. Visibility controlled by z-order.
+- **Workspace views**: Only active view is attached with content bounds. Inactive views are detached from contentView entirely (not attached, no bounds, no GPU usage).
 
 | State   | UI Z-Order                  | Focus    | Description                  |
 | ------- | --------------------------- | -------- | ---------------------------- |
@@ -749,9 +759,9 @@ User: Click "Open Project"
 ```
 User: Click workspace (or keyboard shortcut)
   → IPC: switch-workspace
-  → View Manager: hide current (set bounds to zero)
-  → View Manager: show target (set bounds to visible area)
-  → View Manager: bring to front (remove/re-add child view)
+  → View Manager: attach target view (addChildView) - FIRST for visual continuity
+  → View Manager: set target bounds to content area
+  → View Manager: detach previous view (removeChildView) - AFTER attach
   → Store: update activeWorkspace
   → Focus: code-server view
 ```
