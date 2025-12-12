@@ -8,6 +8,7 @@ import {
   ProjectStoreError,
   OpenCodeError,
   VscodeSetupError,
+  FileSystemError,
   isServiceError,
   type SerializedError,
 } from "./errors";
@@ -204,6 +205,86 @@ describe("VscodeSetupError", () => {
   });
 });
 
+describe("FileSystemError", () => {
+  it("has correct type", () => {
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found");
+    expect(error.type).toBe("filesystem");
+  });
+
+  it("preserves message", () => {
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found");
+    expect(error.message).toBe("File not found");
+  });
+
+  it("preserves fsCode", () => {
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found");
+    expect(error.fsCode).toBe("ENOENT");
+  });
+
+  it("preserves path", () => {
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found");
+    expect(error.path).toBe("/path/to/file");
+  });
+
+  it("preserves cause when provided", () => {
+    const cause = new Error("Original error");
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found", cause);
+    expect(error.cause).toBe(cause);
+  });
+
+  it("preserves originalCode when provided", () => {
+    const error = new FileSystemError(
+      "UNKNOWN",
+      "/path/to/file",
+      "Unknown error",
+      undefined,
+      "ENOSPC"
+    );
+    expect(error.originalCode).toBe("ENOSPC");
+  });
+
+  it("is instanceof Error", () => {
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found");
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it("is instanceof ServiceError", () => {
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found");
+    expect(error).toBeInstanceOf(ServiceError);
+  });
+
+  it("serializes to JSON with all fields", () => {
+    const error = new FileSystemError("ENOENT", "/path/to/file", "File not found");
+    const json = error.toJSON();
+
+    expect(json).toEqual({
+      type: "filesystem",
+      message: "File not found",
+      path: "/path/to/file",
+      code: "ENOENT",
+    });
+  });
+
+  it("serializes all error codes correctly", () => {
+    const testCases = [
+      { code: "ENOENT" as const, path: "/missing" },
+      { code: "EACCES" as const, path: "/forbidden" },
+      { code: "EEXIST" as const, path: "/exists" },
+      { code: "ENOTDIR" as const, path: "/notdir" },
+      { code: "EISDIR" as const, path: "/isdir" },
+      { code: "ENOTEMPTY" as const, path: "/notempty" },
+      { code: "UNKNOWN" as const, path: "/unknown" },
+    ];
+
+    for (const { code, path } of testCases) {
+      const error = new FileSystemError(code, path, `Test error for ${code}`);
+      const json = error.toJSON();
+      expect(json.code).toBe(code);
+      expect(json.path).toBe(path);
+    }
+  });
+});
+
 describe("ServiceError.fromJSON", () => {
   it("deserializes GitError", () => {
     const json: SerializedError = {
@@ -283,6 +364,36 @@ describe("ServiceError.fromJSON", () => {
     expect(error.code).toBe("NETWORK_ERROR");
   });
 
+  it("deserializes FileSystemError", () => {
+    const json: SerializedError = {
+      type: "filesystem",
+      message: "File not found",
+      path: "/path/to/file",
+      code: "ENOENT",
+    };
+
+    const error = ServiceError.fromJSON(json);
+
+    expect(error).toBeInstanceOf(FileSystemError);
+    expect(error.message).toBe("File not found");
+    expect(error.code).toBe("ENOENT");
+    expect((error as FileSystemError).path).toBe("/path/to/file");
+    expect((error as FileSystemError).fsCode).toBe("ENOENT");
+  });
+
+  it("deserializes FileSystemError with missing path", () => {
+    const json: SerializedError = {
+      type: "filesystem",
+      message: "Unknown filesystem error",
+    };
+
+    const error = ServiceError.fromJSON(json);
+
+    expect(error).toBeInstanceOf(FileSystemError);
+    expect((error as FileSystemError).path).toBe("");
+    expect((error as FileSystemError).fsCode).toBe("UNKNOWN");
+  });
+
   it("roundtrips correctly", () => {
     const original = new GitError("Test error", "TEST_CODE");
     const json = original.toJSON();
@@ -291,6 +402,17 @@ describe("ServiceError.fromJSON", () => {
     expect(restored.type).toBe(original.type);
     expect(restored.message).toBe(original.message);
     expect(restored.code).toBe(original.code);
+  });
+
+  it("roundtrips FileSystemError correctly", () => {
+    const original = new FileSystemError("EACCES", "/forbidden/path", "Permission denied");
+    const json = original.toJSON();
+    const restored = ServiceError.fromJSON(json) as FileSystemError;
+
+    expect(restored.type).toBe(original.type);
+    expect(restored.message).toBe(original.message);
+    expect(restored.fsCode).toBe(original.fsCode);
+    expect(restored.path).toBe(original.path);
   });
 });
 
@@ -312,6 +434,11 @@ describe("isServiceError", () => {
 
   it("returns true for ProjectStoreError", () => {
     const error = new ProjectStoreError("test");
+    expect(isServiceError(error)).toBe(true);
+  });
+
+  it("returns true for FileSystemError", () => {
+    const error = new FileSystemError("ENOENT", "/path", "Not found");
     expect(isServiceError(error)).toBe(true);
   });
 

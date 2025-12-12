@@ -7,7 +7,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { IpcMainInvokeEvent } from "electron";
 import { createTestGitRepo, createTempDir } from "../../services/test-utils";
-import { ProjectStore, createMockPathProvider, type PathProvider } from "../../services";
+import {
+  ProjectStore,
+  DefaultFileSystemLayer,
+  createMockPathProvider,
+  type PathProvider,
+} from "../../services";
 import { projectDirName } from "../../services/platform/paths";
 import { AppState } from "../app-state";
 import type { IViewManager } from "../managers/view-manager.interface";
@@ -105,7 +110,8 @@ describe("IPC Integration Tests", () => {
     });
 
     // Create instances
-    projectStore = new ProjectStore(projectsDir);
+    const fileSystemLayer = new DefaultFileSystemLayer();
+    projectStore = new ProjectStore(projectsDir, fileSystemLayer);
     viewManager = createMockViewManager();
     appState = new AppState(projectStore, viewManager, pathProvider, 8080);
   });

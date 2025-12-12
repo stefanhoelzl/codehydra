@@ -319,27 +319,55 @@ The application uses dependency injection to abstract build mode detection and p
 
 **Interfaces (defined in `src/services/platform/`):**
 
-| Interface      | Purpose                                    |
-| -------------- | ------------------------------------------ |
-| `BuildInfo`    | Build mode detection (`isDevelopment`)     |
-| `PlatformInfo` | Platform detection (`platform`, `homeDir`) |
-| `PathProvider` | Application path resolution                |
+| Interface         | Purpose                                    |
+| ----------------- | ------------------------------------------ |
+| `BuildInfo`       | Build mode detection (`isDevelopment`)     |
+| `PlatformInfo`    | Platform detection (`platform`, `homeDir`) |
+| `PathProvider`    | Application path resolution                |
+| `FileSystemLayer` | Filesystem operations (read, write, mkdir) |
 
 **Implementations:**
 
-| Class                 | Location        | Description                                  |
-| --------------------- | --------------- | -------------------------------------------- |
-| `ElectronBuildInfo`   | `src/main/`     | Uses `app.isPackaged`                        |
-| `NodePlatformInfo`    | `src/main/`     | Uses `process.platform`, `os.homedir()`      |
-| `DefaultPathProvider` | `src/services/` | Computes paths from BuildInfo + PlatformInfo |
+| Class                    | Location        | Description                                  |
+| ------------------------ | --------------- | -------------------------------------------- |
+| `ElectronBuildInfo`      | `src/main/`     | Uses `app.isPackaged`                        |
+| `NodePlatformInfo`       | `src/main/`     | Uses `process.platform`, `os.homedir()`      |
+| `DefaultPathProvider`    | `src/services/` | Computes paths from BuildInfo + PlatformInfo |
+| `DefaultFileSystemLayer` | `src/services/` | Wraps `node:fs/promises` with error mapping  |
 
 **Instantiation Order (in `src/main/index.ts`):**
 
 1. Module level (before `app.whenReady()`):
-   - Create `ElectronBuildInfo`, `NodePlatformInfo`, `DefaultPathProvider`
+   - Create `ElectronBuildInfo`, `NodePlatformInfo`, `DefaultPathProvider`, `DefaultFileSystemLayer`
    - Call `redirectElectronDataPaths(pathProvider)` - requires paths early
 2. In `bootstrap()`:
-   - Pass `pathProvider` to services via constructor DI
+   - Pass `pathProvider` and `fileSystemLayer` to services via constructor DI
+
+### FileSystemLayer
+
+`FileSystemLayer` provides a testable abstraction over `node:fs/promises`. Services that need filesystem access receive `FileSystemLayer` via constructor injection, enabling unit testing with mocks instead of real filesystem operations.
+
+```typescript
+// Interface methods
+interface FileSystemLayer {
+  readFile(path: string): Promise<string>;
+  writeFile(path: string, content: string): Promise<void>;
+  mkdir(path: string, options?: MkdirOptions): Promise<void>;
+  readdir(path: string): Promise<readonly DirEntry[]>;
+  unlink(path: string): Promise<void>;
+  rm(path: string, options?: RmOptions): Promise<void>;
+}
+```
+
+**Error Handling:**
+
+All methods throw `FileSystemError` (extends `ServiceError`) with mapped error codes (ENOENT, EACCES, EEXIST, etc.). Unknown error codes are mapped to `UNKNOWN` with the original code preserved in `originalCode`.
+
+**Usage Pattern:**
+
+- Unit tests: Use `createMockFileSystemLayer()` from `filesystem.test-utils.ts`
+- Integration tests: Use `DefaultFileSystemLayer()` for real filesystem operations
+- Boundary tests: `filesystem.boundary.test.ts` tests `DefaultFileSystemLayer` against real filesystem
 
 ### Frontend Components (Svelte 5)
 

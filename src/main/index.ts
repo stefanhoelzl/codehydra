@@ -12,6 +12,7 @@ import {
   ProjectStore,
   DefaultPathProvider,
   DefaultNetworkLayer,
+  DefaultFileSystemLayer,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -45,6 +46,7 @@ const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const buildInfo: BuildInfo = new ElectronBuildInfo();
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+const fileSystemLayer = new DefaultFileSystemLayer();
 
 /**
  * Redirect Electron's data paths to isolate from system defaults.
@@ -189,7 +191,7 @@ async function startServices(): Promise<void> {
   viewManager.updateCodeServerPort(port);
 
   // Create ProjectStore and AppState
-  const projectStore = new ProjectStore(pathProvider.projectsDir);
+  const projectStore = new ProjectStore(pathProvider.projectsDir, fileSystemLayer);
   appState = new AppState(projectStore, viewManager, pathProvider, port);
 
   // Initialize OpenCode services
@@ -388,7 +390,12 @@ async function bootstrap(): Promise<void> {
   // 2. Create VscodeSetupService early (needed for setup:ready handler)
   // Store processRunner in module-level variable for reuse by CodeServerManager
   processRunner = new ExecaProcessRunner();
-  vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, "code-server");
+  vscodeSetupService = new VscodeSetupService(
+    processRunner,
+    pathProvider,
+    "code-server",
+    fileSystemLayer
+  );
 
   // 3. Check if setup is already complete (determines code-server startup)
   const setupComplete = await vscodeSetupService.isSetupComplete();

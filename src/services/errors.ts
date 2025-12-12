@@ -2,6 +2,8 @@
  * Service error definitions with serialization support for IPC.
  */
 
+import type { FileSystemErrorCode } from "./platform/filesystem";
+
 /**
  * Serialized error format for IPC transport.
  */
@@ -12,9 +14,11 @@ export interface SerializedError {
     | "code-server"
     | "project-store"
     | "opencode"
-    | "vscode-setup";
+    | "vscode-setup"
+    | "filesystem";
   readonly message: string;
   readonly code?: string;
+  readonly path?: string;
 }
 
 /**
@@ -80,6 +84,12 @@ export abstract class ServiceError extends Error {
         return new OpenCodeError(json.message, json.code);
       case "vscode-setup":
         return new VscodeSetupError(json.message, json.code);
+      case "filesystem":
+        return new FileSystemError(
+          (json.code as FileSystemErrorCode) ?? "UNKNOWN",
+          json.path ?? "",
+          json.message
+        );
     }
   }
 }
@@ -124,6 +134,38 @@ export class OpenCodeError extends ServiceError {
  */
 export class VscodeSetupError extends ServiceError {
   readonly type = "vscode-setup" as const;
+}
+
+/**
+ * Error from filesystem operations.
+ * Extends ServiceError for IPC serialization.
+ */
+export class FileSystemError extends ServiceError {
+  readonly type = "filesystem" as const;
+
+  constructor(
+    /** Mapped error code */
+    readonly fsCode: FileSystemErrorCode,
+    /** Path that caused the error */
+    readonly path: string,
+    message: string,
+    /** Original error for debugging */
+    readonly cause?: Error,
+    /** Original Node.js error code (e.g., "EMFILE", "ENOSPC") */
+    readonly originalCode?: string
+  ) {
+    super(message, fsCode);
+    this.name = "FileSystemError";
+  }
+
+  override toJSON(): SerializedError {
+    return {
+      type: this.type,
+      message: this.message,
+      path: this.path,
+      code: this.fsCode,
+    };
+  }
 }
 
 /**

@@ -85,6 +85,16 @@ export type {
   NetworkLayerConfig,
 } from "./platform/network";
 
+// Filesystem layer
+export { DefaultFileSystemLayer } from "./platform/filesystem";
+export type {
+  FileSystemLayer,
+  DirEntry,
+  MkdirOptions,
+  RmOptions,
+  FileSystemErrorCode,
+} from "./platform/filesystem";
+
 // VSCode setup
 export { VscodeSetupService, CURRENT_SETUP_VERSION } from "./vscode-setup";
 export type {

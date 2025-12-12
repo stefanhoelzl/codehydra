@@ -521,6 +521,85 @@ const runner = createMockProcessRunner(mockProc);
 const service = new SomeService(runner);
 ```
 
+### FileSystemLayer Pattern
+
+`FileSystemLayer` provides a unified interface for filesystem operations:
+
+| Method      | Description                                         |
+| ----------- | --------------------------------------------------- |
+| `readFile`  | Read file as UTF-8 string                           |
+| `writeFile` | Write string content to file                        |
+| `mkdir`     | Create directory (recursive by default)             |
+| `readdir`   | List directory contents with entry type info        |
+| `unlink`    | Delete a file                                       |
+| `rm`        | Delete file or directory (supports force/recursive) |
+
+```typescript
+// DefaultFileSystemLayer wraps node:fs/promises
+const fileSystemLayer = new DefaultFileSystemLayer();
+
+// Inject into services that need filesystem access
+const projectStore = new ProjectStore(projectsDir, fileSystemLayer);
+const vscodeSetupService = new VscodeSetupService(
+  runner,
+  pathProvider,
+  "code-server",
+  fileSystemLayer
+);
+```
+
+**Error Handling:**
+
+All methods throw `FileSystemError` (extends `ServiceError`) with mapped error codes:
+
+| Code        | Description                         |
+| ----------- | ----------------------------------- |
+| `ENOENT`    | File/directory not found            |
+| `EACCES`    | Permission denied                   |
+| `EEXIST`    | File/directory already exists       |
+| `ENOTDIR`   | Not a directory                     |
+| `EISDIR`    | Is a directory (when file expected) |
+| `ENOTEMPTY` | Directory not empty                 |
+| `UNKNOWN`   | Other errors (check `originalCode`) |
+
+**Testing with Mocks:**
+
+```typescript
+import { createMockFileSystemLayer, createDirEntry } from "../platform/filesystem.test-utils";
+
+// Basic mock - all operations succeed
+const mockFs = createMockFileSystemLayer();
+
+// Return specific file content
+const mockFs = createMockFileSystemLayer({
+  readFile: { content: '{"key": "value"}' },
+});
+
+// Simulate specific error
+const mockFs = createMockFileSystemLayer({
+  readFile: { error: new FileSystemError("ENOENT", "/path", "Not found") },
+});
+
+// Custom implementation for complex logic
+const mockFs = createMockFileSystemLayer({
+  readFile: {
+    implementation: async (path) => {
+      if (path === "/config.json") return "{}";
+      throw new FileSystemError("ENOENT", path, "Not found");
+    },
+  },
+  readdir: {
+    entries: [
+      createDirEntry("file.txt", { isFile: true }),
+      createDirEntry("subdir", { isDirectory: true }),
+    ],
+  },
+});
+
+// Inject into service
+const service = new ProjectStore(projectsDir, mockFs);
+```
+
 ### SSE Connection Lifecycle
 
 `OpenCodeClient` manages SSE connections with auto-reconnection:

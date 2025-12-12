@@ -10,10 +10,9 @@ import {
 import type { SpawnedProcess } from "../platform/process";
 import type { PathProvider } from "../platform/path-provider";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
-import * as fs from "node:fs/promises";
-
-// Mock fs/promises
-vi.mock("node:fs/promises");
+import { createMockFileSystemLayer } from "../platform/filesystem.test-utils";
+import { FileSystemError } from "../errors";
+import type { FileSystemLayer } from "../platform/filesystem";
 
 /**
  * Create a mock SpawnedProcess with controllable wait() result.
@@ -29,6 +28,7 @@ function createMockSpawnedProcess(result: ProcessResult): SpawnedProcess {
 describe("VscodeSetupService", () => {
   let mockProcessRunner: ProcessRunner;
   let mockPathProvider: PathProvider;
+  let mockFs: FileSystemLayer;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -42,6 +42,7 @@ describe("VscodeSetupService", () => {
       vscodeUserDataDir: "/mock/vscode/user-data",
       vscodeSetupMarkerPath: "/mock/vscode/.setup-completed",
     });
+    mockFs = createMockFileSystemLayer();
   });
 
   describe("isSetupComplete", () => {
@@ -50,28 +51,33 @@ describe("VscodeSetupService", () => {
         version: CURRENT_SETUP_VERSION,
         completedAt: "2025-12-09T10:00:00.000Z",
       };
-      vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(marker));
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: JSON.stringify(marker) },
+      });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.isSetupComplete();
 
       expect(result).toBe(true);
-      expect(fs.readFile).toHaveBeenCalledWith("/mock/vscode/.setup-completed", "utf-8");
     });
 
     it("returns false when marker is missing", async () => {
-      const error = new Error("ENOENT") as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      vi.mocked(fs.readFile).mockRejectedValue(error);
+      mockFs = createMockFileSystemLayer({
+        readFile: {
+          error: new FileSystemError("ENOENT", "/mock/vscode/.setup-completed", "Not found"),
+        },
+      });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.isSetupComplete();
 
@@ -83,12 +89,15 @@ describe("VscodeSetupService", () => {
         version: CURRENT_SETUP_VERSION - 1, // Old version
         completedAt: "2025-12-09T10:00:00.000Z",
       };
-      vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(marker));
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: JSON.stringify(marker) },
+      });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.isSetupComplete();
 
@@ -96,12 +105,31 @@ describe("VscodeSetupService", () => {
     });
 
     it("returns false when marker has invalid JSON", async () => {
-      vi.mocked(fs.readFile).mockResolvedValue("invalid json");
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: "invalid json" },
+      });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
+      );
+      const result = await service.isSetupComplete();
+
+      expect(result).toBe(false);
+    });
+
+    it("returns false when marker is missing required fields", async () => {
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: JSON.stringify({ version: "not a number" }) },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.isSetupComplete();
 
@@ -111,43 +139,30 @@ describe("VscodeSetupService", () => {
 
   describe("cleanVscodeDir", () => {
     it("removes the vscode directory", async () => {
-      vi.mocked(fs.rm).mockResolvedValue(undefined);
+      let rmCalled = false;
+      let rmPath = "";
+      let rmOptions: { recursive?: boolean; force?: boolean } | undefined;
+      mockFs = createMockFileSystemLayer({
+        rm: {
+          implementation: async (path, options) => {
+            rmCalled = true;
+            rmPath = path;
+            rmOptions = options;
+          },
+        },
+      });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       await service.cleanVscodeDir();
 
-      expect(fs.rm).toHaveBeenCalledWith("/mock/vscode", { recursive: true, force: true });
-    });
-
-    it("handles missing directory gracefully", async () => {
-      const error = new Error("ENOENT") as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      vi.mocked(fs.rm).mockRejectedValue(error);
-
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server"
-      );
-      // Should not throw
-      await expect(service.cleanVscodeDir()).resolves.toBeUndefined();
-    });
-
-    it("throws on permission error", async () => {
-      const error = new Error("EACCES") as NodeJS.ErrnoException;
-      error.code = "EACCES";
-      vi.mocked(fs.rm).mockRejectedValue(error);
-
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server"
-      );
-      await expect(service.cleanVscodeDir()).rejects.toThrow("EACCES");
+      expect(rmCalled).toBe(true);
+      expect(rmPath).toBe("/mock/vscode");
+      expect(rmOptions).toEqual({ recursive: true, force: true });
     });
 
     it("validates path is under app data directory", async () => {
@@ -160,48 +175,74 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         invalidPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       await expect(service.cleanVscodeDir()).rejects.toThrow("path-validation");
     });
-  });
 
-  describe("installCustomExtensions", () => {
-    it("creates extension directory and files", async () => {
-      // access throws = file doesn't exist, proceed with installation
-      const error = new Error("ENOENT") as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      vi.mocked(fs.access).mockRejectedValue(error);
-      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-      const progressCallback = vi.fn();
+    it("throws on permission error", async () => {
+      mockFs = createMockFileSystemLayer({
+        rm: {
+          error: new FileSystemError("EACCES", "/mock/vscode", "Permission denied"),
+        },
+      });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
+      );
+      await expect(service.cleanVscodeDir()).rejects.toThrow("Permission denied");
+    });
+  });
+
+  describe("installCustomExtensions", () => {
+    it("creates extension directory and files when not exists", async () => {
+      const createdDirs: string[] = [];
+      const writtenFiles: Map<string, string> = new Map();
+
+      mockFs = createMockFileSystemLayer({
+        readFile: {
+          // readFile throws ENOENT = file doesn't exist, proceed with installation
+          error: new FileSystemError("ENOENT", "/mock/vscode/extensions", "Not found"),
+        },
+        mkdir: {
+          implementation: async (path) => {
+            createdDirs.push(path);
+          },
+        },
+        writeFile: {
+          implementation: async (path, content) => {
+            writtenFiles.set(path, content);
+          },
+        },
+      });
+
+      const progressCallback = vi.fn();
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs
       );
       await service.installCustomExtensions(progressCallback);
 
       // Verify directory created
-      expect(fs.mkdir).toHaveBeenCalledWith(
-        "/mock/vscode/extensions/codehydra.vscode-0.0.1-universal",
-        { recursive: true }
-      );
+      expect(createdDirs).toContain("/mock/vscode/extensions/codehydra.vscode-0.0.1-universal");
 
       // Verify package.json written
-      expect(fs.writeFile).toHaveBeenCalledWith(
-        "/mock/vscode/extensions/codehydra.vscode-0.0.1-universal/package.json",
-        expect.stringContaining('"name": "codehydra"'),
-        "utf-8"
-      );
+      const packageJsonPath =
+        "/mock/vscode/extensions/codehydra.vscode-0.0.1-universal/package.json";
+      expect(writtenFiles.has(packageJsonPath)).toBe(true);
+      expect(writtenFiles.get(packageJsonPath)).toContain('"name": "codehydra"');
 
       // Verify extension.js written
-      expect(fs.writeFile).toHaveBeenCalledWith(
-        "/mock/vscode/extensions/codehydra.vscode-0.0.1-universal/extension.js",
-        expect.stringContaining("function activate"),
-        "utf-8"
-      );
+      const extensionJsPath =
+        "/mock/vscode/extensions/codehydra.vscode-0.0.1-universal/extension.js";
+      expect(writtenFiles.has(extensionJsPath)).toBe(true);
+      expect(writtenFiles.get(extensionJsPath)).toContain("function activate");
 
       // Verify progress callback called
       expect(progressCallback).toHaveBeenCalledWith({
@@ -211,22 +252,37 @@ describe("VscodeSetupService", () => {
     });
 
     it("is idempotent when files already exist", async () => {
-      // access resolves = file exists, skip installation
-      vi.mocked(fs.access).mockResolvedValue(undefined);
-      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      let mkdirCalled = false;
+      let writeFileCalled = false;
+
+      mockFs = createMockFileSystemLayer({
+        readFile: {
+          // readFile succeeds = file exists, skip installation
+          content: '{"name": "codehydra"}',
+        },
+        mkdir: {
+          implementation: async () => {
+            mkdirCalled = true;
+          },
+        },
+        writeFile: {
+          implementation: async () => {
+            writeFileCalled = true;
+          },
+        },
+      });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
-      await service.installCustomExtensions();
       await service.installCustomExtensions();
 
       // Since file exists, mkdir and writeFile should not be called
-      expect(fs.mkdir).not.toHaveBeenCalled();
-      expect(fs.writeFile).not.toHaveBeenCalled();
+      expect(mkdirCalled).toBe(false);
+      expect(writeFileCalled).toBe(false);
     });
   });
 
@@ -244,7 +300,8 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       await service.installMarketplaceExtensions(progressCallback);
 
@@ -273,7 +330,8 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.installMarketplaceExtensions();
 
@@ -299,7 +357,8 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.installMarketplaceExtensions();
 
@@ -316,33 +375,43 @@ describe("VscodeSetupService", () => {
 
   describe("writeConfigFiles", () => {
     it("creates user-data directory and writes config files", async () => {
-      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      const createdDirs: string[] = [];
+      const writtenFiles: Map<string, string> = new Map();
+
+      mockFs = createMockFileSystemLayer({
+        mkdir: {
+          implementation: async (path) => {
+            createdDirs.push(path);
+          },
+        },
+        writeFile: {
+          implementation: async (path, content) => {
+            writtenFiles.set(path, content);
+          },
+        },
+      });
       const progressCallback = vi.fn();
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       await service.writeConfigFiles(progressCallback);
 
       // Verify directory created
-      expect(fs.mkdir).toHaveBeenCalledWith("/mock/vscode/user-data/User", { recursive: true });
+      expect(createdDirs).toContain("/mock/vscode/user-data/User");
 
       // Verify settings.json written with expected content
-      expect(fs.writeFile).toHaveBeenCalledWith(
-        "/mock/vscode/user-data/User/settings.json",
-        expect.stringContaining('"workbench.colorTheme": "Default Dark+"'),
-        "utf-8"
-      );
+      const settingsPath = "/mock/vscode/user-data/User/settings.json";
+      expect(writtenFiles.has(settingsPath)).toBe(true);
+      expect(writtenFiles.get(settingsPath)).toContain('"workbench.colorTheme": "Default Dark+"');
 
       // Verify keybindings.json written (empty array)
-      expect(fs.writeFile).toHaveBeenCalledWith(
-        "/mock/vscode/user-data/User/keybindings.json",
-        "[]",
-        "utf-8"
-      );
+      const keybindingsPath = "/mock/vscode/user-data/User/keybindings.json";
+      expect(writtenFiles.has(keybindingsPath)).toBe(true);
+      expect(writtenFiles.get(keybindingsPath)).toBe("[]");
 
       // Verify progress callback called
       expect(progressCallback).toHaveBeenCalledWith({
@@ -352,22 +421,26 @@ describe("VscodeSetupService", () => {
     });
 
     it("includes expected settings", async () => {
-      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-      let writtenSettings = "";
-      vi.mocked(fs.writeFile).mockImplementation(async (path, data) => {
-        if (String(path).endsWith("settings.json")) {
-          writtenSettings = String(data);
-        }
+      const writtenFiles: Map<string, string> = new Map();
+      mockFs = createMockFileSystemLayer({
+        mkdir: { implementation: async () => {} },
+        writeFile: {
+          implementation: async (path, content) => {
+            writtenFiles.set(path, content);
+          },
+        },
       });
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       await service.writeConfigFiles();
 
-      const settings = JSON.parse(writtenSettings);
+      const settingsContent = writtenFiles.get("/mock/vscode/user-data/User/settings.json")!;
+      const settings = JSON.parse(settingsContent) as Record<string, unknown>;
       expect(settings).toEqual({
         "workbench.startupEditor": "none",
         "workbench.colorTheme": "Default Dark+",
@@ -384,29 +457,31 @@ describe("VscodeSetupService", () => {
 
   describe("writeCompletionMarker", () => {
     it("writes marker file with version and timestamp", async () => {
-      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      const writtenFiles: Map<string, string> = new Map();
+      mockFs = createMockFileSystemLayer({
+        writeFile: {
+          implementation: async (path, content) => {
+            writtenFiles.set(path, content);
+          },
+        },
+      });
       const progressCallback = vi.fn();
 
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       await service.writeCompletionMarker(progressCallback);
 
       // Verify marker written
-      expect(fs.writeFile).toHaveBeenCalledWith(
-        "/mock/vscode/.setup-completed",
-        expect.any(String),
-        "utf-8"
-      );
+      const markerPath = "/mock/vscode/.setup-completed";
+      expect(writtenFiles.has(markerPath)).toBe(true);
 
       // Verify content structure
-      const writeCall = vi
-        .mocked(fs.writeFile)
-        .mock.calls.find((call) => String(call[0]).endsWith(".setup-completed"));
-      expect(writeCall).toBeDefined();
-      const marker = JSON.parse(String(writeCall?.[1]));
+      const markerContent = writtenFiles.get(markerPath)!;
+      const marker = JSON.parse(markerContent) as SetupMarker;
       expect(marker.version).toBe(CURRENT_SETUP_VERSION);
       expect(marker.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
@@ -420,13 +495,14 @@ describe("VscodeSetupService", () => {
 
   describe("setup", () => {
     it("runs all setup steps in order and returns success", async () => {
-      // access throws = file doesn't exist, proceed with installation
-      const error = new Error("ENOENT") as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      vi.mocked(fs.access).mockRejectedValue(error);
-      // Mock all file operations
-      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      // readFile throws = file doesn't exist, proceed with installation
+      mockFs = createMockFileSystemLayer({
+        readFile: {
+          error: new FileSystemError("ENOENT", "/mock/vscode/extensions", "Not found"),
+        },
+        mkdir: { implementation: async () => {} },
+        writeFile: { implementation: async () => {} },
+      });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({
           stdout: "Extension installed",
@@ -439,14 +515,17 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.setup(progressCallback);
 
       expect(result).toEqual({ success: true });
 
       // Verify progress callbacks were called for each step
-      const progressMessages = progressCallback.mock.calls.map((call) => call[0].message);
+      const progressMessages = progressCallback.mock.calls.map(
+        (call) => (call[0] as { message: string }).message
+      );
       expect(progressMessages).toContain("Installing codehydra extension...");
       expect(progressMessages).toContain("Installing OpenCode extension...");
       expect(progressMessages).toContain("Writing configuration...");
@@ -454,12 +533,14 @@ describe("VscodeSetupService", () => {
     });
 
     it("returns error when extension install fails", async () => {
-      // access throws = file doesn't exist, proceed with installation
-      const error = new Error("ENOENT") as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      vi.mocked(fs.access).mockRejectedValue(error);
-      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      // readFile throws = file doesn't exist, proceed with installation
+      mockFs = createMockFileSystemLayer({
+        readFile: {
+          error: new FileSystemError("ENOENT", "/mock/vscode/extensions", "Not found"),
+        },
+        mkdir: { implementation: async () => {} },
+        writeFile: { implementation: async () => {} },
+      });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({
           stdout: "",
@@ -471,7 +552,8 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server"
+        "/mock/code-server",
+        mockFs
       );
       const result = await service.setup();
 

@@ -9,6 +9,7 @@ import { createTestGitRepo, createTempDir } from "./test-utils";
 import { SimpleGitClient } from "./git/simple-git-client";
 import { GitWorktreeProvider } from "./git/git-worktree-provider";
 import { ProjectStore } from "./project/project-store";
+import { DefaultFileSystemLayer } from "./platform/filesystem";
 import { createGitWorktreeProvider } from "./index";
 import { projectDirName } from "./platform/paths";
 import path from "path";
@@ -42,7 +43,8 @@ describe("Services Integration", () => {
 
     it("performs complete project and workspace workflow", async () => {
       // 1. Create project store and save project
-      const projectStore = new ProjectStore(projectsDir);
+      const fileSystemLayer = new DefaultFileSystemLayer();
+      const projectStore = new ProjectStore(projectsDir, fileSystemLayer);
       await projectStore.saveProject(repoPath);
 
       // Verify project is saved

@@ -3,10 +3,10 @@
  * Installs extensions and writes configuration files.
  */
 
-import { readFile, rm, mkdir, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
-import { VscodeSetupError } from "../errors";
+import type { FileSystemLayer } from "../platform/filesystem";
+import { VscodeSetupError, FileSystemError } from "../errors";
 import {
   CURRENT_SETUP_VERSION,
   type IVscodeSetup,
@@ -24,15 +24,18 @@ export class VscodeSetupService implements IVscodeSetup {
   private readonly processRunner: ProcessRunner;
   private readonly pathProvider: PathProvider;
   private readonly codeServerBinaryPath: string;
+  private readonly fs: FileSystemLayer;
 
   constructor(
     processRunner: ProcessRunner,
     pathProvider: PathProvider,
-    codeServerBinaryPath: string
+    codeServerBinaryPath: string,
+    fs: FileSystemLayer
   ) {
     this.processRunner = processRunner;
     this.pathProvider = pathProvider;
     this.codeServerBinaryPath = codeServerBinaryPath;
+    this.fs = fs;
   }
 
   /**
@@ -100,14 +103,8 @@ export class VscodeSetupService implements IVscodeSetup {
       );
     }
 
-    try {
-      await rm(vscodeDir, { recursive: true, force: true });
-    } catch (error) {
-      // Only ignore ENOENT (directory doesn't exist)
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
+    // rm with force: true ignores ENOENT
+    await this.fs.rm(vscodeDir, { recursive: true, force: true });
   }
 
   /**
@@ -123,16 +120,20 @@ export class VscodeSetupService implements IVscodeSetup {
     );
     const packageJsonPath = join(extensionDir, "package.json");
 
-    // Check if extension already exists (idempotency)
+    // Check if extension already exists (idempotency) by trying to read the file
     try {
-      await access(packageJsonPath);
+      await this.fs.readFile(packageJsonPath);
       // Extension already exists, skip installation
       return;
-    } catch {
-      // File doesn't exist, proceed with installation
+    } catch (error) {
+      // File doesn't exist (ENOENT), proceed with installation
+      // Any other error is also fine to ignore - we'll just reinstall
+      if (error instanceof FileSystemError && error.fsCode !== "ENOENT") {
+        // Unexpected error reading file - log but proceed anyway
+      }
     }
 
-    await mkdir(extensionDir, { recursive: true });
+    await this.fs.mkdir(extensionDir);
 
     // package.json content
     const packageJson = {
@@ -176,12 +177,11 @@ function deactivate() {}
 module.exports = { activate, deactivate };
 `;
 
-    await writeFile(
+    await this.fs.writeFile(
       join(extensionDir, "package.json"),
-      JSON.stringify(packageJson, null, 2),
-      "utf-8"
+      JSON.stringify(packageJson, null, 2)
     );
-    await writeFile(join(extensionDir, "extension.js"), extensionJs, "utf-8");
+    await this.fs.writeFile(join(extensionDir, "extension.js"), extensionJs);
   }
 
   /**
@@ -192,7 +192,7 @@ module.exports = { activate, deactivate };
     onProgress?.({ step: "config", message: "Writing configuration..." });
 
     const userDir = join(this.pathProvider.vscodeUserDataDir, "User");
-    await mkdir(userDir, { recursive: true });
+    await this.fs.mkdir(userDir);
 
     // VS Code settings
     // Auto-detect system theme so VS Code matches the UI layer's prefers-color-scheme
@@ -211,8 +211,8 @@ module.exports = { activate, deactivate };
     // Empty keybindings
     const keybindings: unknown[] = [];
 
-    await writeFile(join(userDir, "settings.json"), JSON.stringify(settings, null, 2), "utf-8");
-    await writeFile(join(userDir, "keybindings.json"), JSON.stringify(keybindings), "utf-8");
+    await this.fs.writeFile(join(userDir, "settings.json"), JSON.stringify(settings, null, 2));
+    await this.fs.writeFile(join(userDir, "keybindings.json"), JSON.stringify(keybindings));
   }
 
   /**
@@ -227,10 +227,9 @@ module.exports = { activate, deactivate };
       completedAt: new Date().toISOString(),
     };
 
-    await writeFile(
+    await this.fs.writeFile(
       this.pathProvider.vscodeSetupMarkerPath,
-      JSON.stringify(marker, null, 2),
-      "utf-8"
+      JSON.stringify(marker, null, 2)
     );
   }
 
@@ -282,7 +281,7 @@ module.exports = { activate, deactivate };
    */
   private async readMarker(): Promise<SetupMarker | null> {
     try {
-      const content = await readFile(this.pathProvider.vscodeSetupMarkerPath, "utf-8");
+      const content = await this.fs.readFile(this.pathProvider.vscodeSetupMarkerPath);
       const marker = JSON.parse(content) as SetupMarker;
       // Validate marker structure
       if (typeof marker.version === "number" && typeof marker.completedAt === "string") {

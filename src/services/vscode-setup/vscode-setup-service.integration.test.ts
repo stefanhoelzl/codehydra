@@ -12,6 +12,7 @@ import { mkdir, writeFile, readFile, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { VscodeSetupService } from "./vscode-setup-service";
+import { DefaultFileSystemLayer } from "../platform/filesystem";
 import {
   CURRENT_SETUP_VERSION,
   type SetupMarker,
@@ -32,6 +33,7 @@ import {
 describe("VscodeSetupService Integration", () => {
   let tempDir: string;
   let testPathProvider: PathProvider;
+  let fsLayer: DefaultFileSystemLayer;
   let mockPaths: {
     vscodeDir: string;
     extensionsDir: string;
@@ -79,6 +81,7 @@ describe("VscodeSetupService Integration", () => {
 
   beforeEach(async () => {
     tempDir = await createTestDir();
+    fsLayer = new DefaultFileSystemLayer();
 
     // Set up mock paths pointing to our temp directory
     mockPaths = {
@@ -106,7 +109,12 @@ describe("VscodeSetupService Integration", () => {
   describe("Full setup flow", () => {
     it("creates all required files in correct locations", async () => {
       const processRunner = createMockProcessRunner();
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       // Run setup
       const result = await service.setup();
@@ -145,7 +153,12 @@ describe("VscodeSetupService Integration", () => {
 
     it("emits progress callbacks in correct order", async () => {
       const processRunner = createMockProcessRunner();
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       const progressMessages: string[] = [];
       const result = await service.setup((progress) => {
@@ -171,7 +184,12 @@ describe("VscodeSetupService Integration", () => {
 
     it("completes within reasonable time", async () => {
       const processRunner = createMockProcessRunner();
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       const startTime = Date.now();
       await service.setup();
@@ -185,7 +203,12 @@ describe("VscodeSetupService Integration", () => {
   describe("Partial failure cleanup", () => {
     it("does not write marker when extension install fails", async () => {
       const processRunner = createMockProcessRunner(1, "Failed to install extension");
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       const result = await service.setup();
 
@@ -197,7 +220,12 @@ describe("VscodeSetupService Integration", () => {
 
     it("custom extension is created before marketplace extension", async () => {
       const processRunner = createMockProcessRunner(1, "Failed");
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       await service.setup();
 
@@ -219,7 +247,12 @@ describe("VscodeSetupService Integration", () => {
       await writeFile(mockPaths.markerPath, JSON.stringify(marker), "utf-8");
 
       const processRunner = createMockProcessRunner();
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       const isComplete = await service.isSetupComplete();
       expect(isComplete).toBe(false);
@@ -235,7 +268,12 @@ describe("VscodeSetupService Integration", () => {
       await writeFile(mockPaths.markerPath, JSON.stringify(marker), "utf-8");
 
       const processRunner = createMockProcessRunner();
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       const isComplete = await service.isSetupComplete();
       expect(isComplete).toBe(true);
@@ -256,7 +294,12 @@ describe("VscodeSetupService Integration", () => {
       await writeFile(mockPaths.markerPath, "{}", "utf-8");
 
       const processRunner = createMockProcessRunner();
-      const service = new VscodeSetupService(processRunner, testPathProvider, "mock-code-server");
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer
+      );
 
       await service.cleanVscodeDir();
 

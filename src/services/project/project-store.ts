@@ -2,12 +2,12 @@
  * ProjectStore - Persists project configurations across sessions.
  */
 
-import { promises as fs } from "fs";
 import path from "path";
 import type { ProjectConfig } from "./types";
 import { CURRENT_PROJECT_VERSION } from "./types";
 import { ProjectStoreError } from "../errors";
 import { projectDirName } from "../platform/paths";
+import type { FileSystemLayer } from "../platform/filesystem";
 
 /**
  * Store for persisting project configurations.
@@ -15,13 +15,16 @@ import { projectDirName } from "../platform/paths";
  */
 export class ProjectStore {
   private readonly projectsDir: string;
+  private readonly fs: FileSystemLayer;
 
   /**
    * Create a new ProjectStore.
    * @param projectsDir Directory to store project configurations
+   * @param fs FileSystemLayer for filesystem operations
    */
-  constructor(projectsDir: string) {
+  constructor(projectsDir: string, fs: FileSystemLayer) {
     this.projectsDir = projectsDir;
+    this.fs = fs;
   }
 
   /**
@@ -42,11 +45,11 @@ export class ProjectStore {
     };
 
     try {
-      // Ensure the directory exists
-      await fs.mkdir(projectDir, { recursive: true });
+      // Ensure the directory exists (recursive is default)
+      await this.fs.mkdir(projectDir);
 
       // Write the config file
-      await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+      await this.fs.writeFile(configPath, JSON.stringify(config, null, 2));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Unknown error saving project";
       throw new ProjectStoreError(`Failed to save project: ${message}`);
@@ -60,27 +63,21 @@ export class ProjectStore {
    * @returns Array of project paths
    */
   async loadAllProjects(): Promise<readonly string[]> {
-    // Check if projects directory exists
-    try {
-      await fs.access(this.projectsDir);
-    } catch {
-      return [];
-    }
-
     const projects: string[] = [];
 
     try {
-      const entries = await fs.readdir(this.projectsDir, { withFileTypes: true });
+      // readdir throws ENOENT if directory doesn't exist
+      const entries = await this.fs.readdir(this.projectsDir);
 
       for (const entry of entries) {
-        if (!entry.isDirectory()) {
+        if (!entry.isDirectory) {
           continue;
         }
 
         const configPath = path.join(this.projectsDir, entry.name, "config.json");
 
         try {
-          const content = await fs.readFile(configPath, "utf-8");
+          const content = await this.fs.readFile(configPath);
           const parsed: unknown = JSON.parse(content);
 
           if (
@@ -92,11 +89,12 @@ export class ProjectStore {
             projects.push((parsed as { path: string }).path);
           }
         } catch {
-          // Skip invalid entries
+          // Skip invalid entries (ENOENT, malformed JSON, etc.)
           continue;
         }
       }
     } catch {
+      // Directory doesn't exist or other error - return empty array
       return [];
     }
 
@@ -117,15 +115,16 @@ export class ProjectStore {
 
     try {
       // Remove config.json
-      await fs.unlink(configPath);
+      await this.fs.unlink(configPath);
     } catch {
       // Ignore if file doesn't exist
       return;
     }
 
-    // Try to remove the directory if empty
+    // Try to remove the directory
+    // Using rm() with recursive: true to match the original rmdir intent
     try {
-      await fs.rmdir(projectDir);
+      await this.fs.rm(projectDir, { recursive: true });
     } catch {
       // Directory not empty or doesn't exist - that's fine
     }
