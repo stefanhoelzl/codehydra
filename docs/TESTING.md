@@ -97,11 +97,12 @@ Repeat for each new behavior/feature.
 
 ## When to Run Tests
 
-| Test Type       | When to Run                                           |
-| --------------- | ----------------------------------------------------- |
-| **Unit**        | Continuously during TDD (`npm run test:unit`)         |
-| **Integration** | After unit tests pass, before commit                  |
-| **Boundary**    | During development of new/updated external interfaces |
+| Test Type             | When to Run                                             |
+| --------------------- | ------------------------------------------------------- |
+| **Unit**              | Continuously during TDD (`npm run test:unit`)           |
+| **Integration**       | After unit tests pass, before commit                    |
+| **Boundary**          | During development of new/updated external interfaces   |
+| **OpenCode Boundary** | When modifying OpenCodeClient or SDK/SSE event handling |
 
 ## Decision Guide
 
@@ -122,6 +123,12 @@ Code change involves external system interface?
                  │    TEST      │     │              │
                  └──────────────┘     └──────────────┘
 ```
+
+**Specific scenarios:**
+
+- Testing OpenCodeClient changes → run `npm run test:boundary` (OpenCode boundary tests)
+- Testing Git operations → run `npm run test:boundary` (Git boundary tests)
+- Testing code-server manager → run `npm run test:boundary` (code-server boundary tests)
 
 Note: A single code change may require multiple test types.
 
@@ -540,6 +547,114 @@ describe("IPC Integration Tests", () => {
     expect(project.path).toBe(repoPath);
     expect(project.workspaces).toHaveLength(0);
   });
+});
+```
+
+### OpenCode Boundary Tests
+
+OpenCode boundary tests verify the `OpenCodeClient` works correctly with a real `opencode serve` process. They use a mock LLM server to control responses deterministically.
+
+**When to run**: When modifying `OpenCodeClient`, SDK integration, or SSE event handling.
+
+#### Mock LLM Server
+
+The mock LLM server (`src/test/fixtures/mock-llm-server.ts`) implements an OpenAI-compatible API:
+
+| Mode          | Response Behavior                   | Use Case                    |
+| ------------- | ----------------------------------- | --------------------------- |
+| `instant`     | Return completion immediately       | Basic idle → busy → idle    |
+| `slow-stream` | Stream with delays between chunks   | Extended busy state testing |
+| `tool-call`   | Return bash tool_call               | Permission event testing    |
+| `rate-limit`  | Return HTTP 429 with Retry-After    | Retry status mapping        |
+| `sub-agent`   | Return text with `@general` mention | Child session filtering     |
+
+```typescript
+import { createMockLlmServer } from "../../test/fixtures/mock-llm-server";
+
+const mockLlm = createMockLlmServer();
+await mockLlm.start();
+
+mockLlm.setMode("tool-call"); // Triggers permission request
+// ... test code ...
+
+await mockLlm.stop();
+```
+
+**Extending with new modes**: Add new response builder functions in `mock-llm-server.ts` and add a case in `handleRequest()`.
+
+#### Test Utilities
+
+**`startOpencode(config, runner?)`** - Start an opencode serve process:
+
+```typescript
+import { startOpencode, type OpencodeTestConfig } from "./boundary-test-utils";
+
+const config: OpencodeTestConfig = {
+  port: 14096,
+  cwd: tempDir,
+  config: {
+    provider: { mock: { npm: "@ai-sdk/openai-compatible", ... } },
+    model: "mock/test",
+    permission: { bash: "ask", edit: "allow", webfetch: "allow" },
+  },
+};
+
+const proc = await startOpencode(config);
+// ... test code ...
+await proc.stop();
+```
+
+**`waitForPort(port, timeoutMs?)`** - Wait for a port to accept connections:
+
+```typescript
+import { waitForPort, CI_TIMEOUT_MS } from "../platform/network.test-utils";
+
+// Start server process
+const proc = await startOpencode(config);
+
+// Wait for it to be ready (uses longer timeout in CI)
+const timeout = process.env.CI ? CI_TIMEOUT_MS : 5000;
+await waitForPort(port, timeout);
+
+// Now safe to connect
+```
+
+**`checkOpencodeAvailable(runner?)`** - Check if opencode binary exists:
+
+```typescript
+import { checkOpencodeAvailable } from "./boundary-test-utils";
+
+const result = await checkOpencodeAvailable();
+if (!result.available) {
+  console.log(`Skipping: ${result.error}`);
+  return;
+}
+```
+
+#### Cleanup Patterns
+
+OpenCode boundary tests use a cleanup-on-failure pattern with PID tracking:
+
+```typescript
+const spawnedPids: number[] = [];
+
+beforeAll(async () => {
+  // ... setup ...
+  if (proc.pid) spawnedPids.push(proc.pid);
+});
+
+afterAll(async () => {
+  // Primary cleanup
+  await proc?.stop().catch(console.error);
+
+  // Fallback: force-kill any remaining processes
+  for (const pid of spawnedPids) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already dead
+    }
+  }
 });
 ```
 

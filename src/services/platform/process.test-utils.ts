@@ -21,9 +21,15 @@ export interface MockProcessRunner extends ProcessRunner {
 
 /**
  * Create a mock SpawnedProcess with controllable behavior.
+ *
+ * @param overrides - Configuration for mock behavior
+ * @param overrides.pid - Process ID (defaults to 12345, set to null to simulate spawn failure)
+ * @param overrides.killResult - Return value for kill() (defaults to true)
+ * @param overrides.waitResult - Result for wait() (can be a value or async function)
  */
 export function createMockSpawnedProcess(overrides?: {
-  pid?: number;
+  /** Set to null to simulate spawn failure (pid will be undefined) */
+  pid?: number | null;
   killResult?: boolean;
   waitResult?: ProcessResult | (() => Promise<ProcessResult>);
 }): MockSpawnedProcess {
@@ -33,8 +39,11 @@ export function createMockSpawnedProcess(overrides?: {
     stderr: "",
   };
 
+  // pid: null means undefined (spawn failure), otherwise use value or default
+  const pid = overrides?.pid === null ? undefined : (overrides?.pid ?? 12345);
+
   return {
-    pid: overrides?.pid ?? 12345,
+    pid,
     kill: vi.fn().mockReturnValue(overrides?.killResult ?? true),
     wait: vi.fn().mockImplementation(async () => {
       if (typeof overrides?.waitResult === "function") {

@@ -413,6 +413,23 @@ const mockHttpClient = createMockHttpClient({
 const service = new SomeService(mockHttpClient);
 ```
 
+**waitForPort() Utility:**
+
+For boundary tests that need to wait for a server to start, use `waitForPort()`:
+
+```typescript
+import { waitForPort, CI_TIMEOUT_MS } from "../platform/network.test-utils";
+
+// Start a server process
+const proc = await startServer();
+
+// Wait for it to be ready (uses longer timeout in CI)
+const timeout = process.env.CI ? CI_TIMEOUT_MS : 5000;
+await waitForPort(8080, timeout);
+
+// Now safe to connect
+```
+
 **BuildInfo/PathProvider Pattern:**
 
 ```typescript

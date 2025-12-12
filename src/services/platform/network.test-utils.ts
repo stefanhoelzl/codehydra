@@ -280,3 +280,86 @@ export function createTestServer(routes?: Record<string, RouteHandler>): TestSer
     },
   };
 }
+
+// ============================================================================
+// Port Waiting Utility
+// ============================================================================
+
+/**
+ * Default timeout for CI environment (longer to account for slow CI machines).
+ */
+export const CI_TIMEOUT_MS = 30000;
+
+/**
+ * Default timeout for local development.
+ */
+export const DEFAULT_TIMEOUT_MS = 5000;
+
+/**
+ * Interval between port check attempts.
+ */
+const PORT_CHECK_INTERVAL_MS = 100;
+
+/**
+ * Wait for a port to become available (accepting connections).
+ *
+ * Uses dynamic timeout based on CI environment.
+ * Polls the port with TCP connection attempts.
+ *
+ * @param port - Port number to wait for
+ * @param timeoutMs - Maximum time to wait (defaults based on CI environment)
+ * @returns Resolves when port is accepting connections
+ * @throws Error if timeout is reached
+ *
+ * @example
+ * ```ts
+ * // Start a server process
+ * const proc = await startServer();
+ *
+ * // Wait for it to be ready
+ * await waitForPort(8080);
+ *
+ * // Now safe to connect
+ * ```
+ */
+export async function waitForPort(port: number, timeoutMs?: number): Promise<void> {
+  const timeout = timeoutMs ?? (process.env.CI ? CI_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    if (await isPortOpen(port)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, PORT_CHECK_INTERVAL_MS));
+  }
+
+  throw new Error(`Timeout waiting for port ${port} to become available (${timeout}ms)`);
+}
+
+/**
+ * Check if a port is open and accepting connections.
+ *
+ * @param port - Port number to check
+ * @returns true if port is accepting connections
+ */
+async function isPortOpen(port: number): Promise<boolean> {
+  const { createConnection } = await import("net");
+
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host: "localhost" }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+
+    socket.on("error", () => {
+      socket.destroy();
+      resolve(false);
+    });
+
+    // Set a short timeout for connection attempt
+    socket.setTimeout(500, () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}

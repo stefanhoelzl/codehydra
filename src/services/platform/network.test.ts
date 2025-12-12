@@ -182,3 +182,78 @@ describe("DefaultNetworkLayer", () => {
     });
   });
 });
+
+describe("waitForPort", () => {
+  // Import the function dynamically to avoid import issues
+  const getWaitForPort = async () => {
+    const { waitForPort } = await import("./network.test-utils");
+    return waitForPort;
+  };
+
+  it("resolves when port is accepting connections", async () => {
+    const { createTestServer } = await import("./network.test-utils");
+    const waitForPort = await getWaitForPort();
+    const server = createTestServer();
+    await server.start();
+
+    try {
+      // Port should already be ready
+      await expect(waitForPort(server.getPort(), 1000)).resolves.toBeUndefined();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("times out when port is not available", async () => {
+    const waitForPort = await getWaitForPort();
+
+    // Use a port that's almost certainly not in use
+    const unusedPort = 59999;
+
+    await expect(waitForPort(unusedPort, 200)).rejects.toThrow(
+      /Timeout waiting for port 59999 to become available/
+    );
+  });
+
+  it("handles port becoming available during wait", async () => {
+    const { createServer } = await import("net");
+    const waitForPort = await getWaitForPort();
+
+    // Find an unused port by binding to 0
+    const findUnusedPort = (): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const server = createServer();
+        server.listen(0, "localhost", () => {
+          const addr = server.address();
+          if (addr && typeof addr === "object") {
+            const port = addr.port;
+            server.close(() => resolve(port));
+          } else {
+            reject(new Error("Failed to get port"));
+          }
+        });
+      });
+
+    const port = await findUnusedPort();
+
+    // Start a server after a delay
+    const serverPromise = new Promise<{ server: ReturnType<typeof createServer>; port: number }>(
+      (resolve) => {
+        setTimeout(() => {
+          const server = createServer();
+          server.listen(port, "localhost", () => {
+            resolve({ server, port });
+          });
+        }, 150);
+      }
+    );
+
+    // Wait for the port to become available
+    // This should succeed after the server starts
+    await expect(waitForPort(port, 2000)).resolves.toBeUndefined();
+
+    // Cleanup
+    const { server } = await serverPromise;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});

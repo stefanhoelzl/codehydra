@@ -12,5 +12,11 @@
     },
     "types": ["node"]
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/services/**/*", "src/shared/**/*"]
+  "include": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/services/**/*",
+    "src/shared/**/*",
+    "src/test/**/*"
+  ]
 }
