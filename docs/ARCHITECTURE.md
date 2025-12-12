@@ -221,6 +221,35 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 - Re-checks worktree registration before each deletion (TOCTOU protection)
 - Concurrency guard prevents multiple cleanups running simultaneously
 
+### Platform Abstractions Overview
+
+All external system access goes through abstraction interfaces defined in `src/services/platform/`. This architecture enables:
+
+1. **Unit testing**: Services receive mock implementations via constructor injection
+2. **Boundary testing**: Real implementations are tested against actual external systems in `*.boundary.test.ts` files
+3. **Consistent error handling**: All abstractions use `ServiceError` hierarchy
+4. **Single responsibility**: Each interface handles one external concern
+
+**CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
+
+| External System  | Interface         | Implementation           | Test Mock Factory             |
+| ---------------- | ----------------- | ------------------------ | ----------------------------- |
+| Filesystem       | `FileSystemLayer` | `DefaultFileSystemLayer` | `createMockFileSystemLayer()` |
+| HTTP requests    | `HttpClient`      | `DefaultNetworkLayer`    | `createMockHttpClient()`      |
+| Port operations  | `PortManager`     | `DefaultNetworkLayer`    | `createMockPortManager()`     |
+| Process spawning | `ProcessRunner`   | `ExecaProcessRunner`     | `createMockProcessRunner()`   |
+| Build info       | `BuildInfo`       | `ElectronBuildInfo`      | `createMockBuildInfo()`       |
+| Platform info    | `PlatformInfo`    | `NodePlatformInfo`       | `createMockPlatformInfo()`    |
+| Path resolution  | `PathProvider`    | `DefaultPathProvider`    | `createMockPathProvider()`    |
+
+**Boundary test files:**
+
+| Abstraction                  | Boundary Test                 |
+| ---------------------------- | ----------------------------- |
+| `FileSystemLayer`            | `filesystem.boundary.test.ts` |
+| `HttpClient` + `PortManager` | `network.boundary.test.ts`    |
+| `ProcessRunner`              | `process.boundary.test.ts`    |
+
 ### NetworkLayer Pattern
 
 NetworkLayer provides unified interfaces for all localhost network operations, designed following the Interface Segregation Principle. Consumers depend only on the specific interface(s) they need.

@@ -1,6 +1,7 @@
 ---
-status: REVIEW_PENDING
-last_updated: 2025-01-10
+status: COMPLETED
+last_updated: 2025-12-12
+completed: 2025-12-12
 reviewers: [review-testing, review-docs, review-arch, review-senior]
 ---
 
@@ -104,14 +105,14 @@ External Entities:
 
 ### Phase 1: Testing Strategy Documentation
 
-- [ ] **Step 1.1: Create docs/TESTING.md**
+- [x] **Step 1.1: Create docs/TESTING.md**
   - Define all four test types (unit, integration, boundary, system)
   - Establish naming conventions
   - Document when each test type is required
   - Provide examples for each type
   - Files: `docs/TESTING.md` (new)
 
-- [ ] **Step 1.2: Update AGENTS.md**
+- [x] **Step 1.2: Update AGENTS.md**
   - Add testing requirements section
   - Reference docs/TESTING.md
   - Define which tests are required for different code changes
@@ -121,7 +122,7 @@ External Entities:
 
 Each group below will have its own detailed implementation plan created separately.
 
-- [ ] **Step 2.A: OS Process Management**
+- [x] **Step 2.A: OS Process Management**
   - External entity: `execa`, `pidtree`
   - Modules:
     | Module | File |
@@ -150,24 +151,25 @@ Each group below will have its own detailed implementation plan created separate
   - Test file: `src/services/platform/network.boundary.test.ts`
   - Note: HttpClient, SseClient, and PortManager are tested together since DefaultNetworkLayer is a unified module implementing all three interfaces
 
-- [ ] **Step 2.D: Filesystem**
+- [x] **Step 2.D: Filesystem**
   - External entity: `fs/promises`
   - Modules:
     | Module | File |
     |--------|------|
-    | `ProjectStore` | `src/services/project/project-store.ts` |
-  - Test file: `src/services/project/project-store.boundary.test.ts`
+    | `DefaultFileSystemLayer` | `src/services/platform/filesystem.ts` |
+  - Test file: `src/services/platform/filesystem.boundary.test.ts`
+  - Note: FileSystemLayer abstraction created; ProjectStore uses it via DI
 
-- [ ] **Step 2.E: Git**
+- [x] **Step 2.E: Git**
   - External entity: Git CLI via `simple-git`
   - Modules:
     | Module | File |
     |--------|------|
     | `SimpleGitClient` | `src/services/git/simple-git-client.ts` |
-  - Action: Rename existing `simple-git-client.integration.test.ts` → `simple-git-client.boundary.test.ts`
+  - Action: Renamed existing `simple-git-client.integration.test.ts` → `simple-git-client.boundary.test.ts`
   - Note: Tests already exist and test against real git repos
 
-- [ ] **Step 2.F: code-server Binary**
+- [x] **Step 2.F: code-server Binary**
   - External entity: `code-server` binary + HTTP health endpoint
   - Modules:
     | Module | File |
@@ -176,7 +178,7 @@ Each group below will have its own detailed implementation plan created separate
   - Test file: `src/services/code-server/code-server-manager.boundary.test.ts`
   - Prerequisite: `code-server` devDependency available
 
-- [ ] **Step 2.G: OpenCode**
+- [x] **Step 2.G: OpenCode**
   - External entity: `opencode serve` HTTP API + SSE
   - Modules:
     | Module | File |
@@ -237,14 +239,14 @@ This plan establishes the testing strategy. Each phase will have its own detaile
 
 ## Definition of Done
 
-- [ ] Phase 1: `docs/TESTING.md` created with complete testing strategy
-- [ ] Phase 1: `AGENTS.md` updated with testing requirements
-- [ ] Phase 2.A-G: Each phase has detailed plan created (separate planning docs)
-- [ ] Phase 2.A-G: All boundary tests implemented and passing
-- [ ] All tests runnable in CI environment
-- [ ] `npm run validate:fix` passes
-- [ ] Documentation updated
-- [ ] Changes committed
+- [x] Phase 1: `docs/TESTING.md` created with complete testing strategy
+- [x] Phase 1: `AGENTS.md` updated with testing requirements
+- [x] Phase 2.A-G: Each phase has detailed plan created (separate planning docs)
+- [x] Phase 2.A-G: All boundary tests implemented and passing
+- [x] All tests runnable in CI environment
+- [x] `npm run validate:fix` passes
+- [x] Documentation updated
+- [x] Changes committed
 
 ## Implementation Order
 
@@ -279,3 +281,16 @@ Phase 2: Boundary Tests (separate plans for each)
 - **Existing test rename**: The SimpleGitClient already has real boundary tests, just misnamed as "integration"
 - **VscodeSetupService**: Explicitly excluded from this plan (interacts with filesystem + code-server CLI)
 - **System tests**: Marked as TBD in the test pyramid - not part of this plan
+
+## Implementation Notes (Added on Completion)
+
+During implementation, several abstraction layers were created to enable both boundary testing and unit testing:
+
+| Abstraction | Interface                                   | Implementation           | Test Utils                 |
+| ----------- | ------------------------------------------- | ------------------------ | -------------------------- |
+| Filesystem  | `FileSystemLayer`                           | `DefaultFileSystemLayer` | `filesystem.test-utils.ts` |
+| Network     | `HttpClient`, `PortManager`                 | `DefaultNetworkLayer`    | `network.test-utils.ts`    |
+| Processes   | `ProcessRunner`                             | `ExecaProcessRunner`     | `process.test-utils.ts`    |
+| Paths       | `PathProvider`, `BuildInfo`, `PlatformInfo` | Various                  | `*.test-utils.ts`          |
+
+These abstractions are **mandatory** for all external system access. See `AGENTS.md` for usage rules.

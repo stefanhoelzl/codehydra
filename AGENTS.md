@@ -591,6 +591,61 @@ const mockFs = createMockFileSystemLayer({
 const service = new ProjectStore(projectsDir, mockFs);
 ```
 
+### External System Access Rules
+
+**CRITICAL**: All external system access MUST go through abstraction interfaces. Direct library/module usage is forbidden in service code.
+
+| External System  | Required Interface          | Forbidden Direct Access     |
+| ---------------- | --------------------------- | --------------------------- |
+| Filesystem       | `FileSystemLayer`           | `node:fs/promises` directly |
+| HTTP requests    | `HttpClient`                | `fetch()` directly          |
+| Port operations  | `PortManager`               | `net` module directly       |
+| Process spawning | `ProcessRunner`             | `execa` directly            |
+| OpenCode API     | `OpenCodeClient` (uses SDK) | Direct HTTP/SSE calls       |
+| Git operations   | `GitClient`                 | `simple-git` directly       |
+
+**Why this matters:**
+
+1. **Testability**: Unit tests inject mocks; no real I/O in unit tests
+2. **Boundary testing**: Real implementations tested in `*.boundary.test.ts`
+3. **Consistency**: Unified error handling (e.g., `FileSystemError`, `ServiceError`)
+4. **Maintainability**: Single point of change for external dependencies
+
+**Implementation pattern:**
+
+```typescript
+// CORRECT: Inject interface via constructor
+class MyService {
+  constructor(
+    private readonly fs: FileSystemLayer,
+    private readonly http: HttpClient
+  ) {}
+
+  async doWork() {
+    const data = await this.fs.readFile("/path");
+    const response = await this.http.fetch("http://api/endpoint");
+  }
+}
+
+// WRONG: Direct imports
+import * as fs from "node:fs/promises";
+class MyService {
+  async doWork() {
+    const data = await fs.readFile("/path", "utf-8"); // ❌ Not testable
+  }
+}
+```
+
+**Test utils location:**
+
+| Interface         | Mock Factory                  | Location                               |
+| ----------------- | ----------------------------- | -------------------------------------- |
+| `FileSystemLayer` | `createMockFileSystemLayer()` | `platform/filesystem.test-utils.ts`    |
+| `HttpClient`      | `createMockHttpClient()`      | `platform/network.test-utils.ts`       |
+| `PortManager`     | `createMockPortManager()`     | `platform/network.test-utils.ts`       |
+| `ProcessRunner`   | `createMockProcessRunner()`   | `platform/process.test-utils.ts`       |
+| `PathProvider`    | `createMockPathProvider()`    | `platform/path-provider.test-utils.ts` |
+
 ### OpenCode SDK Integration
 
 `OpenCodeClient` uses the official `@opencode-ai/sdk` for HTTP and SSE operations:
