@@ -205,6 +205,7 @@ module.exports = { activate, deactivate };
       "extensions.autoUpdate": false,
       "telemetry.telemetryLevel": "off",
       "window.menuBarVisibility": "hidden",
+      "terminal.integrated.gpuAcceleration": "off",
     };
 
     // Empty keybindings

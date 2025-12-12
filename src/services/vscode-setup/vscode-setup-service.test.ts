@@ -377,6 +377,7 @@ describe("VscodeSetupService", () => {
         "extensions.autoUpdate": false,
         "telemetry.telemetryLevel": "off",
         "window.menuBarVisibility": "hidden",
+        "terminal.integrated.gpuAcceleration": "off",
       });
     });
   });

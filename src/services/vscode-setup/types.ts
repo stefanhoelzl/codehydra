@@ -76,6 +76,7 @@ export interface VscodeSettings {
   readonly "extensions.autoUpdate": boolean;
   readonly "telemetry.telemetryLevel": string;
   readonly "window.menuBarVisibility": string;
+  readonly "terminal.integrated.gpuAcceleration": string;
 }
 
 /**
