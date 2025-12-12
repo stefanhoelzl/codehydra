@@ -66,7 +66,18 @@ export async function createMockSetupState(options: {
       ),
       "utf-8"
     );
-    await writeFile(join(userDir, "keybindings.json"), "[]", "utf-8");
+    await writeFile(
+      join(userDir, "keybindings.json"),
+      JSON.stringify(
+        [
+          { key: "ctrl+j", command: "-workbench.action.togglePanel" },
+          { key: "alt+t", command: "workbench.action.togglePanel" },
+        ],
+        null,
+        2
+      ),
+      "utf-8"
+    );
   }
 
   return vscodeDir;

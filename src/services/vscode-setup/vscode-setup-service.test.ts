@@ -408,10 +408,12 @@ describe("VscodeSetupService", () => {
       expect(writtenFiles.has(settingsPath)).toBe(true);
       expect(writtenFiles.get(settingsPath)).toContain('"workbench.colorTheme": "Default Dark+"');
 
-      // Verify keybindings.json written (empty array)
+      // Verify keybindings.json written with panel toggle remap
       const keybindingsPath = "/mock/vscode/user-data/User/keybindings.json";
       expect(writtenFiles.has(keybindingsPath)).toBe(true);
-      expect(writtenFiles.get(keybindingsPath)).toBe("[]");
+      expect(writtenFiles.get(keybindingsPath)).toContain(
+        '"command": "workbench.action.togglePanel"'
+      );
 
       // Verify progress callback called
       expect(progressCallback).toHaveBeenCalledWith({

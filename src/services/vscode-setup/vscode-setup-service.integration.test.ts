@@ -143,7 +143,10 @@ describe("VscodeSetupService Integration", () => {
       expect(settings["workbench.preferredLightColorTheme"]).toBe("Default Light+");
 
       const keybindings = JSON.parse(await readFile(join(userDir, "keybindings.json"), "utf-8"));
-      expect(keybindings).toEqual([]);
+      expect(keybindings).toEqual([
+        { key: "ctrl+j", command: "-workbench.action.togglePanel" },
+        { key: "alt+t", command: "workbench.action.togglePanel" },
+      ]);
 
       // Verify marker file
       const marker = JSON.parse(await readFile(mockPaths.markerPath, "utf-8")) as SetupMarker;

@@ -10,7 +10,7 @@ export type { ProcessRunner, ProcessResult } from "../platform/process";
  * Current version of the setup process.
  * Increment when setup steps change to force re-setup on existing installs.
  */
-export const CURRENT_SETUP_VERSION = 2;
+export const CURRENT_SETUP_VERSION = 3;
 
 /**
  * Setup steps for progress tracking.
@@ -63,6 +63,14 @@ export interface SetupError {
 export type SetupResult =
   | { readonly success: true }
   | { readonly success: false; readonly error: SetupError };
+
+/**
+ * VS Code keybinding entry for user configuration.
+ */
+export interface VscodeKeybinding {
+  readonly key: string;
+  readonly command: string;
+}
 
 /**
  * VS Code settings structure for user configuration.

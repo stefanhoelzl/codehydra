@@ -15,6 +15,7 @@ import {
   type SetupMarker,
   type ProcessRunner,
   type VscodeSettings,
+  type VscodeKeybinding,
 } from "./types";
 
 /**
@@ -208,11 +209,17 @@ module.exports = { activate, deactivate };
       "terminal.integrated.gpuAcceleration": "off",
     };
 
-    // Empty keybindings
-    const keybindings: unknown[] = [];
+    // Keybindings: Remap Ctrl+J (Toggle Panel) to Alt+T
+    const keybindings: VscodeKeybinding[] = [
+      { key: "ctrl+j", command: "-workbench.action.togglePanel" },
+      { key: "alt+t", command: "workbench.action.togglePanel" },
+    ];
 
     await this.fs.writeFile(join(userDir, "settings.json"), JSON.stringify(settings, null, 2));
-    await this.fs.writeFile(join(userDir, "keybindings.json"), JSON.stringify(keybindings));
+    await this.fs.writeFile(
+      join(userDir, "keybindings.json"),
+      JSON.stringify(keybindings, null, 2)
+    );
   }
 
   /**
