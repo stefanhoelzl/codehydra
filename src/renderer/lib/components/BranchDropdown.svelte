@@ -173,7 +173,14 @@
 
       case "Tab":
         if (highlightedIndex >= 0 && highlightedIndex < options.length) {
+          // User navigated with arrow keys - select highlighted option
           selectBranch(options[highlightedIndex]!.name);
+        } else {
+          // No highlighted option - check if typed text exactly matches a branch
+          const exactMatch = options.find((b) => b.name === filterText);
+          if (exactMatch) {
+            selectBranch(exactMatch.name);
+          }
         }
         isOpen = false;
         break;

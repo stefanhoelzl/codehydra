@@ -375,6 +375,44 @@ describe("BranchDropdown component", () => {
       expect(input).toHaveAttribute("aria-expanded", "false");
       expect(onSelect).not.toHaveBeenCalled();
     });
+
+    it("Tab selects typed branch when it exactly matches an option", async () => {
+      const onSelect = vi.fn();
+      render(BranchDropdown, { props: { ...defaultProps, onSelect } });
+
+      await vi.runAllTimersAsync();
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Type exact branch name without using arrow keys
+      await fireEvent.input(input, { target: { value: "main" } });
+
+      // Press Tab without navigating with arrows
+      await fireEvent.keyDown(input, { key: "Tab" });
+
+      // Should select the typed branch
+      expect(onSelect).toHaveBeenCalledWith("main");
+    });
+
+    it("Tab does not select when typed text does not match any branch", async () => {
+      const onSelect = vi.fn();
+      render(BranchDropdown, { props: { ...defaultProps, onSelect } });
+
+      await vi.runAllTimersAsync();
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Type non-matching text
+      await fireEvent.input(input, { target: { value: "nonexistent" } });
+
+      // Press Tab
+      await fireEvent.keyDown(input, { key: "Tab" });
+
+      // Should NOT call onSelect
+      expect(onSelect).not.toHaveBeenCalled();
+    });
   });
 
   describe("selection", () => {
