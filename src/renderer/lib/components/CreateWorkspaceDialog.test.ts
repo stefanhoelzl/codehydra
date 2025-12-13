@@ -105,6 +105,14 @@ describe("CreateWorkspaceDialog component", () => {
       const nameInput = screen.getByLabelText(/name/i);
       expect(nameInput).toHaveAttribute("aria-describedby");
     });
+
+    it("focuses name input when dialog opens", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const nameInput = screen.getByLabelText(/name/i);
+      expect(nameInput).toHaveFocus();
+    });
   });
 
   describe("validation", () => {

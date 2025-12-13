@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { tick } from "svelte";
   import { createFocusTrap } from "$lib/utils/focus-trap";
   import { getTriggerElement } from "$lib/stores/dialogs.svelte.js";
 
@@ -33,7 +34,11 @@
 
     const trap = createFocusTrap(dialogElement);
     trap.activate();
-    trap.focusFirst();
+
+    // Wait for DOM to update with snippet content before focusing
+    void tick().then(() => {
+      trap.focusFirst();
+    });
 
     return () => {
       trap.deactivate();
