@@ -76,13 +76,13 @@ describe("RemoveWorkspaceDialog component", () => {
       expect(screen.getByText(/Remove workspace "feature-branch"\?/)).toBeInTheDocument();
     });
 
-    it('renders "Delete branch" checkbox, checked by default', async () => {
+    it('renders "Keep branch" checkbox, unchecked by default', async () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const checkbox = screen.getByRole("checkbox", { name: /delete branch/i });
+      const checkbox = screen.getByRole("checkbox", { name: /keep branch/i });
       expect(checkbox).toBeInTheDocument();
-      expect(checkbox).toBeChecked();
+      expect(checkbox).not.toBeChecked();
     });
   });
 
@@ -142,8 +142,8 @@ describe("RemoveWorkspaceDialog component", () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const checkbox = screen.getByRole("checkbox", { name: /delete branch/i });
-      expect(checkbox).toBeChecked();
+      const checkbox = screen.getByRole("checkbox", { name: /keep branch/i });
+      expect(checkbox).not.toBeChecked();
 
       await fireEvent.keyDown(checkbox, { key: " " });
       // Note: actual toggle is handled by the browser, we verify it's focusable
@@ -160,11 +160,11 @@ describe("RemoveWorkspaceDialog component", () => {
   });
 
   describe("submit flow", () => {
-    it("OK calls api.removeWorkspace with workspacePath and deleteBranch value", async () => {
+    it("OK calls api.removeWorkspace with deleteBranch=true when keepBranch unchecked (default)", async () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Click OK with checkbox checked (default)
+      // Click OK with checkbox unchecked (default)
       const okButton = screen.getByRole("button", { name: /ok|remove/i });
       await fireEvent.click(okButton);
 
@@ -173,12 +173,12 @@ describe("RemoveWorkspaceDialog component", () => {
       expect(removeWorkspace).toHaveBeenCalledWith("/test/project/.worktrees/feature-branch", true);
     });
 
-    it("OK calls api.removeWorkspace with deleteBranch=false when unchecked", async () => {
+    it("OK calls api.removeWorkspace with deleteBranch=false when keepBranch checked", async () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Uncheck the checkbox
-      const checkbox = screen.getByRole("checkbox", { name: /delete branch/i });
+      // Check the "Keep branch" checkbox
+      const checkbox = screen.getByRole("checkbox", { name: /keep branch/i });
       await fireEvent.click(checkbox);
 
       // Click OK
@@ -221,7 +221,7 @@ describe("RemoveWorkspaceDialog component", () => {
       const okButton = screen.getByRole("button", { name: /ok|remove/i });
       await fireEvent.click(okButton);
 
-      const checkbox = screen.getByRole("checkbox", { name: /delete branch/i });
+      const checkbox = screen.getByRole("checkbox", { name: /keep branch/i });
       expect(checkbox).toBeDisabled();
 
       await vi.runAllTimersAsync();
@@ -286,7 +286,7 @@ describe("RemoveWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Form should be re-enabled
-      const checkbox = screen.getByRole("checkbox", { name: /delete branch/i });
+      const checkbox = screen.getByRole("checkbox", { name: /keep branch/i });
       expect(checkbox).not.toBeDisabled();
       expect(okButton).not.toBeDisabled();
     });

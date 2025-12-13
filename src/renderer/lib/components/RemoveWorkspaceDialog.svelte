@@ -11,7 +11,7 @@
   let { open, workspacePath }: RemoveWorkspaceDialogProps = $props();
 
   // Form state
-  let deleteBranch = $state(true);
+  let keepBranch = $state(false);
   let submitError = $state<string | null>(null);
   let isSubmitting = $state(false);
   let isDirty = $state(false);
@@ -48,7 +48,7 @@
     isSubmitting = true;
 
     try {
-      await removeWorkspace(workspacePath, deleteBranch);
+      await removeWorkspace(workspacePath, !keepBranch);
       closeDialog();
     } catch (error) {
       submitError = error instanceof Error ? error.message : "Failed to remove workspace";
@@ -64,7 +64,7 @@
   // Handle checkbox change
   function handleCheckboxChange(event: Event): void {
     const target = event.target as HTMLInputElement;
-    deleteBranch = target.checked;
+    keepBranch = target.checked;
   }
 
   // IDs for accessibility
@@ -94,11 +94,11 @@
     <label class="checkbox-label">
       <input
         type="checkbox"
-        checked={deleteBranch}
+        checked={keepBranch}
         onchange={handleCheckboxChange}
         disabled={isSubmitting}
       />
-      Delete branch
+      Keep branch
     </label>
 
     {#if submitError}
