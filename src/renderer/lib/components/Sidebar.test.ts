@@ -524,4 +524,95 @@ describe("Sidebar component", () => {
       expect(ariaLabels.some((label) => label?.match(/busy/i))).toBe(true);
     });
   });
+
+  describe("alphabetical sorting", () => {
+    it("renders projects sorted alphabetically with AaBbCc ordering", () => {
+      const projectCharlie = createMockProject({
+        path: "/charlie" as ProjectPath,
+        name: "charlie",
+        workspaces: [createMockWorkspace({ name: "ws", path: "/charlie/ws" })],
+      });
+      const projectAlphaUpper = createMockProject({
+        path: "/Alpha" as ProjectPath,
+        name: "Alpha",
+        workspaces: [createMockWorkspace({ name: "ws", path: "/Alpha/ws" })],
+      });
+      const projectAlphaLower = createMockProject({
+        path: "/alpha" as ProjectPath,
+        name: "alpha",
+        workspaces: [createMockWorkspace({ name: "ws", path: "/alpha/ws" })],
+      });
+      const projectBeta = createMockProject({
+        path: "/beta" as ProjectPath,
+        name: "beta",
+        workspaces: [createMockWorkspace({ name: "ws", path: "/beta/ws" })],
+      });
+
+      render(Sidebar, {
+        props: {
+          ...defaultProps,
+          // Pass projects in non-alphabetical order
+          projects: [projectCharlie, projectAlphaUpper, projectBeta, projectAlphaLower],
+        },
+      });
+
+      // Get all project names in rendered order
+      const projectNames = screen.getAllByTitle(/^\//);
+      const names = projectNames.map((el) => el.textContent);
+
+      expect(names).toEqual(["Alpha", "alpha", "beta", "charlie"]);
+    });
+
+    it("renders workspaces sorted alphabetically with AaBbCc ordering", () => {
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [
+          createMockWorkspace({ name: "charlie", path: "/test/charlie" }),
+          createMockWorkspace({ name: "Alpha", path: "/test/Alpha" }),
+          createMockWorkspace({ name: "beta", path: "/test/beta" }),
+          createMockWorkspace({ name: "alpha", path: "/test/alpha" }),
+          createMockWorkspace({ name: "Beta", path: "/test/Beta" }),
+        ],
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      // Get workspace buttons in rendered order
+      const workspaceButtons = screen.getAllByRole("button", {
+        name: /^(Alpha|alpha|Beta|beta|charlie)$/,
+      });
+      const names = workspaceButtons.map((el) => el.textContent?.trim());
+
+      expect(names).toEqual(["Alpha", "alpha", "Beta", "beta", "charlie"]);
+    });
+
+    it("shortcut indices match sorted order", () => {
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [
+          createMockWorkspace({ name: "charlie", path: "/test/charlie" }),
+          createMockWorkspace({ name: "alpha", path: "/test/alpha" }),
+          createMockWorkspace({ name: "beta", path: "/test/beta" }),
+        ],
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
+      });
+
+      // alpha should be index 1 (first alphabetically)
+      const alphaButton = screen.getByRole("button", { name: /alpha.*press 1 to jump/i });
+      expect(alphaButton).toBeInTheDocument();
+
+      // beta should be index 2
+      const betaButton = screen.getByRole("button", { name: /beta.*press 2 to jump/i });
+      expect(betaButton).toBeInTheDocument();
+
+      // charlie should be index 3
+      const charlieButton = screen.getByRole("button", { name: /charlie.*press 3 to jump/i });
+      expect(charlieButton).toBeInTheDocument();
+    });
+  });
 });

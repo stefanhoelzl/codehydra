@@ -68,6 +68,18 @@
     onOpenRemoveDialog,
   }: SidebarProps = $props();
 
+  // Sort projects and their workspaces alphabetically (AaBbCc ordering)
+  let sortedProjects = $derived(
+    [...projects]
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { caseFirst: "upper" }))
+      .map((p) => ({
+        ...p,
+        workspaces: [...p.workspaces].sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
+        ),
+      }))
+  );
+
   function handleAddWorkspace(projectPath: ProjectPath): void {
     const triggerId = `add-ws-${projectPath}`;
     onOpenCreateDialog(projectPath, triggerId);
@@ -93,11 +105,11 @@
       <div class="error-state" role="alert">
         <p>{loadingError ?? "An error occurred"}</p>
       </div>
-    {:else if projects.length === 0}
+    {:else if sortedProjects.length === 0}
       <EmptyState />
     {:else}
       <ul class="project-list">
-        {#each projects as project, projectIndex (project.path)}
+        {#each sortedProjects as project, projectIndex (project.path)}
           <li class="project-item">
             <div class="project-header">
               <span class="project-name" title={project.path}>{project.name}</span>
@@ -125,7 +137,7 @@
             <ul class="workspace-list">
               {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
                 {@const globalIndex = getWorkspaceGlobalIndex(
-                  projects,
+                  sortedProjects,
                   projectIndex,
                   workspaceIndex
                 )}
