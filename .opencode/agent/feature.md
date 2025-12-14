@@ -424,15 +424,13 @@ There are two distinct review phases with different reviewers:
 
 These reviewers analyze the **plan** before implementation begins. **All reviewers are recommended by default** - user may explicitly skip reviewers if desired.
 
-| Reviewer           | Focus Area                                             |
-| ------------------ | ------------------------------------------------------ |
-| @review-ui         | UI components, Svelte 5, CSS, HTML, UX                 |
-| @review-typescript | TypeScript code, patterns, clean code                  |
-| @review-electron   | Electron security, IPC, process architecture           |
-| @review-arch       | System architecture, component integration             |
-| @review-senior     | Project fit, duplication, dependency audit             |
-| @review-testing    | Test strategy, TDD approach, coverage                  |
-| @review-docs       | Documentation quality, plan clarity for implementation |
+| Reviewer           | Focus Area                                                   |
+| ------------------ | ------------------------------------------------------------ |
+| @review-ui         | UI components, Svelte 5, CSS, HTML, UX                       |
+| @review-typescript | TypeScript, clean code, Electron security, cross-platform    |
+| @review-arch       | Architecture, project integration, dependencies, duplication |
+| @review-testing    | Test strategy, TDD approach, coverage                        |
+| @review-docs       | Documentation quality, plan clarity for implementation       |
 
 ### Implementation Reviewer (status: `CLEANUP`)
 
@@ -603,7 +601,7 @@ Feature <FEATURE_NAME> is complete!
 - **PARALLEL WHEN POSSIBLE**: Run @explore and @research in parallel when they answer independent questions
 - **QUICK LOOKUPS**: Use webfetch directly for simple documentation checks
 - **WRITE TO planning/**: You are explicitly allowed to create and edit files in the `planning/` directory - this is your workspace
-- **ALL REVIEWERS BY DEFAULT**: Recommend all 7 plan reviewers; user may skip specific ones
+- **ALL REVIEWERS BY DEFAULT**: Recommend all 5 plan reviewers; user may skip specific ones
 - **PARALLEL REVIEWS**: Always invoke non-skipped reviewers in parallel (single message)
 - **TRACK STATE**: Always be clear about which workflow state you're in
 - **PASS FULL CONTEXT**: When invoking reviewers, include the complete plan content
