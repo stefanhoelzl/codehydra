@@ -49,9 +49,12 @@ export function createFocusTrap(container: HTMLElement): FocusTrap {
     activate: () => container.addEventListener("keydown", handleKeyDown),
     deactivate: () => container.removeEventListener("keydown", handleKeyDown),
     focusFirst: () => {
-      const first = getFocusables()[0];
-      if (first) {
-        first.focus();
+      const focusables = getFocusables();
+      // Prefer element with data-autofocus attribute (avoids a11y_autofocus warning)
+      const autofocused = focusables.find((el) => el.hasAttribute("data-autofocus"));
+      const target = autofocused ?? focusables[0];
+      if (target) {
+        target.focus();
       } else {
         // Fall back to container if no focusable elements
         container.focus();

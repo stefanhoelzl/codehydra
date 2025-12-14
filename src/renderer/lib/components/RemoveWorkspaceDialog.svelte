@@ -109,7 +109,13 @@
   {/snippet}
 
   {#snippet actions()}
-    <button type="button" class="ok-button" onclick={handleSubmit} disabled={isSubmitting}>
+    <button
+      type="button"
+      class="ok-button"
+      onclick={handleSubmit}
+      disabled={isSubmitting}
+      data-autofocus
+    >
       {isSubmitting ? "Removing..." : "Remove"}
     </button>
     <button type="button" class="cancel-button" onclick={handleCancel} disabled={isSubmitting}>

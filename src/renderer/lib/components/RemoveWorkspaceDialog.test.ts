@@ -138,6 +138,14 @@ describe("RemoveWorkspaceDialog component", () => {
   });
 
   describe("keyboard navigation", () => {
+    it("Remove button has initial focus", async () => {
+      render(RemoveWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const removeButton = screen.getByRole("button", { name: /^remove$/i });
+      expect(removeButton).toHaveFocus();
+    });
+
     it("Space toggles checkbox", async () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
