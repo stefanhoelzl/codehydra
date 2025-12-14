@@ -5,6 +5,7 @@
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
+    "preinstall": "node scripts/check-path-length.cjs",
     "setup": "npm install && npm run build",
     "dev": "npm run build && electron-vite dev",
     "build": "electron-vite build",
