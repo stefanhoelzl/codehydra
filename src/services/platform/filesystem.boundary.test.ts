@@ -333,10 +333,19 @@ describe("DefaultFileSystemLayer", () => {
       await expect(fs.readFile(filePath)).rejects.toThrow();
     });
 
-    it("throws EISDIR for directory without recursive option", async () => {
-      // Node.js rm() requires recursive: true for any directory
+    it("removes empty directory without recursive flag", async () => {
       const dirPath = join(tempDir.path, "empty-dir");
       await nodeMkdir(dirPath);
+
+      await fs.rm(dirPath);
+
+      await expect(fs.readdir(dirPath)).rejects.toThrow();
+    });
+
+    it("throws ENOTEMPTY for non-empty directory without recursive flag", async () => {
+      const dirPath = join(tempDir.path, "non-empty-dir");
+      await nodeMkdir(dirPath);
+      await nodeWriteFile(join(dirPath, "file.txt"), "content", "utf-8");
 
       await expect(fs.rm(dirPath)).rejects.toThrow(FileSystemError);
 
@@ -344,7 +353,7 @@ describe("DefaultFileSystemLayer", () => {
         await fs.rm(dirPath);
       } catch (error) {
         expect(error).toBeInstanceOf(FileSystemError);
-        expect((error as FileSystemError).fsCode).toBe("EISDIR");
+        expect((error as FileSystemError).fsCode).toBe("ENOTEMPTY");
         expect((error as FileSystemError).path).toBe(dirPath);
       }
     });

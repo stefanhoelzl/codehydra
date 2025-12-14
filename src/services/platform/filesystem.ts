@@ -282,8 +282,26 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     const recursive = options?.recursive ?? false;
     const force = options?.force ?? false;
     try {
-      await fs.rm(path, { recursive, force });
+      if (recursive) {
+        // Use fs.rm for recursive deletion
+        await fs.rm(path, { recursive, force });
+      } else {
+        // For non-recursive: check if directory or file
+        const stat = await fs.stat(path);
+        if (stat.isDirectory()) {
+          // Use rmdir for directories - fails with ENOTEMPTY if not empty
+          await fs.rmdir(path);
+        } else {
+          // Use rm for files
+          await fs.rm(path, { force });
+        }
+      }
     } catch (error) {
+      // Handle ENOENT when force is true
+      const nodeError = error as NodeJS.ErrnoException;
+      if (force && nodeError.code === "ENOENT") {
+        return;
+      }
       throw mapError(error, path);
     }
   }
