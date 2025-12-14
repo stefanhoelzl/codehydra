@@ -121,12 +121,19 @@ export class ProjectStore {
       return;
     }
 
-    // Try to remove the directory
-    // Using rm() with recursive: true to match the original rmdir intent
+    // Try to remove the workspaces subdirectory (only succeeds if empty)
+    const workspacesDir = path.join(projectDir, "workspaces");
     try {
-      await this.fs.rm(projectDir, { recursive: true });
+      await this.fs.rm(workspacesDir);
     } catch {
-      // Directory not empty or doesn't exist - that's fine
+      // ENOTEMPTY (workspaces exist) or ENOENT (doesn't exist) - that's fine
+    }
+
+    // Try to remove the project directory (only succeeds if empty)
+    try {
+      await this.fs.rm(projectDir);
+    } catch {
+      // ENOTEMPTY or ENOENT - that's fine
     }
   }
 }

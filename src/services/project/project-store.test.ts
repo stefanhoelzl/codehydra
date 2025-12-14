@@ -265,9 +265,9 @@ describe("ProjectStore", () => {
   });
 
   describe("removeProject", () => {
-    it("removes config.json and empty directory", async () => {
+    it("removes config.json, workspaces dir, and project dir without recursive flag", async () => {
       const unlinkedPaths: string[] = [];
-      const removedDirs: string[] = [];
+      const rmCalls: Array<{ path: string; recursive: boolean | undefined }> = [];
 
       const mockFs = createMockFileSystemLayer({
         unlink: {
@@ -276,8 +276,8 @@ describe("ProjectStore", () => {
           },
         },
         rm: {
-          implementation: async (path) => {
-            removedDirs.push(path);
+          implementation: async (path, options) => {
+            rmCalls.push({ path, recursive: options?.recursive });
           },
         },
       });
@@ -286,11 +286,15 @@ describe("ProjectStore", () => {
       await store.removeProject("/home/user/projects/my-repo");
 
       // Verify config.json was deleted
-      expect(unlinkedPaths.length).toBe(1);
+      expect(unlinkedPaths).toHaveLength(1);
       expect(unlinkedPaths[0]).toContain("config.json");
 
-      // Verify directory removal was attempted
-      expect(removedDirs.length).toBe(1);
+      // Verify both workspaces/ and project dir removal were attempted
+      // Both should be WITHOUT recursive flag to preserve existing workspaces
+      expect(rmCalls).toHaveLength(2);
+      expect(rmCalls[0]?.path).toContain("workspaces");
+      expect(rmCalls[0]?.recursive).not.toBe(true);
+      expect(rmCalls[1]?.recursive).not.toBe(true);
     });
 
     it("does not throw if project was not saved (ENOENT)", async () => {
@@ -308,7 +312,7 @@ describe("ProjectStore", () => {
       ).resolves.toBeUndefined();
     });
 
-    it("preserves directory if not empty", async () => {
+    it("preserves directory when workspaces exist (ENOTEMPTY)", async () => {
       const unlinkedPaths: string[] = [];
 
       const mockFs = createMockFileSystemLayer({
@@ -318,18 +322,19 @@ describe("ProjectStore", () => {
           },
         },
         rm: {
-          // Simulate directory not empty (EISDIR indicates rm failed because it's a directory)
-          error: new FileSystemError("EISDIR", "/path", "Is a directory"),
+          // rm() without recursive fails with ENOTEMPTY when directory has contents
+          error: new FileSystemError("ENOTEMPTY", "/path", "Directory not empty"),
         },
       });
 
       const store = new ProjectStore(projectsDir, mockFs);
 
-      // Should not throw even if rm fails
+      // Should not throw - workspaces are intentionally preserved
       await expect(store.removeProject("/home/user/projects/my-repo")).resolves.toBeUndefined();
 
       // config.json should still be deleted
-      expect(unlinkedPaths.length).toBe(1);
+      expect(unlinkedPaths).toHaveLength(1);
+      expect(unlinkedPaths[0]).toContain("config.json");
     });
   });
 });
