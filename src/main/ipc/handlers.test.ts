@@ -76,6 +76,24 @@ describe("registerHandler", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("throws Error instance with serialized message for handler errors", async () => {
+    const schema = z.object({ path: z.string() });
+    const handler = vi
+      .fn()
+      .mockRejectedValue(new WorkspaceError("Branch not found", "BRANCH_NOT_FOUND"));
+
+    registerHandler("project:open", schema, handler);
+
+    const registeredWrapper = mockHandle.mock.calls[0]?.[1] as (
+      event: unknown,
+      payload: unknown
+    ) => Promise<unknown>;
+
+    // Should throw an Error instance (not a plain object) with the error message
+    await expect(registeredWrapper({}, { path: "/test" })).rejects.toThrow(Error);
+    await expect(registeredWrapper({}, { path: "/test" })).rejects.toThrow("Branch not found");
+  });
+
   it("allows void schema for handlers without payload", async () => {
     const handler = vi.fn().mockResolvedValue([]);
 

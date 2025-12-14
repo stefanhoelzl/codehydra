@@ -83,8 +83,11 @@ export function registerHandler<K extends keyof IpcCommands>(
       // Execute handler
       return await handler(event, validatedPayload as IpcCommands[K]["payload"]);
     } catch (error) {
-      // Serialize and re-throw for IPC
-      throw serializeError(error);
+      // Serialize error and throw as Error instance for proper IPC transport.
+      // Electron's ipcMain.handle() expects Error instances - throwing plain objects
+      // results in unusable error messages in the renderer.
+      const serialized = serializeError(error);
+      throw new Error(serialized.message);
     }
   });
 }
