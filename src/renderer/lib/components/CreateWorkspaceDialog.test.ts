@@ -394,6 +394,73 @@ describe("CreateWorkspaceDialog component", () => {
 
       expect(mockCloseDialog).toHaveBeenCalled();
     });
+
+    it("Enter on name input submits form when valid", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // Fill valid name
+      const nameInput = getNameInput();
+      await fireEvent.input(nameInput, { target: { value: "valid-name" } });
+
+      // Select a branch
+      const branchDropdown = getBranchDropdown();
+      await fireEvent.focus(branchDropdown);
+      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
+      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+
+      // Press Enter on name input
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
+
+      expect(mockCreateWorkspace).toHaveBeenCalledWith(
+        defaultProps.projectPath,
+        "valid-name",
+        expect.any(String)
+      );
+    });
+
+    it("Enter on name input does not submit when form invalid", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // Leave name empty, just press Enter
+      const nameInput = getNameInput();
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
+
+      expect(mockCreateWorkspace).not.toHaveBeenCalled();
+    });
+
+    it("Enter on name input does not submit while already submitting", async () => {
+      // Delay the API response to keep form in submitting state
+      mockCreateWorkspace.mockImplementation(
+        () => new Promise((resolve) => setTimeout(resolve, 1000))
+      );
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // Fill valid form
+      const nameInput = getNameInput();
+      await fireEvent.input(nameInput, { target: { value: "valid-name" } });
+
+      const branchDropdown = getBranchDropdown();
+      await fireEvent.focus(branchDropdown);
+      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
+      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+
+      // Submit via Enter
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+
+      // Try to submit again via Enter while still submitting
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+
+      // Should only have been called once
+      expect(mockCreateWorkspace).toHaveBeenCalledTimes(1);
+
+      await vi.runAllTimersAsync();
+    });
   });
 
   describe("submit flow", () => {

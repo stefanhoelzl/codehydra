@@ -95,6 +95,14 @@
     nameError = validateName(name);
   }
 
+  // Handle Enter key on name input to submit form
+  function handleNameKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter" && isFormValid && !isSubmitting) {
+      event.preventDefault();
+      handleSubmit();
+    }
+  }
+
   // Handle branch selection
   function handleBranchSelect(branch: string): void {
     selectedBranch = branch;
@@ -149,9 +157,12 @@
       <vscode-textfield
         bind:this={nameInputRef}
         id="workspace-name"
+        role="textbox"
+        tabindex="0"
         value={name}
         oninput={handleNameInput}
         onblur={handleNameBlur}
+        onkeydown={handleNameKeydown}
         disabled={isSubmitting}
         aria-describedby={nameErrorId}
         invalid={nameError ? true : undefined}
