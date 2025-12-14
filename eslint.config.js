@@ -38,5 +38,11 @@ export default tseslint.config(
         parser: tseslint.parser,
       },
     },
+  },
+  {
+    files: ["**/*.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
   }
 );
