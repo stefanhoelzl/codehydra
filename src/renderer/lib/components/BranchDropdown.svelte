@@ -15,6 +15,7 @@
   let branches = $state<BaseInfo[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let hasValidatedInitialValue = $state(false);
 
   // Load branches on mount or when projectPath changes
   $effect(() => {
@@ -30,6 +31,27 @@
         error = err instanceof Error ? err.message : "Failed to load branches";
         loading = false;
       });
+  });
+
+  // Reset validation flag when value prop changes from parent
+  // This allows re-validation if parent updates value dynamically
+  $effect(() => {
+    // Track value to create dependency
+    void value;
+    // Reset flag so validation runs again with new value
+    hasValidatedInitialValue = false;
+  });
+
+  // Validate initial value exists in branches after loading
+  $effect(() => {
+    // Only validate once after branches load
+    if (loading || hasValidatedInitialValue) return;
+    hasValidatedInitialValue = true;
+
+    // If value is set but doesn't exist in branches, clear it
+    if (value && !branches.some((b) => b.name === value)) {
+      onSelect(""); // Notify parent the value is invalid
+    }
   });
 
   /**

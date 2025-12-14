@@ -253,6 +253,15 @@ They can click "Open Project" to try again.
 7. Git worktree created in managed location (NOT in main directory)
 8. New workspace becomes active
 
+**Default branch pre-selection:**
+
+- When creating a workspace, the Base Branch dropdown is pre-populated with a default:
+  - **Within a session**: The last-used base branch for that project is remembered
+  - **First time / new session**: Falls back to `main` or `master` (whichever exists, preferring `main`)
+  - **If neither exists**: Dropdown starts empty, user must select manually
+- If the pre-selected branch no longer exists (e.g., was deleted), the dropdown clears and shows an empty selection
+- The last-used branch is stored in memory only (not persisted across app restarts)
+
 **Workspace name validation rules:**
 
 - Must start with letter or number

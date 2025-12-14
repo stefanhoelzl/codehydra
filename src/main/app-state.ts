@@ -37,6 +37,7 @@ export class AppState {
   private readonly pathProvider: PathProvider;
   private readonly codeServerPort: number;
   private readonly openProjects: Map<string, OpenProject> = new Map();
+  private readonly lastBaseBranches: Map<string, string> = new Map();
   private discoveryService: DiscoveryService | null = null;
   private agentStatusManager: AgentStatusManager | null = null;
 
@@ -81,6 +82,46 @@ export class AppState {
   }
 
   /**
+   * Sets the last used base branch for a project.
+   * This is used to remember the user's branch selection within a session.
+   *
+   * @param projectPath - Path to the project
+   * @param branch - Branch name that was used
+   */
+  setLastBaseBranch(projectPath: string, branch: string): void {
+    this.lastBaseBranches.set(projectPath, branch);
+  }
+
+  /**
+   * Gets the default base branch for a project.
+   * Returns the last used branch if set, otherwise falls back to provider's defaultBase().
+   *
+   * @param projectPath - Path to the project
+   * @returns The default branch name, or undefined if not determinable
+   */
+  async getDefaultBaseBranch(projectPath: string): Promise<string | undefined> {
+    // Check runtime cache first
+    const lastBranch = this.lastBaseBranches.get(projectPath);
+    if (lastBranch) {
+      return lastBranch;
+    }
+
+    // Fall back to provider's default
+    const provider = this.getWorkspaceProvider(projectPath);
+    if (!provider) {
+      return undefined;
+    }
+
+    try {
+      return await provider.defaultBase();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.warn(`Failed to get default base branch: ${message}`);
+      return undefined;
+    }
+  }
+
+  /**
    * Opens a project by path.
    * Validates it's a git repository, discovers workspaces, creates views.
    *
@@ -119,14 +160,28 @@ export class AppState {
     const firstWorkspace = workspaces[0];
     this.viewManager.setActiveWorkspace(firstWorkspace?.path ?? null);
 
-    // Create project object
+    // Store in internal state first (needed for getDefaultBaseBranch to work)
+    this.openProjects.set(projectPath, {
+      project: {
+        path: projectPath as ProjectPath,
+        name: path.basename(projectPath),
+        workspaces,
+      },
+      provider,
+    });
+
+    // Get default base branch (uses lastBaseBranches cache or provider fallback)
+    const defaultBaseBranch = await this.getDefaultBaseBranch(projectPath);
+
+    // Create final project object with defaultBaseBranch (only include if defined)
     const project: Project = {
       path: projectPath as ProjectPath,
       name: path.basename(projectPath),
       workspaces,
+      ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
     };
 
-    // Store in internal state
+    // Update stored project with defaultBaseBranch
     this.openProjects.set(projectPath, { project, provider });
 
     // Persist to store
@@ -174,12 +229,20 @@ export class AppState {
   }
 
   /**
-   * Gets all open projects.
+   * Gets all open projects with current defaultBaseBranch.
    *
-   * @returns Array of all open projects
+   * @returns Promise resolving to array of all open projects
    */
-  getAllProjects(): Project[] {
-    return Array.from(this.openProjects.values()).map((p) => p.project);
+  async getAllProjects(): Promise<Project[]> {
+    const result: Project[] = [];
+    for (const openProject of this.openProjects.values()) {
+      const defaultBaseBranch = await this.getDefaultBaseBranch(openProject.project.path);
+      result.push({
+        ...openProject.project,
+        ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+      });
+    }
+    return result;
   }
 
   /**

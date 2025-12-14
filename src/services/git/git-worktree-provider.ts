@@ -236,6 +236,31 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
   }
 
   /**
+   * Returns the default base branch for creating new workspaces.
+   * Checks for "main" first, then "master". Returns undefined if neither exists.
+   *
+   * @returns Promise resolving to "main", "master", or undefined
+   */
+  async defaultBase(): Promise<string | undefined> {
+    try {
+      const bases = await this.listBases();
+      const branchNames = bases.map((b) => b.name);
+
+      if (branchNames.includes("main")) {
+        return "main";
+      }
+      if (branchNames.includes("master")) {
+        return "master";
+      }
+      return undefined;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.warn(`Failed to get default base branch: ${message}`);
+      return undefined;
+    }
+  }
+
+  /**
    * Removes workspace directories that are not registered with git.
    * Handles cases where `git worktree remove` unregistered a worktree
    * but failed to delete its directory (e.g., due to locked files).

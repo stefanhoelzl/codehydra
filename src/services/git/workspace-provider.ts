@@ -77,4 +77,12 @@ export interface IWorkspaceProvider {
    * @returns Promise resolving to cleanup result with count and any failures
    */
   cleanupOrphanedWorkspaces?(): Promise<CleanupResult>;
+
+  /**
+   * Returns the default base branch for creating new workspaces.
+   * Checks for "main" first, then "master". Returns undefined if neither exists.
+   *
+   * @returns Promise resolving to "main", "master", or undefined
+   */
+  defaultBase(): Promise<string | undefined>;
 }

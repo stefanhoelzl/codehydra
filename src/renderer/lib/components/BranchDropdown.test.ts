@@ -478,6 +478,73 @@ describe("BranchDropdown component", () => {
     });
   });
 
+  describe("initial value validation", () => {
+    it("displays initial value prop in input when it exists in loaded branches", async () => {
+      render(BranchDropdown, { props: { ...defaultProps, value: "main" } });
+
+      await vi.runAllTimersAsync();
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+      expect(input.value).toBe("main");
+    });
+
+    it("clears value and calls onSelect empty when initial value not in branch list", async () => {
+      const onSelect = vi.fn();
+      render(BranchDropdown, {
+        props: { ...defaultProps, value: "deleted-branch", onSelect },
+      });
+
+      await vi.runAllTimersAsync();
+
+      // Should have called onSelect with empty string to clear invalid value
+      expect(onSelect).toHaveBeenCalledWith("");
+    });
+
+    it("does not clear value when branches are still loading", async () => {
+      const onSelect = vi.fn();
+
+      // Delay the response to keep loading state
+      mockListBases.mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(allBranches), 1000))
+      );
+
+      render(BranchDropdown, {
+        props: { ...defaultProps, value: "nonexistent", onSelect },
+      });
+
+      // Advance only partially - should still be loading
+      await vi.advanceTimersByTimeAsync(500);
+      await tick();
+
+      // Should NOT have called onSelect while still loading
+      expect(onSelect).not.toHaveBeenCalled();
+
+      // Now finish loading
+      await vi.runAllTimersAsync();
+    });
+
+    it("user can override initial value by selecting different branch", async () => {
+      const onSelect = vi.fn();
+      render(BranchDropdown, { props: { ...defaultProps, value: "main", onSelect } });
+
+      await vi.runAllTimersAsync();
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Clear filter to show all branches
+      await fireEvent.input(input, { target: { value: "" } });
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      // Select a different branch
+      const option = screen.getByText("develop");
+      await fireEvent.mouseDown(option);
+
+      expect(onSelect).toHaveBeenCalledWith("develop");
+    });
+  });
+
   describe("positioning", () => {
     it("dropdown uses fixed positioning when open", async () => {
       render(BranchDropdown, { props: defaultProps });

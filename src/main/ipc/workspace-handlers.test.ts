@@ -55,6 +55,7 @@ function createMockAppState() {
     findProjectForWorkspace: vi.fn(),
     addWorkspace: vi.fn(),
     removeWorkspace: vi.fn(),
+    setLastBaseBranch: vi.fn(),
   };
 }
 
@@ -143,6 +144,151 @@ describe("workspace:create handler", () => {
 
     await expect(handler(mockEvent, payload)).rejects.toThrow("Project not open");
   });
+
+  it("calls appState.setLastBaseBranch() with baseBranch", async () => {
+    const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
+    const mockProvider = createMockProvider();
+
+    const project: Project = {
+      path: "/test/repo" as ProjectPath,
+      name: "repo",
+      workspaces: [],
+    };
+    const workspace: Workspace = {
+      name: "feature-branch",
+      path: "/test/repo/.worktrees/feature-branch",
+      branch: "feature-branch",
+    };
+
+    mockAppState.getProject.mockReturnValue(project);
+    mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
+    mockProvider.createWorkspace.mockResolvedValue(workspace);
+
+    const handler = createWorkspaceCreateHandler(mockAppState, mockViewManager);
+    const payload: WorkspaceCreatePayload = {
+      projectPath: "/test/repo",
+      name: "feature-branch",
+      baseBranch: "develop",
+    };
+
+    await handler(mockEvent, payload);
+
+    expect(mockAppState.setLastBaseBranch).toHaveBeenCalledWith("/test/repo", "develop");
+  });
+
+  it("still returns workspace correctly after saving branch", async () => {
+    const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
+    const mockProvider = createMockProvider();
+
+    const project: Project = {
+      path: "/test/repo" as ProjectPath,
+      name: "repo",
+      workspaces: [],
+    };
+    const workspace: Workspace = {
+      name: "feature-branch",
+      path: "/test/repo/.worktrees/feature-branch",
+      branch: "feature-branch",
+    };
+
+    mockAppState.getProject.mockReturnValue(project);
+    mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
+    mockProvider.createWorkspace.mockResolvedValue(workspace);
+
+    const handler = createWorkspaceCreateHandler(mockAppState, mockViewManager);
+    const payload: WorkspaceCreatePayload = {
+      projectPath: "/test/repo",
+      name: "feature-branch",
+      baseBranch: "main",
+    };
+
+    const result = await handler(mockEvent, payload);
+
+    expect(result).toEqual(workspace);
+    expect(mockAppState.setLastBaseBranch).toHaveBeenCalled();
+  });
+
+  it("calls emitEvent before setLastBaseBranch for correct ordering", async () => {
+    const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
+    const mockProvider = createMockProvider();
+
+    const project: Project = {
+      path: "/test/repo" as ProjectPath,
+      name: "repo",
+      workspaces: [],
+    };
+    const workspace: Workspace = {
+      name: "feature-branch",
+      path: "/test/repo/.worktrees/feature-branch",
+      branch: "feature-branch",
+    };
+
+    mockAppState.getProject.mockReturnValue(project);
+    mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
+    mockProvider.createWorkspace.mockResolvedValue(workspace);
+
+    // Track call order
+    const callOrder: string[] = [];
+    mockEmitEvent.mockImplementation(() => {
+      callOrder.push("emitEvent");
+    });
+    mockAppState.setLastBaseBranch.mockImplementation(() => {
+      callOrder.push("setLastBaseBranch");
+    });
+
+    const handler = createWorkspaceCreateHandler(mockAppState, mockViewManager);
+    const payload: WorkspaceCreatePayload = {
+      projectPath: "/test/repo",
+      name: "feature-branch",
+      baseBranch: "main",
+    };
+
+    await handler(mockEvent, payload);
+
+    // Verify emitEvent is called before setLastBaseBranch
+    expect(callOrder).toEqual(["emitEvent", "setLastBaseBranch"]);
+  });
+
+  it("emits workspace:created event with defaultBaseBranch", async () => {
+    const mockAppState = createMockAppState();
+    const mockViewManager = createMockViewManager();
+    const mockProvider = createMockProvider();
+
+    const project: Project = {
+      path: "/test/repo" as ProjectPath,
+      name: "repo",
+      workspaces: [],
+    };
+    const workspace: Workspace = {
+      name: "feature-branch",
+      path: "/test/repo/.worktrees/feature-branch",
+      branch: "feature-branch",
+    };
+
+    mockAppState.getProject.mockReturnValue(project);
+    mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
+    mockProvider.createWorkspace.mockResolvedValue(workspace);
+    mockEmitEvent.mockClear();
+
+    const handler = createWorkspaceCreateHandler(mockAppState, mockViewManager);
+    const payload: WorkspaceCreatePayload = {
+      projectPath: "/test/repo",
+      name: "feature-branch",
+      baseBranch: "develop",
+    };
+
+    await handler(mockEvent, payload);
+
+    // Verify emitEvent was called with defaultBaseBranch
+    expect(mockEmitEvent).toHaveBeenCalledWith("workspace:created", {
+      projectPath: "/test/repo",
+      workspace,
+      defaultBaseBranch: "develop",
+    });
+  });
 });
 
 describe("workspace:remove handler", () => {
@@ -162,7 +308,7 @@ describe("workspace:remove handler", () => {
 
     mockAppState.findProjectForWorkspace.mockReturnValue(project);
     mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
-    mockAppState.getAllProjects.mockReturnValue([project]);
+    mockAppState.getAllProjects.mockResolvedValue([project]);
     mockProvider.removeWorkspace.mockResolvedValue({ workspaceRemoved: true, baseDeleted: false });
     mockViewManager.getActiveWorkspacePath.mockReturnValue(null); // Not removing active workspace
 
@@ -199,7 +345,7 @@ describe("workspace:remove handler", () => {
     mockAppState.findProjectForWorkspace.mockReturnValue(project);
     mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
     // After removal, ws2 is still in the project
-    mockAppState.getAllProjects.mockReturnValue([
+    mockAppState.getAllProjects.mockResolvedValue([
       {
         ...project,
         workspaces: [{ name: "ws2", path: "/test/repo/.worktrees/ws2", branch: "ws2" }],
@@ -235,7 +381,7 @@ describe("workspace:remove handler", () => {
     mockAppState.findProjectForWorkspace.mockReturnValue(project);
     mockAppState.getWorkspaceProvider.mockReturnValue(mockProvider);
     // After removal, no workspaces remain
-    mockAppState.getAllProjects.mockReturnValue([{ ...project, workspaces: [] }]);
+    mockAppState.getAllProjects.mockResolvedValue([{ ...project, workspaces: [] }]);
     mockProvider.removeWorkspace.mockResolvedValue({ workspaceRemoved: true, baseDeleted: false });
     mockViewManager.getActiveWorkspacePath.mockReturnValue("/test/repo/.worktrees/ws1"); // Removing the active (and only) workspace
 

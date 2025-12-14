@@ -58,8 +58,12 @@ export interface DomainStores {
   addProject: (project: Project) => void;
   /** Remove a project from the store by path */
   removeProject: (path: ProjectPath) => void;
-  /** Add a workspace to a project */
-  addWorkspace: (projectPath: ProjectPath, workspace: Workspace) => void;
+  /** Add a workspace to a project, optionally updating the project's defaultBaseBranch */
+  addWorkspace: (
+    projectPath: ProjectPath,
+    workspace: Workspace,
+    defaultBaseBranch?: string
+  ) => void;
   /** Remove a workspace from a project - projectPath is branded, workspacePath is plain string */
   removeWorkspace: (projectPath: ProjectPath, workspacePath: string) => void;
   /** Set the active workspace - uses plain string to match store */
@@ -132,7 +136,7 @@ export function setupDomainEvents(
   // Workspace events
   unsubscribes.push(
     api.onWorkspaceCreated((event) => {
-      stores.addWorkspace(event.projectPath, event.workspace);
+      stores.addWorkspace(event.projectPath, event.workspace, event.defaultBaseBranch);
       // UI decides: newly created workspace should be selected
       stores.setActiveWorkspace(event.workspace.path);
     })

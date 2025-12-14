@@ -787,6 +787,51 @@ describe("CreateWorkspaceDialog component", () => {
     });
   });
 
+  describe("default branch initialization", () => {
+    it("initializes selectedBranch from project.defaultBaseBranch", async () => {
+      const projectWithDefault = {
+        ...mockProjectsList[0],
+        defaultBaseBranch: "develop",
+      };
+      mockProjectsStore.mockReturnValue([projectWithDefault, mockProjectsList[1]]);
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const branchCombobox = getBranchDropdown() as HTMLInputElement;
+      expect(branchCombobox.value).toBe("develop");
+    });
+
+    it("initializes selectedBranch to empty string when defaultBaseBranch is undefined", async () => {
+      // mockProjectsList[0] has no defaultBaseBranch
+      mockProjectsStore.mockReturnValue(mockProjectsList);
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const branchCombobox = getBranchDropdown() as HTMLInputElement;
+      expect(branchCombobox.value).toBe("");
+    });
+
+    it("form is valid when defaultBaseBranch exists and is valid", async () => {
+      const projectWithDefault = {
+        ...mockProjectsList[0],
+        defaultBaseBranch: "main",
+      };
+      mockProjectsStore.mockReturnValue([projectWithDefault, mockProjectsList[1]]);
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // Fill in just the name - branch should already be set
+      const nameInput = getNameInput();
+      await fireEvent.input(nameInput, { target: { value: "my-feature" } });
+
+      const okButton = screen.getByRole("button", { name: /ok|create/i });
+      expect(okButton).not.toBeDisabled();
+    });
+  });
+
   describe("error handling", () => {
     it('api.createWorkspace failure displays error in role="alert"', async () => {
       mockCreateWorkspace.mockRejectedValue(new Error("Network error"));

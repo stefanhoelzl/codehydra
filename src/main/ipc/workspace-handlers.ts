@@ -27,9 +27,12 @@ import { emitEvent } from "./handlers";
  * Creates a new workspace, creates its view, and sets it as active.
  */
 export function createWorkspaceCreateHandler(
+  // setLastBaseBranch is included to save the base branch used for workspace creation.
+  // This enables the CreateWorkspaceDialog to pre-select the last-used branch as the default
+  // when opening the dialog again for the same project.
   appState: Pick<
     AppState,
-    "getProject" | "getWorkspaceProvider" | "getWorkspaceUrl" | "addWorkspace"
+    "getProject" | "getWorkspaceProvider" | "getWorkspaceUrl" | "addWorkspace" | "setLastBaseBranch"
   >,
   viewManager: Pick<IViewManager, "setActiveWorkspace">
 ): (event: IpcMainInvokeEvent, payload: WorkspaceCreatePayload) => Promise<Workspace> {
@@ -53,11 +56,15 @@ export function createWorkspaceCreateHandler(
     // Set as active workspace (focuses by default)
     viewManager.setActiveWorkspace(workspace.path);
 
-    // Emit event
+    // Emit event with the base branch to update project's defaultBaseBranch in renderer
     emitEvent("workspace:created", {
       projectPath: payload.projectPath as ProjectPath,
       workspace,
+      defaultBaseBranch: payload.baseBranch,
     });
+
+    // Save the base branch as the last used for this project
+    appState.setLastBaseBranch(payload.projectPath, payload.baseBranch);
 
     return workspace;
   };
@@ -103,7 +110,7 @@ export function createWorkspaceRemoveHandler(
 
     // If the removed workspace was active, select the next workspace
     if (wasActive) {
-      const nextWorkspacePath = findNextWorkspace(appState.getAllProjects(), project.path);
+      const nextWorkspacePath = findNextWorkspace(await appState.getAllProjects(), project.path);
       viewManager.setActiveWorkspace(nextWorkspacePath);
 
       // Emit switched event so renderer updates (even when null, so UI shows empty state)

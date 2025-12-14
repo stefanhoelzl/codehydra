@@ -13,6 +13,9 @@
 
   let { open, projectPath }: CreateWorkspaceDialogProps = $props();
 
+  // Get project default base branch
+  const project = $derived(projects.value.find((p) => p.path === projectPath));
+
   // Form state
   // Track user's project selection, null means use the prop value
   let userSelectedProject = $state<string | null>(null);
@@ -20,7 +23,12 @@
   const selectedProject = $derived(userSelectedProject ?? projectPath);
 
   let name = $state("");
-  let selectedBranch = $state("");
+  // Initialize selectedBranch from project's default base branch.
+  // This is initialization-only: the value is captured once when the component mounts.
+  // If the project changes, the dialog should be remounted (closed and reopened) to
+  // pick up the new project's default branch.
+  // svelte-ignore state_referenced_locally
+  let selectedBranch = $state(project?.defaultBaseBranch ?? "");
   let nameError = $state<string | null>(null);
   let submitError = $state<string | null>(null);
   let isSubmitting = $state(false);

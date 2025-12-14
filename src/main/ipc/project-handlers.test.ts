@@ -130,7 +130,7 @@ describe("project:list handler", () => {
       { path: "/test/repo1" as Project["path"], name: "repo1", workspaces: [] },
       { path: "/test/repo2" as Project["path"], name: "repo2", workspaces: [] },
     ];
-    mockAppState.getAllProjects.mockReturnValue(projects);
+    mockAppState.getAllProjects.mockResolvedValue(projects);
     mockViewManager.getActiveWorkspacePath.mockReturnValue("/test/repo1/.worktrees/ws1");
 
     const handler = createProjectListHandler(mockAppState, mockViewManager);
@@ -146,7 +146,7 @@ describe("project:list handler", () => {
 
   it("returns null activeWorkspacePath when no workspace is active", async () => {
     const projects: Project[] = [];
-    mockAppState.getAllProjects.mockReturnValue(projects);
+    mockAppState.getAllProjects.mockResolvedValue(projects);
     mockViewManager.getActiveWorkspacePath.mockReturnValue(null);
 
     const handler = createProjectListHandler(mockAppState, mockViewManager);

@@ -92,6 +92,8 @@ export interface Project {
   readonly path: ProjectPath;
   readonly name: string; // folder name
   readonly workspaces: readonly Workspace[];
+  /** Default base branch for creating workspaces (last used or "main"/"master" fallback) */
+  readonly defaultBaseBranch?: string;
 }
 
 // ============ Agent Status Types ============
@@ -229,6 +231,8 @@ export interface ProjectClosedEvent {
 export interface WorkspaceCreatedEvent {
   readonly projectPath: ProjectPath;
   readonly workspace: Workspace;
+  /** The base branch used for workspace creation (updates project's defaultBaseBranch) */
+  readonly defaultBaseBranch?: string;
 }
 
 export interface WorkspaceRemovedEvent {

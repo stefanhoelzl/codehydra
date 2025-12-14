@@ -51,7 +51,7 @@ export function createProjectListHandler(
 ): (event: IpcMainInvokeEvent, payload: void) => Promise<ProjectListResponse> {
   return async () => {
     return {
-      projects: appState.getAllProjects(),
+      projects: await appState.getAllProjects(),
       activeWorkspacePath: viewManager.getActiveWorkspacePath(),
     };
   };

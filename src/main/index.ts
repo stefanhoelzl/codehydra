@@ -298,7 +298,7 @@ async function startServices(): Promise<void> {
   await appState.loadPersistedProjects();
 
   // Set first workspace active if any projects loaded
-  const projects = appState.getAllProjects();
+  const projects = await appState.getAllProjects();
   if (projects.length > 0) {
     const firstWorkspace = projects[0]?.workspaces[0];
     if (firstWorkspace) {

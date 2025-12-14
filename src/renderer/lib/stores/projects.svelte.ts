@@ -113,9 +113,20 @@ export function setError(message: string): void {
   _loadingError = message;
 }
 
-export function addWorkspace(projectPath: ProjectPath, workspace: Workspace): void {
+export function addWorkspace(
+  projectPath: ProjectPath,
+  workspace: Workspace,
+  defaultBaseBranch?: string
+): void {
   _projects = _projects.map((p) =>
-    p.path === projectPath ? { ...p, workspaces: [...p.workspaces, workspace] } : p
+    p.path === projectPath
+      ? {
+          ...p,
+          workspaces: [...p.workspaces, workspace],
+          // Update defaultBaseBranch if provided (remembers last-used branch for next workspace creation)
+          ...(defaultBaseBranch !== undefined ? { defaultBaseBranch } : {}),
+        }
+      : p
   );
 }
 

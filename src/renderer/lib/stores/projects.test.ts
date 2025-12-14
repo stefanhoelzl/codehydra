@@ -252,6 +252,48 @@ describe("projects store", () => {
       expect(projects.value[0]?.workspaces).toHaveLength(1);
       expect(projects.value[0]?.workspaces[0]).toEqual(newWorkspace);
     });
+
+    it("updates project defaultBaseBranch when provided", () => {
+      const project = createMockProject({
+        path: "/test/project" as ProjectPath,
+        workspaces: [],
+      });
+      addProject(project);
+
+      const newWorkspace = createMockWorkspace({ path: "/test/project/.worktrees/new" });
+      addWorkspace("/test/project" as ProjectPath, newWorkspace, "develop");
+
+      expect(projects.value[0]?.defaultBaseBranch).toBe("develop");
+    });
+
+    it("does not update defaultBaseBranch when not provided", () => {
+      const project = createMockProject({
+        path: "/test/project" as ProjectPath,
+        workspaces: [],
+        defaultBaseBranch: "main",
+      });
+      addProject(project);
+
+      const newWorkspace = createMockWorkspace({ path: "/test/project/.worktrees/new" });
+      addWorkspace("/test/project" as ProjectPath, newWorkspace);
+
+      // Should preserve existing defaultBaseBranch
+      expect(projects.value[0]?.defaultBaseBranch).toBe("main");
+    });
+
+    it("overwrites existing defaultBaseBranch when new value provided", () => {
+      const project = createMockProject({
+        path: "/test/project" as ProjectPath,
+        workspaces: [],
+        defaultBaseBranch: "main",
+      });
+      addProject(project);
+
+      const newWorkspace = createMockWorkspace({ path: "/test/project/.worktrees/new" });
+      addWorkspace("/test/project" as ProjectPath, newWorkspace, "feature/new-base");
+
+      expect(projects.value[0]?.defaultBaseBranch).toBe("feature/new-base");
+    });
   });
 
   describe("removeWorkspace", () => {

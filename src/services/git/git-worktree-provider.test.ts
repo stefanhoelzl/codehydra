@@ -800,6 +800,108 @@ describe("GitWorktreeProvider", () => {
     });
   });
 
+  describe("defaultBase", () => {
+    it("returns 'main' when main branch exists", async () => {
+      const branches: BranchInfo[] = [
+        { name: "main", isRemote: false },
+        { name: "feature", isRemote: false },
+      ];
+      const mockClient = createMockGitClient({
+        listBranches: vi.fn().mockResolvedValue(branches),
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      const result = await provider.defaultBase();
+
+      expect(result).toBe("main");
+    });
+
+    it("returns 'master' when only master exists (no main)", async () => {
+      const branches: BranchInfo[] = [
+        { name: "master", isRemote: false },
+        { name: "feature", isRemote: false },
+      ];
+      const mockClient = createMockGitClient({
+        listBranches: vi.fn().mockResolvedValue(branches),
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      const result = await provider.defaultBase();
+
+      expect(result).toBe("master");
+    });
+
+    it("returns 'main' when both main and master exist", async () => {
+      const branches: BranchInfo[] = [
+        { name: "master", isRemote: false },
+        { name: "main", isRemote: false },
+        { name: "feature", isRemote: false },
+      ];
+      const mockClient = createMockGitClient({
+        listBranches: vi.fn().mockResolvedValue(branches),
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      const result = await provider.defaultBase();
+
+      expect(result).toBe("main");
+    });
+
+    it("returns undefined when neither main nor master exists", async () => {
+      const branches: BranchInfo[] = [
+        { name: "feature", isRemote: false },
+        { name: "develop", isRemote: false },
+      ];
+      const mockClient = createMockGitClient({
+        listBranches: vi.fn().mockResolvedValue(branches),
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      const result = await provider.defaultBase();
+
+      expect(result).toBeUndefined();
+    });
+
+    it("returns undefined when listBases() throws (error handling)", async () => {
+      const mockClient = createMockGitClient({
+        listBranches: vi.fn().mockRejectedValue(new Error("Git error")),
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      const result = await provider.defaultBase();
+
+      expect(result).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+  });
+
   describe("cleanupOrphanedWorkspaces", () => {
     it("removes orphaned directories", async () => {
       const worktrees: WorktreeInfo[] = [

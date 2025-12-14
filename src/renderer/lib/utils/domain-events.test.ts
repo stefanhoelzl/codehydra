@@ -234,11 +234,37 @@ describe("setupDomainEvents", () => {
       };
       workspaceCreatedCallback!(event);
 
-      // Verify workspace was added
-      expect(mockStores.addWorkspace).toHaveBeenCalledWith("/test/project", event.workspace);
+      // Verify workspace was added (with undefined defaultBaseBranch since not in event)
+      expect(mockStores.addWorkspace).toHaveBeenCalledWith(
+        "/test/project",
+        event.workspace,
+        undefined
+      );
       // Verify it was set as active (UI decides new workspace should be selected)
       expect(mockStores.setActiveWorkspace).toHaveBeenCalledWith(
         "/test/project/.worktrees/feature"
+      );
+    });
+
+    it("passes defaultBaseBranch to addWorkspace when provided in event", () => {
+      setupDomainEvents(mockApi, mockStores);
+
+      const event: WorkspaceCreatedEvent = {
+        projectPath: "/test/project" as ProjectPath,
+        workspace: {
+          path: "/test/project/.worktrees/feature",
+          name: "feature",
+          branch: "feature",
+        },
+        defaultBaseBranch: "develop",
+      };
+      workspaceCreatedCallback!(event);
+
+      // Verify workspace was added with defaultBaseBranch
+      expect(mockStores.addWorkspace).toHaveBeenCalledWith(
+        "/test/project",
+        event.workspace,
+        "develop"
       );
     });
   });
