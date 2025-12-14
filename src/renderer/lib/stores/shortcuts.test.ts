@@ -551,7 +551,7 @@ describe("shortcuts store", () => {
 
         handleKeyDown(new KeyboardEvent("keydown", { key: "Enter" }));
 
-        expect(mockDialogState.openCreateDialog).toHaveBeenCalledWith("/project", null);
+        expect(mockDialogState.openCreateDialog).toHaveBeenCalledWith("/project");
         expect(shortcutModeActive.value).toBe(false);
       });
 
@@ -572,7 +572,7 @@ describe("shortcuts store", () => {
 
         handleKeyDown(new KeyboardEvent("keydown", { key: "Delete" }));
 
-        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith("/workspace", null);
+        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith("/workspace");
         expect(shortcutModeActive.value).toBe(false);
       });
 
@@ -582,7 +582,7 @@ describe("shortcuts store", () => {
         handleShortcutEnable();
         handleKeyDown(new KeyboardEvent("keydown", { key: "Backspace" }));
 
-        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith("/workspace", null);
+        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith("/workspace");
       });
 
       it("should-not-open-remove-dialog-when-no-active-workspace", () => {

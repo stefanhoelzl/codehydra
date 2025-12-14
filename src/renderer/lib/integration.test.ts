@@ -569,6 +569,88 @@ describe("Integration tests", () => {
         expect(screen.getByRole("dialog")).toBeInTheDocument();
       });
     });
+
+    it("focuses active workspace when dialog closes", async () => {
+      const workspace = createWorkspace("main", "/test/my-project");
+      const project = createProject("my-project", [workspace]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [project],
+        activeWorkspacePath: asWorkspacePath(workspace.path),
+      });
+
+      render(App);
+
+      // Wait for initial load and active workspace to be set
+      await waitFor(() => {
+        expect(screen.getByText("my-project")).toBeInTheDocument();
+        expect(projectsStore.activeWorkspacePath.value).toBe(workspace.path);
+      });
+
+      // Open create dialog
+      const addButton = screen.getByLabelText(/add workspace/i);
+      await fireEvent.click(addButton);
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+
+      // Clear calls
+      mockApi.setDialogMode.mockClear();
+      mockApi.focusActiveWorkspace.mockClear();
+
+      // Close dialog via Cancel button
+      const cancelButton = screen.getByRole("button", { name: /cancel/i });
+      await fireEvent.click(cancelButton);
+
+      // Wait for dialog to close
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+
+      // Verify both setDialogMode(false) AND focusActiveWorkspace() were called
+      expect(mockApi.setDialogMode).toHaveBeenCalledWith(false);
+      expect(mockApi.focusActiveWorkspace).toHaveBeenCalled();
+    });
+
+    it("does NOT focus workspace when dialog closes and no active workspace", async () => {
+      const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
+      mockApi.listProjects.mockResolvedValue({
+        projects: [project],
+        activeWorkspacePath: null, // No active workspace
+      });
+
+      render(App);
+
+      // Wait for initial load
+      await waitFor(() => {
+        expect(screen.getByText("my-project")).toBeInTheDocument();
+      });
+
+      // Open create dialog
+      const addButton = screen.getByLabelText(/add workspace/i);
+      await fireEvent.click(addButton);
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+
+      // Clear calls
+      mockApi.setDialogMode.mockClear();
+      mockApi.focusActiveWorkspace.mockClear();
+
+      // Close dialog via Cancel button
+      const cancelButton = screen.getByRole("button", { name: /cancel/i });
+      await fireEvent.click(cancelButton);
+
+      // Wait for dialog to close
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+
+      // Verify setDialogMode(false) was called but NOT focusActiveWorkspace()
+      expect(mockApi.setDialogMode).toHaveBeenCalledWith(false);
+      expect(mockApi.focusActiveWorkspace).not.toHaveBeenCalled();
+    });
   });
 
   describe("state consistency", () => {

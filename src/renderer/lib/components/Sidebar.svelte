@@ -51,8 +51,8 @@
     onOpenProject: () => void;
     onCloseProject: (path: ProjectPath) => void;
     onSwitchWorkspace: (path: string) => void;
-    onOpenCreateDialog: (projectPath: string, triggerId: string) => void;
-    onOpenRemoveDialog: (workspacePath: string, triggerId: string) => void;
+    onOpenCreateDialog: (projectPath: string) => void;
+    onOpenRemoveDialog: (workspacePath: string) => void;
   }
 
   let {
@@ -81,13 +81,11 @@
   );
 
   function handleAddWorkspace(projectPath: ProjectPath): void {
-    const triggerId = `add-ws-${projectPath}`;
-    onOpenCreateDialog(projectPath, triggerId);
+    onOpenCreateDialog(projectPath);
   }
 
   function handleRemoveWorkspace(workspacePath: string): void {
-    const triggerId = `remove-ws-${workspacePath}`;
-    onOpenRemoveDialog(workspacePath, triggerId);
+    onOpenRemoveDialog(workspacePath);
   }
 </script>
 

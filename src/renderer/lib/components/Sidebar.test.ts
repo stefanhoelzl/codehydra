@@ -168,7 +168,7 @@ describe("Sidebar component", () => {
       const addButton = screen.getByLabelText(/add workspace/i);
       await fireEvent.click(addButton);
 
-      expect(onOpenCreateDialog).toHaveBeenCalledWith("/test/project", expect.any(String));
+      expect(onOpenCreateDialog).toHaveBeenCalledWith("/test/project");
     });
 
     it("[x] on project calls closeProject", async () => {
@@ -197,7 +197,7 @@ describe("Sidebar component", () => {
       const removeButton = screen.getByLabelText(/remove workspace/i);
       await fireEvent.click(removeButton);
 
-      expect(onOpenRemoveDialog).toHaveBeenCalledWith("/test/.worktrees/ws1", expect.any(String));
+      expect(onOpenRemoveDialog).toHaveBeenCalledWith("/test/.worktrees/ws1");
     });
 
     it("clicking workspace calls switchWorkspace", async () => {

@@ -46,10 +46,14 @@
   // Container ref for focus management
   let containerRef: HTMLElement;
 
-  // Sync dialog state with main process z-order
+  // Sync dialog state with main process z-order and focus
   $effect(() => {
     const isDialogOpen = dialogState.value.type !== "closed";
     void api.setDialogMode(isDialogOpen);
+    // When dialog closes and there's an active workspace, focus it
+    if (!isDialogOpen && activeWorkspacePath.value) {
+      void api.focusActiveWorkspace();
+    }
   });
 
   // Initialize and subscribe to domain events on mount
@@ -110,7 +114,7 @@
         // Auto-open create dialog when project has no workspaces
         onProjectOpenedHook: (project) => {
           if (project.workspaces.length === 0 && dialogState.value.type === "closed") {
-            openCreateDialog(project.path, null);
+            openCreateDialog(project.path);
           }
         },
       },
@@ -153,13 +157,13 @@
   }
 
   // Handle opening create dialog
-  function handleOpenCreateDialog(projectPath: string, triggerId: string): void {
-    openCreateDialog(projectPath, triggerId);
+  function handleOpenCreateDialog(projectPath: string): void {
+    openCreateDialog(projectPath);
   }
 
   // Handle opening remove dialog
-  function handleOpenRemoveDialog(workspacePath: string, triggerId: string): void {
-    openRemoveDialog(workspacePath, triggerId);
+  function handleOpenRemoveDialog(workspacePath: string): void {
+    openRemoveDialog(workspacePath);
   }
 </script>
 

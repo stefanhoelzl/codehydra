@@ -107,7 +107,7 @@ describe("App component", () => {
       render(App);
 
       // Open create dialog
-      dialogsStore.openCreateDialog("/test/project", null);
+      dialogsStore.openCreateDialog("/test/project");
 
       // Wait for dialog to appear
       await waitFor(() => {
@@ -123,7 +123,7 @@ describe("App component", () => {
       render(App);
 
       // Open remove dialog
-      dialogsStore.openRemoveDialog("/test/.worktrees/feature", null);
+      dialogsStore.openRemoveDialog("/test/.worktrees/feature");
 
       // Wait for dialog to appear
       await waitFor(() => {

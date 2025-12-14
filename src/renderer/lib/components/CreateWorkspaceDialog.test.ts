@@ -45,7 +45,6 @@ vi.mock("$lib/stores/projects.svelte.js", () => ({
 // Mock $lib/stores/dialogs.svelte.js
 vi.mock("$lib/stores/dialogs.svelte.js", () => ({
   closeDialog: mockCloseDialog,
-  getTriggerElement: vi.fn().mockReturnValue(null),
 }));
 
 // Import component after mocks

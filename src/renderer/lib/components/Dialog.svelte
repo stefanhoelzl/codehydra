@@ -2,7 +2,6 @@
   import type { Snippet } from "svelte";
   import { tick } from "svelte";
   import { createFocusTrap } from "$lib/utils/focus-trap";
-  import { getTriggerElement } from "$lib/stores/dialogs.svelte.js";
 
   interface DialogProps {
     open: boolean;
@@ -42,9 +41,7 @@
 
     return () => {
       trap.deactivate();
-      // Return focus to trigger element
-      const triggerElement = getTriggerElement();
-      triggerElement?.focus();
+      // Focus is handled by MainView's $effect when dialog closes
     };
   });
 

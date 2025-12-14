@@ -408,7 +408,7 @@ describe("MainView component", () => {
       mockApi.setDialogMode.mockClear();
 
       // Open a dialog
-      dialogsStore.openCreateDialog("/test/project", null);
+      dialogsStore.openCreateDialog("/test/project");
 
       await waitFor(() => {
         expect(mockApi.setDialogMode).toHaveBeenCalledWith(true);
@@ -417,7 +417,7 @@ describe("MainView component", () => {
 
     it("calls setDialogMode(false) when dialog closes", async () => {
       // Start with dialog open
-      dialogsStore.openCreateDialog("/test/project", null);
+      dialogsStore.openCreateDialog("/test/project");
 
       render(MainView);
 
@@ -436,6 +436,91 @@ describe("MainView component", () => {
         expect(mockApi.setDialogMode).toHaveBeenCalledWith(false);
       });
     });
+
+    it("calls focusActiveWorkspace() when dialog closes and workspace is active", async () => {
+      const projectWithWorkspace: Project[] = [
+        {
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [
+            {
+              path: asWorkspacePath("/test/.worktrees/feature"),
+              name: "feature",
+              branch: "feature",
+            },
+          ],
+        },
+      ];
+      mockApi.listProjects.mockResolvedValue({
+        projects: projectWithWorkspace,
+        activeWorkspacePath: asWorkspacePath("/test/.worktrees/feature"),
+      });
+
+      render(MainView);
+
+      // Wait for mount and active workspace to be set
+      await waitFor(() => {
+        expect(projectsStore.activeWorkspacePath.value).toBe("/test/.worktrees/feature");
+      });
+
+      // Open a dialog
+      dialogsStore.openCreateDialog("/test/project");
+
+      await waitFor(() => {
+        expect(mockApi.setDialogMode).toHaveBeenCalledWith(true);
+      });
+
+      // Clear calls
+      mockApi.setDialogMode.mockClear();
+      mockApi.focusActiveWorkspace.mockClear();
+
+      // Close dialog
+      dialogsStore.closeDialog();
+
+      await waitFor(() => {
+        expect(mockApi.setDialogMode).toHaveBeenCalledWith(false);
+        expect(mockApi.focusActiveWorkspace).toHaveBeenCalled();
+      });
+    });
+
+    it("does NOT call focusActiveWorkspace() when dialog closes and no workspace is active", async () => {
+      // No active workspace
+      mockApi.listProjects.mockResolvedValue({ projects: [], activeWorkspacePath: null });
+
+      render(MainView);
+
+      // Wait for mount
+      await waitFor(() => {
+        expect(mockApi.listProjects).toHaveBeenCalled();
+      });
+
+      // Open a dialog (need a project for create dialog)
+      const project: Project = {
+        path: asProjectPath("/test/project"),
+        name: "test-project",
+        workspaces: [],
+      };
+      projectsStore.setProjects([project]);
+      dialogsStore.openCreateDialog("/test/project");
+
+      await waitFor(() => {
+        expect(mockApi.setDialogMode).toHaveBeenCalledWith(true);
+      });
+
+      // Clear calls
+      mockApi.setDialogMode.mockClear();
+      mockApi.focusActiveWorkspace.mockClear();
+
+      // Close dialog
+      dialogsStore.closeDialog();
+
+      await waitFor(() => {
+        expect(mockApi.setDialogMode).toHaveBeenCalledWith(false);
+      });
+
+      // focusActiveWorkspace should NOT be called when no active workspace
+      expect(mockApi.focusActiveWorkspace).not.toHaveBeenCalled();
+    });
   });
 
   describe("dialogs", () => {
@@ -448,7 +533,7 @@ describe("MainView component", () => {
       });
 
       // Open create dialog
-      dialogsStore.openCreateDialog("/test/project", null);
+      dialogsStore.openCreateDialog("/test/project");
 
       await waitFor(() => {
         const dialog = screen.getByRole("dialog");
@@ -466,7 +551,7 @@ describe("MainView component", () => {
       });
 
       // Open remove dialog
-      dialogsStore.openRemoveDialog("/test/.worktrees/feature", null);
+      dialogsStore.openRemoveDialog("/test/.worktrees/feature");
 
       await waitFor(() => {
         const dialog = screen.getByRole("dialog");
@@ -685,7 +770,7 @@ describe("MainView component", () => {
       });
 
       // Open a remove dialog first
-      dialogsStore.openRemoveDialog("/test/.worktrees/feature", null);
+      dialogsStore.openRemoveDialog("/test/.worktrees/feature");
 
       expect(dialogsStore.dialogState.value.type).toBe("remove");
 

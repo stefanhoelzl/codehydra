@@ -199,13 +199,13 @@ function handleDialog(key: DialogKey): void {
     if (!projectPath) return;
     // Deactivate mode without calling full exitShortcutMode to avoid z-order thrashing
     _shortcutModeActive = false;
-    openCreateDialog(projectPath, null);
+    openCreateDialog(projectPath);
   } else {
     // Delete or Backspace
     const workspacePath = activeWorkspacePath.value;
     if (!workspacePath) return;
     _shortcutModeActive = false;
-    openRemoveDialog(workspacePath, null);
+    openRemoveDialog(workspacePath);
   }
 }
 
