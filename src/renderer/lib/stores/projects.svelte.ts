@@ -14,12 +14,27 @@ let _loadingError = $state<string | null>(null);
 
 // ============ Derived ============
 
+/**
+ * Projects sorted alphabetically (AaBbCc ordering) with their workspaces also sorted.
+ * This is the canonical order used for display and navigation.
+ */
+const _sortedProjects = $derived(
+  [...(_projects ?? [])]
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { caseFirst: "upper" }))
+    .map((p) => ({
+      ...p,
+      workspaces: [...p.workspaces].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
+      ),
+    }))
+);
+
 const _activeProject = $derived<Project | undefined>(
-  _projects.find((p) => p.workspaces.some((w) => w.path === _activeWorkspacePath))
+  _sortedProjects.find((p) => p.workspaces.some((w) => w.path === _activeWorkspacePath))
 );
 
 const _flatWorkspaceList = $derived(
-  _projects.flatMap((p) =>
+  _sortedProjects.flatMap((p) =>
     p.workspaces.map((w) => ({
       projectPath: p.path,
       workspace: w,
@@ -31,7 +46,7 @@ const _flatWorkspaceList = $derived(
 
 export const projects = {
   get value() {
-    return _projects;
+    return _sortedProjects;
   },
 };
 
@@ -126,11 +141,10 @@ export function reset(): void {
 
 /**
  * Get flat array of all workspaces across all projects.
- * Order: project order, then workspace order within each project.
- * Note: Defensive null check handles edge cases during test cleanup.
+ * Order: alphabetical by project name, then alphabetical by workspace name.
  */
 export function getAllWorkspaces(): Workspace[] {
-  return (_projects ?? []).flatMap((p) => [...p.workspaces]);
+  return projects.value.flatMap((p) => p.workspaces);
 }
 
 /**

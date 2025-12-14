@@ -528,13 +528,13 @@ describe("Sidebar component", () => {
     });
   });
 
-  describe("alphabetical sorting", () => {
-    it("renders projects sorted alphabetically with AaBbCc ordering", () => {
-      const projectCharlie = createMockProject({
-        path: "/charlie" as ProjectPath,
-        name: "charlie",
-        workspaces: [createMockWorkspace({ name: "ws", path: "/charlie/ws" })],
-      });
+  describe("rendering order", () => {
+    // Note: Sorting is handled by the projects store (projects.svelte.ts).
+    // Sidebar renders projects in the order it receives them.
+    // These tests verify Sidebar renders in the provided order.
+
+    it("renders projects in the order provided", () => {
+      // Projects are pre-sorted by the store - Sidebar renders them in that order
       const projectAlphaUpper = createMockProject({
         path: "/Alpha" as ProjectPath,
         name: "Alpha",
@@ -550,12 +550,17 @@ describe("Sidebar component", () => {
         name: "beta",
         workspaces: [createMockWorkspace({ name: "ws", path: "/beta/ws" })],
       });
+      const projectCharlie = createMockProject({
+        path: "/charlie" as ProjectPath,
+        name: "charlie",
+        workspaces: [createMockWorkspace({ name: "ws", path: "/charlie/ws" })],
+      });
 
       render(Sidebar, {
         props: {
           ...defaultProps,
-          // Pass projects in non-alphabetical order
-          projects: [projectCharlie, projectAlphaUpper, projectBeta, projectAlphaLower],
+          // Pass projects in alphabetical order (as the store provides)
+          projects: [projectAlphaUpper, projectAlphaLower, projectBeta, projectCharlie],
         },
       });
 
@@ -566,15 +571,16 @@ describe("Sidebar component", () => {
       expect(names).toEqual(["Alpha", "alpha", "beta", "charlie"]);
     });
 
-    it("renders workspaces sorted alphabetically with AaBbCc ordering", () => {
+    it("renders workspaces in the order provided", () => {
+      // Workspaces are pre-sorted by the store - Sidebar renders them in that order
       const project = createMockProject({
         path: "/test" as ProjectPath,
         workspaces: [
-          createMockWorkspace({ name: "charlie", path: "/test/charlie" }),
           createMockWorkspace({ name: "Alpha", path: "/test/Alpha" }),
-          createMockWorkspace({ name: "beta", path: "/test/beta" }),
           createMockWorkspace({ name: "alpha", path: "/test/alpha" }),
           createMockWorkspace({ name: "Beta", path: "/test/Beta" }),
+          createMockWorkspace({ name: "beta", path: "/test/beta" }),
+          createMockWorkspace({ name: "charlie", path: "/test/charlie" }),
         ],
       });
 
@@ -591,13 +597,14 @@ describe("Sidebar component", () => {
       expect(names).toEqual(["Alpha", "alpha", "Beta", "beta", "charlie"]);
     });
 
-    it("shortcut indices match sorted order", () => {
+    it("shortcut indices match rendered order", () => {
+      // Workspaces are pre-sorted by the store
       const project = createMockProject({
         path: "/test" as ProjectPath,
         workspaces: [
-          createMockWorkspace({ name: "charlie", path: "/test/charlie" }),
           createMockWorkspace({ name: "alpha", path: "/test/alpha" }),
           createMockWorkspace({ name: "beta", path: "/test/beta" }),
+          createMockWorkspace({ name: "charlie", path: "/test/charlie" }),
         ],
       });
 
@@ -605,7 +612,7 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project], shortcutModeActive: true },
       });
 
-      // alpha should be index 1 (first alphabetically)
+      // alpha should be index 1 (first in the list)
       const alphaButton = screen.getByRole("button", { name: /alpha.*press 1 to jump/i });
       expect(alphaButton).toBeInTheDocument();
 

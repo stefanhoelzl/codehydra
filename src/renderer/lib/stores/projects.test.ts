@@ -271,19 +271,21 @@ describe("projects store", () => {
 
   describe("getAllWorkspaces", () => {
     it("should-return-flat-array-of-all-workspaces", () => {
-      const ws1 = createMockWorkspace({ path: "/test/p1/ws1" });
-      const ws2 = createMockWorkspace({ path: "/test/p1/ws2" });
-      const ws3 = createMockWorkspace({ path: "/test/p2/ws3" });
+      const ws1 = createMockWorkspace({ path: "/test/p1/ws1", name: "ws1" });
+      const ws2 = createMockWorkspace({ path: "/test/p1/ws2", name: "ws2" });
+      const ws3 = createMockWorkspace({ path: "/test/p2/ws3", name: "ws3" });
 
       addProject(
         createMockProject({
           path: "/test/p1" as ProjectPath,
+          name: "project-a",
           workspaces: [ws1, ws2],
         })
       );
       addProject(
         createMockProject({
           path: "/test/p2" as ProjectPath,
+          name: "project-b",
           workspaces: [ws3],
         })
       );
@@ -295,26 +297,48 @@ describe("projects store", () => {
       expect(result[2]).toEqual(ws3);
     });
 
-    it("should-maintain-project-then-workspace-order", () => {
+    it("should-return-workspaces-in-alphabetical-order", () => {
+      // Add projects in non-alphabetical order
+      const wsZ1 = createMockWorkspace({ path: "/test/z/ws1", name: "z1" });
+      const wsZ2 = createMockWorkspace({ path: "/test/z/ws2", name: "z2" });
       const wsA1 = createMockWorkspace({ path: "/test/a/ws1", name: "a1" });
-      const wsA2 = createMockWorkspace({ path: "/test/a/ws2", name: "a2" });
-      const wsB1 = createMockWorkspace({ path: "/test/b/ws1", name: "b1" });
 
       addProject(
         createMockProject({
-          path: "/test/a" as ProjectPath,
-          workspaces: [wsA1, wsA2],
+          path: "/test/z" as ProjectPath,
+          name: "Zeta",
+          workspaces: [wsZ1, wsZ2],
         })
       );
       addProject(
         createMockProject({
-          path: "/test/b" as ProjectPath,
-          workspaces: [wsB1],
+          path: "/test/a" as ProjectPath,
+          name: "Alpha",
+          workspaces: [wsA1],
+        })
+      );
+
+      // Should be sorted alphabetically: Alpha project first, then Zeta
+      const result = getAllWorkspaces();
+      expect(result.map((w: Workspace) => w.name)).toEqual(["a1", "z1", "z2"]);
+    });
+
+    it("should-sort-workspaces-within-project-alphabetically", () => {
+      // Add workspaces in non-alphabetical order
+      const wsC = createMockWorkspace({ path: "/test/p/wsC", name: "charlie" });
+      const wsA = createMockWorkspace({ path: "/test/p/wsA", name: "alpha" });
+      const wsB = createMockWorkspace({ path: "/test/p/wsB", name: "bravo" });
+
+      addProject(
+        createMockProject({
+          path: "/test/p" as ProjectPath,
+          name: "Project",
+          workspaces: [wsC, wsA, wsB],
         })
       );
 
       const result = getAllWorkspaces();
-      expect(result.map((w: Workspace) => w.name)).toEqual(["a1", "a2", "b1"]);
+      expect(result.map((w: Workspace) => w.name)).toEqual(["alpha", "bravo", "charlie"]);
     });
 
     it("should-return-empty-array-when-no-projects", () => {
@@ -324,27 +348,31 @@ describe("projects store", () => {
   });
 
   describe("getWorkspaceByIndex", () => {
-    it("should-return-workspace-at-global-index", () => {
-      const ws1 = createMockWorkspace({ path: "/test/p1/ws1", name: "first" });
-      const ws2 = createMockWorkspace({ path: "/test/p1/ws2", name: "second" });
-      const ws3 = createMockWorkspace({ path: "/test/p2/ws3", name: "third" });
+    it("should-return-workspace-at-global-index-in-alphabetical-order", () => {
+      // Add in non-alphabetical order to verify sorting
+      const wsC = createMockWorkspace({ path: "/test/p2/wsC", name: "charlie" });
+      const wsA = createMockWorkspace({ path: "/test/p1/wsA", name: "alpha" });
+      const wsB = createMockWorkspace({ path: "/test/p1/wsB", name: "bravo" });
 
-      addProject(
-        createMockProject({
-          path: "/test/p1" as ProjectPath,
-          workspaces: [ws1, ws2],
-        })
-      );
       addProject(
         createMockProject({
           path: "/test/p2" as ProjectPath,
-          workspaces: [ws3],
+          name: "project-b",
+          workspaces: [wsC],
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          name: "project-a",
+          workspaces: [wsB, wsA], // Add in non-alphabetical order
         })
       );
 
-      expect(getWorkspaceByIndex(0)?.name).toBe("first");
-      expect(getWorkspaceByIndex(1)?.name).toBe("second");
-      expect(getWorkspaceByIndex(2)?.name).toBe("third");
+      // Should be sorted: project-a (alpha, bravo), project-b (charlie)
+      expect(getWorkspaceByIndex(0)?.name).toBe("alpha");
+      expect(getWorkspaceByIndex(1)?.name).toBe("bravo");
+      expect(getWorkspaceByIndex(2)?.name).toBe("charlie");
     });
 
     it("should-return-undefined-for-out-of-range-index", () => {
@@ -363,27 +391,31 @@ describe("projects store", () => {
   });
 
   describe("findWorkspaceIndex", () => {
-    it("should-find-workspace-index-by-path", () => {
-      const ws1 = createMockWorkspace({ path: "/test/p1/ws1" });
-      const ws2 = createMockWorkspace({ path: "/test/p1/ws2" });
-      const ws3 = createMockWorkspace({ path: "/test/p2/ws3" });
+    it("should-find-workspace-index-by-path-in-alphabetical-order", () => {
+      // Add in non-alphabetical order to verify sorting
+      const wsC = createMockWorkspace({ path: "/test/p2/wsC", name: "charlie" });
+      const wsA = createMockWorkspace({ path: "/test/p1/wsA", name: "alpha" });
+      const wsB = createMockWorkspace({ path: "/test/p1/wsB", name: "bravo" });
 
-      addProject(
-        createMockProject({
-          path: "/test/p1" as ProjectPath,
-          workspaces: [ws1, ws2],
-        })
-      );
       addProject(
         createMockProject({
           path: "/test/p2" as ProjectPath,
-          workspaces: [ws3],
+          name: "project-b",
+          workspaces: [wsC],
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          name: "project-a",
+          workspaces: [wsB, wsA], // Add in non-alphabetical order
         })
       );
 
-      expect(findWorkspaceIndex("/test/p1/ws1")).toBe(0);
-      expect(findWorkspaceIndex("/test/p1/ws2")).toBe(1);
-      expect(findWorkspaceIndex("/test/p2/ws3")).toBe(2);
+      // Should be sorted: project-a (alpha, bravo), project-b (charlie)
+      expect(findWorkspaceIndex("/test/p1/wsA")).toBe(0); // alpha
+      expect(findWorkspaceIndex("/test/p1/wsB")).toBe(1); // bravo
+      expect(findWorkspaceIndex("/test/p2/wsC")).toBe(2); // charlie
     });
 
     it("should-return-negative-one-for-unknown-path", () => {
