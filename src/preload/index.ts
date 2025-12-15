@@ -108,9 +108,6 @@ contextBridge.exposeInMainWorld("api", {
     getActiveWorkspace: () => ipcRenderer.invoke(ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE),
     switchWorkspace: (projectId: string, workspaceName: string, focus?: boolean) =>
       ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { projectId, workspaceName, focus }),
-    setDialogMode: (isOpen: boolean) =>
-      ipcRenderer.invoke(ApiIpcChannels.UI_SET_DIALOG_MODE, { isOpen }),
-    focusActiveWorkspace: () => ipcRenderer.invoke(ApiIpcChannels.UI_FOCUS_ACTIVE_WORKSPACE),
     setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),
   },
   lifecycle: {

@@ -134,12 +134,11 @@ export class ViewManager implements IViewManager {
 
     // Create ShortcutController with deps that reference the holder
     const shortcutController = new ShortcutController(windowManager.getWindow(), {
-      setDialogMode: (isOpen) => viewManagerHolder.instance?.setDialogMode(isOpen),
       focusUI: () => viewManagerHolder.instance?.focusUI(),
       getUIWebContents: () => viewManagerHolder.instance?.getUIWebContents() ?? null,
       setMode: (mode) => viewManagerHolder.instance?.setMode(mode),
       getMode: () => viewManagerHolder.instance?.getMode() ?? "workspace",
-      // Shortcut key callback - sends IPC event to renderer (Stage 2.3)
+      // Shortcut key callback - sends IPC event to renderer
       onShortcut: (key) => {
         const webContents = viewManagerHolder.instance?.getUIWebContents();
         if (webContents && !webContents.isDestroyed()) {
@@ -159,7 +158,6 @@ export class ViewManager implements IViewManager {
     // Register UI view with shortcut controller for keyboard shortcuts
     // (Alt+X activation and action keys in shortcut mode)
     shortcutController.registerView(uiView.webContents);
-    console.debug("ViewManager: UI view registered with shortcut controller");
 
     // Don't call updateBounds() here - let the resize event from maximize() trigger it.
     // On Linux, maximize() is async and bounds aren't available immediately.
@@ -492,21 +490,7 @@ export class ViewManager implements IViewManager {
    * Focuses the UI layer view.
    */
   focusUI(): void {
-    console.debug("ViewManager: focusUI called");
     this.uiView.webContents.focus();
-  }
-
-  /**
-   * Sets whether the UI layer should be in dialog mode.
-   * In dialog mode, the UI is moved to the top to overlay workspace views.
-   *
-   * @deprecated Use setMode() instead. Kept for backward compatibility during migration.
-   * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
-   */
-  setDialogMode(isOpen: boolean): void {
-    // Delegate to setMode for consistent state management
-    // setMode handles z-index, focus, and event emission
-    this.setMode(isOpen ? "dialog" : "workspace");
   }
 
   /**
@@ -527,7 +511,6 @@ export class ViewManager implements IViewManager {
       return;
     }
 
-    console.debug("ViewManager mode:", previousMode, "→", newMode);
     this.mode = newMode;
 
     try {

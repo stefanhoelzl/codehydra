@@ -30,13 +30,13 @@
 
 ## Key Concepts
 
-| Concept         | Description                                                                                                                                           |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Project         | Git repository path (container, not viewable) - the main git directory                                                                                |
-| Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                                                                       |
-| WebContentsView | Electron view for embedding (not iframe)                                                                                                              |
-| Shortcut Mode   | Keyboard-driven navigation activated by Alt+X, shows overlay with workspace actions (↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project) |
-| VS Code Setup   | First-run setup that installs extensions and config; runs once before code-server starts; marker at `<app-data>/vscode/.setup-completed`              |
+| Concept         | Description                                                                                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Project         | Git repository path (container, not viewable) - the main git directory                                                                                                                                    |
+| Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                                                                                                                           |
+| WebContentsView | Electron view for embedding (not iframe)                                                                                                                                                                  |
+| Shortcut Mode   | Keyboard-driven navigation activated by Alt+X. All key detection in main process (ShortcutController). Actions: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project. Escape exits (renderer). |
+| VS Code Setup   | First-run setup that installs extensions and config; runs once before code-server starts; marker at `<app-data>/vscode/.setup-completed`                                                                  |
 
 ## View Detachment Pattern
 
@@ -181,7 +181,7 @@ bootstrap() -> UI loads -> setupReady() called
 For UI state changes that cannot fail (like z-order swapping), use the `void` operator to call IPC without awaiting:
 
 ```typescript
-void api.setDialogMode(true); // Intentionally not awaited
+void api.ui.setMode("dialog"); // Intentionally not awaited
 ```
 
 This pattern is used when:

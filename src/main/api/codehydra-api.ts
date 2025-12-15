@@ -562,14 +562,6 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
         });
       },
 
-      setDialogMode: async (isOpen: boolean): Promise<void> => {
-        this.viewManager.setDialogMode(isOpen);
-      },
-
-      focusActiveWorkspace: async (): Promise<void> => {
-        this.viewManager.focusActiveWorkspace();
-      },
-
       setMode: async (mode): Promise<void> => {
         this.viewManager.setMode(mode);
       },

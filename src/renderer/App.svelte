@@ -16,7 +16,7 @@
   MainView.svelte owns:
   - IPC initialization (listProjects, getAllAgentStatuses)
   - Domain event subscriptions (project/workspace/agent changes)
-  - setDialogMode sync with main process
+  - setMode("dialog") calls when dialogs open/close
   - Sidebar, dialogs, ShortcutOverlay rendering
 -->
 <script lang="ts">

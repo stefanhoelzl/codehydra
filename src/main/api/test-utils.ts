@@ -305,11 +305,7 @@ function createMockUiApi(options?: MockUiApiOptions): IUiApi {
       }
     },
 
-    async setDialogMode(): Promise<void> {
-      // No-op in mock
-    },
-
-    async focusActiveWorkspace(): Promise<void> {
+    async setMode(): Promise<void> {
       // No-op in mock
     },
   };

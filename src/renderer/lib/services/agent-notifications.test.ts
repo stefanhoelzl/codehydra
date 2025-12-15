@@ -58,9 +58,16 @@ describe("AgentNotificationService", () => {
   });
 
   describe("chime detection", () => {
-    it("does not trigger on first event (no previous counts)", () => {
-      // First event has no previous to compare against
-      service.handleStatusChange("/test", { idle: 2, busy: 0 });
+    it("plays chime on first status report with idle agents (gray → green)", () => {
+      // First event with idle agents - opencode just connected
+      service.handleStatusChange("/test", { idle: 1, busy: 0 });
+
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not play chime on first status report with no idle agents", () => {
+      // First event with no idle agents (all busy)
+      service.handleStatusChange("/test", { idle: 0, busy: 2 });
 
       expect(mockPlayChime).not.toHaveBeenCalled();
     });
@@ -76,7 +83,8 @@ describe("AgentNotificationService", () => {
     });
 
     it("does not trigger when idle count decreases", () => {
-      service.handleStatusChange("/test", { idle: 2, busy: 0 });
+      // Seed to establish initial state without triggering first-report chime
+      service.seedInitialCounts({ "/test": { idle: 2, busy: 0 } });
       // Idle decreases from 2 to 1
       service.handleStatusChange("/test", { idle: 1, busy: 1 });
 
@@ -84,7 +92,8 @@ describe("AgentNotificationService", () => {
     });
 
     it("does not trigger when idle count stays the same", () => {
-      service.handleStatusChange("/test", { idle: 1, busy: 1 });
+      // Seed to establish initial state without triggering first-report chime
+      service.seedInitialCounts({ "/test": { idle: 1, busy: 1 } });
       // Idle stays at 1
       service.handleStatusChange("/test", { idle: 1, busy: 2 });
 
@@ -140,11 +149,11 @@ describe("AgentNotificationService", () => {
       service.handleStatusChange("/test", { idle: 0, busy: 2 });
       service.removeWorkspace("/test");
 
-      // After removal, next event is treated as first (no previous)
+      // After removal, next event is treated as first report with idle agents
       service.handleStatusChange("/test", { idle: 1, busy: 1 });
 
-      // No chime because there's no previous to compare
-      expect(mockPlayChime).not.toHaveBeenCalled();
+      // Chime plays because first report with idle > 0 (gray → green)
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
     });
 
     it("resets all state", () => {
@@ -153,12 +162,12 @@ describe("AgentNotificationService", () => {
 
       service.reset();
 
-      // Both workspaces should now be treated as first events
+      // Both workspaces should now be treated as first events with idle agents
       service.handleStatusChange("/test-a", { idle: 1, busy: 1 });
       service.handleStatusChange("/test-b", { idle: 1, busy: 2 });
 
-      // No chimes since there's no previous counts after reset
-      expect(mockPlayChime).not.toHaveBeenCalled();
+      // Both chime because first report with idle > 0 (gray → green)
+      expect(mockPlayChime).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -167,12 +176,13 @@ describe("AgentNotificationService", () => {
       service.handleStatusChange("/test", { idle: 0, busy: 2 });
       service.handleStatusChange("/test", { idle: 2, busy: 0 });
 
-      // Chime should trigger (idle increased)
+      // Chime should trigger (idle increased from 0 to 2)
       expect(mockPlayChime).toHaveBeenCalledTimes(1);
     });
 
     it("handles counts with large numbers", () => {
-      service.handleStatusChange("/test", { idle: 50, busy: 50 });
+      // Seed to establish initial state without triggering first-report chime
+      service.seedInitialCounts({ "/test": { idle: 50, busy: 50 } });
       service.handleStatusChange("/test", { idle: 100, busy: 0 });
 
       // Chime should trigger (idle increased from 50 to 100)
@@ -222,15 +232,17 @@ describe("AgentNotificationService", () => {
     it("handles empty statuses object", () => {
       service.seedInitialCounts({});
 
-      // Without seeding, first event should not trigger chime
+      // Even without seeding for this workspace, first event with idle > 0 triggers chime
+      // (gray → green transition)
       service.handleStatusChange("/test", { idle: 1, busy: 0 });
 
-      expect(mockPlayChime).not.toHaveBeenCalled();
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
     });
 
     it("overwrites existing counts when seeding", () => {
-      // First establish some state
+      // First establish some state (triggers first-report chime since idle > 0)
       service.handleStatusChange("/test", { idle: 5, busy: 0 });
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
 
       // Seed overwrites with new state
       service.seedInitialCounts({
@@ -240,7 +252,8 @@ describe("AgentNotificationService", () => {
       // Now idle increases from 0 to 1 (not from 5)
       service.handleStatusChange("/test", { idle: 1, busy: 1 });
 
-      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+      // Total: 1 (first report) + 1 (increase after seed) = 2
+      expect(mockPlayChime).toHaveBeenCalledTimes(2);
     });
   });
 });

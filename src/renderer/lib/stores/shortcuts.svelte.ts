@@ -45,7 +45,6 @@ export const shortcutModeActive = {
  * @param event - The mode change event with mode and previousMode
  */
 export function handleModeChange(event: UIModeChangedEvent): void {
-  console.debug("Shortcuts mode:", event.previousMode, "→", event.mode);
   _shortcutModeActive = event.mode === "shortcut";
 }
 

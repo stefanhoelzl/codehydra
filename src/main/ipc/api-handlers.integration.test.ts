@@ -98,8 +98,6 @@ function createMockApiWithEvents(): {
       selectFolder: vi.fn().mockResolvedValue(null),
       getActiveWorkspace: vi.fn().mockResolvedValue(null),
       switchWorkspace: vi.fn().mockResolvedValue(undefined),
-      setDialogMode: vi.fn().mockResolvedValue(undefined),
-      focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
       setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {

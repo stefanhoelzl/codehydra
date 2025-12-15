@@ -199,16 +199,6 @@ export function registerApiHandlers(api: ICodeHydraApi): void {
     return await api.ui.switchWorkspace(projectId, workspaceName, focus);
   });
 
-  ipcMain.handle(ApiIpcChannels.UI_SET_DIALOG_MODE, async (_event, payload: unknown) => {
-    const p = payload as Record<string, unknown>;
-    const isOpen = validateBoolean(p?.isOpen, "isOpen", false);
-    return await api.ui.setDialogMode(isOpen);
-  });
-
-  ipcMain.handle(ApiIpcChannels.UI_FOCUS_ACTIVE_WORKSPACE, async () => {
-    return await api.ui.focusActiveWorkspace();
-  });
-
   ipcMain.handle(ApiIpcChannels.UI_SET_MODE, async (_event, payload: unknown) => {
     const p = payload as Record<string, unknown>;
     const mode = validateUIMode(p?.mode, "mode");

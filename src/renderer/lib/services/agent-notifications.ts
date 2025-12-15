@@ -31,14 +31,21 @@ export class AgentNotificationService {
 
   /**
    * Handle a status change event and play chime if appropriate.
-   * Triggers chime when idle count increases (agent finished work).
+   * Triggers chime when idle count increases (agent finished work) or
+   * when first status report has idle agents (opencode just connected).
    */
   handleStatusChange(workspacePath: string, counts: AgentStatusCounts): void {
     const prev = this.previousCounts.get(workspacePath);
 
-    // Play chime when idle count increases (agent finished work)
-    if (this.enabled && prev && counts.idle > prev.idle) {
-      this.playChime();
+    // Play chime when:
+    // 1. Idle count increases from previous (red → green, or more agents became idle)
+    // 2. First status report with idle agents (gray → green, opencode just connected)
+    if (this.enabled) {
+      const idleIncreased = prev && counts.idle > prev.idle;
+      const firstIdleReport = !prev && counts.idle > 0;
+      if (idleIncreased || firstIdleReport) {
+        this.playChime();
+      }
     }
 
     this.previousCounts.set(workspacePath, { ...counts });

@@ -89,15 +89,6 @@ export interface IViewManager {
   focusUI(): void;
 
   /**
-   * Sets whether the UI layer should be in dialog mode.
-   * In dialog mode, the UI is moved to the top to overlay workspace views.
-   *
-   * @deprecated Use setMode() instead. Kept for backward compatibility during migration.
-   * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
-   */
-  setDialogMode(isOpen: boolean): void;
-
-  /**
    * Sets the UI mode.
    * - "workspace": UI at z-index 0, focus active workspace
    * - "shortcut": UI on top, focus UI layer

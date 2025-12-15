@@ -124,12 +124,6 @@ describe("IUiApi Interface", () => {
         void workspaceName;
         void focus;
       },
-      async setDialogMode(isOpen: boolean): Promise<void> {
-        void isOpen;
-      },
-      async focusActiveWorkspace(): Promise<void> {
-        // no-op
-      },
       async setMode(mode: UIMode): Promise<void> {
         void mode;
       },
@@ -139,8 +133,6 @@ describe("IUiApi Interface", () => {
     expect(typeof api.selectFolder).toBe("function");
     expect(typeof api.getActiveWorkspace).toBe("function");
     expect(typeof api.switchWorkspace).toBe("function");
-    expect(typeof api.setDialogMode).toBe("function");
-    expect(typeof api.focusActiveWorkspace).toBe("function");
     expect(typeof api.setMode).toBe("function");
   });
 });

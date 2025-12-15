@@ -9,8 +9,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Uses flat API namespace (no longer nested under v2)
 const mockApi = vi.hoisted(() => ({
   ui: {
-    setDialogMode: vi.fn().mockResolvedValue(undefined),
-    focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
     selectFolder: vi.fn().mockResolvedValue(null),
     setMode: vi.fn().mockResolvedValue(undefined),

@@ -87,8 +87,6 @@ const mockApi = vi.hoisted(() => ({
     selectFolder: vi.fn().mockResolvedValue(null),
     getActiveWorkspace: vi.fn().mockResolvedValue(null),
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
-    setDialogMode: vi.fn().mockResolvedValue(undefined),
-    focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
     setMode: vi.fn().mockResolvedValue(undefined),
   },
   lifecycle: {
@@ -541,7 +539,7 @@ describe("Integration tests", () => {
   });
 
   describe("dialog z-order integration", () => {
-    it("calls api.setDialogMode(true) when dialog opens", async () => {
+    it("calls api.setMode('dialog') when dialog opens", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
 
@@ -553,7 +551,7 @@ describe("Integration tests", () => {
       });
 
       // Clear any calls from initialization
-      mockApi.ui.setDialogMode.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Open create dialog
       const addButton = screen.getByLabelText(/add workspace/i);
@@ -564,11 +562,11 @@ describe("Integration tests", () => {
         expect(screen.getByRole("dialog")).toBeInTheDocument();
       });
 
-      // Verify setDialogMode was called with true
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(true);
+      // Verify setMode was called with "dialog"
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
     });
 
-    it("calls api.setDialogMode(false) when dialog closes", async () => {
+    it("calls api.setMode('workspace') when dialog closes", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
 
@@ -588,7 +586,7 @@ describe("Integration tests", () => {
       });
 
       // Clear calls and close dialog
-      mockApi.ui.setDialogMode.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Close dialog via Cancel button
       const cancelButton = screen.getByRole("button", { name: /cancel/i });
@@ -599,14 +597,14 @@ describe("Integration tests", () => {
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       });
 
-      // Verify setDialogMode was called with false
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
+      // Verify setMode was called with "workspace"
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
 
-    it("handles api.setDialogMode failure gracefully", async () => {
+    it("handles api.setMode failure gracefully", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
-      mockApi.ui.setDialogMode.mockRejectedValue(new Error("IPC failed"));
+      mockApi.ui.setMode.mockRejectedValue(new Error("IPC failed"));
 
       render(App);
 
@@ -625,7 +623,7 @@ describe("Integration tests", () => {
       });
     });
 
-    it("focuses active workspace when dialog closes", async () => {
+    it("setMode('workspace') handles focus when dialog closes with active workspace", async () => {
       const workspace = createWorkspace("main", "/test/my-project");
       const project = createProject("my-project", [workspace]);
       mockApi.projects.list.mockResolvedValue([project]);
@@ -652,8 +650,7 @@ describe("Integration tests", () => {
       });
 
       // Clear calls
-      mockApi.ui.setDialogMode.mockClear();
-      mockApi.ui.focusActiveWorkspace.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Close dialog via Cancel button
       const cancelButton = screen.getByRole("button", { name: /cancel/i });
@@ -664,12 +661,11 @@ describe("Integration tests", () => {
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       });
 
-      // Verify both setDialogMode(false) AND focusActiveWorkspace() were called
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
+      // Verify setMode("workspace") was called - it handles both z-order and focus internally
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
 
-    it("does NOT focus workspace when dialog closes and no active workspace", async () => {
+    it("setMode('workspace') handles dialog close with no active workspace", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
       mockApi.ui.getActiveWorkspace.mockResolvedValue(null); // No active workspace
@@ -690,8 +686,7 @@ describe("Integration tests", () => {
       });
 
       // Clear calls
-      mockApi.ui.setDialogMode.mockClear();
-      mockApi.ui.focusActiveWorkspace.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Close dialog via Cancel button
       const cancelButton = screen.getByRole("button", { name: /cancel/i });
@@ -702,9 +697,8 @@ describe("Integration tests", () => {
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       });
 
-      // Verify setDialogMode(false) was called but NOT focusActiveWorkspace()
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-      expect(mockApi.ui.focusActiveWorkspace).not.toHaveBeenCalled();
+      // Verify setMode("workspace") was called - ViewManager gracefully handles null activeWorkspacePath
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
   });
 
@@ -803,8 +797,7 @@ describe("Integration tests", () => {
       });
 
       // Clear any calls from initialization
-      mockApi.ui.setDialogMode.mockClear();
-      mockApi.ui.focusActiveWorkspace.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Verify overlay exists but is initially inactive (opacity 0)
       // Use { hidden: true } because aria-hidden="true" excludes from accessible tree

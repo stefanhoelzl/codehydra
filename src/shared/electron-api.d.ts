@@ -107,8 +107,6 @@ export interface Api {
     selectFolder(): Promise<string | null>;
     getActiveWorkspace(): Promise<WorkspaceRef | null>;
     switchWorkspace(projectId: string, workspaceName: string, focus?: boolean): Promise<void>;
-    setDialogMode(isOpen: boolean): Promise<void>;
-    focusActiveWorkspace(): Promise<void>;
     setMode(mode: UIMode): Promise<void>;
   };
   lifecycle: {

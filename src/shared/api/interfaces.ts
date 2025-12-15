@@ -58,11 +58,6 @@ export interface IUiApi {
     focus?: boolean
   ): Promise<void>;
   /**
-   * @deprecated Use setMode() instead. Kept for backward compatibility during migration.
-   */
-  setDialogMode(isOpen: boolean): Promise<void>;
-  focusActiveWorkspace(): Promise<void>;
-  /**
    * Sets the UI mode.
    * - "workspace": UI at z-index 0, focus active workspace
    * - "shortcut": UI on top, focus UI layer

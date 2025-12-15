@@ -1,5 +1,5 @@
 ---
-status: CODE_REVIEW_DONE
+status: COMPLETED
 last_updated: 2025-12-15
 reviewers: [review-arch, review-typescript, review-testing, review-ui, review-docs]
 ---
@@ -467,20 +467,20 @@ Dialog closes                                        ──►  api.setMode("wor
 
 **Manual Testing Checklist**:
 
-- [ ] Arrow Up navigates up in workspace list
-- [ ] Arrow Down navigates down in workspace list
-- [ ] Arrow Up at first workspace (verify wrap/stop behavior)
-- [ ] Arrow Down at last workspace (verify wrap/stop behavior)
-- [ ] Number keys 1-9 jump to corresponding workspace
-- [ ] Number key 0 jumps to workspace 10
-- [ ] Number key for non-existent workspace is ignored
-- [ ] Enter opens create workspace dialog (mode becomes "dialog")
-- [ ] Delete opens remove workspace confirmation
-- [ ] O opens project selector
-- [ ] Escape exits shortcut mode (renderer handles this, calls setMode)
-- [ ] Actions work when workspace view has focus
-- [ ] Actions work when UI view has focus
-- [ ] Opening dialog during shortcut mode hides overlay
+- [x] Arrow Up navigates up in workspace list
+- [x] Arrow Down navigates down in workspace list
+- [x] Arrow Up at first workspace (verify wrap/stop behavior)
+- [x] Arrow Down at last workspace (verify wrap/stop behavior)
+- [x] Number keys 1-9 jump to corresponding workspace
+- [x] Number key 0 jumps to workspace 10
+- [x] Number key for non-existent workspace is ignored
+- [x] Enter opens create workspace dialog (mode becomes "dialog")
+- [x] Delete opens remove workspace confirmation
+- [x] O opens project selector
+- [x] Escape exits shortcut mode (renderer handles this, calls setMode)
+- [x] Actions work when workspace view has focus
+- [x] Actions work when UI view has focus
+- [x] Opening dialog during shortcut mode hides overlay
 
 ---
 
@@ -492,7 +492,7 @@ Dialog closes                                        ──►  api.setMode("wor
 
 ### Implementation Steps
 
-- [ ] **Step 3.1: Migrate dialog components to setMode()**
+- [x] **Step 3.1: Migrate dialog components to setMode()**
   - Search for `setDialogMode(true)` and `setDialogMode(false)` patterns
   - Replace `api.ui.setDialogMode(true)` with `void api.ui.setMode("dialog")`
   - Replace `api.ui.setDialogMode(false)` + `api.ui.focusActiveWorkspace()` with `void api.ui.setMode("workspace")`
@@ -500,32 +500,32 @@ Dialog closes                                        ──►  api.setMode("wor
   - Files: `src/renderer/lib/components/MainView.svelte`, any components using setDialogMode
   - Test criteria: Dialogs work correctly
 
-- [ ] **Step 3.2: Remove old API methods**
+- [x] **Step 3.2: Remove old API methods**
   - Remove `setDialogMode()` from UIApi interface and implementation
   - Remove `focusActiveWorkspace()` from UIApi interface and implementation
   - Remove IPC handlers for old methods
   - Files: `src/shared/api/interfaces.ts`, `src/main/api/codehydra-api.ts`, `src/main/ipc/api-handlers.ts`
   - Test criteria: Old methods no longer exist, TypeScript errors if any caller remains
 
-- [ ] **Step 3.3: Remove old IPC channels**
+- [x] **Step 3.3: Remove old IPC channels**
   - Remove `api:ui:set-dialog-mode` channel
   - Remove `api:ui:focus-active-workspace` channel
   - Files: `src/shared/ipc.ts`
   - Test criteria: No references to old channels
 
-- [ ] **Step 3.4: Update preload**
+- [x] **Step 3.4: Update preload**
   - Remove `setDialogMode()` method
   - Remove `focusActiveWorkspace()` method
   - Files: `src/preload/index.ts`
   - Test criteria: Old methods not exposed
 
-- [ ] **Step 3.5: Clean up ViewManager**
+- [x] **Step 3.5: Clean up ViewManager**
   - Remove `setDialogMode()` wrapper method
   - Remove `isDialogMode` flag (replaced by `mode` state)
   - Files: `src/main/managers/view-manager.ts`
   - Test criteria: Clean implementation with only setMode()/getMode()
 
-- [ ] **Step 3.6: Update ARCHITECTURE.md**
+- [x] **Step 3.6: Update ARCHITECTURE.md**
   - Update "Dialog Overlay Mode" section: replace setDialogMode() with setMode()
   - Rewrite "Keyboard Capture System" section: unified main-process detection
   - Update "IPC Contract" section: remove shortcut:enable/disable, document api:ui:mode-changed and api:shortcut:key
@@ -533,14 +533,14 @@ Dialog closes                                        ──►  api.setMode("wor
   - Files: `docs/ARCHITECTURE.md`
   - Test criteria: Documentation matches implementation
 
-- [ ] **Step 3.7: Update AGENTS.md**
+- [x] **Step 3.7: Update AGENTS.md**
   - Update "Shortcut Mode" concept: clarify all detection in main process
   - Update "Fire-and-Forget IPC" section: replace setDialogMode() example with setMode()
   - Add note that action key detection moved from renderer to main process
   - Files: `AGENTS.md`
   - Test criteria: Documentation matches implementation
 
-- [ ] **Step 3.8: Final cleanup pass**
+- [x] **Step 3.8: Final cleanup pass**
   - Search for any remaining references to old methods
   - Run `npm run validate:fix`
   - Files: Various
@@ -639,10 +639,10 @@ export function simulateKeyPress(key: string, modifiers?: { alt?: boolean }): In
 
 ## Definition of Done
 
-- [ ] All Stage 1 steps complete and tested (TDD)
-- [ ] All Stage 2 steps complete and tested (TDD)
-- [ ] All Stage 3 steps complete and tested
-- [ ] `npm run validate:fix` passes
-- [ ] Documentation updated (ARCHITECTURE.md: Dialog Overlay Mode, Keyboard Capture System, IPC Contract; AGENTS.md: Shortcut Mode, Fire-and-Forget IPC)
-- [ ] User acceptance testing passed for each stage
-- [ ] Changes committed
+- [x] All Stage 1 steps complete and tested (TDD)
+- [x] All Stage 2 steps complete and tested (TDD)
+- [x] All Stage 3 steps complete and tested
+- [x] `npm run validate:fix` passes
+- [x] Documentation updated (ARCHITECTURE.md: Dialog Overlay Mode, Keyboard Capture System, IPC Contract; AGENTS.md: Shortcut Mode, Fire-and-Forget IPC)
+- [x] User acceptance testing passed for each stage
+- [x] Changes committed

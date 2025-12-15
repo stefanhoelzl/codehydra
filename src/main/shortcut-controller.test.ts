@@ -75,17 +75,15 @@ function createMockWebContents(): WebContents & {
 function createMockDeps() {
   const mockUIWebContents = createMockWebContents();
   return {
-    setDialogMode: vi.fn(),
     focusUI: vi.fn(),
     getUIWebContents: vi.fn(() => mockUIWebContents) as ReturnType<typeof vi.fn> & {
       mockReturnValue: (value: WebContents | null) => void;
     },
-    // New setMode API (Step 1.5)
     setMode: vi.fn(),
     getMode: vi.fn(() => "workspace") as ReturnType<typeof vi.fn> & {
       mockReturnValue: (value: "workspace" | "dialog" | "shortcut") => void;
     },
-    // Shortcut key callback (Step 2.2)
+    // Shortcut key callback
     onShortcut: vi.fn() as ReturnType<typeof vi.fn> & {
       mockClear: () => void;
     },

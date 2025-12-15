@@ -883,7 +883,7 @@ describe("ViewManager", () => {
       manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
 
       // Enable dialog mode
-      manager.setDialogMode(true);
+      manager.setMode("dialog");
 
       // Activate first workspace
       manager.setActiveWorkspace("/path/to/workspace1");
@@ -894,7 +894,7 @@ describe("ViewManager", () => {
       // Switch workspace while in dialog mode
       manager.setActiveWorkspace("/path/to/workspace2");
 
-      // UI layer should be re-added to top (setDialogMode called again)
+      // UI layer should be re-added to top (setMode("dialog") maintains z-order)
       expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(uiView);
     });
 
@@ -1100,158 +1100,6 @@ describe("ViewManager", () => {
     });
   });
 
-  describe("setDialogMode", () => {
-    it("moves UI layer to top when isOpen is true", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      // Clear previous calls from create
-      mockWindowManager.getWindow().contentView.addChildView.mockClear();
-
-      manager.setDialogMode(true);
-
-      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
-      // Should be called without index parameter (adds to end = top)
-      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(uiView);
-      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(1);
-    });
-
-    it("moves UI layer to bottom when isOpen is false", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      // First enter dialog mode
-      manager.setDialogMode(true);
-
-      // Clear previous calls
-      mockWindowManager.getWindow().contentView.addChildView.mockClear();
-
-      // Then exit dialog mode
-      manager.setDialogMode(false);
-
-      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
-      // Should be called with index 0 (adds to bottom)
-      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(
-        uiView,
-        0
-      );
-    });
-
-    it("is idempotent - multiple calls with same value are safe", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      // Clear previous calls from create
-      mockWindowManager.getWindow().contentView.addChildView.mockClear();
-
-      // Call setDialogMode(true) twice
-      expect(() => {
-        manager.setDialogMode(true);
-        manager.setDialogMode(true);
-      }).not.toThrow();
-
-      // setDialogMode delegates to setMode which is idempotent - only first call triggers z-order change
-      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not throw when window is destroyed", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      const mockWindow = mockWindowManager.getWindow();
-      // Simulate window being destroyed
-      mockWindow.isDestroyed = vi.fn(() => true);
-
-      // Should not throw
-      expect(() => manager.setDialogMode(true)).not.toThrow();
-
-      // Reset for other tests
-      mockWindow.isDestroyed = vi.fn(() => false);
-    });
-
-    it("does not affect workspace views - they remain accessible", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      // Create workspace views
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
-
-      // Change dialog mode
-      manager.setDialogMode(true);
-
-      // Workspace views should still be accessible
-      expect(manager.getWorkspaceView("/path/to/workspace1")).toBeDefined();
-      expect(manager.getWorkspaceView("/path/to/workspace2")).toBeDefined();
-    });
-
-    it("focuses active workspace when exiting dialog mode", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      // Create and activate workspace
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
-      manager.setActiveWorkspace("/path/to/workspace");
-
-      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
-      workspaceView?.webContents.focus.mockClear();
-
-      // Enter dialog mode
-      manager.setDialogMode(true);
-
-      // Exit dialog mode
-      manager.setDialogMode(false);
-
-      // Active workspace should be focused
-      expect(workspaceView?.webContents.focus).toHaveBeenCalled();
-    });
-
-    it("does not focus workspace when entering dialog mode", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      // Create and activate workspace
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
-      manager.setActiveWorkspace("/path/to/workspace");
-
-      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
-      workspaceView?.webContents.focus.mockClear();
-
-      // Enter dialog mode
-      manager.setDialogMode(true);
-
-      // Workspace should NOT be focused when entering dialog mode
-      expect(workspaceView?.webContents.focus).not.toHaveBeenCalled();
-    });
-
-    it("does not throw when exiting dialog mode with no active workspace", () => {
-      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
-        uiPreloadPath: "/path/to/preload.js",
-        codeServerPort: 8080,
-      });
-
-      // Enter dialog mode without any workspace
-      manager.setDialogMode(true);
-
-      // Exit dialog mode - should not throw
-      expect(() => manager.setDialogMode(false)).not.toThrow();
-    });
-  });
-
   describe("destroy", () => {
     it("unsubscribes from resize events", () => {
       const unsubscribe = vi.fn();
@@ -1397,7 +1245,6 @@ describe("ViewManager", () => {
       });
 
       expect(ShortcutController).toHaveBeenCalledWith(mockWindowManager.getWindow(), {
-        setDialogMode: expect.any(Function),
         focusUI: expect.any(Function),
         getUIWebContents: expect.any(Function),
         setMode: expect.any(Function),
@@ -1678,7 +1525,7 @@ describe("ViewManager", () => {
       manager.setActiveWorkspace("/path/to/ws1");
 
       // Enter dialog mode
-      manager.setDialogMode(true);
+      manager.setMode("dialog");
 
       // Verify workspace is still accessible
       expect(manager.getWorkspaceView("/path/to/ws1")).toBeDefined();
@@ -1691,7 +1538,7 @@ describe("ViewManager", () => {
       expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws2");
 
       // Exit dialog mode
-      manager.setDialogMode(false);
+      manager.setMode("workspace");
 
       // Workspace still works
       expect(manager.getActiveWorkspacePath()).toBe("/path/to/ws2");

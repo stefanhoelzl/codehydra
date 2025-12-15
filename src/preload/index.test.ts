@@ -365,26 +365,6 @@ describe("preload API", () => {
       });
     });
 
-    it("ui.setDialogMode calls api:ui:set-dialog-mode", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue(undefined);
-
-      const ui = exposedApi.ui as { setDialogMode: (isOpen: boolean) => Promise<void> };
-      await ui.setDialogMode(true);
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:ui:set-dialog-mode", {
-        isOpen: true,
-      });
-    });
-
-    it("ui.focusActiveWorkspace calls api:ui:focus-active-workspace", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue(undefined);
-
-      const ui = exposedApi.ui as { focusActiveWorkspace: () => Promise<void> };
-      await ui.focusActiveWorkspace();
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:ui:focus-active-workspace");
-    });
-
     it("ui.setMode calls api:ui:set-mode", async () => {
       mockIpcRenderer.invoke.mockResolvedValue(undefined);
 

@@ -55,8 +55,7 @@ const mockApi = vi.hoisted(() => ({
     selectFolder: vi.fn().mockResolvedValue(null),
     getActiveWorkspace: vi.fn().mockResolvedValue(null),
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
-    setDialogMode: vi.fn().mockResolvedValue(undefined),
-    focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
+    setMode: vi.fn().mockResolvedValue(undefined),
   },
   // Flat API structure - lifecycle namespace
   lifecycle: {
@@ -469,7 +468,7 @@ describe("MainView component", () => {
   });
 
   describe("dialog state sync", () => {
-    it("calls setDialogMode(true) when dialog opens", async () => {
+    it("calls setMode('dialog') when dialog opens", async () => {
       render(MainView);
 
       // Wait for mount to complete
@@ -478,17 +477,17 @@ describe("MainView component", () => {
       });
 
       // Clear initial calls
-      mockApi.ui.setDialogMode.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Open a dialog
       dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
 
       await waitFor(() => {
-        expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(true);
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
       });
     });
 
-    it("calls setDialogMode(false) when dialog closes", async () => {
+    it("calls setMode('workspace') when dialog closes", async () => {
       // Start with dialog open
       dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
 
@@ -500,17 +499,17 @@ describe("MainView component", () => {
       });
 
       // Clear calls
-      mockApi.ui.setDialogMode.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Close dialog
       dialogsStore.closeDialog();
 
       await waitFor(() => {
-        expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
       });
     });
 
-    it("calls focusActiveWorkspace() when dialog closes and workspace is active", async () => {
+    it("calls setMode('workspace') when dialog closes with active workspace", async () => {
       const projectWithWorkspace = [
         {
           id: asProjectId("test-project-12345678"),
@@ -544,23 +543,22 @@ describe("MainView component", () => {
       dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
 
       await waitFor(() => {
-        expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(true);
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
       });
 
       // Clear calls
-      mockApi.ui.setDialogMode.mockClear();
-      mockApi.ui.focusActiveWorkspace.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Close dialog
       dialogsStore.closeDialog();
 
+      // setMode("workspace") handles both z-order and focus
       await waitFor(() => {
-        expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-        expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
       });
     });
 
-    it("does NOT call focusActiveWorkspace() when dialog closes and no workspace is active", async () => {
+    it("calls setMode('workspace') when dialog closes with no active workspace", async () => {
       // No active workspace
       mockApi.projects.list.mockResolvedValue([]);
       mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
@@ -581,22 +579,20 @@ describe("MainView component", () => {
       dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
 
       await waitFor(() => {
-        expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(true);
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
       });
 
       // Clear calls
-      mockApi.ui.setDialogMode.mockClear();
-      mockApi.ui.focusActiveWorkspace.mockClear();
+      mockApi.ui.setMode.mockClear();
 
       // Close dialog
       dialogsStore.closeDialog();
 
+      // setMode("workspace") is still called even without active workspace
+      // ViewManager's setMode("workspace") gracefully handles null activeWorkspacePath
       await waitFor(() => {
-        expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
       });
-
-      // focusActiveWorkspace should NOT be called when no active workspace
-      expect(mockApi.ui.focusActiveWorkspace).not.toHaveBeenCalled();
     });
   });
 

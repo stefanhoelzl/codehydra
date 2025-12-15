@@ -464,12 +464,12 @@ The application uses a unified API layer (`ICodeHydraApi`) that abstracts all Co
 
 The API is split into focused sub-interfaces following Interface Segregation Principle:
 
-| Interface       | Methods                                            | Purpose                |
-| --------------- | -------------------------------------------------- | ---------------------- |
-| `IProjectApi`   | `open`, `close`, `list`, `get`, `fetchBases`       | Project management     |
-| `IWorkspaceApi` | `create`, `remove`, `get`, `getStatus`             | Workspace operations   |
-| `IUiApi`        | `selectFolder`, `switchWorkspace`, `setDialogMode` | UI-specific operations |
-| `ILifecycleApi` | `getState`, `setup`, `quit`                        | Application lifecycle  |
+| Interface       | Methods                                      | Purpose                |
+| --------------- | -------------------------------------------- | ---------------------- |
+| `IProjectApi`   | `open`, `close`, `list`, `get`, `fetchBases` | Project management     |
+| `IWorkspaceApi` | `create`, `remove`, `get`, `getStatus`       | Workspace operations   |
+| `IUiApi`        | `selectFolder`, `switchWorkspace`, `setMode` | UI-specific operations |
+| `ILifecycleApi` | `getState`, `setup`, `quit`                  | Application lifecycle  |
 
 Non-UI consumers (MCP Server, CLI) use `ICoreApi` which excludes `IUiApi` and `ILifecycleApi`.
 
@@ -518,18 +518,18 @@ API event emission                    IPC handler subscription
 
 ### API Events
 
-| Event                      | Payload                     | Description                |
-| -------------------------- | --------------------------- | -------------------------- |
-| `project:opened`           | `{ project: Project }`      | Project was opened         |
-| `project:closed`           | `{ projectId: ProjectId }`  | Project was closed         |
-| `project:bases-updated`    | `{ projectId, bases }`      | Branch list refreshed      |
-| `workspace:created`        | `{ projectId, workspace }`  | Workspace was created      |
-| `workspace:removed`        | `WorkspaceRef`              | Workspace was removed      |
-| `workspace:switched`       | `WorkspaceRef \| null`      | Active workspace changed   |
-| `workspace:status-changed` | `WorkspaceRef & { status }` | Dirty/agent status changed |
-| `shortcut:enable`          | `void`                      | Shortcut mode activated    |
-| `shortcut:disable`         | `void`                      | Shortcut mode deactivated  |
-| `setup:progress`           | `{ step, message }`         | Setup progress update      |
+| Event                      | Payload                     | Description                                 |
+| -------------------------- | --------------------------- | ------------------------------------------- |
+| `project:opened`           | `{ project: Project }`      | Project was opened                          |
+| `project:closed`           | `{ projectId: ProjectId }`  | Project was closed                          |
+| `project:bases-updated`    | `{ projectId, bases }`      | Branch list refreshed                       |
+| `workspace:created`        | `{ projectId, workspace }`  | Workspace was created                       |
+| `workspace:removed`        | `WorkspaceRef`              | Workspace was removed                       |
+| `workspace:switched`       | `WorkspaceRef \| null`      | Active workspace changed                    |
+| `workspace:status-changed` | `WorkspaceRef & { status }` | Dirty/agent status changed                  |
+| `ui:mode-changed`          | `{ mode, previousMode }`    | UI mode changed (shortcut/dialog/workspace) |
+| `shortcut:key`             | `ShortcutKey`               | Shortcut action key pressed                 |
+| `setup:progress`           | `{ step, message }`         | Setup progress update                       |
 
 ### IPC Channel Naming
 
@@ -577,20 +577,25 @@ App.svelte (mode router)
 
 See [VS Code Setup](#vs-code-setup) for the main process side of this flow.
 
-### Dialog Overlay Mode
+### UI Mode System
 
-When a modal dialog or shortcut mode is active, the UI layer's z-order is changed to overlay workspace views:
+The application uses a unified UI mode system with three modes:
+
+| Mode        | UI Z-Order | Focus          | Description              |
+| ----------- | ---------- | -------------- | ------------------------ |
+| `workspace` | Behind     | Workspace view | Normal editing mode      |
+| `shortcut`  | On top     | UI layer       | Shortcut overlay visible |
+| `dialog`    | On top     | Dialog (no-op) | Modal dialog open        |
 
 ```
-NORMAL STATE (no dialog, no shortcut mode):
+WORKSPACE MODE (normal):
 ┌─────────────────────────────────────────────────────────────────────┐
 │ children[0]: UI Layer        │ children[N]: Workspace Views        │
 │ z-order: BEHIND              │ z-order: ON TOP                     │
-│                              │                                     │
-│ Sidebar receives events      │ Workspace receives events           │
+│ Sidebar visible              │ VS Code receives keyboard input     │
 └──────────────────────────────┴─────────────────────────────────────┘
 
-DIALOG/SHORTCUT STATE:
+SHORTCUT/DIALOG MODE (overlay):
 ┌─────────────────────────────────────────────────────────────────────┐
 │ children[0..N-1]: Workspace Views (z-order: BEHIND)                 │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -602,12 +607,23 @@ DIALOG/SHORTCUT STATE:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-This is triggered by:
+**Mode Transitions:**
 
-- **Dialogs**: A reactive `$effect` in App.svelte watches `dialogState` and calls `api.setDialogMode(isOpen)`
-- **Shortcut mode**: `ShortcutController` calls `setDialogMode(true)` when Alt+X detected
+| Trigger        | Mode Change          |
+| -------------- | -------------------- |
+| Alt+X pressed  | workspace → shortcut |
+| Alt released   | shortcut → workspace |
+| Escape pressed | shortcut → workspace |
+| Dialog opens   | any → dialog         |
+| Dialog closes  | dialog → workspace   |
 
-The main process ViewManager handles the z-order swap using `contentView.addChildView()` reordering.
+**API:** `api.ui.setMode(mode)` - unified method that handles z-order and focus:
+
+- `setMode("workspace")`: UI behind workspaces, focus active workspace
+- `setMode("shortcut")`: UI on top, focus UI layer
+- `setMode("dialog")`: UI on top, no focus change (dialog manages its own)
+
+Mode transitions are idempotent - calling `setMode()` with the current mode is a no-op.
 
 ## Theming System
 
@@ -880,32 +896,34 @@ This provides an optimized layout for AI agent workflows.
 
 ## Keyboard Capture System
 
-CodeHydra uses a two-phase keyboard capture system to enable shortcuts inside VS Code views.
+CodeHydra uses a **unified main-process keyboard capture system** where all shortcut detection happens in the main process.
 
-### Phase 1: Activation Detection (Main Process)
+### Architecture Overview
 
-The `ShortcutController` uses Electron's `before-input-event` API to intercept keyboard events
-before they reach VS Code. It detects the Alt+X activation sequence:
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Main Process: ShortcutController                                        │
+│  ├─ Registers before-input-event on ALL WebViews (workspace + UI)       │
+│  ├─ Queries viewManager.getMode() for current state                     │
+│  ├─ Alt+X when mode=workspace → setMode("shortcut")                     │
+│  ├─ Action keys when mode=shortcut → emit shortcut:key event            │
+│  └─ Alt release when mode=shortcut → setMode("workspace")               │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Renderer: Receives events, executes actions                              │
+│  ├─ ui:mode-changed → update shortcut overlay visibility                │
+│  ├─ shortcut:key → execute workspace action (navigate, jump, dialog)    │
+│  └─ Escape key → call api.ui.setMode("workspace")                       │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-- Alt keydown → Enter ALT_WAITING state, prevent event
-- X keydown (while ALT_WAITING) → Activate shortcut mode, focus UI layer
-- Non-X keydown (while ALT_WAITING) → Let through to VS Code with altKey modifier
-- Alt keyup → Always suppressed (VS Code never sees Alt-only events)
+### Key Detection Flow
 
-### Phase 2: Action Handling (UI Layer)
-
-Once activated, the UI layer has focus and handles keys directly via DOM events:
-
-- Action keys (0-9, arrows, Enter, Delete) → Execute workspace actions
-- Alt keyup → Exit shortcut mode, return focus to VS Code
-- Window blur → Exit shortcut mode (handles Alt+Tab)
-
-### Key Files
-
-| File                                          | Purpose                            |
-| --------------------------------------------- | ---------------------------------- |
-| `src/main/shortcut-controller.ts`             | Activation detection state machine |
-| `src/renderer/lib/stores/shortcuts.svelte.ts` | UI layer state and handlers        |
+| User Action            | Main Process                 | Renderer                  |
+| ---------------------- | ---------------------------- | ------------------------- |
+| Alt+X pressed          | setMode("shortcut")          | Show overlay              |
+| Action key (↑↓0-9 etc) | Emit api:shortcut:key        | Execute action            |
+| Escape pressed         | (passes through to renderer) | Call setMode("workspace") |
+| Alt released           | setMode("workspace")         | Hide overlay              |
 
 ### ShortcutController State Machine
 
@@ -927,33 +945,30 @@ Once activated, the UI layer has focus and handles keys directly via DOM events:
               │  (suppress)  (let through)      │                          │
               │     │             │             ▼                          │
               │     │             │      • preventDefault                  │
-              │     │             │      • setDialogMode(true)             │
+              │     │             │      • setMode("shortcut")             │
               │     │             │      • focusUI()                       │
-              │     │             │      • Emit ENABLE to UI               │
               │     │             │             │                          │
               └─────┴─────────────┴─────────────┘                          │
                                                                            │
-              Main process returns to NORMAL immediately ──────────────────┘
+              Main process returns to NORMAL, UI has focus ────────────────┘
 ```
 
-**Note**: Alt keyup is ALWAYS suppressed (in both states) so VS Code never sees Alt-only key events.
+**While in shortcut mode**, action keys (↑↓Enter Delete O 0-9) are captured and emitted as `api:shortcut:key` events. Unknown keys pass through to the focused view.
 
-### Race Condition Handling
+### Key Files
 
-There is a race condition where the user can release Alt faster than focus switches to the UI layer:
+| File                                          | Purpose                                  |
+| --------------------------------------------- | ---------------------------------------- |
+| `src/main/shortcut-controller.ts`             | Main-process key detection and mode mgmt |
+| `src/renderer/lib/stores/shortcuts.svelte.ts` | UI state (mode tracking)                 |
+| `src/renderer/App.svelte`                     | Event subscriptions, action handlers     |
 
-1. User presses Alt+X → ShortcutController activates mode, calls `focusUI()`
-2. User releases Alt VERY QUICKLY (before focus actually switches)
-3. Workspace view still has focus, catches the Alt keyup via `before-input-event`
-4. **Problem**: UI layer never sees Alt keyup, thinks shortcut mode is still active
+### Design Decisions
 
-**Solution**: Main process tracks `shortcutModeActive` flag. On Alt keyup, if the flag was true:
-
-- Reset flag to false
-- Send `shortcut:disable` event to UI
-- UI receives event and resets its state
-
-This ensures the UI never gets stuck in shortcut mode.
+1. **Main process owns all detection**: Eliminates race conditions where renderer sees keys before focus switches
+2. **ViewManager is single source of truth for mode**: ShortcutController queries `getMode()` instead of tracking its own state
+3. **Escape handled in renderer**: Simplest key that doesn't require focus changes, just calls `setMode("workspace")`
+4. **Mode transitions are idempotent**: Prevents spurious events during workspace switches
 
 ## Data Flow
 

@@ -244,8 +244,6 @@ export const ApiIpcChannels = {
   UI_SELECT_FOLDER: "api:ui:select-folder",
   UI_GET_ACTIVE_WORKSPACE: "api:ui:get-active-workspace",
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
-  UI_SET_DIALOG_MODE: "api:ui:set-dialog-mode",
-  UI_FOCUS_ACTIVE_WORKSPACE: "api:ui:focus-active-workspace",
   UI_SET_MODE: "api:ui:set-mode",
   // Lifecycle commands
   LIFECYCLE_GET_STATE: "api:lifecycle:get-state",
@@ -335,13 +333,6 @@ export interface ApiUiSwitchWorkspacePayload {
   readonly projectId: string;
   readonly workspaceName: string;
   readonly focus?: boolean;
-}
-
-/**
- * Payload for api:ui:set-dialog-mode command.
- */
-export interface ApiUiSetDialogModePayload {
-  readonly isOpen: boolean;
 }
 
 /**

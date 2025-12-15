@@ -97,11 +97,8 @@
       return;
     }
 
-    void api.ui.setDialogMode(isDialogOpen);
-    // When dialog closes and there's an active workspace, focus it
-    if (!isDialogOpen && activeWorkspacePath.value) {
-      void api.ui.focusActiveWorkspace();
-    }
+    // setMode("dialog") moves UI to top; setMode("workspace") moves UI behind and focuses workspace
+    void api.ui.setMode(isDialogOpen ? "dialog" : "workspace");
   });
 
   // Initialize and subscribe to domain events on mount

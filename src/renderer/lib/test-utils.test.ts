@@ -82,8 +82,7 @@ describe("createMockApi", () => {
     expect(await api.ui.selectFolder()).toBeNull();
     expect(await api.ui.getActiveWorkspace()).toBeNull();
     expect(await api.ui.switchWorkspace("id", "name")).toBeUndefined();
-    expect(await api.ui.setDialogMode(true)).toBeUndefined();
-    expect(await api.ui.focusActiveWorkspace()).toBeUndefined();
+    expect(await api.ui.setMode("workspace")).toBeUndefined();
   });
 
   it("lifecycle methods return expected default values", async () => {

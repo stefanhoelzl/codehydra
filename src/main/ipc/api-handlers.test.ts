@@ -46,8 +46,6 @@ function createMockApi(): ICodeHydraApi {
       selectFolder: vi.fn().mockResolvedValue(null),
       getActiveWorkspace: vi.fn().mockResolvedValue(null),
       switchWorkspace: vi.fn(),
-      setDialogMode: vi.fn(),
-      focusActiveWorkspace: vi.fn(),
       setMode: vi.fn(),
     },
     lifecycle: {
@@ -110,8 +108,6 @@ describe("registerApiHandlers", () => {
     expect(registeredChannels).toContain("api:ui:select-folder");
     expect(registeredChannels).toContain("api:ui:get-active-workspace");
     expect(registeredChannels).toContain("api:ui:switch-workspace");
-    expect(registeredChannels).toContain("api:ui:set-dialog-mode");
-    expect(registeredChannels).toContain("api:ui:focus-active-workspace");
     expect(registeredChannels).toContain("api:ui:set-mode");
     expect(registeredChannels).toContain("api:lifecycle:get-state");
     expect(registeredChannels).toContain("api:lifecycle:setup");
@@ -405,24 +401,6 @@ describe("UI API handlers", () => {
         TEST_WORKSPACE_NAME,
         false
       );
-    });
-  });
-
-  describe("api:ui:set-dialog-mode", () => {
-    it("delegates to api.ui.setDialogMode", async () => {
-      const handler = getHandler("api:ui:set-dialog-mode");
-      await handler({}, { isOpen: true });
-
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(true);
-    });
-  });
-
-  describe("api:ui:focus-active-workspace", () => {
-    it("delegates to api.ui.focusActiveWorkspace", async () => {
-      const handler = getHandler("api:ui:focus-active-workspace");
-      await handler({}, undefined);
-
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
     });
   });
 

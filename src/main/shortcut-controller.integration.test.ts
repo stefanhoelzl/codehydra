@@ -71,11 +71,8 @@ function createMockDeps() {
   const mockUIWebContents = createMockWebContents();
   let currentMode: UIMode = "workspace";
   const deps = {
-    // Legacy deps (kept in interface but no longer called - will be removed in Stage 3)
-    setDialogMode: vi.fn(),
     focusUI: vi.fn(),
     getUIWebContents: vi.fn(() => mockUIWebContents),
-    // New deps - setMode is the unified API
     setMode: vi.fn((mode: UIMode) => {
       currentMode = mode;
     }),
@@ -155,8 +152,7 @@ describe("ShortcutController Integration", () => {
       expect(mockDeps.setMode).toHaveBeenCalledTimes(1);
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
 
-      // - Legacy callbacks are no longer called (Stage 1 complete - unified setMode handles everything)
-      expect(mockDeps.setDialogMode).not.toHaveBeenCalled();
+      // - focusUI is no longer called directly (setMode handles it internally)
       expect(mockDeps.focusUI).not.toHaveBeenCalled();
     });
 
@@ -172,9 +168,6 @@ describe("ShortcutController Integration", () => {
       const executionOrder: string[] = [];
       mockDeps.setMode.mockImplementation(() => {
         executionOrder.push("setMode");
-      });
-      mockDeps.setDialogMode.mockImplementation(() => {
-        executionOrder.push("setDialogMode");
       });
       mockDeps.focusUI.mockImplementation(() => {
         executionOrder.push("focusUI");
@@ -204,7 +197,6 @@ describe("ShortcutController Integration", () => {
 
       // Verify nothing in the chain was called
       expect(mockDeps.setMode).not.toHaveBeenCalled();
-      expect(mockDeps.setDialogMode).not.toHaveBeenCalled();
       expect(mockDeps.focusUI).not.toHaveBeenCalled();
     });
 
@@ -221,7 +213,6 @@ describe("ShortcutController Integration", () => {
 
       // Verify nothing in the chain was called
       expect(mockDeps.setMode).not.toHaveBeenCalled();
-      expect(mockDeps.setDialogMode).not.toHaveBeenCalled();
       expect(mockDeps.focusUI).not.toHaveBeenCalled();
     });
   });

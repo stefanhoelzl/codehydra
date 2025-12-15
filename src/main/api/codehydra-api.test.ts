@@ -54,7 +54,6 @@ function createMockViewManager(overrides: Partial<IViewManager> = {}): IViewMana
     getActiveWorkspacePath: vi.fn(),
     focusActiveWorkspace: vi.fn(),
     focusUI: vi.fn(),
-    setDialogMode: vi.fn(),
     setMode: vi.fn(),
     getMode: vi.fn().mockReturnValue("workspace"),
     onModeChange: vi.fn().mockReturnValue(() => {}),
@@ -1062,28 +1061,6 @@ describe("CodeHydraApiImpl - IUiApi", () => {
       await expect(
         api.ui.switchWorkspace(TEST_PROJECT_ID, "nonexistent" as WorkspaceName)
       ).rejects.toThrow(/not found/i);
-    });
-  });
-
-  describe("setDialogMode()", () => {
-    it("should set dialog mode", async () => {
-      await api.ui.setDialogMode(true);
-
-      expect(viewManager.setDialogMode).toHaveBeenCalledWith(true);
-    });
-
-    it("should clear dialog mode", async () => {
-      await api.ui.setDialogMode(false);
-
-      expect(viewManager.setDialogMode).toHaveBeenCalledWith(false);
-    });
-  });
-
-  describe("focusActiveWorkspace()", () => {
-    it("should focus active workspace", async () => {
-      await api.ui.focusActiveWorkspace();
-
-      expect(viewManager.focusActiveWorkspace).toHaveBeenCalled();
     });
   });
 });

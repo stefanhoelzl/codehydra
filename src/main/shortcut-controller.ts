@@ -54,16 +54,14 @@ function normalizeKey(key: string): ShortcutKey | null {
 }
 
 interface ShortcutControllerDeps {
-  /** @deprecated Use setMode instead */
-  setDialogMode: (isOpen: boolean) => void;
-  /** @deprecated Handled by setMode */
+  /** Focuses the UI layer */
   focusUI: () => void;
   getUIWebContents: () => WebContents | null;
   /** Sets the UI mode (workspace, shortcut, dialog) */
-  setMode?: (mode: UIMode) => void;
+  setMode: (mode: UIMode) => void;
   /** Gets the current UI mode */
-  getMode?: () => UIMode;
-  /** Callback when a shortcut key is pressed in shortcut mode (Stage 2.2) */
+  getMode: () => UIMode;
+  /** Callback when a shortcut key is pressed in shortcut mode */
   onShortcut?: (key: ShortcutKey) => void;
 }
 
@@ -99,7 +97,6 @@ export class ShortcutController {
    * @param webContents - WebContents of the workspace view
    */
   registerView(webContents: WebContents): void {
-    console.debug("ShortcutController: registerView called");
     if (this.registeredViews.has(webContents)) return;
 
     const inputHandler = (event: ElectronEvent, input: Input) => {
@@ -166,7 +163,6 @@ export class ShortcutController {
     if (input.type === "keyUp" && isAltKey) {
       const currentMode = this.getCurrentMode();
       if (currentMode === "shortcut") {
-        console.debug("ShortcutController: Alt keyUp detected, exiting shortcut mode");
         if (this.deps.setMode) {
           this.deps.setMode("workspace");
         }
@@ -180,8 +176,6 @@ export class ShortcutController {
 
     // Ignore auto-repeat events (fires dozens per second on key hold)
     if (input.isAutoRepeat) return;
-
-    console.debug("ShortcutController before-input-event:", input.type, input.key);
 
     const isActivationKey = input.key.toLowerCase() === SHORTCUT_ACTIVATION_KEY;
     const currentMode = this.getCurrentMode();
