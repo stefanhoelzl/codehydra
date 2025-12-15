@@ -10,10 +10,13 @@ import {
   isProjectKey,
   isActionKey,
   jumpKeyToIndex,
+  isShortcutKey,
+  SHORTCUT_KEYS,
   type NavigationKey,
   type JumpKey,
   type DialogKey,
   type ProjectKey,
+  type ShortcutKey,
 } from "./shortcuts";
 
 describe("shortcuts type guards", () => {
@@ -157,6 +160,78 @@ describe("shortcuts type guards", () => {
       if (isProjectKey(projectKey)) {
         const p: ProjectKey = projectKey;
         expect(p).toBe("o");
+      }
+    });
+  });
+
+  // ============ Stage 2: ShortcutKey type for main→renderer events ============
+
+  describe("SHORTCUT_KEYS", () => {
+    it("contains all normalized shortcut keys", () => {
+      // All valid shortcut keys as normalized values
+      const expectedKeys = [
+        "up",
+        "down",
+        "enter",
+        "delete",
+        "o",
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+      ];
+      expect(SHORTCUT_KEYS).toEqual(expectedKeys);
+    });
+  });
+
+  describe("isShortcutKey", () => {
+    it.each([
+      "up",
+      "down",
+      "enter",
+      "delete",
+      "o",
+      "0",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+    ])('returns true for valid shortcut key "%s"', (key) => {
+      expect(isShortcutKey(key)).toBe(true);
+    });
+
+    it.each([
+      "invalid",
+      "ArrowUp", // raw Electron key, not normalized
+      "ArrowDown",
+      "Enter", // raw Electron key
+      "Delete",
+      "Backspace",
+      "O", // uppercase
+      "U", // not a shortcut key
+      "escape", // Escape is handled by renderer, not main process
+      "",
+    ])('returns false for invalid shortcut key "%s"', (key) => {
+      expect(isShortcutKey(key)).toBe(false);
+    });
+
+    it("narrows type correctly", () => {
+      const key = "up";
+      if (isShortcutKey(key)) {
+        // TypeScript should infer key as ShortcutKey here
+        const shortcutKey: ShortcutKey = key;
+        expect(shortcutKey).toBe("up");
       }
     });
   });

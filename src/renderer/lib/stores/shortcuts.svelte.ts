@@ -14,23 +14,16 @@ import {
   activeWorkspacePath,
   activeProject,
   activeWorkspace,
+  projects,
 } from "./projects.svelte";
 import {
-  isActionKey,
-  isNavigationKey,
-  isJumpKey,
-  isDialogKey,
-  isProjectKey,
   jumpKeyToIndex,
-  type ActionKey,
+  isShortcutKey,
   type NavigationKey,
   type JumpKey,
   type DialogKey,
+  type ShortcutKey,
 } from "@shared/shortcuts";
-
-// ============ Constants ============
-
-const ALT_KEY = "Alt";
 
 // ============ State ============
 
@@ -54,17 +47,6 @@ export const shortcutModeActive = {
 export function handleModeChange(event: UIModeChangedEvent): void {
   console.debug("Shortcuts mode:", event.previousMode, "→", event.mode);
   _shortcutModeActive = event.mode === "shortcut";
-}
-
-/**
- * Handles keyup events. Exits shortcut mode when Alt is released.
- * @param event - The keyboard event
- */
-export function handleKeyUp(event: KeyboardEvent): void {
-  if (event.repeat) return;
-  if (event.key === ALT_KEY && _shortcutModeActive) {
-    exitShortcutMode();
-  }
 }
 
 /**
@@ -104,26 +86,62 @@ function logWorkspaceSwitchError(action: string, error: unknown): void {
 
 /**
  * Handle keydown events during shortcut mode.
- * Dispatches to appropriate action handler based on key type.
+ * Only handles Escape key - other action keys come via events from main process.
+ * (See Design Decisions: Escape is handled by renderer because it's a UI-level action.)
+ *
+ * @param event - The keyboard event
  */
 export function handleKeyDown(event: KeyboardEvent): void {
   if (!_shortcutModeActive) return;
 
-  if (isActionKey(event.key)) {
+  // Only handle Escape - other keys come via onShortcut events from main process
+  if (event.key === "Escape") {
     event.preventDefault();
-    void executeAction(event.key);
+    exitShortcutMode();
   }
 }
 
-async function executeAction(key: ActionKey): Promise<void> {
-  if (isNavigationKey(key)) {
-    await handleNavigation(key);
-  } else if (isJumpKey(key)) {
-    await handleJump(key);
-  } else if (isDialogKey(key)) {
-    handleDialog(key);
-  } else if (isProjectKey(key)) {
-    handleProjectOpen();
+/**
+ * Handle shortcut key events from main process.
+ * This is the new event-based handler for Stage 2 (main process detects keys, emits events).
+ *
+ * @param key - Normalized shortcut key from main process (e.g., "up", "down", "enter", "0"-"9")
+ */
+export function handleShortcutKey(key: ShortcutKey): void {
+  if (!isShortcutKey(key)) {
+    console.warn("Unknown shortcut key:", key);
+    return;
+  }
+
+  void executeShortcutAction(key);
+}
+
+/**
+ * Execute action for a normalized ShortcutKey.
+ * Maps normalized keys to action handlers.
+ */
+async function executeShortcutAction(key: ShortcutKey): Promise<void> {
+  switch (key) {
+    case "up":
+      await handleNavigation("ArrowUp");
+      break;
+    case "down":
+      await handleNavigation("ArrowDown");
+      break;
+    case "enter":
+      handleDialog("Enter");
+      break;
+    case "delete":
+      handleDialog("Delete");
+      break;
+    case "o":
+      handleProjectOpen();
+      break;
+    default:
+      // Digit keys: "0"-"9"
+      if (/^[0-9]$/.test(key)) {
+        await handleJump(key as JumpKey);
+      }
   }
 }
 
@@ -187,7 +205,8 @@ async function handleJump(key: JumpKey): Promise<void> {
  */
 function handleDialog(key: DialogKey): void {
   if (key === "Enter") {
-    const project = activeProject.value;
+    // Use active project, or fallback to first project if none active
+    const project = activeProject.value ?? projects.value[0];
     if (!project) return;
     // Deactivate mode without calling full exitShortcutMode to avoid z-order thrashing
     _shortcutModeActive = false;

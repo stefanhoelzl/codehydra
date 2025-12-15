@@ -25,8 +25,8 @@
   import {
     handleModeChange,
     handleKeyDown,
-    handleKeyUp,
     handleWindowBlur,
+    handleShortcutKey,
   } from "$lib/stores/shortcuts.svelte.js";
   import {
     setupState,
@@ -71,6 +71,17 @@
     });
     return () => {
       unsubModeChange();
+    };
+  });
+
+  // Subscribe to shortcut:key events from main process (Stage 2.5)
+  // Main process detects action keys and emits normalized ShortcutKey values
+  $effect(() => {
+    const unsubShortcut = api.onShortcut((key) => {
+      handleShortcutKey(key);
+    });
+    return () => {
+      unsubShortcut();
     };
   });
 
@@ -150,7 +161,7 @@
   }
 </script>
 
-<svelte:window onkeydowncapture={handleKeyDown} onkeyup={handleKeyUp} onblur={handleWindowBlur} />
+<svelte:window onkeydowncapture={handleKeyDown} onblur={handleWindowBlur} />
 
 <!-- Screen reader announcements for mode transitions -->
 <div class="ch-visually-hidden" aria-live="polite" aria-atomic="true">

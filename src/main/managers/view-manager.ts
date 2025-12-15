@@ -6,6 +6,7 @@
 import { WebContentsView, type WebContents } from "electron";
 import type { IViewManager, Unsubscribe } from "./view-manager.interface";
 import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
+import { ApiIpcChannels } from "../../shared/ipc";
 import type { WindowManager } from "./window-manager";
 import { openExternal } from "../utils/external-url";
 import { ShortcutController } from "../shortcut-controller";
@@ -138,6 +139,13 @@ export class ViewManager implements IViewManager {
       getUIWebContents: () => viewManagerHolder.instance?.getUIWebContents() ?? null,
       setMode: (mode) => viewManagerHolder.instance?.setMode(mode),
       getMode: () => viewManagerHolder.instance?.getMode() ?? "workspace",
+      // Shortcut key callback - sends IPC event to renderer (Stage 2.3)
+      onShortcut: (key) => {
+        const webContents = viewManagerHolder.instance?.getUIWebContents();
+        if (webContents && !webContents.isDestroyed()) {
+          webContents.send(ApiIpcChannels.SHORTCUT_KEY, key);
+        }
+      },
     });
 
     const viewManager = new ViewManager(
@@ -148,9 +156,10 @@ export class ViewManager implements IViewManager {
     );
     viewManagerHolder.instance = viewManager;
 
-    // Register UI view with shortcut controller for Alt keyup detection
-    // This ensures Alt release is captured even when UI has focus (shortcut mode active)
+    // Register UI view with shortcut controller for keyboard shortcuts
+    // (Alt+X activation and action keys in shortcut mode)
     shortcutController.registerView(uiView.webContents);
+    console.debug("ViewManager: UI view registered with shortcut controller");
 
     // Don't call updateBounds() here - let the resize event from maximize() trigger it.
     // On Linux, maximize() is async and bounds aren't available immediately.
@@ -483,6 +492,7 @@ export class ViewManager implements IViewManager {
    * Focuses the UI layer view.
    */
   focusUI(): void {
+    console.debug("ViewManager: focusUI called");
     this.uiView.webContents.focus();
   }
 
@@ -535,9 +545,10 @@ export class ViewManager implements IViewManager {
           break;
 
         case "shortcut":
-          // Move UI to top (adding existing child moves it to end = top)
+          // Move UI to top so overlay is visible above workspace views
           contentView.addChildView(this.uiView);
-          // Focus the UI layer so it can receive keyboard events
+          // Focus UI layer so it receives keyboard events (including Alt release)
+          // UI layer is always attached (never detached), so it reliably receives before-input-event
           this.focusUI();
           break;
 

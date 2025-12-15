@@ -10,6 +10,7 @@ import type {
   UIModeChangedEvent,
 } from "./ipc";
 import type { UIMode } from "./ipc";
+import type { ShortcutKey } from "./shortcuts";
 
 import type {
   Project,
@@ -129,6 +130,14 @@ export interface Api {
    * @returns Unsubscribe function to remove the listener
    */
   onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe;
+
+  /**
+   * Subscribe to shortcut key events from main process.
+   * Fired when a shortcut key is pressed while shortcut mode is active.
+   * @param callback - Called with the normalized shortcut key (e.g., "up", "down", "enter", "0"-"9")
+   * @returns Unsubscribe function to remove the listener
+   */
+  onShortcut(callback: (key: ShortcutKey) => void): Unsubscribe;
 }
 
 declare global {

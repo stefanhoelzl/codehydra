@@ -1,5 +1,5 @@
 ---
-status: APPROVED
+status: CODE_REVIEW_DONE
 last_updated: 2025-12-15
 reviewers: [review-arch, review-typescript, review-testing, review-ui, review-docs]
 ---
@@ -300,7 +300,7 @@ Dialog closes                                        ──►  api.setMode("wor
 
 ### Implementation Steps
 
-- [ ] **Step 2.1: Add ShortcutKey type and event channel (TDD)**
+- [x] **Step 2.1: Add ShortcutKey type and event channel (TDD)**
   - Write failing tests:
     - `isShortcutKey("up")` returns true
     - `isShortcutKey("invalid")` returns false
@@ -332,7 +332,7 @@ Dialog closes                                        ──►  api.setMode("wor
   - Files: `src/shared/ipc.ts`, `src/shared/shortcuts.ts`
   - Test criteria: Type tests pass, type guard works
 
-- [ ] **Step 2.2: Add shortcut event emission to ShortcutController (TDD)**
+- [x] **Step 2.2: Add shortcut event emission to ShortcutController (TDD)**
   - Write failing tests FIRST (use `test.each` for key mappings):
     ```typescript
     test.each([
@@ -382,18 +382,18 @@ Dialog closes                                        ──►  api.setMode("wor
   - Files: `src/main/shortcut-controller.ts`
   - Test criteria: All parameterized tests pass
 
-- [ ] **Step 2.3: Wire shortcut event to IPC**
+- [x] **Step 2.3: Wire shortcut event to IPC**
   - In main process setup, wire `ShortcutController.onShortcut` to emit IPC event
   - Files: `src/main/index.ts` or where ShortcutController is instantiated
   - Test criteria: Integration test verifies events reach renderer
 
-- [ ] **Step 2.4: Add onShortcut subscription to preload (TDD)**
+- [x] **Step 2.4: Add onShortcut subscription to preload (TDD)**
   - Write failing test: `onShortcut subscription receives ShortcutKey`
   - Add `onShortcut(callback: (key: ShortcutKey) => void): () => void`
   - Files: `src/preload/index.ts`
   - Test criteria: Preload exposes subscription
 
-- [ ] **Step 2.5: Update renderer to handle shortcut events (TDD)**
+- [x] **Step 2.5: Update renderer to handle shortcut events (TDD)**
   - Write failing tests FIRST:
     - `Shortcut "up" calls navigateWorkspace(-1)`
     - `Shortcut "down" calls navigateWorkspace(1)`
@@ -422,7 +422,7 @@ Dialog closes                                        ──►  api.setMode("wor
   - Files: `src/renderer/App.svelte`
   - Test criteria: All action tests pass
 
-- [ ] **Step 2.6: Remove keyboard event handling from renderer (TDD)**
+- [x] **Step 2.6: Remove keyboard event handling from renderer (TDD)**
   - Write failing test: `Escape key in shortcut mode calls api.ui.setMode("workspace")`
   - Remove `handleKeyDown` for shortcut mode action keys from App.svelte
   - KEEP Escape key handler:
@@ -437,7 +437,7 @@ Dialog closes                                        ──►  api.setMode("wor
   - Files: `src/renderer/App.svelte`, `src/renderer/lib/stores/shortcuts.svelte.ts`
   - Test criteria: Only Escape handler remains, test passes
 
-- [ ] **Step 2.7: Register before-input-event on UI view (TDD)**
+- [x] **Step 2.7: Register before-input-event on UI view (TDD)**
   - Write failing test: `Action key captured when UI view has focus`
   - ShortcutController registers handler on UI WebContentsView
   - Ensures action keys are captured even when UI has focus

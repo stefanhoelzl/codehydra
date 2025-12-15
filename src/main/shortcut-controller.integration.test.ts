@@ -65,17 +65,17 @@ function createMockWebContents(): WebContents & {
 }
 
 /**
- * Creates mock dependencies for ShortcutController with new setMode API.
+ * Creates mock dependencies for ShortcutController with setMode API.
  */
 function createMockDeps() {
   const mockUIWebContents = createMockWebContents();
   let currentMode: UIMode = "workspace";
   const deps = {
-    // Legacy deps (still called for backward compatibility during migration)
+    // Legacy deps (kept in interface but no longer called - will be removed in Stage 3)
     setDialogMode: vi.fn(),
     focusUI: vi.fn(),
     getUIWebContents: vi.fn(() => mockUIWebContents),
-    // New deps
+    // New deps - setMode is the unified API
     setMode: vi.fn((mode: UIMode) => {
       currentMode = mode;
     }),
@@ -108,6 +108,7 @@ describe("ShortcutController Integration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     mockWindow = createMockWindow();
     mockDeps = createMockDeps();
     controller = new ShortcutController(mockWindow, mockDeps);
@@ -115,10 +116,11 @@ describe("ShortcutController Integration", () => {
 
   afterEach(() => {
     controller.dispose();
+    vi.useRealTimers();
   });
 
   describe("keyboard-wiring-roundtrip", () => {
-    it("Alt+X triggers setMode('shortcut') and legacy callbacks", () => {
+    it("Alt+X triggers setMode('shortcut')", () => {
       // 1. Create and register a mock WebContents view (simulating workspace view)
       const workspaceWebContents = createMockWebContents();
       controller.registerView(workspaceWebContents);
@@ -133,28 +135,32 @@ describe("ShortcutController Integration", () => {
       const altEvent = createMockElectronEvent();
       inputHandler(altEvent, createMockElectronInput("Alt", "keyDown"));
 
-      // Verify Alt keydown was captured (preventDefault called)
-      expect(altEvent.preventDefault).toHaveBeenCalled();
+      // NOTE: Alt keydown is NOT prevented - this allows Chromium to track the key
+      // so that keyUp fires when Alt is released. See regression test in unit tests.
+      expect(altEvent.preventDefault).not.toHaveBeenCalled();
 
       // 4. Simulate X keydown
       const xEvent = createMockElectronEvent();
       inputHandler(xEvent, createMockElectronInput("x", "keyDown"));
 
       // 5. Verify the full chain was executed:
-      // - X keydown was captured
-      expect(xEvent.preventDefault).toHaveBeenCalled();
+      // - X keydown is NOT prevented (Electron bug #37336 workaround)
+      // If X is prevented, releasing X before Alt breaks keyUp for ALL keys
+      expect(xEvent.preventDefault).not.toHaveBeenCalled();
 
-      // - setMode("shortcut") was called (new API)
+      // - setMode is deferred via setImmediate, flush timers
+      vi.runAllTimers();
+
+      // - setMode("shortcut") was called (unified API handles z-order and focus)
       expect(mockDeps.setMode).toHaveBeenCalledTimes(1);
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
 
-      // - Legacy callbacks still called for backward compatibility
-      expect(mockDeps.setDialogMode).toHaveBeenCalledTimes(1);
-      expect(mockDeps.setDialogMode).toHaveBeenCalledWith(true);
-      expect(mockDeps.focusUI).toHaveBeenCalledTimes(1);
+      // - Legacy callbacks are no longer called (Stage 1 complete - unified setMode handles everything)
+      expect(mockDeps.setDialogMode).not.toHaveBeenCalled();
+      expect(mockDeps.focusUI).not.toHaveBeenCalled();
     });
 
-    it("verifies execution order: setMode before legacy callbacks", () => {
+    it("verifies setMode is the only call (no legacy callbacks)", () => {
       const workspaceWebContents = createMockWebContents();
       controller.registerView(workspaceWebContents);
 
@@ -178,8 +184,11 @@ describe("ShortcutController Integration", () => {
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
       inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
 
-      // Verify order: setMode first, then legacy callbacks
-      expect(executionOrder).toEqual(["setMode", "setDialogMode", "focusUI"]);
+      // setMode is deferred via setImmediate, flush timers
+      vi.runAllTimers();
+
+      // Verify only setMode is called (unified API handles everything)
+      expect(executionOrder).toEqual(["setMode"]);
     });
 
     it("does not trigger chain when only Alt is pressed (no X follow-up)", () => {

@@ -4,16 +4,54 @@
  * Uses main-process `before-input-event` capture instead of the
  * previously-documented dual-capture strategy. This is simpler and
  * doesn't require injecting preload scripts into workspace content.
+ *
+ * IMPORTANT: This controller does NOT call event.preventDefault() on any keys.
+ * This is intentional - Electron bug #37336 causes keyUp events to not fire
+ * when keyDown was prevented. By letting all keys propagate, we ensure
+ * reliable keyUp detection for exiting shortcut mode when Alt is released.
  */
 
 import type { WebContents, Event as ElectronEvent, Input, BaseWindow } from "electron";
 import type { UIMode } from "../shared/ipc";
+import type { ShortcutKey } from "../shared/shortcuts";
+import { isShortcutKey } from "../shared/shortcuts";
 
 type ShortcutActivationState = "NORMAL" | "ALT_WAITING";
 
 /** Key constants for maintainability */
 const SHORTCUT_MODIFIER_KEY = "Alt";
 const SHORTCUT_ACTIVATION_KEY = "x";
+
+/**
+ * Map from Electron key values to normalized ShortcutKey values.
+ * Only includes keys that need transformation; digit keys pass through.
+ */
+const KEY_MAP: Record<string, ShortcutKey> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+  Enter: "enter",
+  Delete: "delete",
+  Backspace: "delete",
+  o: "o",
+  O: "o",
+};
+
+/**
+ * Normalizes an Electron key value to a ShortcutKey, or returns null if not a shortcut key.
+ * Handles key mappings (e.g., ArrowUp → "up") and pass-through for digit keys.
+ */
+function normalizeKey(key: string): ShortcutKey | null {
+  // Check explicit mappings first
+  const mapped = KEY_MAP[key];
+  if (mapped !== undefined) {
+    return mapped;
+  }
+  // Digit keys pass through as-is
+  if (isShortcutKey(key)) {
+    return key;
+  }
+  return null;
+}
 
 interface ShortcutControllerDeps {
   /** @deprecated Use setMode instead */
@@ -25,6 +63,8 @@ interface ShortcutControllerDeps {
   setMode?: (mode: UIMode) => void;
   /** Gets the current UI mode */
   getMode?: () => UIMode;
+  /** Callback when a shortcut key is pressed in shortcut mode (Stage 2.2) */
+  onShortcut?: (key: ShortcutKey) => void;
 }
 
 /**
@@ -46,7 +86,6 @@ export class ShortcutController {
   private readonly deps: ShortcutControllerDeps;
   private readonly window: BaseWindow;
   private readonly boundHandleWindowBlur: () => void;
-
   constructor(window: BaseWindow, deps: ShortcutControllerDeps) {
     this.window = window;
     this.deps = deps;
@@ -60,6 +99,7 @@ export class ShortcutController {
    * @param webContents - WebContents of the workspace view
    */
   registerView(webContents: WebContents): void {
+    console.debug("ShortcutController: registerView called");
     if (this.registeredViews.has(webContents)) return;
 
     const inputHandler = (event: ElectronEvent, input: Input) => {
@@ -105,36 +145,28 @@ export class ShortcutController {
   }
 
   /**
-   * Handles keyboard input from workspace views.
+   * Handles keyboard input from workspace views via before-input-event.
+   *
+   * IMPORTANT: This handler does NOT call event.preventDefault() on any keys.
+   * Electron bug #37336 causes keyUp events to not fire when keyDown was prevented.
+   * By letting all keys propagate, we ensure reliable Alt keyUp detection.
    *
    * Algorithm:
-   * 1. Early exit for non-keyDown events (performance)
-   * 2. Early exit for auto-repeat events
-   * 3. Alt keyup: always suppress (any state) → NORMAL
-   * 4. Alt keydown: NORMAL → ALT_WAITING, suppress
-   * 5. In ALT_WAITING + X keydown: activate shortcut, suppress
+   * 1. Handle keyUp: Alt release exits shortcut mode
+   * 2. Skip auto-repeat events
+   * 3. Shortcut key in shortcut mode: emit event (no suppress)
+   * 4. Alt keydown: NORMAL → ALT_WAITING
+   * 5. In ALT_WAITING + X keydown: activate shortcut (no suppress)
    * 6. In ALT_WAITING + other key: exit to NORMAL, let through
    */
-  private handleInput(event: ElectronEvent, input: Input): void {
-    // Performance: only process keyDown for state machine, keyUp for Alt suppression
-    if (input.type !== "keyDown" && input.type !== "keyUp") return;
-
-    // Ignore auto-repeat events (fires dozens per second on key hold)
-    if (input.isAutoRepeat) return;
-
+  private handleInput(_event: ElectronEvent, input: Input): void {
     const isAltKey = input.key === SHORTCUT_MODIFIER_KEY;
-    const isActivationKey = input.key.toLowerCase() === SHORTCUT_ACTIVATION_KEY;
 
-    // Alt keyup: ALWAYS suppress to prevent VS Code menu activation
-    // Also exit shortcut mode if active. This handles a race condition:
-    // 1. Alt+X activates shortcut mode, focus moves to UI
-    // 2. User releases Alt very quickly (before focus actually switches)
-    // 3. This handler catches the Alt keyup (workspace still has focus)
-    // 4. We need to exit shortcut mode
+    // Handle Alt keyUp: exit shortcut mode
     if (input.type === "keyUp" && isAltKey) {
-      event.preventDefault();
       const currentMode = this.getCurrentMode();
       if (currentMode === "shortcut") {
+        console.debug("ShortcutController: Alt keyUp detected, exiting shortcut mode");
         if (this.deps.setMode) {
           this.deps.setMode("workspace");
         }
@@ -143,13 +175,37 @@ export class ShortcutController {
       return;
     }
 
-    // Only process keyDown from here
+    // Only process keyDown events from here
     if (input.type !== "keyDown") return;
+
+    // Ignore auto-repeat events (fires dozens per second on key hold)
+    if (input.isAutoRepeat) return;
+
+    console.debug("ShortcutController before-input-event:", input.type, input.key);
+
+    const isActivationKey = input.key.toLowerCase() === SHORTCUT_ACTIVATION_KEY;
+    const currentMode = this.getCurrentMode();
+
+    // Shortcut key detection in shortcut mode
+    // NOTE: This runs before Alt+X detection because shortcut mode is already active
+    if (currentMode === "shortcut") {
+      const normalizedKey = normalizeKey(input.key);
+      if (normalizedKey !== null) {
+        // NOTE: Do NOT call event.preventDefault() - see Electron bug #37336
+        // Preventing any key breaks keyUp tracking for ALL keys in the sequence
+        if (this.deps.onShortcut) {
+          this.deps.onShortcut(normalizedKey);
+        }
+        return;
+      }
+      // Unknown key in shortcut mode - let it pass through
+      // (e.g., Escape is handled by renderer)
+    }
 
     // NORMAL state: Alt keydown starts waiting
     if (this.state === "NORMAL" && isAltKey) {
       this.state = "ALT_WAITING";
-      event.preventDefault();
+      // NOTE: Do NOT call event.preventDefault() - see Electron bug #37336
       return;
     }
 
@@ -157,27 +213,27 @@ export class ShortcutController {
     if (this.state === "ALT_WAITING") {
       if (isActivationKey) {
         // Alt+X detected: check if we can activate shortcut mode
-        const currentMode = this.getCurrentMode();
-
         // Don't activate shortcut mode if a dialog is open
         if (currentMode === "dialog") {
           this.state = "NORMAL";
           return;
         }
 
-        event.preventDefault();
+        // NOTE: Do NOT call event.preventDefault() - see Electron bug #37336
 
-        // Activate shortcut mode via unified mode system
-        // setMode handles z-order and focus (UI on top, UI focused)
+        // Defer mode change to next tick to avoid interfering with keyboard event delivery
+        // (Being inside before-input-event callback may affect subsequent events)
         if (this.deps.setMode) {
-          this.deps.setMode("shortcut");
+          const setMode = this.deps.setMode;
+          setImmediate(() => {
+            setMode("shortcut");
+          });
         }
 
         this.state = "NORMAL";
       } else if (!isAltKey) {
         // Non-X key: exit waiting, let the key through to VS Code
         this.state = "NORMAL";
-        // Do NOT preventDefault - let the keystroke pass through
       }
     }
   }
@@ -192,7 +248,7 @@ export class ShortcutController {
    * Should be called from ViewManager.destroy() during shutdown.
    */
   dispose(): void {
-    // Unregister all views (makes copies to avoid mutation during iteration)
+    // Unregister all workspace views (makes copies to avoid mutation during iteration)
     for (const webContents of [...this.registeredViews]) {
       this.unregisterView(webContents);
     }

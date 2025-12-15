@@ -3,11 +3,17 @@
 /**
  * Tests for ShortcutController.
  * Tests the Alt+X shortcut detection state machine.
+ *
+ * IMPORTANT: These tests verify that NO keys are prevented via event.preventDefault().
+ * This is intentional - Electron bug #37336 causes keyUp events to not fire when
+ * keyDown was prevented. By letting all keys propagate, we ensure reliable Alt
+ * keyUp detection for exiting shortcut mode.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { WebContents, Event as ElectronEvent, Input, BaseWindow } from "electron";
 import { ShortcutController } from "./shortcut-controller";
+import type { ShortcutKey } from "../shared/shortcuts";
 
 /**
  * Creates a mock Electron Input object for testing.
@@ -79,6 +85,10 @@ function createMockDeps() {
     getMode: vi.fn(() => "workspace") as ReturnType<typeof vi.fn> & {
       mockReturnValue: (value: "workspace" | "dialog" | "shortcut") => void;
     },
+    // Shortcut key callback (Step 2.2)
+    onShortcut: vi.fn() as ReturnType<typeof vi.fn> & {
+      mockClear: () => void;
+    },
     mockUIWebContents,
   };
 }
@@ -99,6 +109,17 @@ function createMockWindow(): BaseWindow & {
   };
 }
 
+/**
+ * Helper to get the before-input-event handler for a registered view.
+ */
+function getInputHandler(
+  webContents: ReturnType<typeof createMockWebContents>
+): (event: ElectronEvent, input: Input) => void {
+  return webContents.on.mock.calls.find(
+    (call: unknown[]) => call[0] === "before-input-event"
+  )?.[1] as (event: ElectronEvent, input: Input) => void;
+}
+
 describe("ShortcutController", () => {
   let mockWindow: ReturnType<typeof createMockWindow>;
   let mockDeps: ReturnType<typeof createMockDeps>;
@@ -106,6 +127,7 @@ describe("ShortcutController", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     mockWindow = createMockWindow();
     mockDeps = createMockDeps();
     controller = new ShortcutController(mockWindow, mockDeps as never);
@@ -113,6 +135,7 @@ describe("ShortcutController", () => {
 
   afterEach(() => {
     controller.dispose();
+    vi.useRealTimers();
   });
 
   describe("constructor", () => {
@@ -137,7 +160,8 @@ describe("ShortcutController", () => {
       controller.registerView(webContents);
       controller.registerView(webContents);
 
-      expect(webContents.on).toHaveBeenCalledTimes(2); // once for each event type
+      // 2 event types: before-input-event, destroyed
+      expect(webContents.on).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -160,32 +184,27 @@ describe("ShortcutController", () => {
   });
 
   describe("state machine: NORMAL → ALT_WAITING", () => {
-    it("controller-normal-to-waiting: Alt keydown transitions to ALT_WAITING and prevents default", () => {
+    it("Alt keydown transitions to ALT_WAITING without preventing default", () => {
+      // NOTE: We do NOT prevent any keys - Electron bug #37336 causes keyUp
+      // to not fire when keyDown was prevented.
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
       const event = createMockElectronEvent();
-      const input = createMockElectronInput("Alt", "keyDown");
+      const inputHandler = getInputHandler(webContents);
+      inputHandler(event, createMockElectronInput("Alt", "keyDown"));
 
-      // Get the handler and simulate input
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
-      inputHandler(event, input);
-
-      expect(event.preventDefault).toHaveBeenCalled();
+      // Alt keyDown should NOT be prevented
+      expect(event.preventDefault).not.toHaveBeenCalled();
     });
   });
 
   describe("state machine: ALT_WAITING → NORMAL (activate)", () => {
-    it("controller-waiting-to-activate: X keydown calls setMode('shortcut') and prevents default", () => {
+    it("X keydown calls setMode('shortcut') without preventing default", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      // Get the handler
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // First: Alt down to enter ALT_WAITING
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
@@ -194,20 +213,20 @@ describe("ShortcutController", () => {
       const event = createMockElectronEvent();
       inputHandler(event, createMockElectronInput("x", "keyDown"));
 
-      expect(event.preventDefault).toHaveBeenCalled();
-      // Only setMode is called - unified mode system handles z-order and focus
+      // NOTE: X keyDown is NOT prevented - see Electron bug #37336
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      // setMode is deferred via setImmediate, flush timers to execute it
+      vi.runAllTimers();
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
     });
   });
 
   describe("state machine: ALT_WAITING → NORMAL (non-X key)", () => {
-    it("controller-waiting-non-x: Non-X keydown returns to NORMAL without preventing default", () => {
+    it("Non-X keydown returns to NORMAL without preventing default", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Alt down to enter ALT_WAITING
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
@@ -219,18 +238,51 @@ describe("ShortcutController", () => {
       // Should NOT prevent default (let the keystroke through to VS Code)
       expect(event.preventDefault).not.toHaveBeenCalled();
       // Should NOT activate shortcut mode
-      expect(mockDeps.setDialogMode).not.toHaveBeenCalled();
+      expect(mockDeps.setMode).not.toHaveBeenCalled();
     });
   });
 
-  describe("Alt keyup suppression", () => {
-    it("controller-waiting-alt-up: Alt keyup in ALT_WAITING is suppressed", () => {
+  describe("Alt keyUp handling", () => {
+    it("Alt keyUp in shortcut mode calls setMode('workspace')", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
+
+      // Mode is shortcut (already activated)
+      mockDeps.getMode.mockReturnValue("shortcut");
+
+      // Alt keyUp
+      const event = createMockElectronEvent();
+      inputHandler(event, createMockElectronInput("Alt", "keyUp"));
+
+      expect(mockDeps.setMode).toHaveBeenCalledWith("workspace");
+      // Should NOT prevent default
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    });
+
+    it("Alt keyUp in workspace mode does not call setMode", () => {
+      const webContents = createMockWebContents();
+      controller.registerView(webContents);
+
+      const inputHandler = getInputHandler(webContents);
+
+      // Mode is workspace
+      mockDeps.getMode.mockReturnValue("workspace");
+
+      // Alt keyUp
+      const event = createMockElectronEvent();
+      inputHandler(event, createMockElectronInput("Alt", "keyUp"));
+
+      expect(mockDeps.setMode).not.toHaveBeenCalled();
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    });
+
+    it("Alt keyUp in ALT_WAITING does NOT prevent default", () => {
+      const webContents = createMockWebContents();
+      controller.registerView(webContents);
+
+      const inputHandler = getInputHandler(webContents);
 
       // Alt down to enter ALT_WAITING
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
@@ -239,51 +291,33 @@ describe("ShortcutController", () => {
       const event = createMockElectronEvent();
       inputHandler(event, createMockElectronInput("Alt", "keyUp"));
 
-      expect(event.preventDefault).toHaveBeenCalled();
-    });
-
-    it("controller-normal-alt-up: Alt keyup in NORMAL is suppressed", () => {
-      const webContents = createMockWebContents();
-      controller.registerView(webContents);
-
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
-
-      // Alt up without prior Alt down (NORMAL state)
-      const event = createMockElectronEvent();
-      inputHandler(event, createMockElectronInput("Alt", "keyUp"));
-
-      expect(event.preventDefault).toHaveBeenCalled();
+      // Should NOT prevent default
+      expect(event.preventDefault).not.toHaveBeenCalled();
     });
   });
 
   describe("auto-repeat handling", () => {
-    it("controller-ignore-repeat: Auto-repeat events are ignored", () => {
+    it("Auto-repeat events are ignored", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Auto-repeat Alt keydown
       const event = createMockElectronEvent();
       inputHandler(event, createMockElectronInput("Alt", "keyDown", { isAutoRepeat: true }));
 
-      // Should NOT prevent default or change state
+      // Should NOT change state (not logged, no effect)
       expect(event.preventDefault).not.toHaveBeenCalled();
     });
   });
 
   describe("window blur handling", () => {
-    it("controller-window-blur: Window blur resets ALT_WAITING to NORMAL", () => {
+    it("Window blur resets ALT_WAITING to NORMAL", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Alt down to enter ALT_WAITING
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
@@ -303,15 +337,13 @@ describe("ShortcutController", () => {
   });
 
   describe("null WebContents handling", () => {
-    it("controller-emit-null-webcontents: Alt+X does not throw when UI WebContents is null", () => {
+    it("Alt+X does not throw when UI WebContents is null", () => {
       mockDeps.getUIWebContents.mockReturnValue(null as unknown as WebContents);
 
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Alt down, then X down
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
@@ -321,7 +353,8 @@ describe("ShortcutController", () => {
         inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
       }).not.toThrow();
 
-      // setMode should still be called (unified mode system)
+      // setMode is deferred via setImmediate, flush timers to execute it
+      vi.runAllTimers();
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
     });
 
@@ -331,9 +364,7 @@ describe("ShortcutController", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Alt down, then X down
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
@@ -349,7 +380,7 @@ describe("ShortcutController", () => {
   });
 
   describe("dispose cleanup", () => {
-    it("controller-dispose-cleanup: dispose unregisters all views and window blur handler", () => {
+    it("dispose unregisters all views and window blur handler", () => {
       const webContents1 = createMockWebContents();
       const webContents2 = createMockWebContents();
 
@@ -367,22 +398,21 @@ describe("ShortcutController", () => {
   });
 
   describe("multiple views", () => {
-    it("controller-multiple-views: Alt+X with multiple views calls setMode once", () => {
+    it("Alt+X with multiple views calls setMode once", () => {
       const webContents1 = createMockWebContents();
       const webContents2 = createMockWebContents();
 
       controller.registerView(webContents1);
       controller.registerView(webContents2);
 
-      // Get handler from first view
-      const inputHandler = webContents1.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents1);
 
       // Alt down, then X down
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
       inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
 
+      // setMode is deferred via setImmediate, flush timers to execute it
+      vi.runAllTimers();
       // Should only call setMode once (one controller instance)
       expect(mockDeps.setMode).toHaveBeenCalledTimes(1);
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
@@ -390,7 +420,7 @@ describe("ShortcutController", () => {
   });
 
   describe("destroyed WebContents auto-cleanup", () => {
-    it("controller-destroyed-webcontents: Destroyed WebContents auto-unregistered", () => {
+    it("Destroyed WebContents auto-unregistered", () => {
       const webContents = createMockWebContents();
 
       controller.registerView(webContents);
@@ -413,26 +443,24 @@ describe("ShortcutController", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Alt down, then uppercase X down
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
       inputHandler(createMockElectronEvent(), createMockElectronInput("X", "keyDown"));
 
+      // setMode is deferred via setImmediate, flush timers to execute it
+      vi.runAllTimers();
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
     });
   });
 
-  describe("setMode integration (Stage 1.5)", () => {
+  describe("setMode integration", () => {
     it("Alt+X when mode is workspace calls setMode('shortcut')", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Ensure mode starts as workspace
       mockDeps.getMode.mockReturnValue("workspace");
@@ -441,6 +469,8 @@ describe("ShortcutController", () => {
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
       inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
 
+      // setMode is deferred via setImmediate, flush timers to execute it
+      vi.runAllTimers();
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
     });
 
@@ -448,9 +478,7 @@ describe("ShortcutController", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Mode is dialog
       mockDeps.getMode.mockReturnValue("dialog");
@@ -462,47 +490,11 @@ describe("ShortcutController", () => {
       expect(mockDeps.setMode).not.toHaveBeenCalled();
     });
 
-    it("Alt release when mode is shortcut calls setMode('workspace')", () => {
-      const webContents = createMockWebContents();
-      controller.registerView(webContents);
-
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
-
-      // Mode is shortcut (already activated)
-      mockDeps.getMode.mockReturnValue("shortcut");
-
-      // Alt keyup
-      inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyUp"));
-
-      expect(mockDeps.setMode).toHaveBeenCalledWith("workspace");
-    });
-
-    it("Alt release when mode is workspace does not call setMode", () => {
-      const webContents = createMockWebContents();
-      controller.registerView(webContents);
-
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
-
-      // Mode is workspace
-      mockDeps.getMode.mockReturnValue("workspace");
-
-      // Alt keyup (without prior Alt+X activation)
-      inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyUp"));
-
-      expect(mockDeps.setMode).not.toHaveBeenCalled();
-    });
-
     it("Rapid Alt+X press/release handles correctly", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
       // Start in workspace mode
       mockDeps.getMode.mockReturnValue("workspace");
@@ -511,6 +503,8 @@ describe("ShortcutController", () => {
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
       inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
 
+      // setMode is deferred via setImmediate, flush timers to execute it
+      vi.runAllTimers();
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
       mockDeps.setMode.mockClear();
 
@@ -524,52 +518,160 @@ describe("ShortcutController", () => {
     });
   });
 
-  describe("Alt release race condition handling", () => {
-    it("handles race condition: Alt released before focus switches after activation", () => {
-      // This test documents the race condition handling:
-      // When user releases Alt very quickly after Alt+X, the workspace view
-      // (not yet unfocused) catches the Alt keyup. setMode("workspace") ensures
-      // the mode is correctly transitioned.
-
+  describe("Alt keyUp after Alt+X activation", () => {
+    it("Alt keyUp exits shortcut mode after Alt+X activation", () => {
       const webContents = createMockWebContents();
       controller.registerView(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+      const inputHandler = getInputHandler(webContents);
 
-      // Step 1: Activate shortcut mode with Alt+X
-      inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
-      inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
+      // Step 1: Alt keyDown - should NOT be prevented
+      const altDownEvent = createMockElectronEvent();
+      inputHandler(altDownEvent, createMockElectronInput("Alt", "keyDown"));
+      expect(altDownEvent.preventDefault).not.toHaveBeenCalled();
 
-      // Verify activation happened (unified mode system only calls setMode)
+      // Step 2: X keyDown - also NOT prevented (Electron bug #37336 workaround)
+      const xDownEvent = createMockElectronEvent();
+      inputHandler(xDownEvent, createMockElectronInput("x", "keyDown"));
+      expect(xDownEvent.preventDefault).not.toHaveBeenCalled();
+
+      // Flush deferred setMode call
+      vi.runAllTimers();
       expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
 
-      // Step 2: Alt is released while workspace view still has focus
-      // (simulates the race condition - focus hasn't switched yet)
-      // Simulate mode state change (setMode was called, mode is now "shortcut")
+      // Step 3: Simulate mode change
       mockDeps.getMode.mockReturnValue("shortcut");
       mockDeps.setMode.mockClear();
-      inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyUp"));
 
-      // Step 3: setMode("workspace") should be called to exit shortcut mode
+      // Step 4: Alt keyUp fires - exits shortcut mode
+      const altUpEvent = createMockElectronEvent();
+      inputHandler(altUpEvent, createMockElectronInput("Alt", "keyUp"));
+
+      // Step 5: Verify shortcut mode exits
       expect(mockDeps.setMode).toHaveBeenCalledWith("workspace");
+      expect(altUpEvent.preventDefault).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============ Shortcut Key Event Emission ============
+
+  describe("shortcut key event emission", () => {
+    describe("key normalization", () => {
+      it.each([
+        ["ArrowUp", "up"],
+        ["ArrowDown", "down"],
+        ["Enter", "enter"],
+        ["Delete", "delete"],
+        ["Backspace", "delete"],
+        ["o", "o"],
+        ["O", "o"],
+        ["0", "0"],
+        ["1", "1"],
+        ["2", "2"],
+        ["3", "3"],
+        ["4", "4"],
+        ["5", "5"],
+        ["6", "6"],
+        ["7", "7"],
+        ["8", "8"],
+        ["9", "9"],
+      ] as const)("emits %s as shortcut key %s", (input, expected: ShortcutKey) => {
+        const webContents = createMockWebContents();
+        controller.registerView(webContents);
+        const inputHandler = getInputHandler(webContents);
+
+        // Mode must be shortcut for action keys to be captured
+        mockDeps.getMode.mockReturnValue("shortcut");
+
+        const event = createMockElectronEvent();
+        inputHandler(event, createMockElectronInput(input, "keyDown"));
+
+        expect(mockDeps.onShortcut).toHaveBeenCalledWith(expected);
+        // NOTE: Even shortcut keys are NOT prevented - Electron bug #37336
+        expect(event.preventDefault).not.toHaveBeenCalled();
+      });
     });
 
-    it("does not call setMode when Alt is released without prior activation", () => {
-      const webContents = createMockWebContents();
-      controller.registerView(webContents);
+    describe("shortcut key in wrong mode", () => {
+      it("ignores shortcut key when mode is workspace", () => {
+        const webContents = createMockWebContents();
+        controller.registerView(webContents);
+        const inputHandler = getInputHandler(webContents);
 
-      const inputHandler = webContents.on.mock.calls.find(
-        (call: unknown[]) => call[0] === "before-input-event"
-      )?.[1] as (event: ElectronEvent, input: Input) => void;
+        // Mode is workspace
+        mockDeps.getMode.mockReturnValue("workspace");
 
-      // Just Alt down then up, without X (no activation)
-      inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
-      inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyUp"));
+        const event = createMockElectronEvent();
+        inputHandler(event, createMockElectronInput("ArrowUp", "keyDown"));
 
-      // Should NOT call setMode (shortcut mode was never activated)
-      expect(mockDeps.setMode).not.toHaveBeenCalled();
+        expect(mockDeps.onShortcut).not.toHaveBeenCalled();
+        expect(event.preventDefault).not.toHaveBeenCalled();
+      });
+
+      it("ignores shortcut key when mode is dialog", () => {
+        const webContents = createMockWebContents();
+        controller.registerView(webContents);
+        const inputHandler = getInputHandler(webContents);
+
+        // Mode is dialog
+        mockDeps.getMode.mockReturnValue("dialog");
+
+        const event = createMockElectronEvent();
+        inputHandler(event, createMockElectronInput("Enter", "keyDown"));
+
+        expect(mockDeps.onShortcut).not.toHaveBeenCalled();
+        expect(event.preventDefault).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("unknown key handling", () => {
+      it("does not emit for unknown key in shortcut mode", () => {
+        const webContents = createMockWebContents();
+        controller.registerView(webContents);
+        const inputHandler = getInputHandler(webContents);
+
+        // Mode is shortcut
+        mockDeps.getMode.mockReturnValue("shortcut");
+
+        const event = createMockElectronEvent();
+        // 'a' is not a shortcut key
+        inputHandler(event, createMockElectronInput("a", "keyDown"));
+
+        expect(mockDeps.onShortcut).not.toHaveBeenCalled();
+        expect(event.preventDefault).not.toHaveBeenCalled();
+      });
+
+      it("Escape is not handled (handled by renderer)", () => {
+        const webContents = createMockWebContents();
+        controller.registerView(webContents);
+        const inputHandler = getInputHandler(webContents);
+
+        // Mode is shortcut
+        mockDeps.getMode.mockReturnValue("shortcut");
+
+        const event = createMockElectronEvent();
+        inputHandler(event, createMockElectronInput("Escape", "keyDown"));
+
+        // Escape should NOT be captured by main process
+        expect(mockDeps.onShortcut).not.toHaveBeenCalled();
+        expect(event.preventDefault).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("keyUp handling for shortcut keys", () => {
+      it("does not emit on keyUp (only keyDown triggers actions)", () => {
+        const webContents = createMockWebContents();
+        controller.registerView(webContents);
+        const inputHandler = getInputHandler(webContents);
+
+        // Mode is shortcut
+        mockDeps.getMode.mockReturnValue("shortcut");
+
+        const event = createMockElectronEvent();
+        inputHandler(event, createMockElectronInput("ArrowUp", "keyUp"));
+
+        expect(mockDeps.onShortcut).not.toHaveBeenCalled();
+      });
     });
   });
 });

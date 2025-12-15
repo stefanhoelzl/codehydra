@@ -21,7 +21,6 @@
     activeWorkspacePath,
     loadingState,
     loadingError,
-    activeProject,
     getAllWorkspaces,
     setProjects,
     addProject,
@@ -267,7 +266,7 @@
   <ShortcutOverlay
     active={shortcutModeActive.value}
     workspaceCount={getAllWorkspaces().length}
-    hasActiveProject={activeProject.value !== undefined}
+    hasActiveProject={projects.value.length > 0}
     hasActiveWorkspace={activeWorkspacePath.value !== null}
   />
 

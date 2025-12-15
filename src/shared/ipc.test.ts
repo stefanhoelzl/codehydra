@@ -115,6 +115,10 @@ describe("ApiIpcChannels (v2 API)", () => {
       expect(ApiIpcChannels.UI_MODE_CHANGED).toBe("api:ui:mode-changed");
     });
 
+    it("has SHORTCUT_KEY event channel", () => {
+      expect(ApiIpcChannels.SHORTCUT_KEY).toBe("api:shortcut:key");
+    });
+
     it("has UI_SET_MODE command channel", () => {
       expect(ApiIpcChannels.UI_SET_MODE).toBe("api:ui:set-mode");
     });

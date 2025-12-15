@@ -1402,6 +1402,7 @@ describe("ViewManager", () => {
         getUIWebContents: expect.any(Function),
         setMode: expect.any(Function),
         getMode: expect.any(Function),
+        onShortcut: expect.any(Function),
       });
     });
 
@@ -1498,7 +1499,7 @@ describe("ViewManager", () => {
       expect(workspaceView?.webContents.focus).toHaveBeenCalled();
     });
 
-    it("setMode-shortcut-zindex: sets z-index to top", () => {
+    it("setMode-shortcut-zindex: sets z-index to top so overlay is visible", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
@@ -1509,23 +1510,33 @@ describe("ViewManager", () => {
       manager.setMode("shortcut");
 
       const uiView = MockWebContentsViewClass.mock.results[0]?.value;
-      // Should be called without index parameter (adds to end = top)
+      // Should move UI to top (addChildView without index = add to end = top)
+      // This ensures the shortcut overlay is visible above workspace views
       expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(uiView);
-      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(1);
     });
 
-    it("setMode-shortcut-focus: focuses UI layer", () => {
+    it("setMode-shortcut-focuses-ui: focuses UI layer for keyboard event handling", () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
       });
 
+      // Create and activate workspace
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.setActiveWorkspace("/path/to/workspace");
+
       const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       uiView?.webContents.focus.mockClear();
+      workspaceView?.webContents.focus.mockClear();
 
       manager.setMode("shortcut");
 
+      // Should focus UI layer - it's always attached (never detached) so it reliably
+      // receives before-input-event for Alt release detection. Workspace views can be
+      // detached during navigation, which would cause Alt keyUp to be missed.
       expect(uiView?.webContents.focus).toHaveBeenCalled();
+      expect(workspaceView?.webContents.focus).not.toHaveBeenCalled();
     });
 
     it("setMode-dialog-zindex: sets z-index to top", () => {

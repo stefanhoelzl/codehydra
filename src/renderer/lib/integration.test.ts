@@ -106,6 +106,11 @@ const mockApi = vi.hoisted(() => ({
     v2EventCallbacks.set("ui:mode-changed", callback);
     return vi.fn(); // unsubscribe
   }),
+  // onShortcut captures callback for shortcut key events from main process
+  onShortcut: vi.fn((callback: V2EventCallback) => {
+    v2EventCallbacks.set("shortcut:key", callback);
+    return vi.fn(); // unsubscribe
+  }),
   // Legacy APIs (kept for backwards compatibility with some old tests)
   listBases: vi.fn().mockResolvedValue([]),
   isWorkspaceDirty: vi.fn().mockResolvedValue(false),
@@ -816,17 +821,15 @@ describe("Integration tests", () => {
       });
       expect(shortcutsStore.shortcutModeActive.value).toBe(true);
 
-      // Step 3: Simulate Alt keyup event
-      await fireEvent.keyUp(window, { key: "Alt" });
+      // Step 3: Main process sends mode-changed when Alt is released
+      // (Alt release handling moved from renderer to main process in Stage 2)
+      fireV2Event("ui:mode-changed", { mode: "workspace", previousMode: "shortcut" });
 
       // Step 4: Verify overlay becomes inactive
       await waitFor(() => {
         expect(overlay).not.toHaveClass("active");
       });
       expect(shortcutsStore.shortcutModeActive.value).toBe(false);
-
-      // Step 5: Verify setMode was called to exit shortcut mode
-      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
   });
 
@@ -867,8 +870,8 @@ describe("Integration tests", () => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
 
-      // Step 2: Press ArrowDown
-      await fireEvent.keyDown(window, { key: "ArrowDown" });
+      // Step 2: Fire shortcut key event (keys now come from main process via onShortcut)
+      fireV2Event("shortcut:key", "down");
 
       // Step 3: Verify workspace switch was called (v2 API: projectId, workspaceName, focus)
       await waitFor(() => {
@@ -882,8 +885,9 @@ describe("Integration tests", () => {
       // Step 4: Verify overlay is still active
       expect(shortcutsStore.shortcutModeActive.value).toBe(true);
 
-      // Step 5: Release Alt
-      await fireEvent.keyUp(window, { key: "Alt" });
+      // Step 5: Main process sends mode-changed when Alt is released
+      // (Alt release handling moved from renderer to main process in Stage 2)
+      fireV2Event("ui:mode-changed", { mode: "workspace", previousMode: "shortcut" });
 
       // Step 6: Verify overlay hides
       await waitFor(() => {
@@ -914,8 +918,8 @@ describe("Integration tests", () => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
 
-      // Press 1 then wait for it to complete (v2 API: projectId, workspaceName, focus)
-      await fireEvent.keyDown(window, { key: "1" });
+      // Fire shortcut key events (keys now come from main process via onShortcut)
+      fireV2Event("shortcut:key", "1");
       await waitFor(() => {
         expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
           actualProjectId,
@@ -924,9 +928,9 @@ describe("Integration tests", () => {
         );
       });
 
-      // Clear and press 2
+      // Clear and fire key "2"
       mockApi.ui.switchWorkspace.mockClear();
-      await fireEvent.keyDown(window, { key: "2" });
+      fireV2Event("shortcut:key", "2");
 
       await waitFor(() => {
         expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
@@ -971,8 +975,8 @@ describe("Integration tests", () => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
 
-      // Press Enter to open create dialog
-      await fireEvent.keyDown(window, { key: "Enter" });
+      // Fire Enter shortcut key to open create dialog
+      fireV2Event("shortcut:key", "enter");
 
       // Verify dialog opens
       await waitFor(() => {
@@ -1014,8 +1018,8 @@ describe("Integration tests", () => {
       // Activate shortcut mode
       fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
 
-      // Press ArrowDown (should wrap to first)
-      await fireEvent.keyDown(window, { key: "ArrowDown" });
+      // Fire ArrowDown shortcut key (should wrap to first)
+      fireV2Event("shortcut:key", "down");
 
       await waitFor(() => {
         expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, ws1.name, false);
@@ -1037,8 +1041,8 @@ describe("Integration tests", () => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
 
-      // Press O
-      await fireEvent.keyDown(window, { key: "o" });
+      // Fire O shortcut key
+      fireV2Event("shortcut:key", "o");
 
       // Verify shortcut mode deactivated
       expect(shortcutsStore.shortcutModeActive.value).toBe(false);
@@ -1075,9 +1079,10 @@ describe("Integration tests", () => {
       const openHint = screen.getByLabelText("O to open project");
       expect(openHint).not.toHaveClass("shortcut-hint--hidden");
 
-      // Pressing arrow should be no-op
+      // Pressing arrow should be no-op (fires via shortcut:key event)
       mockApi.ui.switchWorkspace.mockClear();
-      await fireEvent.keyDown(window, { key: "ArrowDown" });
+      fireV2Event("shortcut:key", "down");
+      // Even with event fired, no workspaces means no switch
       expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
     });
 
@@ -1106,7 +1111,7 @@ describe("Integration tests", () => {
       expect(navigateHint).toHaveClass("shortcut-hint--hidden");
 
       // Jump should still work for index 1 (v2 API: projectId, workspaceName, focus)
-      await fireEvent.keyDown(window, { key: "1" });
+      fireV2Event("shortcut:key", "1");
 
       await waitFor(() => {
         expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, ws.name, false);

@@ -29,6 +29,8 @@ export const {
   on,
   // UI mode change event
   onModeChange,
+  // Shortcut key event (main process → renderer)
+  onShortcut,
 } = window.api;
 
 // =============================================================================

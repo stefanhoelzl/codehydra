@@ -260,6 +260,7 @@ export const ApiIpcChannels = {
   WORKSPACE_SWITCHED: "api:workspace:switched",
   WORKSPACE_STATUS_CHANGED: "api:workspace:status-changed",
   UI_MODE_CHANGED: "api:ui:mode-changed",
+  SHORTCUT_KEY: "api:shortcut:key",
   SETUP_PROGRESS: "api:setup:progress",
 } as const satisfies Record<string, string>;
 

@@ -411,6 +411,22 @@ describe("preload API", () => {
         expect.any(Function)
       );
     });
+
+    it("onShortcut subscribes to api:shortcut:key and returns unsubscribe", () => {
+      const callback = vi.fn();
+
+      const onShortcut = exposedApi.onShortcut as (cb: (key: string) => void) => () => void;
+      const unsubscribe = onShortcut(callback);
+
+      expect(mockIpcRenderer.on).toHaveBeenCalledWith("api:shortcut:key", expect.any(Function));
+      expect(unsubscribe).toBeInstanceOf(Function);
+
+      unsubscribe();
+      expect(mockIpcRenderer.removeListener).toHaveBeenCalledWith(
+        "api:shortcut:key",
+        expect.any(Function)
+      );
+    });
   });
 
   describe("lifecycle", () => {

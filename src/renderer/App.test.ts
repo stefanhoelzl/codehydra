@@ -79,6 +79,11 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
         callbacks.set("ui:mode-changed", callback);
         return vi.fn(); // unsubscribe
       }),
+      // onShortcut captures callback for shortcut:key events
+      onShortcut: vi.fn((callback: EventCallback) => {
+        callbacks.set("shortcut:key", callback);
+        return vi.fn(); // unsubscribe
+      }),
     },
   };
 });
@@ -132,6 +137,11 @@ describe("App component", () => {
     // Reset onModeChange implementation to capture callbacks (some tests override it)
     mockApi.onModeChange.mockImplementation((callback: EventCallback) => {
       eventCallbacks.set("ui:mode-changed", callback);
+      return vi.fn();
+    });
+    // Reset onShortcut implementation to capture callbacks
+    mockApi.onShortcut.mockImplementation((callback: EventCallback) => {
+      eventCallbacks.set("shortcut:key", callback);
       return vi.fn();
     });
     // Default to returning empty projects
@@ -379,24 +389,9 @@ describe("App component", () => {
       });
     });
 
-    it("should-wire-keyup-handler-to-window: Alt keyup exits shortcut mode", async () => {
-      render(App);
-
-      // Wait for subscription
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Enable shortcut mode first via ui:mode-changed event
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Simulate Alt keyup - should call setMode("workspace") via fire-and-forget
-      window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt" }));
-
-      // In the new architecture, Alt keyup calls api.ui.setMode("workspace")
-      // which is fire-and-forget in the renderer
-      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
-    });
+    // NOTE: Alt keyup handling was moved to main process in Stage 2 of SHORTCUT_MODE_REFACTOR.
+    // The main process detects Alt release via before-input-event and emits ui:mode-changed.
+    // The renderer no longer listens to keyup events for Alt.
 
     it("should-wire-blur-handler-to-window: window blur exits shortcut mode", async () => {
       render(App);
@@ -434,44 +429,15 @@ describe("App component", () => {
       expect(mockApi.ui.setMode).not.toHaveBeenCalled();
     });
 
-    it("should-connect-handleKeyDown-to-window: action key triggers action during shortcut mode", async () => {
-      // Set up projects with workspaces - use v2 API format with ID
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [
-            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
-            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
-          ],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
+    // NOTE: Test "Alt keyup in shortcut mode calls api.ui.setMode('workspace') as fallback" removed.
+    // The renderer fallback for Alt keyup was removed in favor of focusing the UI layer
+    // during shortcut mode, which ensures the main process's before-input-event handler
+    // reliably receives Alt keyup events.
 
-      render(App);
-
-      // Wait for projects to load and subscriptions to be set up
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Get the actual project ID from the store (ID is regenerated from path)
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
-      // Enable shortcut mode via ui:mode-changed event
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Press "1" key to jump to first workspace
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "1" }));
-
-      // Should have called v2.ui.switchWorkspace with focus=false to keep shortcut mode active
-      // Note: Now uses projectId (from store) and workspaceName instead of path
-      await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws1", false);
-      });
-    });
+    // NOTE: Test "should-connect-handleKeyDown-to-window" removed in Stage 2.6
+    // It tested old keyboard-based action handling which is now replaced by:
+    // - Main process detects keys and emits shortcut:key events
+    // - Tests: "shortcut '1'-'9' jumps to workspace by index" etc.
 
     it("should-pass-shortcutModeActive-to-sidebar: sidebar shows index numbers when active", async () => {
       const mockProjects = [
@@ -612,6 +578,345 @@ describe("App component", () => {
         const liveRegion = document.querySelector('[aria-live="polite"]');
         expect(liveRegion).toHaveTextContent("Shortcut mode active");
       });
+    });
+
+    // ============ Stage 2.5: Shortcut key events from main process ============
+
+    it("subscribes to onShortcut on mount", async () => {
+      render(App);
+
+      await waitFor(() => {
+        expect(mockApi.onShortcut).toHaveBeenCalledWith(expect.any(Function));
+      });
+    });
+
+    it('shortcut "up" navigates to previous workspace', async () => {
+      const mockProjects = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [
+            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
+            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
+          ],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(mockProjects);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      // Get actual project ID
+      const actualProjectId = projectsStore.projects.value[0]!.id;
+
+      // Set active workspace to second one
+      projectsStore.setActiveWorkspace("/test/.worktrees/ws2");
+
+      // Enable shortcut mode first (via mode change event)
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "up"
+      fireEvent("shortcut:key", "up");
+
+      await waitFor(() => {
+        // Should navigate to first workspace (ws1)
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws1", false);
+      });
+    });
+
+    it('shortcut "down" navigates to next workspace', async () => {
+      const mockProjects = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [
+            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
+            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
+          ],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(mockProjects);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      // Get actual project ID
+      const actualProjectId = projectsStore.projects.value[0]!.id;
+
+      // Set active workspace to first one
+      projectsStore.setActiveWorkspace("/test/.worktrees/ws1");
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "down"
+      fireEvent("shortcut:key", "down");
+
+      await waitFor(() => {
+        // Should navigate to second workspace (ws2)
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws2", false);
+      });
+    });
+
+    it('shortcut "1"-"9" jumps to workspace by index (1=first, 9=ninth)', async () => {
+      const mockProjects = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [
+            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
+            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
+            { path: "/test/.worktrees/ws3", name: "ws3", branch: "bugfix" },
+          ],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(mockProjects);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      const actualProjectId = projectsStore.projects.value[0]!.id;
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "2" to jump to second workspace
+      fireEvent("shortcut:key", "2");
+
+      await waitFor(() => {
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws2", false);
+      });
+    });
+
+    it('shortcut "0" jumps to workspace 10 (index 9)', async () => {
+      // Create 10 workspaces with zero-padded names for correct sorting
+      // ws01, ws02, ..., ws10 sort correctly: ws01 at index 0, ws10 at index 9
+      const workspaces = Array.from({ length: 10 }, (_, i) => ({
+        path: `/test/.worktrees/ws${String(i + 1).padStart(2, "0")}`,
+        name: `ws${String(i + 1).padStart(2, "0")}`,
+        branch: `branch${i + 1}`,
+      }));
+
+      const mockProjects = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces,
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(mockProjects);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      const actualProjectId = projectsStore.projects.value[0]!.id;
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "0" to jump to 10th workspace
+      fireEvent("shortcut:key", "0");
+
+      await waitFor(() => {
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws10", false);
+      });
+    });
+
+    it("shortcut number beyond workspace count is ignored", async () => {
+      const mockProjects = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [
+            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
+            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
+          ],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(mockProjects);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      // Clear any previous calls
+      mockApi.ui.switchWorkspace.mockClear();
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "5" (only 2 workspaces exist)
+      fireEvent("shortcut:key", "5");
+
+      // Should NOT call switchWorkspace (index out of range)
+      await new Promise((r) => setTimeout(r, 50)); // Short wait
+      expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('shortcut "enter" opens create workspace dialog', async () => {
+      const mockProjects = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [{ path: "/test/.worktrees/ws1", name: "ws1", branch: "main" }],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(mockProjects);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      // Set active workspace so we have an active project
+      projectsStore.setActiveWorkspace("/test/.worktrees/ws1");
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "enter"
+      fireEvent("shortcut:key", "enter");
+
+      // Should open create dialog
+      await waitFor(() => {
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toBeInTheDocument();
+        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+      });
+    });
+
+    it('shortcut "delete" opens remove workspace dialog', async () => {
+      const mockProjects = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: asProjectPath("/test/project"),
+          name: "test-project",
+          workspaces: [{ path: "/test/.worktrees/ws1", name: "ws1", branch: "main" }],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(mockProjects);
+
+      render(App);
+
+      await waitFor(() => {
+        expect(projectsStore.projects.value).toHaveLength(1);
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      // Set active workspace so we have something to delete
+      projectsStore.setActiveWorkspace("/test/.worktrees/ws1");
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "delete"
+      fireEvent("shortcut:key", "delete");
+
+      // Should open remove dialog
+      await waitFor(() => {
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toBeInTheDocument();
+        expect(screen.getByText("Remove Workspace")).toBeInTheDocument();
+      });
+    });
+
+    it('shortcut "o" opens project folder picker', async () => {
+      render(App);
+
+      await waitFor(() => {
+        expect(getEventCallback("shortcut:key")).toBeDefined();
+      });
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Fire shortcut:key event with "o"
+      fireEvent("shortcut:key", "o");
+
+      await waitFor(() => {
+        expect(mockApi.ui.selectFolder).toHaveBeenCalled();
+      });
+    });
+
+    it("unsubscribes from shortcut events on unmount", async () => {
+      const unsubShortcut = vi.fn();
+      mockApi.onShortcut.mockReturnValue(unsubShortcut);
+
+      const { unmount } = render(App);
+
+      await waitFor(() => {
+        expect(mockApi.onShortcut).toHaveBeenCalledWith(expect.any(Function));
+      });
+
+      unmount();
+
+      expect(unsubShortcut).toHaveBeenCalledTimes(1);
+    });
+
+    // ============ Stage 2.6: Escape key still handled in renderer ============
+
+    it("Escape key in shortcut mode calls api.ui.setMode('workspace')", async () => {
+      render(App);
+
+      // Wait for subscription
+      await waitFor(() => {
+        expect(getEventCallback("ui:mode-changed")).toBeDefined();
+      });
+
+      // Enable shortcut mode
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      // Clear any previous setMode calls
+      mockApi.ui.setMode.mockClear();
+
+      // Press Escape - should call setMode("workspace")
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
+    });
+
+    it("Escape key when not in shortcut mode does not call setMode", async () => {
+      render(App);
+
+      // Wait for subscription
+      await waitFor(() => {
+        expect(getEventCallback("ui:mode-changed")).toBeDefined();
+      });
+
+      // Make sure we're NOT in shortcut mode (mode is workspace by default)
+      mockApi.ui.setMode.mockClear();
+
+      // Press Escape - should NOT call setMode
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
     });
   });
 

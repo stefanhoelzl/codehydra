@@ -123,6 +123,7 @@ describe("renderer API layer", () => {
         },
         on: vi.fn(() => vi.fn()),
         onModeChange: vi.fn(() => vi.fn()),
+        onShortcut: vi.fn(() => vi.fn()),
       };
       window.api = mockApi;
     });
