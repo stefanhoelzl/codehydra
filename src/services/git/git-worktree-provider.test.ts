@@ -1962,6 +1962,146 @@ describe("GitWorktreeProvider", () => {
     });
   });
 
+  describe("keepFilesService integration", () => {
+    it("calls copyToWorkspace after worktree created when service provided", async () => {
+      const mockClient = createMockGitClient({
+        listWorktrees: vi
+          .fn()
+          .mockResolvedValue([
+            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+          ]),
+      });
+      const mockKeepFilesService = {
+        copyToWorkspace: vi.fn().mockResolvedValue({
+          configExists: true,
+          copiedCount: 3,
+          skippedCount: 0,
+          errors: [],
+        }),
+      };
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        { keepFilesService: mockKeepFilesService }
+      );
+
+      await provider.createWorkspace("feature-x", "main");
+
+      expect(mockKeepFilesService.copyToWorkspace).toHaveBeenCalledWith(
+        PROJECT_ROOT,
+        expect.stringContaining("feature-x")
+      );
+    });
+
+    it("works without keepFilesService (backward compatible)", async () => {
+      const mockClient = createMockGitClient({
+        listWorktrees: vi
+          .fn()
+          .mockResolvedValue([
+            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+          ]),
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+        // No options - should work without keepFilesService
+      );
+
+      // Should not throw
+      const workspace = await provider.createWorkspace("feature-x", "main");
+      expect(workspace.name).toBe("feature-x");
+    });
+
+    it("works with options but no keepFilesService", async () => {
+      const mockClient = createMockGitClient({
+        listWorktrees: vi
+          .fn()
+          .mockResolvedValue([
+            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+          ]),
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        {} // Options without keepFilesService
+      );
+
+      // Should not throw
+      const workspace = await provider.createWorkspace("feature-x", "main");
+      expect(workspace.name).toBe("feature-x");
+    });
+
+    it("logs copy errors but does not throw", async () => {
+      const mockClient = createMockGitClient({
+        listWorktrees: vi
+          .fn()
+          .mockResolvedValue([
+            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+          ]),
+      });
+      const mockKeepFilesService = {
+        copyToWorkspace: vi.fn().mockResolvedValue({
+          configExists: true,
+          copiedCount: 2,
+          skippedCount: 0,
+          errors: [{ path: ".env", message: "Permission denied" }],
+        }),
+      };
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        { keepFilesService: mockKeepFilesService }
+      );
+
+      // Should not throw despite copy errors
+      const workspace = await provider.createWorkspace("feature-x", "main");
+
+      expect(workspace.name).toBe("feature-x");
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it("logs success at info level", async () => {
+      const mockClient = createMockGitClient({
+        listWorktrees: vi
+          .fn()
+          .mockResolvedValue([
+            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+          ]),
+      });
+      const mockKeepFilesService = {
+        copyToWorkspace: vi.fn().mockResolvedValue({
+          configExists: true,
+          copiedCount: 5,
+          skippedCount: 1,
+          errors: [],
+        }),
+      };
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        { keepFilesService: mockKeepFilesService }
+      );
+
+      await provider.createWorkspace("feature-x", "main");
+
+      expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("5"));
+      infoSpy.mockRestore();
+    });
+  });
+
   describe("getMetadata", () => {
     it("applies base fallback when not in config", async () => {
       const worktreePath = "/data/workspaces/feature-x";

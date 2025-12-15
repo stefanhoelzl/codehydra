@@ -174,6 +174,7 @@ Services are pure Node.js for testability without Electron:
 | OpenCode Discovery       | Find running OpenCode instances                                 | Implemented |
 | OpenCode Status Provider | SSE connections, status aggregation                             | Implemented |
 | VS Code Setup Service    | First-run extension and config installation                     | Implemented |
+| KeepFiles Service        | Copy gitignored files from project root to new workspaces       | Implemented |
 | NetworkLayer             | HTTP, SSE, port operations (HttpClient, SseClient, PortManager) | Implemented |
 
 ### Workspace Cleanup
@@ -422,8 +423,23 @@ interface FileSystemLayer {
   readdir(path: string): Promise<readonly DirEntry[]>;
   unlink(path: string): Promise<void>;
   rm(path: string, options?: RmOptions): Promise<void>;
+  copyTree(src: string, dest: string): Promise<CopyTreeResult>;
+}
+
+interface CopyTreeResult {
+  copiedCount: number; // Number of files copied
+  skippedSymlinks: readonly string[]; // Paths of symlinks skipped (security)
 }
 ```
+
+**copyTree Behavior:**
+
+- Copies files and directories recursively from `src` to `dest`
+- Uses `fs.copyFile()` internally for correct binary file handling
+- Skips symlinks (security measure - prevents symlink attacks)
+- Overwrites existing destination files
+- Creates parent directories as needed
+- Throws `FileSystemError` with `ENOENT` if source doesn't exist
 
 **Error Handling:**
 

@@ -136,11 +136,12 @@ describe("AppState", () => {
 
       await appState.openProject("/project");
 
-      // createGitWorktreeProvider is called with projectPath, workspacesDir, and fileSystemLayer
+      // createGitWorktreeProvider is called with projectPath, workspacesDir, fileSystemLayer, and options
       expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith(
         "/project",
         mockPathProvider.getProjectWorkspacesDir("/project"),
-        expect.any(Object) // FileSystemLayer
+        expect.any(Object), // FileSystemLayer
+        expect.objectContaining({ keepFilesService: expect.any(Object) }) // Options with KeepFilesService
       );
     });
 
@@ -400,11 +401,12 @@ describe("AppState", () => {
       await appState.loadPersistedProjects();
 
       expect(mockProjectStore.loadAllProjects).toHaveBeenCalled();
-      // createGitWorktreeProvider is called with projectPath, workspacesDir, and fileSystemLayer
+      // createGitWorktreeProvider is called with projectPath, workspacesDir, fileSystemLayer, and options
       expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith(
         "/project",
         mockPathProvider.getProjectWorkspacesDir("/project"),
-        expect.any(Object) // FileSystemLayer
+        expect.any(Object), // FileSystemLayer
+        expect.objectContaining({ keepFilesService: expect.any(Object) }) // Options with KeepFilesService
       );
     });
 

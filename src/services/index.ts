@@ -107,6 +107,13 @@ export type {
 // Note: ProcessRunner and ProcessResult are exported from platform/process.
 // VscodeSetupService uses ProcessRunner via vscode-setup/types.ts re-export.
 
+// KeepFiles service
+export { KeepFilesService } from "./keepfiles";
+export type { IKeepFilesService, CopyResult, CopyError } from "./keepfiles";
+
+// Git worktree provider options
+export type { GitWorktreeProviderOptions } from "./git/git-worktree-provider";
+
 /**
  * Factory function to create a GitWorktreeProvider with a SimpleGitClient.
  *
@@ -114,17 +121,25 @@ export type {
  * @param workspacesDir Directory where worktrees will be created. Callers must obtain this
  *   from `PathProvider.getProjectWorkspacesDir(projectRoot)` to ensure consistent worktree placement.
  * @param fileSystemLayer FileSystemLayer for cleanup operations
+ * @param options Optional configuration including keepFilesService
  * @returns Promise resolving to an IWorkspaceProvider
  * @throws WorkspaceError if path is invalid or not a git repository
  */
 export async function createGitWorktreeProvider(
   projectRoot: string,
   workspacesDir: string,
-  fileSystemLayer: import("./platform/filesystem").FileSystemLayer
+  fileSystemLayer: import("./platform/filesystem").FileSystemLayer,
+  options?: import("./git/git-worktree-provider").GitWorktreeProviderOptions
 ): Promise<import("./git/workspace-provider").IWorkspaceProvider> {
   const { GitWorktreeProvider } = await import("./git/git-worktree-provider");
   const { SimpleGitClient } = await import("./git/simple-git-client");
 
   const gitClient = new SimpleGitClient();
-  return GitWorktreeProvider.create(projectRoot, gitClient, workspacesDir, fileSystemLayer);
+  return GitWorktreeProvider.create(
+    projectRoot,
+    gitClient,
+    workspacesDir,
+    fileSystemLayer,
+    options
+  );
 }

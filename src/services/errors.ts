@@ -15,7 +15,8 @@ export interface SerializedError {
     | "project-store"
     | "opencode"
     | "vscode-setup"
-    | "filesystem";
+    | "filesystem"
+    | "keepfiles";
   readonly message: string;
   readonly code?: string;
   readonly path?: string;
@@ -90,6 +91,8 @@ export abstract class ServiceError extends Error {
           json.path ?? "",
           json.message
         );
+      case "keepfiles":
+        return new KeepFilesError(json.message, json.code);
     }
   }
 }
@@ -134,6 +137,13 @@ export class OpenCodeError extends ServiceError {
  */
 export class VscodeSetupError extends ServiceError {
   readonly type = "vscode-setup" as const;
+}
+
+/**
+ * Error from KeepFiles operations (copying gitignored files to workspaces).
+ */
+export class KeepFilesError extends ServiceError {
+  readonly type = "keepfiles" as const;
 }
 
 /**

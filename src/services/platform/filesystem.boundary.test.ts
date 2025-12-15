@@ -419,4 +419,195 @@ describe("DefaultFileSystemLayer", () => {
       await expect(fs.readdir(dirPath)).rejects.toThrow();
     });
   });
+
+  describe("copyTree", () => {
+    it("copies text file with content verification", async () => {
+      const srcPath = join(tempDir.path, "src.txt");
+      const destPath = join(tempDir.path, "dest.txt");
+      const content = "Hello, World! Line 1\nLine 2\nLine 3 with UTF-8: 日本語";
+      await nodeWriteFile(srcPath, content, "utf-8");
+
+      const result = await fs.copyTree(srcPath, destPath);
+
+      expect(result.copiedCount).toBe(1);
+      expect(result.skippedSymlinks).toHaveLength(0);
+
+      const destContent = await fs.readFile(destPath);
+      expect(destContent).toBe(content);
+    });
+
+    it("copies binary file with null bytes byte-for-byte", async () => {
+      const srcPath = join(tempDir.path, "binary.bin");
+      const destPath = join(tempDir.path, "binary-copy.bin");
+      // Create binary content with null bytes
+      const binaryContent = Buffer.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe, 0x00, 0x00, 0x89]);
+      await nodeWriteFile(srcPath, binaryContent);
+
+      const result = await fs.copyTree(srcPath, destPath);
+
+      expect(result.copiedCount).toBe(1);
+
+      // Verify byte-for-byte
+      const { readFile: nodeReadFile } = await import("node:fs/promises");
+      const destBuffer = await nodeReadFile(destPath);
+      expect(Buffer.compare(destBuffer, binaryContent)).toBe(0);
+    });
+
+    it("copies small PNG binary file correctly", async () => {
+      const srcPath = join(tempDir.path, "image.png");
+      const destPath = join(tempDir.path, "image-copy.png");
+      // Minimal valid PNG (1x1 transparent pixel)
+      const pngHeader = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x62, 0x00,
+        0x02, 0x00, 0x00, 0x05, 0x00, 0x01, 0xe9, 0xfa, 0xdc, 0xd8, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+      ]);
+      await nodeWriteFile(srcPath, pngHeader);
+
+      const result = await fs.copyTree(srcPath, destPath);
+
+      expect(result.copiedCount).toBe(1);
+
+      const { readFile: nodeReadFile } = await import("node:fs/promises");
+      const destBuffer = await nodeReadFile(destPath);
+      expect(Buffer.compare(destBuffer, pngHeader)).toBe(0);
+    });
+
+    it("copies nested directory structure (3+ levels deep)", async () => {
+      const srcDir = join(tempDir.path, "src");
+      const destDir = join(tempDir.path, "dest");
+
+      // Create 4-level deep structure
+      await nodeMkdir(join(srcDir, "level1", "level2", "level3"), { recursive: true });
+      await nodeWriteFile(join(srcDir, "root.txt"), "root", "utf-8");
+      await nodeWriteFile(join(srcDir, "level1", "l1.txt"), "level1", "utf-8");
+      await nodeWriteFile(join(srcDir, "level1", "level2", "l2.txt"), "level2", "utf-8");
+      await nodeWriteFile(join(srcDir, "level1", "level2", "level3", "l3.txt"), "level3", "utf-8");
+
+      const result = await fs.copyTree(srcDir, destDir);
+
+      expect(result.copiedCount).toBe(4);
+      expect(result.skippedSymlinks).toHaveLength(0);
+
+      // Verify all files copied
+      expect(await fs.readFile(join(destDir, "root.txt"))).toBe("root");
+      expect(await fs.readFile(join(destDir, "level1", "l1.txt"))).toBe("level1");
+      expect(await fs.readFile(join(destDir, "level1", "level2", "l2.txt"))).toBe("level2");
+      expect(await fs.readFile(join(destDir, "level1", "level2", "level3", "l3.txt"))).toBe(
+        "level3"
+      );
+    });
+
+    it("preserves file permissions (basic chmod check)", async () => {
+      const srcPath = join(tempDir.path, "executable.sh");
+      const destPath = join(tempDir.path, "executable-copy.sh");
+      await nodeWriteFile(srcPath, "#!/bin/bash\necho hello", "utf-8");
+
+      // Make file executable
+      const { chmod, stat } = await import("node:fs/promises");
+      await chmod(srcPath, 0o755);
+
+      await fs.copyTree(srcPath, destPath);
+
+      const destStat = await stat(destPath);
+      // Check executable bit is preserved (at least for owner)
+      const ownerExecuteBit = 0o100;
+      expect(destStat.mode & ownerExecuteBit).toBe(ownerExecuteBit);
+    });
+
+    it("skips actual symlinks and reports them in result", async () => {
+      const srcDir = join(tempDir.path, "src");
+      const destDir = join(tempDir.path, "dest");
+      await nodeMkdir(srcDir);
+
+      // Create a regular file and a symlink to it
+      const filePath = join(srcDir, "file.txt");
+      const linkPath = join(srcDir, "link.txt");
+      await nodeWriteFile(filePath, "content", "utf-8");
+      await symlink(filePath, linkPath);
+
+      const result = await fs.copyTree(srcDir, destDir);
+
+      expect(result.copiedCount).toBe(1); // Only the file
+      expect(result.skippedSymlinks).toHaveLength(1);
+      expect(result.skippedSymlinks[0]).toBe(linkPath);
+
+      // Verify file was copied but symlink was not
+      expect(await fs.readFile(join(destDir, "file.txt"))).toBe("content");
+      await expect(fs.readFile(join(destDir, "link.txt"))).rejects.toThrow(FileSystemError);
+    });
+
+    it("throws ENOENT when source does not exist", async () => {
+      const srcPath = join(tempDir.path, "non-existent");
+      const destPath = join(tempDir.path, "dest");
+
+      await expect(fs.copyTree(srcPath, destPath)).rejects.toThrow(FileSystemError);
+
+      try {
+        await fs.copyTree(srcPath, destPath);
+      } catch (error) {
+        expect(error).toBeInstanceOf(FileSystemError);
+        expect((error as FileSystemError).fsCode).toBe("ENOENT");
+      }
+    });
+
+    it("copies 1000 small files in under 5 seconds", async () => {
+      const srcDir = join(tempDir.path, "src-large");
+      const destDir = join(tempDir.path, "dest-large");
+      await nodeMkdir(srcDir);
+
+      // Create 1000 small files
+      const promises: Promise<void>[] = [];
+      for (let i = 0; i < 1000; i++) {
+        promises.push(nodeWriteFile(join(srcDir, `file${i}.txt`), `content ${i}`, "utf-8"));
+      }
+      await Promise.all(promises);
+
+      const start = Date.now();
+      const result = await fs.copyTree(srcDir, destDir);
+      const elapsed = Date.now() - start;
+
+      expect(result.copiedCount).toBe(1000);
+      expect(elapsed).toBeLessThan(5000); // Less than 5 seconds
+    });
+
+    it("overwrites existing destination files", async () => {
+      const srcPath = join(tempDir.path, "src.txt");
+      const destPath = join(tempDir.path, "dest.txt");
+      await nodeWriteFile(srcPath, "new content", "utf-8");
+      await nodeWriteFile(destPath, "old content", "utf-8");
+
+      const result = await fs.copyTree(srcPath, destPath);
+
+      expect(result.copiedCount).toBe(1);
+      expect(await fs.readFile(destPath)).toBe("new content");
+    });
+
+    it("creates parent directories for destination", async () => {
+      const srcPath = join(tempDir.path, "src.txt");
+      const destPath = join(tempDir.path, "new", "nested", "deep", "dest.txt");
+      await nodeWriteFile(srcPath, "content", "utf-8");
+
+      const result = await fs.copyTree(srcPath, destPath);
+
+      expect(result.copiedCount).toBe(1);
+      expect(await fs.readFile(destPath)).toBe("content");
+    });
+
+    it("handles symlink at root level", async () => {
+      const targetPath = join(tempDir.path, "target.txt");
+      const linkPath = join(tempDir.path, "link");
+      const destPath = join(tempDir.path, "dest");
+      await nodeWriteFile(targetPath, "content", "utf-8");
+      await symlink(targetPath, linkPath);
+
+      const result = await fs.copyTree(linkPath, destPath);
+
+      expect(result.copiedCount).toBe(0);
+      expect(result.skippedSymlinks).toHaveLength(1);
+      expect(result.skippedSymlinks[0]).toBe(linkPath);
+    });
+  });
 });

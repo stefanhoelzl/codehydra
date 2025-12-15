@@ -4,7 +4,13 @@
  * Provides mock factory for FileSystemLayer to enable easy unit testing of consumers.
  */
 
-import type { FileSystemLayer, DirEntry, MkdirOptions, RmOptions } from "./filesystem";
+import type {
+  FileSystemLayer,
+  DirEntry,
+  MkdirOptions,
+  RmOptions,
+  CopyTreeResult,
+} from "./filesystem";
 import { FileSystemError } from "../errors";
 
 // ============================================================================
@@ -76,6 +82,18 @@ export interface MockRmOptions {
 }
 
 /**
+ * Options for mock copyTree method.
+ */
+export interface MockCopyTreeOptions {
+  /** Result to return */
+  readonly result?: CopyTreeResult;
+  /** Error to throw */
+  readonly error?: FileSystemError;
+  /** Custom implementation */
+  readonly implementation?: (src: string, dest: string) => Promise<CopyTreeResult>;
+}
+
+/**
  * Options for creating a mock FileSystemLayer.
  */
 export interface MockFileSystemLayerOptions {
@@ -91,6 +109,8 @@ export interface MockFileSystemLayerOptions {
   readonly unlink?: MockUnlinkOptions;
   /** Mock rm: succeed or throw error */
   readonly rm?: MockRmOptions;
+  /** Mock copyTree: return result or throw error */
+  readonly copyTree?: MockCopyTreeOptions;
 }
 
 // ============================================================================
@@ -183,6 +203,16 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
         throw options.rm.error;
       }
       // Default: succeed silently
+    },
+
+    async copyTree(src: string, dest: string): Promise<CopyTreeResult> {
+      if (options?.copyTree?.implementation) {
+        return options.copyTree.implementation(src, dest);
+      }
+      if (options?.copyTree?.error) {
+        throw options.copyTree.error;
+      }
+      return options?.copyTree?.result ?? { copiedCount: 0, skippedSymlinks: [] };
     },
   };
 }

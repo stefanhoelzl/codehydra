@@ -37,6 +37,7 @@
 | WebContentsView | Electron view for embedding (not iframe)                                                                                                                                                                  |
 | Shortcut Mode   | Keyboard-driven navigation activated by Alt+X. All key detection in main process (ShortcutController). Actions: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project. Escape exits (renderer). |
 | VS Code Setup   | First-run setup that installs extensions and config; runs once before code-server starts; marker at `<app-data>/vscode/.setup-completed`                                                                  |
+| .keepfiles      | Config file in project root listing files to copy to new workspaces. Uses gitignore syntax with **inverted semantics** - listed patterns are COPIED (not ignored). Supports negation with `!` prefix.     |
 
 ## View Detachment Pattern
 
@@ -792,6 +793,7 @@ const service = new SomeService(runner);
 | `readdir`   | List directory contents with entry type info        |
 | `unlink`    | Delete a file                                       |
 | `rm`        | Delete file or directory (supports force/recursive) |
+| `copyTree`  | Copy file or directory recursively (skips symlinks) |
 
 ```typescript
 // DefaultFileSystemLayer wraps node:fs/promises
@@ -878,6 +880,10 @@ const service = new ProjectStore(projectsDir, mockFs);
 2. **Boundary testing**: Real implementations tested in `*.boundary.test.ts`
 3. **Consistency**: Unified error handling (e.g., `FileSystemError`, `ServiceError`)
 4. **Maintainability**: Single point of change for external dependencies
+
+**Exception - Pure Libraries:**
+
+The `ignore` package (used by KeepFilesService) is acceptable for direct usage because it's a pure pattern-matching library with no I/O or side effects. It only performs string operations on patterns and paths.
 
 **Implementation pattern:**
 

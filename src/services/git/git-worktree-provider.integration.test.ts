@@ -4,13 +4,16 @@
  * These tests use real git repositories to verify the implementation.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
 import { SimpleGitClient } from "./simple-git-client";
 import { createTestGitRepo, createTempDir } from "../test-utils";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { simpleGit } from "simple-git";
-import path from "path";
+import path, { join } from "node:path";
+import { mkdir as nodeMkdir, writeFile as nodeWriteFile } from "node:fs/promises";
+import { KeepFilesService } from "../keepfiles/keepfiles-service";
+import { execSync } from "node:child_process";
 
 describe("GitWorktreeProvider integration", () => {
   let repoPath: string;
@@ -193,6 +196,164 @@ describe("GitWorktreeProvider integration", () => {
       expect(metadata.note).toBe("note value");
       expect(metadata.model).toBe("claude-4");
       expect(metadata.base).toBe("main");
+    });
+  });
+});
+
+describe("GitWorktreeProvider with KeepFilesService (integration)", () => {
+  let tempDir: { path: string; cleanup: () => Promise<void> };
+  let projectRoot: string;
+  let workspacesDir: string;
+  let fs: DefaultFileSystemLayer;
+
+  /**
+   * Initialize a git repository in the given directory.
+   */
+  async function initGitRepo(dir: string): Promise<void> {
+    execSync("git init", { cwd: dir, stdio: "ignore" });
+    execSync('git config user.email "test@test.com"', { cwd: dir, stdio: "ignore" });
+    execSync('git config user.name "Test"', { cwd: dir, stdio: "ignore" });
+    // Create initial commit so branches work
+    await nodeWriteFile(join(dir, ".gitignore"), "# ignore\n.env\n", "utf-8");
+    execSync("git add .", { cwd: dir, stdio: "ignore" });
+    execSync('git commit -m "Initial commit"', { cwd: dir, stdio: "ignore" });
+  }
+
+  beforeEach(async () => {
+    tempDir = await createTempDir();
+    projectRoot = join(tempDir.path, "project");
+    workspacesDir = join(tempDir.path, "workspaces");
+    await nodeMkdir(projectRoot);
+    await nodeMkdir(workspacesDir);
+    fs = new DefaultFileSystemLayer();
+
+    // Initialize git repo
+    await initGitRepo(projectRoot);
+  });
+
+  afterEach(async () => {
+    // Clean up any worktrees before removing temp dir
+    try {
+      execSync("git worktree prune", { cwd: projectRoot, stdio: "ignore" });
+    } catch {
+      // Ignore cleanup errors
+    }
+    await tempDir.cleanup();
+  });
+
+  describe("full flow", () => {
+    it(".keepfiles read from correct location and files copied to worktree", async () => {
+      // Create .keepfiles in project root
+      await nodeWriteFile(join(projectRoot, ".keepfiles"), ".env\nconfig/\n", "utf-8");
+
+      // Create files to be copied
+      await nodeWriteFile(join(projectRoot, ".env"), "SECRET=value", "utf-8");
+      await nodeMkdir(join(projectRoot, "config"));
+      await nodeWriteFile(join(projectRoot, "config", "app.json"), '{"key": "value"}', "utf-8");
+
+      // Create a file that shouldn't be copied
+      await nodeWriteFile(join(projectRoot, "README.md"), "# README", "utf-8");
+
+      const gitClient = new SimpleGitClient();
+      const keepFilesService = new KeepFilesService(fs);
+      const provider = await GitWorktreeProvider.create(projectRoot, gitClient, workspacesDir, fs, {
+        keepFilesService,
+      });
+
+      // Create workspace
+      const workspace = await provider.createWorkspace("feature-test", "main");
+
+      expect(workspace.name).toBe("feature-test");
+      expect(workspace.path).toContain("feature-test");
+
+      // Verify files were copied
+      const envContent = await fs.readFile(join(workspace.path, ".env"));
+      expect(envContent).toBe("SECRET=value");
+
+      const configContent = await fs.readFile(join(workspace.path, "config", "app.json"));
+      expect(configContent).toBe('{"key": "value"}');
+
+      // README should NOT be copied
+      await expect(fs.readFile(join(workspace.path, "README.md"))).rejects.toThrow();
+    });
+
+    it("error handling does not fail workspace creation", async () => {
+      // Create .keepfiles with a pattern that will cause errors
+      await nodeWriteFile(join(projectRoot, ".keepfiles"), "nonexistent.txt\n.env\n", "utf-8");
+
+      // Create only .env (nonexistent.txt doesn't exist, but that shouldn't cause an error)
+      await nodeWriteFile(join(projectRoot, ".env"), "SECRET=value", "utf-8");
+
+      const gitClient = new SimpleGitClient();
+      const keepFilesService = new KeepFilesService(fs);
+      const provider = await GitWorktreeProvider.create(projectRoot, gitClient, workspacesDir, fs, {
+        keepFilesService,
+      });
+
+      // Should not throw
+      const workspace = await provider.createWorkspace("feature-error-test", "main");
+
+      expect(workspace.name).toBe("feature-error-test");
+
+      // .env should still be copied
+      const envContent = await fs.readFile(join(workspace.path, ".env"));
+      expect(envContent).toBe("SECRET=value");
+    });
+  });
+
+  describe("concurrent workspace creation", () => {
+    it("two workspaces created in parallel both get correct files", async () => {
+      // Create .keepfiles
+      await nodeWriteFile(join(projectRoot, ".keepfiles"), ".env\n", "utf-8");
+      await nodeWriteFile(join(projectRoot, ".env"), "SHARED=value", "utf-8");
+
+      const gitClient = new SimpleGitClient();
+      const keepFilesService = new KeepFilesService(fs);
+      const provider = await GitWorktreeProvider.create(projectRoot, gitClient, workspacesDir, fs, {
+        keepFilesService,
+      });
+
+      // Create two workspaces in parallel
+      const [workspace1, workspace2] = await Promise.all([
+        provider.createWorkspace("feature-a", "main"),
+        provider.createWorkspace("feature-b", "main"),
+      ]);
+
+      expect(workspace1.name).toBe("feature-a");
+      expect(workspace2.name).toBe("feature-b");
+
+      // Both should have .env copied
+      const env1 = await fs.readFile(join(workspace1.path, ".env"));
+      const env2 = await fs.readFile(join(workspace2.path, ".env"));
+
+      expect(env1).toBe("SHARED=value");
+      expect(env2).toBe("SHARED=value");
+    });
+  });
+
+  describe("timing verification", () => {
+    it("keep files copied after worktree creation succeeds", async () => {
+      await nodeWriteFile(join(projectRoot, ".keepfiles"), ".env\n", "utf-8");
+      await nodeWriteFile(join(projectRoot, ".env"), "SECRET=value", "utf-8");
+
+      const gitClient = new SimpleGitClient();
+      const keepFilesService = new KeepFilesService(fs);
+
+      // Spy on copyToWorkspace to verify timing
+      const copyToWorkspaceSpy = vi.spyOn(keepFilesService, "copyToWorkspace");
+
+      const provider = await GitWorktreeProvider.create(projectRoot, gitClient, workspacesDir, fs, {
+        keepFilesService,
+      });
+
+      const workspace = await provider.createWorkspace("feature-timing", "main");
+
+      // Verify copyToWorkspace was called with the correct arguments
+      expect(copyToWorkspaceSpy).toHaveBeenCalledWith(projectRoot, workspace.path);
+
+      // The fact that we can read .env in the workspace proves it was called after worktree creation
+      const envContent = await fs.readFile(join(workspace.path, ".env"));
+      expect(envContent).toBe("SECRET=value");
     });
   });
 });

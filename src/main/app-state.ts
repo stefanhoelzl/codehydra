@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   createGitWorktreeProvider,
   DefaultFileSystemLayer,
+  KeepFilesService,
   type IWorkspaceProvider,
   type PathProvider,
   type ProjectStore,
@@ -133,7 +134,10 @@ export class AppState {
     // Create workspace provider (validates it's a git repo)
     const workspacesDir = this.pathProvider.getProjectWorkspacesDir(projectPath);
     const fileSystemLayer = new DefaultFileSystemLayer();
-    const provider = await createGitWorktreeProvider(projectPath, workspacesDir, fileSystemLayer);
+    const keepFilesService = new KeepFilesService(fileSystemLayer);
+    const provider = await createGitWorktreeProvider(projectPath, workspacesDir, fileSystemLayer, {
+      keepFilesService,
+    });
 
     // Run cleanup non-blocking (fire and forget)
     if (provider.cleanupOrphanedWorkspaces) {

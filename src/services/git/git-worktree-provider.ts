@@ -10,6 +10,18 @@ import { WorkspaceError } from "../errors";
 import { sanitizeWorkspaceName } from "../platform/paths";
 import { isValidMetadataKey } from "../../shared/api/types";
 import type { FileSystemLayer } from "../platform/filesystem";
+import type { IKeepFilesService } from "../keepfiles";
+
+/**
+ * Options for GitWorktreeProvider.
+ */
+export interface GitWorktreeProviderOptions {
+  /**
+   * Optional service for copying .keepfiles-configured files to new workspaces.
+   * If not provided, no files are copied on workspace creation.
+   */
+  readonly keepFilesService?: IKeepFilesService;
+}
 
 /**
  * Implementation of IWorkspaceProvider using git worktrees.
@@ -23,6 +35,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
   private readonly gitClient: IGitClient;
   private readonly workspacesDir: string;
   private readonly fileSystemLayer: FileSystemLayer;
+  private readonly keepFilesService: IKeepFilesService | undefined;
   private cleanupInProgress = false;
 
   /**
@@ -44,12 +57,14 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     projectRoot: string,
     gitClient: IGitClient,
     workspacesDir: string,
-    fileSystemLayer: FileSystemLayer
+    fileSystemLayer: FileSystemLayer,
+    options?: GitWorktreeProviderOptions
   ) {
     this.projectRoot = projectRoot;
     this.gitClient = gitClient;
     this.workspacesDir = workspacesDir;
     this.fileSystemLayer = fileSystemLayer;
+    this.keepFilesService = options?.keepFilesService;
   }
 
   /**
@@ -85,6 +100,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
    * @param gitClient Git client to use for operations
    * @param workspacesDir Directory where worktrees will be created (from PathProvider.getProjectWorkspacesDir)
    * @param fileSystemLayer FileSystemLayer for cleanup operations
+   * @param options Optional configuration including keepFilesService
    * @returns Promise resolving to a new GitWorktreeProvider
    * @throws WorkspaceError if path is invalid or not a git repository
    */
@@ -92,7 +108,8 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     projectRoot: string,
     gitClient: IGitClient,
     workspacesDir: string,
-    fileSystemLayer: FileSystemLayer
+    fileSystemLayer: FileSystemLayer,
+    options?: GitWorktreeProviderOptions
   ): Promise<GitWorktreeProvider> {
     // Validate absolute path
     if (!path.isAbsolute(projectRoot)) {
@@ -118,7 +135,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       throw new WorkspaceError(`Failed to validate repository: ${message}`);
     }
 
-    return new GitWorktreeProvider(projectRoot, gitClient, workspacesDir, fileSystemLayer);
+    return new GitWorktreeProvider(projectRoot, gitClient, workspacesDir, fileSystemLayer, options);
   }
 
   async discover(): Promise<readonly Workspace[]> {
@@ -254,6 +271,28 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Unknown error";
       console.warn(`Failed to save base branch config for ${name}: ${message}`);
+    }
+
+    // Copy keep files from project root to new workspace (if service configured)
+    if (this.keepFilesService) {
+      try {
+        const result = await this.keepFilesService.copyToWorkspace(this.projectRoot, worktreePath);
+
+        if (result.configExists) {
+          console.info(
+            `Copied ${result.copiedCount} keep file(s) to workspace (${result.skippedCount} skipped)`
+          );
+
+          // Log any errors that occurred during copying
+          for (const error of result.errors) {
+            console.warn(`Failed to copy ${error.path}: ${error.message}`);
+          }
+        }
+      } catch (error: unknown) {
+        // Copy errors shouldn't fail workspace creation
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.warn(`Failed to copy keep files: ${message}`);
+      }
     }
 
     return {
