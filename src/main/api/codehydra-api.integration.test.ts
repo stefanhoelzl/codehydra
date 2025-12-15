@@ -60,6 +60,9 @@ function createMockViewManager(): IViewManager {
     focusActiveWorkspace: vi.fn(),
     focusUI: vi.fn(),
     setDialogMode: vi.fn(),
+    setMode: vi.fn(),
+    getMode: vi.fn().mockReturnValue("workspace"),
+    onModeChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
   } as unknown as IViewManager;
 }

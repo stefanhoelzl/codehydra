@@ -23,8 +23,7 @@
   import { onMount } from "svelte";
   import * as api from "$lib/api";
   import {
-    handleShortcutEnable,
-    handleShortcutDisable,
+    handleModeChange,
     handleKeyDown,
     handleKeyUp,
     handleWindowBlur,
@@ -49,18 +48,29 @@
    */
   type AppMode = { type: "initializing" } | { type: "setup" } | { type: "ready" };
 
+  /** Time in ms before clearing ARIA announcement to prevent repetition */
+  const ARIA_ANNOUNCEMENT_CLEAR_MS = 1000;
+
   let appMode = $state<AppMode>({ type: "initializing" });
 
   // Announcement message for screen readers (cleared after announcement)
   let announceMessage = $state<string>("");
 
-  // Subscribe to shortcut events from main process (global - work in both modes)
+  // Subscribe to ui:mode-changed events from main process (unified mode system)
   $effect(() => {
-    const unsubEnable = api.on("shortcut:enable", handleShortcutEnable);
-    const unsubDisable = api.on("shortcut:disable", handleShortcutDisable);
+    const unsubModeChange = api.onModeChange((event) => {
+      handleModeChange(event);
+      // Announce mode changes for screen readers
+      if (event.mode === "shortcut") {
+        announceMessage = "Shortcut mode active. Use arrow keys to navigate.";
+        // Clear after timeout so it doesn't repeat
+        setTimeout(() => {
+          announceMessage = "";
+        }, ARIA_ANNOUNCEMENT_CLEAR_MS);
+      }
+    });
     return () => {
-      unsubEnable();
-      unsubDisable();
+      unsubModeChange();
     };
   });
 
@@ -117,10 +127,10 @@
     appMode = { type: "ready" };
     // Announce mode transition for screen readers
     announceMessage = "Setup complete. Application ready.";
-    // Clear after 1 second so it doesn't repeat
+    // Clear after timeout so it doesn't repeat
     setTimeout(() => {
       announceMessage = "";
-    }, 1000);
+    }, ARIA_ANNOUNCEMENT_CLEAR_MS);
   }
 
   // Derive current step message for setup screen

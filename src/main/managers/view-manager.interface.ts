@@ -4,6 +4,7 @@
  */
 
 import type { WebContentsView } from "electron";
+import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
 
 /**
  * Function to unsubscribe from an event.
@@ -91,9 +92,37 @@ export interface IViewManager {
    * Sets whether the UI layer should be in dialog mode.
    * In dialog mode, the UI is moved to the top to overlay workspace views.
    *
+   * @deprecated Use setMode() instead. Kept for backward compatibility during migration.
    * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
    */
   setDialogMode(isOpen: boolean): void;
+
+  /**
+   * Sets the UI mode.
+   * - "workspace": UI at z-index 0, focus active workspace
+   * - "shortcut": UI on top, focus UI layer
+   * - "dialog": UI on top, no focus change
+   *
+   * Mode transitions are idempotent - setting the same mode twice does not emit an event.
+   *
+   * @param mode - The new UI mode
+   */
+  setMode(mode: UIMode): void;
+
+  /**
+   * Gets the current UI mode.
+   *
+   * @returns The current UI mode
+   */
+  getMode(): UIMode;
+
+  /**
+   * Subscribe to mode change events.
+   *
+   * @param callback - Called when mode changes, receives mode and previousMode
+   * @returns Unsubscribe function
+   */
+  onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe;
 
   /**
    * Updates the code-server port.

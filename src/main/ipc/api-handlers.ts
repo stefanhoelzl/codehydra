@@ -14,7 +14,7 @@ import * as path from "path";
 import type { ICodeHydraApi, Unsubscribe } from "../../shared/api/interfaces";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { isProjectId, isWorkspaceName } from "../../shared/api/types";
-import { ApiIpcChannels } from "../../shared/ipc";
+import { ApiIpcChannels, type UIMode } from "../../shared/ipc";
 
 // =============================================================================
 // Validation Helpers
@@ -85,6 +85,22 @@ function validateBoolean(value: unknown, field: string, defaultValue: boolean): 
     throw new ApiValidationError(field, "must be a boolean");
   }
   return value;
+}
+
+/**
+ * Valid UI modes.
+ */
+const VALID_UI_MODES: readonly UIMode[] = ["workspace", "dialog", "shortcut"];
+
+/**
+ * Validate that a value is a valid UIMode.
+ */
+function validateUIMode(value: unknown, field: string): UIMode {
+  const str = validateString(value, field);
+  if (!VALID_UI_MODES.includes(str as UIMode)) {
+    throw new ApiValidationError(field, `must be one of: ${VALID_UI_MODES.join(", ")}`);
+  }
+  return str as UIMode;
 }
 
 // =============================================================================
@@ -193,6 +209,12 @@ export function registerApiHandlers(api: ICodeHydraApi): void {
     return await api.ui.focusActiveWorkspace();
   });
 
+  ipcMain.handle(ApiIpcChannels.UI_SET_MODE, async (_event, payload: unknown) => {
+    const p = payload as Record<string, unknown>;
+    const mode = validateUIMode(p?.mode, "mode");
+    return await api.ui.setMode(mode);
+  });
+
   // ---------------------------------------------------------------------------
   // Lifecycle API
   // ---------------------------------------------------------------------------
@@ -281,16 +303,10 @@ export function wireApiEvents(
     })
   );
 
-  // Shortcut events
+  // UI mode events
   unsubscribers.push(
-    api.on("shortcut:enable", () => {
-      send(ApiIpcChannels.SHORTCUT_ENABLE);
-    })
-  );
-
-  unsubscribers.push(
-    api.on("shortcut:disable", () => {
-      send(ApiIpcChannels.SHORTCUT_DISABLE);
+    api.on("ui:mode-changed", (event) => {
+      send(ApiIpcChannels.UI_MODE_CHANGED, event);
     })
   );
 

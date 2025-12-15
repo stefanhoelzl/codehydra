@@ -53,6 +53,9 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
   protected readonly electronApp: typeof Electron.app;
   protected readonly vscodeSetup: IVscodeSetup | undefined;
 
+  // Cleanup function for ViewManager mode change subscription
+  private readonly unsubscribeViewManagerModeChange: Unsubscribe;
+
   constructor(
     private readonly appState: AppState,
     viewManager: IViewManager,
@@ -70,6 +73,13 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
     this.workspaces = this.createWorkspaceApi();
     this.ui = this.createUiApi();
     this.lifecycle = this.createLifecycleApi();
+
+    // Wire ViewManager mode changes to API events
+    // This ensures mode changes from any source (ShortcutController, renderer)
+    // are emitted to API subscribers
+    this.unsubscribeViewManagerModeChange = this.viewManager.onModeChange((event) => {
+      this.emit("ui:mode-changed", event);
+    });
   }
 
   // ==========================================================================
@@ -109,6 +119,7 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
   // ==========================================================================
 
   dispose(): void {
+    this.unsubscribeViewManagerModeChange();
     this.listeners.clear();
   }
 
@@ -557,6 +568,10 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
 
       focusActiveWorkspace: async (): Promise<void> => {
         this.viewManager.focusActiveWorkspace();
+      },
+
+      setMode: async (mode): Promise<void> => {
+        this.viewManager.setMode(mode);
       },
     };
   }

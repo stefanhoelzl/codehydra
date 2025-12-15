@@ -89,6 +89,7 @@ const mockApi = vi.hoisted(() => ({
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
     setDialogMode: vi.fn().mockResolvedValue(undefined),
     focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
+    setMode: vi.fn().mockResolvedValue(undefined),
   },
   lifecycle: {
     getState: vi.fn().mockResolvedValue("ready"),
@@ -98,6 +99,11 @@ const mockApi = vi.hoisted(() => ({
   // on() captures callbacks by event name for tests to fire events
   on: vi.fn((event: string, callback: V2EventCallback) => {
     v2EventCallbacks.set(event, callback);
+    return vi.fn(); // unsubscribe
+  }),
+  // onModeChange captures callback for ui:mode-changed events
+  onModeChange: vi.fn((callback: V2EventCallback) => {
+    v2EventCallbacks.set("ui:mode-changed", callback);
     return vi.fn(); // unsubscribe
   }),
   // Legacy APIs (kept for backwards compatibility with some old tests)
@@ -802,7 +808,7 @@ describe("Integration tests", () => {
       expect(overlay).not.toHaveClass("active");
 
       // Step 1: Simulate shortcut enable event (Alt+X pressed)
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
 
       // Step 2: Verify overlay becomes active
       await waitFor(() => {
@@ -819,9 +825,8 @@ describe("Integration tests", () => {
       });
       expect(shortcutsStore.shortcutModeActive.value).toBe(false);
 
-      // Step 5: Verify APIs were called (v2 API)
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
+      // Step 5: Verify setMode was called to exit shortcut mode
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
   });
 
@@ -857,7 +862,7 @@ describe("Integration tests", () => {
       mockApi.ui.switchWorkspace.mockClear();
 
       // Step 1: Activate shortcut mode
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
@@ -904,7 +909,7 @@ describe("Integration tests", () => {
       const actualProjectId = projectsStore.projects.value[0]!.id;
 
       // Activate shortcut mode
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
@@ -961,7 +966,7 @@ describe("Integration tests", () => {
       });
 
       // Activate shortcut mode
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
@@ -1007,7 +1012,7 @@ describe("Integration tests", () => {
       mockApi.ui.switchWorkspace.mockClear();
 
       // Activate shortcut mode
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
 
       // Press ArrowDown (should wrap to first)
       await fireEvent.keyDown(window, { key: "ArrowDown" });
@@ -1027,7 +1032,7 @@ describe("Integration tests", () => {
       mockApi.ui.selectFolder.mockClear();
 
       // Activate shortcut mode
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
@@ -1054,7 +1059,7 @@ describe("Integration tests", () => {
       });
 
       // Activate shortcut mode
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });
@@ -1091,7 +1096,7 @@ describe("Integration tests", () => {
       const actualProjectId = projectsStore.projects.value[0]!.id;
 
       // Activate shortcut mode
-      fireV2Event("shortcut:enable");
+      fireV2Event("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(shortcutsStore.shortcutModeActive.value).toBe(true);
       });

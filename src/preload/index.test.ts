@@ -384,6 +384,33 @@ describe("preload API", () => {
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:ui:focus-active-workspace");
     });
+
+    it("ui.setMode calls api:ui:set-mode", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue(undefined);
+
+      const ui = exposedApi.ui as { setMode: (mode: string) => Promise<void> };
+      await ui.setMode("shortcut");
+
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:ui:set-mode", {
+        mode: "shortcut",
+      });
+    });
+
+    it("onModeChange subscribes to api:ui:mode-changed and returns unsubscribe", () => {
+      const callback = vi.fn();
+
+      const onModeChange = exposedApi.onModeChange as (cb: () => void) => () => void;
+      const unsubscribe = onModeChange(callback);
+
+      expect(mockIpcRenderer.on).toHaveBeenCalledWith("api:ui:mode-changed", expect.any(Function));
+      expect(unsubscribe).toBeInstanceOf(Function);
+
+      unsubscribe();
+      expect(mockIpcRenderer.removeListener).toHaveBeenCalledWith(
+        "api:ui:mode-changed",
+        expect.any(Function)
+      );
+    });
   });
 
   describe("lifecycle", () => {

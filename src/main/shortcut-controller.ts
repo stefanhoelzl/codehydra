@@ -7,7 +7,7 @@
  */
 
 import type { WebContents, Event as ElectronEvent, Input, BaseWindow } from "electron";
-import { ApiIpcChannels } from "../shared/ipc";
+import type { UIMode } from "../shared/ipc";
 
 type ShortcutActivationState = "NORMAL" | "ALT_WAITING";
 
@@ -16,9 +16,15 @@ const SHORTCUT_MODIFIER_KEY = "Alt";
 const SHORTCUT_ACTIVATION_KEY = "x";
 
 interface ShortcutControllerDeps {
+  /** @deprecated Use setMode instead */
   setDialogMode: (isOpen: boolean) => void;
+  /** @deprecated Handled by setMode */
   focusUI: () => void;
   getUIWebContents: () => WebContents | null;
+  /** Sets the UI mode (workspace, shortcut, dialog) */
+  setMode?: (mode: UIMode) => void;
+  /** Gets the current UI mode */
+  getMode?: () => UIMode;
 }
 
 /**
@@ -31,8 +37,6 @@ interface ShortcutControllerDeps {
  */
 export class ShortcutController {
   private state: ShortcutActivationState = "NORMAL";
-  /** Whether shortcut mode is currently active (UI overlay is showing) */
-  private shortcutModeActive = false;
   private readonly registeredViews = new Set<WebContents>();
   private readonly inputHandlers = new Map<
     WebContents,
@@ -94,6 +98,13 @@ export class ShortcutController {
   }
 
   /**
+   * Gets the current mode from deps or returns 'workspace' as default.
+   */
+  private getCurrentMode(): UIMode {
+    return this.deps.getMode?.() ?? "workspace";
+  }
+
+  /**
    * Handles keyboard input from workspace views.
    *
    * Algorithm:
@@ -115,17 +126,18 @@ export class ShortcutController {
     const isActivationKey = input.key.toLowerCase() === SHORTCUT_ACTIVATION_KEY;
 
     // Alt keyup: ALWAYS suppress to prevent VS Code menu activation
-    // Also notify UI if shortcut mode was active. This handles a race condition:
-    // 1. Alt+X activates shortcut mode, focusUI() is called
+    // Also exit shortcut mode if active. This handles a race condition:
+    // 1. Alt+X activates shortcut mode, focus moves to UI
     // 2. User releases Alt very quickly (before focus actually switches)
     // 3. This handler catches the Alt keyup (workspace still has focus)
-    // 4. Without SHORTCUT_DISABLE, UI would never know Alt was released
-    // 5. shortcutModeActive would stay true, breaking subsequent Alt+X usage
+    // 4. We need to exit shortcut mode
     if (input.type === "keyUp" && isAltKey) {
       event.preventDefault();
-      if (this.shortcutModeActive) {
-        this.shortcutModeActive = false;
-        this.emitDisable();
+      const currentMode = this.getCurrentMode();
+      if (currentMode === "shortcut") {
+        if (this.deps.setMode) {
+          this.deps.setMode("workspace");
+        }
       }
       this.state = "NORMAL";
       return;
@@ -144,12 +156,23 @@ export class ShortcutController {
     // ALT_WAITING state
     if (this.state === "ALT_WAITING") {
       if (isActivationKey) {
-        // Alt+X detected: activate shortcut mode
+        // Alt+X detected: check if we can activate shortcut mode
+        const currentMode = this.getCurrentMode();
+
+        // Don't activate shortcut mode if a dialog is open
+        if (currentMode === "dialog") {
+          this.state = "NORMAL";
+          return;
+        }
+
         event.preventDefault();
-        this.deps.setDialogMode(true);
-        this.deps.focusUI();
-        this.shortcutModeActive = true;
-        this.emitEnable();
+
+        // Activate shortcut mode via unified mode system
+        // setMode handles z-order and focus (UI on top, UI focused)
+        if (this.deps.setMode) {
+          this.deps.setMode("shortcut");
+        }
+
         this.state = "NORMAL";
       } else if (!isAltKey) {
         // Non-X key: exit waiting, let the key through to VS Code
@@ -161,26 +184,7 @@ export class ShortcutController {
 
   private handleWindowBlur(): void {
     // Reset state when window loses OS focus (e.g., Alt+Tab)
-    this.shortcutModeActive = false;
     this.state = "NORMAL";
-  }
-
-  private emitEnable(): void {
-    const uiWebContents = this.deps.getUIWebContents();
-    if (!uiWebContents || uiWebContents.isDestroyed()) {
-      // Silently fail if UI not ready - this is a transient state
-      return;
-    }
-    uiWebContents.send(ApiIpcChannels.SHORTCUT_ENABLE);
-  }
-
-  private emitDisable(): void {
-    const uiWebContents = this.deps.getUIWebContents();
-    if (!uiWebContents || uiWebContents.isDestroyed()) {
-      // Silently fail if UI not ready - this is a transient state
-      return;
-    }
-    uiWebContents.send(ApiIpcChannels.SHORTCUT_DISABLE);
   }
 
   /**

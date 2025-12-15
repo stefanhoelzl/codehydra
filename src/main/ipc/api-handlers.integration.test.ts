@@ -100,6 +100,7 @@ function createMockApiWithEvents(): {
       switchWorkspace: vi.fn().mockResolvedValue(undefined),
       setDialogMode: vi.fn().mockResolvedValue(undefined),
       focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
+      setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
       getState: vi.fn().mockResolvedValue("ready"),
@@ -238,18 +239,6 @@ describe("API → IPC → Renderer event flow", () => {
     emitEvent("workspace:status-changed", event);
 
     expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:status-changed", event);
-  });
-
-  it("should forward shortcut:enable event to renderer", () => {
-    emitEvent("shortcut:enable");
-
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:shortcut:enable", undefined);
-  });
-
-  it("should forward shortcut:disable event to renderer", () => {
-    emitEvent("shortcut:disable");
-
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:shortcut:disable", undefined);
   });
 
   it("should forward setup:progress event to renderer", () => {

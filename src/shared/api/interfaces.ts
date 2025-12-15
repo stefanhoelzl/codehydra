@@ -16,6 +16,7 @@ import type {
   SetupProgress,
   AppState,
 } from "./types";
+import type { UIMode, UIModeChangedEvent } from "../ipc";
 
 /**
  * Interface for objects that can be disposed.
@@ -56,8 +57,22 @@ export interface IUiApi {
     workspaceName: WorkspaceName,
     focus?: boolean
   ): Promise<void>;
+  /**
+   * @deprecated Use setMode() instead. Kept for backward compatibility during migration.
+   */
   setDialogMode(isOpen: boolean): Promise<void>;
   focusActiveWorkspace(): Promise<void>;
+  /**
+   * Sets the UI mode.
+   * - "workspace": UI at z-index 0, focus active workspace
+   * - "shortcut": UI on top, focus UI layer
+   * - "dialog": UI on top, no focus change
+   *
+   * Mode transitions are idempotent - setting the same mode twice does not emit an event.
+   *
+   * @param mode - The new UI mode
+   */
+  setMode(mode: UIMode): Promise<void>;
 }
 
 export interface ILifecycleApi {
@@ -84,8 +99,7 @@ export interface ApiEvents {
   "workspace:removed": (event: WorkspaceRef) => void;
   "workspace:switched": (event: WorkspaceRef | null) => void;
   "workspace:status-changed": (event: WorkspaceRef & { readonly status: WorkspaceStatus }) => void;
-  "shortcut:enable": () => void;
-  "shortcut:disable": () => void;
+  "ui:mode-changed": (event: UIModeChangedEvent) => void;
   "setup:progress": (event: SetupProgress) => void;
 }
 

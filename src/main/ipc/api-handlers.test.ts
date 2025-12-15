@@ -48,6 +48,7 @@ function createMockApi(): ICodeHydraApi {
       switchWorkspace: vi.fn(),
       setDialogMode: vi.fn(),
       focusActiveWorkspace: vi.fn(),
+      setMode: vi.fn(),
     },
     lifecycle: {
       getState: vi.fn().mockResolvedValue("ready"),
@@ -111,6 +112,7 @@ describe("registerApiHandlers", () => {
     expect(registeredChannels).toContain("api:ui:switch-workspace");
     expect(registeredChannels).toContain("api:ui:set-dialog-mode");
     expect(registeredChannels).toContain("api:ui:focus-active-workspace");
+    expect(registeredChannels).toContain("api:ui:set-mode");
     expect(registeredChannels).toContain("api:lifecycle:get-state");
     expect(registeredChannels).toContain("api:lifecycle:setup");
     expect(registeredChannels).toContain("api:lifecycle:quit");
@@ -423,6 +425,29 @@ describe("UI API handlers", () => {
       expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
     });
   });
+
+  describe("api:ui:set-mode", () => {
+    it("delegates to api.ui.setMode", async () => {
+      const handler = getHandler("api:ui:set-mode");
+      await handler({}, { mode: "shortcut" });
+
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("shortcut");
+    });
+
+    it("throws validation error for missing mode", async () => {
+      const handler = getHandler("api:ui:set-mode");
+
+      await expect(handler({}, {})).rejects.toThrow(/mode/i);
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
+    });
+
+    it("throws validation error for invalid mode", async () => {
+      const handler = getHandler("api:ui:set-mode");
+
+      await expect(handler({}, { mode: "invalid" })).rejects.toThrow(/mode/i);
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("Lifecycle API handlers", () => {
@@ -533,8 +558,7 @@ describe("wireApiEvents", () => {
     expect(mockApi.on).toHaveBeenCalledWith("workspace:removed", expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith("workspace:switched", expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith("workspace:status-changed", expect.any(Function));
-    expect(mockApi.on).toHaveBeenCalledWith("shortcut:enable", expect.any(Function));
-    expect(mockApi.on).toHaveBeenCalledWith("shortcut:disable", expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith("ui:mode-changed", expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith("setup:progress", expect.any(Function));
   });
 
@@ -558,6 +582,18 @@ describe("wireApiEvents", () => {
     expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:created", {
       projectId: TEST_PROJECT_ID,
       workspace: TEST_WORKSPACE,
+    });
+  });
+
+  it("forwards ui:mode-changed events to webContents", () => {
+    wireApiEvents(mockApi, () => mockWebContents as never);
+
+    const handler = eventHandlers.get("ui:mode-changed");
+    handler?.({ mode: "shortcut", previousMode: "workspace" });
+
+    expect(mockWebContents.send).toHaveBeenCalledWith("api:ui:mode-changed", {
+      mode: "shortcut",
+      previousMode: "workspace",
     });
   });
 

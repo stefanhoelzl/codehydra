@@ -27,6 +27,8 @@ export const {
   ui,
   lifecycle,
   on,
+  // UI mode change event
+  onModeChange,
 } = window.api;
 
 // =============================================================================

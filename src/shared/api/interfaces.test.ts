@@ -26,6 +26,7 @@ import type {
   SetupProgress,
   AppState,
 } from "./types";
+import type { UIMode, UIModeChangedEvent } from "../ipc";
 
 describe("IProjectApi Interface", () => {
   it("should have correct method signatures", () => {
@@ -129,6 +130,9 @@ describe("IUiApi Interface", () => {
       async focusActiveWorkspace(): Promise<void> {
         // no-op
       },
+      async setMode(mode: UIMode): Promise<void> {
+        void mode;
+      },
     };
 
     expect(api).toBeDefined();
@@ -137,6 +141,7 @@ describe("IUiApi Interface", () => {
     expect(typeof api.switchWorkspace).toBe("function");
     expect(typeof api.setDialogMode).toBe("function");
     expect(typeof api.focusActiveWorkspace).toBe("function");
+    expect(typeof api.setMode).toBe("function");
   });
 });
 
@@ -192,15 +197,16 @@ describe("ApiEvents Interface", () => {
       "workspace:status-changed": (event: WorkspaceRef & { readonly status: WorkspaceStatus }) => {
         void event;
       },
-      "shortcut:enable": () => {},
-      "shortcut:disable": () => {},
+      "ui:mode-changed": (event: UIModeChangedEvent) => {
+        void event;
+      },
       "setup:progress": (event: SetupProgress) => {
         void event;
       },
     };
 
     expect(handlers).toBeDefined();
-    expect(Object.keys(handlers)).toHaveLength(10);
+    expect(Object.keys(handlers)).toHaveLength(9);
   });
 });
 

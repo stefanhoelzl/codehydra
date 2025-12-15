@@ -5,6 +5,7 @@
 
 import { WebContentsView, type WebContents } from "electron";
 import type { IViewManager, Unsubscribe } from "./view-manager.interface";
+import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
 import type { WindowManager } from "./window-manager";
 import { openExternal } from "../utils/external-url";
 import { ShortcutController } from "../shortcut-controller";
@@ -67,9 +68,13 @@ export class ViewManager implements IViewManager {
    */
   private attachedWorkspacePath: string | null = null;
   /**
-   * Tracks dialog mode state for z-order maintenance during workspace switches.
+   * Current UI mode. Single source of truth for UI state.
    */
-  private isDialogMode = false;
+  private mode: UIMode = "workspace";
+  /**
+   * Callbacks for mode change events.
+   */
+  private readonly modeChangeCallbacks: Set<(event: UIModeChangedEvent) => void> = new Set();
   /**
    * Tracks which workspaces have had their URL loaded.
    * Used to ensure URL is only loaded on first activation (lazy loading).
@@ -131,6 +136,8 @@ export class ViewManager implements IViewManager {
       setDialogMode: (isOpen) => viewManagerHolder.instance?.setDialogMode(isOpen),
       focusUI: () => viewManagerHolder.instance?.focusUI(),
       getUIWebContents: () => viewManagerHolder.instance?.getUIWebContents() ?? null,
+      setMode: (mode) => viewManagerHolder.instance?.setMode(mode),
+      getMode: () => viewManagerHolder.instance?.getMode() ?? "workspace",
     });
 
     const viewManager = new ViewManager(
@@ -140,6 +147,10 @@ export class ViewManager implements IViewManager {
       shortcutController
     );
     viewManagerHolder.instance = viewManager;
+
+    // Register UI view with shortcut controller for Alt keyup detection
+    // This ensures Alt release is captured even when UI has focus (shortcut mode active)
+    shortcutController.registerView(uiView.webContents);
 
     // Don't call updateBounds() here - let the resize event from maximize() trigger it.
     // On Linux, maximize() is async and bounds aren't available immediately.
@@ -417,9 +428,19 @@ export class ViewManager implements IViewManager {
         this.detachView(previousPath);
       }
 
-      // Maintain z-order if in dialog mode
-      if (this.isDialogMode) {
-        this.setDialogMode(true); // Re-apply to ensure UI on top
+      // Maintain z-order if in dialog or shortcut mode
+      // The new workspace view was just attached to the top, so we need to
+      // re-add the UI layer to keep it on top. Must directly manipulate z-order
+      // since setMode is idempotent and won't re-apply if mode hasn't changed.
+      if (this.mode === "dialog" || this.mode === "shortcut") {
+        try {
+          const window = this.windowManager.getWindow();
+          if (!window.isDestroyed()) {
+            window.contentView.addChildView(this.uiView);
+          }
+        } catch {
+          // Ignore errors during z-order change - window may be closing
+        }
       }
 
       this.updateBounds();
@@ -469,28 +490,98 @@ export class ViewManager implements IViewManager {
    * Sets whether the UI layer should be in dialog mode.
    * In dialog mode, the UI is moved to the top to overlay workspace views.
    *
+   * @deprecated Use setMode() instead. Kept for backward compatibility during migration.
    * @param isOpen - True to enable dialog mode (UI on top), false for normal mode (UI behind)
    */
   setDialogMode(isOpen: boolean): void {
-    this.isDialogMode = isOpen;
+    // Delegate to setMode for consistent state management
+    // setMode handles z-index, focus, and event emission
+    this.setMode(isOpen ? "dialog" : "workspace");
+  }
+
+  /**
+   * Sets the UI mode.
+   * - "workspace": UI at z-index 0, focus active workspace
+   * - "shortcut": UI on top, focus UI layer
+   * - "dialog": UI on top, no focus change
+   *
+   * Mode transitions are idempotent - setting the same mode twice does not emit an event.
+   *
+   * @param mode - The new UI mode
+   */
+  setMode(newMode: UIMode): void {
+    const previousMode = this.mode;
+
+    // Idempotent: no-op if same mode
+    if (newMode === previousMode) {
+      return;
+    }
+
+    console.debug("ViewManager mode:", previousMode, "→", newMode);
+    this.mode = newMode;
 
     try {
       const window = this.windowManager.getWindow();
       if (window.isDestroyed()) return;
 
       const contentView = window.contentView;
-      if (isOpen) {
-        // Move UI to top (adding existing child moves it to end = top)
-        contentView.addChildView(this.uiView);
-      } else {
-        // Move UI to bottom (index 0 = behind workspaces)
-        contentView.addChildView(this.uiView, 0);
-        // Focus the active workspace when exiting dialog mode
-        this.focusActiveWorkspace();
+
+      switch (newMode) {
+        case "workspace":
+          // Move UI to bottom (index 0 = behind workspaces)
+          contentView.addChildView(this.uiView, 0);
+          // Focus the active workspace
+          this.focusActiveWorkspace();
+          break;
+
+        case "shortcut":
+          // Move UI to top (adding existing child moves it to end = top)
+          contentView.addChildView(this.uiView);
+          // Focus the UI layer so it can receive keyboard events
+          this.focusUI();
+          break;
+
+        case "dialog":
+          // Move UI to top (adding existing child moves it to end = top)
+          contentView.addChildView(this.uiView);
+          // Do NOT change focus - dialog component will manage focus
+          break;
       }
     } catch {
-      // Ignore errors during z-order change - window may be closing
+      // Ignore errors during mode change - window may be closing
     }
+
+    // Emit event to subscribers
+    const event: UIModeChangedEvent = { mode: newMode, previousMode };
+    for (const callback of this.modeChangeCallbacks) {
+      try {
+        callback(event);
+      } catch (error) {
+        console.error("Error in mode change callback:", error);
+      }
+    }
+  }
+
+  /**
+   * Gets the current UI mode.
+   *
+   * @returns The current UI mode
+   */
+  getMode(): UIMode {
+    return this.mode;
+  }
+
+  /**
+   * Subscribe to mode change events.
+   *
+   * @param callback - Called when mode changes, receives mode and previousMode
+   * @returns Unsubscribe function
+   */
+  onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe {
+    this.modeChangeCallbacks.add(callback);
+    return () => {
+      this.modeChangeCallbacks.delete(callback);
+    };
   }
 
   /**

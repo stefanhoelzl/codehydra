@@ -3,19 +3,15 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { IpcChannels, ApiIpcChannels, type SetupReadyResponse } from "./ipc";
+import {
+  IpcChannels,
+  ApiIpcChannels,
+  type SetupReadyResponse,
+  type UIMode,
+  type UIModeChangedEvent,
+} from "./ipc";
 
 describe("IpcChannels (legacy)", () => {
-  describe("Shortcut channels", () => {
-    it("has SHORTCUT_ENABLE channel", () => {
-      expect(IpcChannels.SHORTCUT_ENABLE).toBe("shortcut:enable");
-    });
-
-    it("has SHORTCUT_DISABLE channel", () => {
-      expect(IpcChannels.SHORTCUT_DISABLE).toBe("shortcut:disable");
-    });
-  });
-
   describe("Setup channels", () => {
     it("has SETUP_READY channel", () => {
       expect(IpcChannels.SETUP_READY).toBe("setup:ready");
@@ -49,6 +45,33 @@ describe("IpcChannels (legacy)", () => {
       const response2: SetupReadyResponse = { ready: false };
       expect(response2.ready).toBe(false);
     });
+  });
+});
+
+describe("UIMode types", () => {
+  it("UIMode type accepts 'workspace' value", () => {
+    // Type-level test: verify UIMode accepts valid values
+    const mode: UIMode = "workspace";
+    expect(mode).toBe("workspace");
+  });
+
+  it("UIMode type accepts 'dialog' value", () => {
+    const mode: UIMode = "dialog";
+    expect(mode).toBe("dialog");
+  });
+
+  it("UIMode type accepts 'shortcut' value", () => {
+    const mode: UIMode = "shortcut";
+    expect(mode).toBe("shortcut");
+  });
+
+  it("UIModeChangedEvent has mode and previousMode", () => {
+    const event: UIModeChangedEvent = {
+      mode: "shortcut",
+      previousMode: "workspace",
+    };
+    expect(event.mode).toBe("shortcut");
+    expect(event.previousMode).toBe("workspace");
   });
 });
 
@@ -88,8 +111,12 @@ describe("ApiIpcChannels (v2 API)", () => {
       expect(ApiIpcChannels.WORKSPACE_STATUS_CHANGED).toBe("api:workspace:status-changed");
     });
 
-    it("has SHORTCUT_ENABLE event channel", () => {
-      expect(ApiIpcChannels.SHORTCUT_ENABLE).toBe("api:shortcut:enable");
+    it("has UI_MODE_CHANGED event channel", () => {
+      expect(ApiIpcChannels.UI_MODE_CHANGED).toBe("api:ui:mode-changed");
+    });
+
+    it("has UI_SET_MODE command channel", () => {
+      expect(ApiIpcChannels.UI_SET_MODE).toBe("api:ui:set-mode");
     });
   });
 });

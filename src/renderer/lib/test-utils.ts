@@ -55,6 +55,7 @@ export function createMockApi(): Api {
       switchWorkspace: vi.fn().mockResolvedValue(undefined),
       setDialogMode: vi.fn().mockResolvedValue(undefined),
       focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
+      setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
       getState: vi.fn().mockResolvedValue("ready"),
@@ -62,5 +63,6 @@ export function createMockApi(): Api {
       quit: vi.fn().mockResolvedValue(undefined),
     },
     on: vi.fn(() => vi.fn()),
+    onModeChange: vi.fn(() => vi.fn()),
   };
 }

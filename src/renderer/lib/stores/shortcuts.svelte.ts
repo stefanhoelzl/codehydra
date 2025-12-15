@@ -4,7 +4,8 @@
  */
 
 import * as api from "$lib/api";
-import { dialogState, openCreateDialog, openRemoveDialog } from "./dialogs.svelte";
+import type { UIModeChangedEvent } from "@shared/ipc";
+import { openCreateDialog, openRemoveDialog } from "./dialogs.svelte";
 import {
   getAllWorkspaces,
   getWorkspaceRefByIndex,
@@ -46,26 +47,13 @@ export const shortcutModeActive = {
 // ============ Actions ============
 
 /**
- * Enables shortcut mode when Alt+X is pressed.
- * Ignored if a dialog is currently open.
+ * Handles ui:mode-changed event from main process.
+ * Updates shortcut mode state based on the new mode.
+ * @param event - The mode change event with mode and previousMode
  */
-export function handleShortcutEnable(): void {
-  // Check dialog state directly to support testing with mocks
-  if (dialogState.value.type !== "closed") return;
-  _shortcutModeActive = true;
-}
-
-/**
- * Handles SHORTCUT_DISABLE from main process.
- * This covers the race condition where Alt is released before focus switches to UI.
- * Must restore z-order and focus since main process only sent the IPC message.
- */
-export function handleShortcutDisable(): void {
-  if (!_shortcutModeActive) return;
-  _shortcutModeActive = false;
-  // Fire-and-forget pattern - see AGENTS.md IPC Patterns
-  void api.ui.setDialogMode(false);
-  void api.ui.focusActiveWorkspace();
+export function handleModeChange(event: UIModeChangedEvent): void {
+  console.debug("Shortcuts mode:", event.previousMode, "→", event.mode);
+  _shortcutModeActive = event.mode === "shortcut";
 }
 
 /**
@@ -94,13 +82,12 @@ export function handleWindowBlur(): void {
 
 /**
  * Exits shortcut mode and restores normal state.
- * Calls IPC to restore z-order and focus.
+ * Calls setMode("workspace") to restore z-order and focus.
  */
 export function exitShortcutMode(): void {
   _shortcutModeActive = false;
   // Fire-and-forget pattern - see AGENTS.md IPC Patterns
-  void api.ui.setDialogMode(false);
-  void api.ui.focusActiveWorkspace();
+  void api.ui.setMode("workspace");
 }
 
 // ============ Action Handlers ============

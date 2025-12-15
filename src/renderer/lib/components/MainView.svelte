@@ -91,6 +91,13 @@
   // Sync dialog state with main process z-order and focus
   $effect(() => {
     const isDialogOpen = dialogState.value.type !== "closed";
+
+    // Don't sync when in shortcut mode - shortcut mode manages its own z-order
+    // The shortcut keyboard handlers will call setMode("dialog") when opening dialogs
+    if (shortcutModeActive.value) {
+      return;
+    }
+
     void api.ui.setDialogMode(isDialogOpen);
     // When dialog closes and there's an active workspace, focus it
     if (!isDialogOpen && activeWorkspacePath.value) {

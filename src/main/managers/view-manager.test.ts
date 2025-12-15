@@ -1124,9 +1124,13 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      // Clear previous calls from create
+      // First enter dialog mode
+      manager.setDialogMode(true);
+
+      // Clear previous calls
       mockWindowManager.getWindow().contentView.addChildView.mockClear();
 
+      // Then exit dialog mode
       manager.setDialogMode(false);
 
       const uiView = MockWebContentsViewClass.mock.results[0]?.value;
@@ -1152,8 +1156,8 @@ describe("ViewManager", () => {
         manager.setDialogMode(true);
       }).not.toThrow();
 
-      // Both calls should succeed
-      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(2);
+      // setDialogMode delegates to setMode which is idempotent - only first call triggers z-order change
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(1);
     });
 
     it("does not throw when window is destroyed", () => {
@@ -1396,6 +1400,8 @@ describe("ViewManager", () => {
         setDialogMode: expect.any(Function),
         focusUI: expect.any(Function),
         getUIWebContents: expect.any(Function),
+        setMode: expect.any(Function),
+        getMode: expect.any(Function),
       });
     });
 
@@ -1446,6 +1452,166 @@ describe("ViewManager", () => {
         webPreferences?: { preload?: string };
       };
       expect(workspaceViewConfig.webPreferences?.preload).toBeUndefined();
+    });
+  });
+
+  describe("setMode", () => {
+    it("setMode-workspace-zindex: sets z-index to 0", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Set to dialog first to ensure we're changing state
+      manager.setMode("dialog");
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.setMode("workspace");
+
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      // Should be called with index 0 (adds to bottom)
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(
+        uiView,
+        0
+      );
+    });
+
+    it("setMode-workspace-focus: focuses active workspace", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create and activate workspace
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      workspaceView?.webContents.focus.mockClear();
+
+      // Set to shortcut first, then back to workspace
+      manager.setMode("shortcut");
+      workspaceView?.webContents.focus.mockClear();
+
+      manager.setMode("workspace");
+
+      expect(workspaceView?.webContents.focus).toHaveBeenCalled();
+    });
+
+    it("setMode-shortcut-zindex: sets z-index to top", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.setMode("shortcut");
+
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      // Should be called without index parameter (adds to end = top)
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(uiView);
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledTimes(1);
+    });
+
+    it("setMode-shortcut-focus: focuses UI layer", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      uiView?.webContents.focus.mockClear();
+
+      manager.setMode("shortcut");
+
+      expect(uiView?.webContents.focus).toHaveBeenCalled();
+    });
+
+    it("setMode-dialog-zindex: sets z-index to top", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.setMode("dialog");
+
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      // Should be called without index parameter (adds to end = top)
+      expect(mockWindowManager.getWindow().contentView.addChildView).toHaveBeenCalledWith(uiView);
+    });
+
+    it("setMode-dialog-no-focus-change: does not change focus", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      // Create and activate workspace
+      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const uiView = MockWebContentsViewClass.mock.results[0]?.value;
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      uiView?.webContents.focus.mockClear();
+      workspaceView?.webContents.focus.mockClear();
+
+      manager.setMode("dialog");
+
+      // Should NOT call focus on either UI or workspace (no focus change)
+      expect(uiView?.webContents.focus).not.toHaveBeenCalled();
+      expect(workspaceView?.webContents.focus).not.toHaveBeenCalled();
+    });
+
+    it("setMode-idempotent: same mode is no-op (no event emitted)", () => {
+      const onModeChange = vi.fn();
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+      manager.onModeChange(onModeChange);
+
+      // Set to shortcut
+      manager.setMode("shortcut");
+      expect(onModeChange).toHaveBeenCalledTimes(1);
+
+      // Set to shortcut again
+      manager.setMode("shortcut");
+      // Should NOT emit again
+      expect(onModeChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("setMode-emits-event: emits event with mode and previousMode", () => {
+      const onModeChange = vi.fn();
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+      manager.onModeChange(onModeChange);
+
+      manager.setMode("shortcut");
+
+      expect(onModeChange).toHaveBeenCalledWith({
+        mode: "shortcut",
+        previousMode: "workspace",
+      });
+    });
+
+    it("getMode-returns-current: returns current mode", () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      expect(manager.getMode()).toBe("workspace");
+
+      manager.setMode("shortcut");
+      expect(manager.getMode()).toBe("shortcut");
+
+      manager.setMode("dialog");
+      expect(manager.getMode()).toBe("dialog");
     });
   });
 

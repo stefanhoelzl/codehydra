@@ -5,7 +5,12 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { IpcChannels, ApiIpcChannels } from "../shared/ipc";
-import type { SetupProgress, SetupErrorPayload, SetupReadyResponse } from "../shared/ipc";
+import type {
+  SetupProgress,
+  SetupErrorPayload,
+  SetupReadyResponse,
+  UIModeChangedEvent,
+} from "../shared/ipc";
 
 /**
  * Function to unsubscribe from an event.
@@ -105,6 +110,7 @@ contextBridge.exposeInMainWorld("api", {
     setDialogMode: (isOpen: boolean) =>
       ipcRenderer.invoke(ApiIpcChannels.UI_SET_DIALOG_MODE, { isOpen }),
     focusActiveWorkspace: () => ipcRenderer.invoke(ApiIpcChannels.UI_FOCUS_ACTIVE_WORKSPACE),
+    setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),
   },
   lifecycle: {
     getState: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_GET_STATE),
@@ -118,4 +124,11 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on(channel, handler);
     return () => ipcRenderer.removeListener(channel, handler);
   },
+
+  /**
+   * Subscribe to UI mode change events.
+   * @param callback - Called when UI mode changes (workspace, shortcut, dialog)
+   * @returns Unsubscribe function to remove the listener
+   */
+  onModeChange: createEventSubscription<UIModeChangedEvent>(ApiIpcChannels.UI_MODE_CHANGED),
 });

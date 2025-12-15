@@ -2,12 +2,12 @@
 
 /**
  * Integration test for ShortcutController.
- * Tests the full path from input event through to IPC message.
+ * Tests the full path from input event through to mode changes.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { WebContents, Event as ElectronEvent, Input, BaseWindow } from "electron";
-import { ApiIpcChannels } from "../shared/ipc";
+import type { UIMode } from "../shared/ipc";
 import { ShortcutController } from "./shortcut-controller";
 
 /**
@@ -65,14 +65,21 @@ function createMockWebContents(): WebContents & {
 }
 
 /**
- * Creates mock dependencies for ShortcutController.
+ * Creates mock dependencies for ShortcutController with new setMode API.
  */
 function createMockDeps() {
   const mockUIWebContents = createMockWebContents();
+  let currentMode: UIMode = "workspace";
   const deps = {
+    // Legacy deps (still called for backward compatibility during migration)
     setDialogMode: vi.fn(),
     focusUI: vi.fn(),
     getUIWebContents: vi.fn(() => mockUIWebContents),
+    // New deps
+    setMode: vi.fn((mode: UIMode) => {
+      currentMode = mode;
+    }),
+    getMode: vi.fn(() => currentMode),
     mockUIWebContents,
   };
   return deps;
@@ -111,7 +118,7 @@ describe("ShortcutController Integration", () => {
   });
 
   describe("keyboard-wiring-roundtrip", () => {
-    it("Alt keydown followed by X keydown triggers full chain: setDialogMode, focusUI, IPC message", () => {
+    it("Alt+X triggers setMode('shortcut') and legacy callbacks", () => {
       // 1. Create and register a mock WebContents view (simulating workspace view)
       const workspaceWebContents = createMockWebContents();
       controller.registerView(workspaceWebContents);
@@ -137,20 +144,17 @@ describe("ShortcutController Integration", () => {
       // - X keydown was captured
       expect(xEvent.preventDefault).toHaveBeenCalled();
 
-      // - setDialogMode(true) was called
+      // - setMode("shortcut") was called (new API)
+      expect(mockDeps.setMode).toHaveBeenCalledTimes(1);
+      expect(mockDeps.setMode).toHaveBeenCalledWith("shortcut");
+
+      // - Legacy callbacks still called for backward compatibility
       expect(mockDeps.setDialogMode).toHaveBeenCalledTimes(1);
       expect(mockDeps.setDialogMode).toHaveBeenCalledWith(true);
-
-      // - focusUI() was called
       expect(mockDeps.focusUI).toHaveBeenCalledTimes(1);
-
-      // - IPC message was sent to UI WebContents
-      expect(mockDeps.getUIWebContents).toHaveBeenCalled();
-      expect(mockDeps.mockUIWebContents.send).toHaveBeenCalledTimes(1);
-      expect(mockDeps.mockUIWebContents.send).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_ENABLE);
     });
 
-    it("verifies execution order: setDialogMode before focusUI before IPC", () => {
+    it("verifies execution order: setMode before legacy callbacks", () => {
       const workspaceWebContents = createMockWebContents();
       controller.registerView(workspaceWebContents);
 
@@ -160,22 +164,22 @@ describe("ShortcutController Integration", () => {
 
       // Track execution order
       const executionOrder: string[] = [];
+      mockDeps.setMode.mockImplementation(() => {
+        executionOrder.push("setMode");
+      });
       mockDeps.setDialogMode.mockImplementation(() => {
         executionOrder.push("setDialogMode");
       });
       mockDeps.focusUI.mockImplementation(() => {
         executionOrder.push("focusUI");
       });
-      mockDeps.mockUIWebContents.send.mockImplementation(() => {
-        executionOrder.push("send");
-      });
 
       // Trigger Alt+X
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
       inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
 
-      // Verify order
-      expect(executionOrder).toEqual(["setDialogMode", "focusUI", "send"]);
+      // Verify order: setMode first, then legacy callbacks
+      expect(executionOrder).toEqual(["setMode", "setDialogMode", "focusUI"]);
     });
 
     it("does not trigger chain when only Alt is pressed (no X follow-up)", () => {
@@ -190,9 +194,9 @@ describe("ShortcutController Integration", () => {
       inputHandler(createMockElectronEvent(), createMockElectronInput("Alt", "keyDown"));
 
       // Verify nothing in the chain was called
+      expect(mockDeps.setMode).not.toHaveBeenCalled();
       expect(mockDeps.setDialogMode).not.toHaveBeenCalled();
       expect(mockDeps.focusUI).not.toHaveBeenCalled();
-      expect(mockDeps.mockUIWebContents.send).not.toHaveBeenCalled();
     });
 
     it("does not trigger chain when X is pressed without prior Alt", () => {
@@ -207,9 +211,9 @@ describe("ShortcutController Integration", () => {
       inputHandler(createMockElectronEvent(), createMockElectronInput("x", "keyDown"));
 
       // Verify nothing in the chain was called
+      expect(mockDeps.setMode).not.toHaveBeenCalled();
       expect(mockDeps.setDialogMode).not.toHaveBeenCalled();
       expect(mockDeps.focusUI).not.toHaveBeenCalled();
-      expect(mockDeps.mockUIWebContents.send).not.toHaveBeenCalled();
     });
   });
 });

@@ -123,6 +123,24 @@ export interface AgentStatusChangedEvent {
   readonly status: AggregatedAgentStatus;
 }
 
+// ============ UI Mode Types ============
+
+/**
+ * UI mode for the application.
+ * - "workspace": Normal mode, workspace view has focus, UI behind workspace
+ * - "shortcut": Shortcut mode active, UI on top, shows keyboard hints
+ * - "dialog": Dialog open, UI on top, dialog has focus
+ */
+export type UIMode = "workspace" | "dialog" | "shortcut";
+
+/**
+ * Event payload for UI mode changes.
+ */
+export interface UIModeChangedEvent {
+  readonly mode: UIMode;
+  readonly previousMode: UIMode;
+}
+
 // ============ Setup Types ============
 
 /**
@@ -191,13 +209,8 @@ export interface WorkspaceSwitchedEvent {
 // These legacy channels remain for:
 // - Setup: Setup handlers are registered during bootstrap BEFORE startServices() runs.
 //   The v2 lifecycle handlers are registered in startServices(), so setup must use legacy channels.
-// - Shortcuts: ShortcutController directly sends to these channels. TODO: Wire through API.
 
 export const IpcChannels = {
-  // Shortcut events (main → renderer)
-  // NOTE: ShortcutController directly sends to these channels (not through v2 API yet)
-  SHORTCUT_ENABLE: "shortcut:enable",
-  SHORTCUT_DISABLE: "shortcut:disable",
   // Setup channels (must be registered early, before v2 API handlers)
   SETUP_READY: "setup:ready",
   SETUP_RETRY: "setup:retry",
@@ -233,6 +246,7 @@ export const ApiIpcChannels = {
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
   UI_SET_DIALOG_MODE: "api:ui:set-dialog-mode",
   UI_FOCUS_ACTIVE_WORKSPACE: "api:ui:focus-active-workspace",
+  UI_SET_MODE: "api:ui:set-mode",
   // Lifecycle commands
   LIFECYCLE_GET_STATE: "api:lifecycle:get-state",
   LIFECYCLE_SETUP: "api:lifecycle:setup",
@@ -245,8 +259,7 @@ export const ApiIpcChannels = {
   WORKSPACE_REMOVED: "api:workspace:removed",
   WORKSPACE_SWITCHED: "api:workspace:switched",
   WORKSPACE_STATUS_CHANGED: "api:workspace:status-changed",
-  SHORTCUT_ENABLE: "api:shortcut:enable",
-  SHORTCUT_DISABLE: "api:shortcut:disable",
+  UI_MODE_CHANGED: "api:ui:mode-changed",
   SETUP_PROGRESS: "api:setup:progress",
 } as const satisfies Record<string, string>;
 
@@ -328,4 +341,11 @@ export interface ApiUiSwitchWorkspacePayload {
  */
 export interface ApiUiSetDialogModePayload {
   readonly isOpen: boolean;
+}
+
+/**
+ * Payload for api:ui:set-mode command.
+ */
+export interface ApiUiSetModePayload {
+  readonly mode: UIMode;
 }

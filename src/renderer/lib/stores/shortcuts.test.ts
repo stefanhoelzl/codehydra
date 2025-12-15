@@ -13,6 +13,7 @@ const mockApi = vi.hoisted(() => ({
     focusActiveWorkspace: vi.fn().mockResolvedValue(undefined),
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
     selectFolder: vi.fn().mockResolvedValue(null),
+    setMode: vi.fn().mockResolvedValue(undefined),
   },
   projects: {
     open: vi.fn().mockResolvedValue(undefined),
@@ -74,13 +75,22 @@ vi.mock("./projects.svelte", () => mockProjectsStore);
 // Import after mock setup
 import {
   shortcutModeActive,
-  handleShortcutEnable,
-  handleShortcutDisable,
+  handleModeChange,
   handleKeyDown,
   handleKeyUp,
   handleWindowBlur,
   reset,
 } from "./shortcuts.svelte";
+
+// Helper to enable shortcut mode via ui:mode-changed event
+function enableShortcutMode(): void {
+  handleModeChange({ mode: "shortcut", previousMode: "workspace" });
+}
+
+// Helper to disable shortcut mode via ui:mode-changed event
+function disableShortcutMode(): void {
+  handleModeChange({ mode: "workspace", previousMode: "shortcut" });
+}
 
 describe("shortcuts store", () => {
   beforeEach(() => {
@@ -96,67 +106,57 @@ describe("shortcuts store", () => {
     });
   });
 
-  describe("handleShortcutEnable", () => {
-    it("should-enable-shortcut-mode-when-no-dialog-open: handleShortcutEnable sets active to true", () => {
-      handleShortcutEnable();
+  describe("handleModeChange", () => {
+    it("should-enable-shortcut-mode-on-mode-change: handleModeChange with shortcut mode sets active to true", () => {
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
     });
 
-    it("should-ignore-enable-when-dialog-is-open: handleShortcutEnable ignored if dialog open", () => {
-      // Set dialog state to open
-      mockDialogState.dialogState.value = { type: "create", projectPath: "/test" };
-
-      handleShortcutEnable();
-      expect(shortcutModeActive.value).toBe(false);
-    });
-  });
-
-  describe("handleShortcutDisable", () => {
-    it("should-disable-shortcut-mode-and-restore-state: handleShortcutDisable resets state and calls APIs", () => {
+    it("should-disable-shortcut-mode-on-workspace-mode: handleModeChange with workspace mode sets active to false", () => {
       // First enable shortcut mode
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
-      handleShortcutDisable();
+      disableShortcutMode();
 
       expect(shortcutModeActive.value).toBe(false);
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
     });
 
-    it("should-ignore-disable-when-already-inactive: handleShortcutDisable when inactive is no-op", () => {
-      handleShortcutDisable();
+    it("should-set-inactive-for-dialog-mode: handleModeChange with dialog mode sets active to false", () => {
+      // First enable shortcut mode
+      enableShortcutMode();
+      expect(shortcutModeActive.value).toBe(true);
+
+      // Dialog mode from main process sets active to false
+      handleModeChange({ mode: "dialog", previousMode: "shortcut" });
 
       expect(shortcutModeActive.value).toBe(false);
-      expect(mockApi.ui.setDialogMode).not.toHaveBeenCalled();
-      expect(mockApi.ui.focusActiveWorkspace).not.toHaveBeenCalled();
     });
   });
 
   describe("handleKeyUp", () => {
-    it("should-exit-shortcut-mode-on-alt-keyup: handleKeyUp with Alt calls exitShortcutMode", () => {
+    it("should-exit-shortcut-mode-on-alt-keyup: handleKeyUp with Alt calls setMode('workspace')", () => {
       // First enable shortcut mode
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       const event = new KeyboardEvent("keyup", { key: "Alt" });
       handleKeyUp(event);
 
       expect(shortcutModeActive.value).toBe(false);
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
 
     it("should-ignore-keyup-for-non-alt-keys: handleKeyUp with other keys is ignored", () => {
       // First enable shortcut mode
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       const event = new KeyboardEvent("keyup", { key: "x" });
       handleKeyUp(event);
 
       expect(shortcutModeActive.value).toBe(true);
-      expect(mockApi.ui.setDialogMode).not.toHaveBeenCalled();
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
     });
 
     it("should-ignore-keyup-when-inactive: handleKeyUp when inactive is no-op", () => {
@@ -164,42 +164,39 @@ describe("shortcuts store", () => {
       handleKeyUp(event);
 
       expect(shortcutModeActive.value).toBe(false);
-      expect(mockApi.ui.setDialogMode).not.toHaveBeenCalled();
-      expect(mockApi.ui.focusActiveWorkspace).not.toHaveBeenCalled();
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
     });
 
     it("should-ignore-repeat-keyup-events: handleKeyUp with event.repeat=true is ignored", () => {
       // First enable shortcut mode
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       const event = new KeyboardEvent("keyup", { key: "Alt", repeat: true });
       handleKeyUp(event);
 
       expect(shortcutModeActive.value).toBe(true);
-      expect(mockApi.ui.setDialogMode).not.toHaveBeenCalled();
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
     });
   });
 
   describe("handleWindowBlur", () => {
-    it("should-exit-shortcut-mode-on-window-blur: handleWindowBlur exits shortcut mode", () => {
+    it("should-exit-shortcut-mode-on-window-blur: handleWindowBlur calls setMode('workspace')", () => {
       // First enable shortcut mode
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       handleWindowBlur();
 
       expect(shortcutModeActive.value).toBe(false);
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
 
     it("handleWindowBlur when inactive is no-op", () => {
       handleWindowBlur();
 
       expect(shortcutModeActive.value).toBe(false);
-      expect(mockApi.ui.setDialogMode).not.toHaveBeenCalled();
-      expect(mockApi.ui.focusActiveWorkspace).not.toHaveBeenCalled();
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
     });
 
     it("should-not-exit-shortcut-mode-on-blur-during-navigation", async () => {
@@ -226,7 +223,7 @@ describe("shortcuts store", () => {
           })
       );
 
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       // Start navigation (this sets _switchingWorkspace = true)
@@ -237,8 +234,7 @@ describe("shortcuts store", () => {
 
       // Should NOT exit shortcut mode because we're switching workspaces
       expect(shortcutModeActive.value).toBe(true);
-      expect(mockApi.ui.setDialogMode).not.toHaveBeenCalled();
-      expect(mockApi.ui.focusActiveWorkspace).not.toHaveBeenCalled();
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
 
       // Complete the switch
       resolveSwitch!();
@@ -267,7 +263,7 @@ describe("shortcuts store", () => {
           })
       );
 
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       // Start jump (this sets _switchingWorkspace = true)
@@ -278,8 +274,7 @@ describe("shortcuts store", () => {
 
       // Should NOT exit shortcut mode because we're switching workspaces
       expect(shortcutModeActive.value).toBe(true);
-      expect(mockApi.ui.setDialogMode).not.toHaveBeenCalled();
-      expect(mockApi.ui.focusActiveWorkspace).not.toHaveBeenCalled();
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
 
       // Complete the switch
       resolveSwitch!();
@@ -287,7 +282,7 @@ describe("shortcuts store", () => {
     });
 
     it("should-exit-shortcut-mode-on-blur-when-not-switching", () => {
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       // Blur without any navigation/jump in progress
@@ -295,64 +290,38 @@ describe("shortcuts store", () => {
 
       // Should exit shortcut mode normally
       expect(shortcutModeActive.value).toBe(false);
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
   });
 
   describe("exitShortcutMode API calls", () => {
-    it("should-call-setDialogMode-false-on-exit: exitShortcutMode calls api.setDialogMode(false)", () => {
-      handleShortcutEnable();
+    it("should-call-setMode-workspace-on-exit: exitShortcutMode calls api.ui.setMode('workspace')", () => {
+      enableShortcutMode();
       handleWindowBlur(); // Uses exitShortcutMode internally
 
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledWith(false);
-    });
-
-    it("should-call-focusActiveWorkspace-on-exit: exitShortcutMode calls api.focusActiveWorkspace()", () => {
-      handleShortcutEnable();
-      handleWindowBlur(); // Uses exitShortcutMode internally
-
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalled();
-    });
-  });
-
-  describe("dialog state integration", () => {
-    it("should-update-dialogOpen-when-dialogState-changes: $derived reactivity works", () => {
-      // Dialog closed - enable should work
-      mockDialogState.dialogState.value = { type: "closed" };
-      handleShortcutEnable();
-      expect(shortcutModeActive.value).toBe(true);
-
-      reset();
-
-      // Dialog open - enable should be ignored
-      mockDialogState.dialogState.value = { type: "remove", workspacePath: "/test" };
-      handleShortcutEnable();
-      expect(shortcutModeActive.value).toBe(false);
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
     });
   });
 
   describe("edge cases", () => {
-    it("should-handle-rapid-enable-disable-toggle: rapid state changes remain consistent", () => {
-      handleShortcutEnable();
+    it("should-handle-rapid-mode-toggle: rapid state changes remain consistent", () => {
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
-      handleShortcutDisable();
+      disableShortcutMode();
       expect(shortcutModeActive.value).toBe(false);
 
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
-      handleShortcutDisable();
+      disableShortcutMode();
       expect(shortcutModeActive.value).toBe(false);
 
-      // After all toggles, state should be consistent
-      expect(mockApi.ui.setDialogMode).toHaveBeenCalledTimes(2); // Called on each disable
-      expect(mockApi.ui.focusActiveWorkspace).toHaveBeenCalledTimes(2);
+      // After all toggles, state should be consistent (mode changes don't call setMode since they're events from main process)
     });
 
     it("should-reset-state-for-testing: reset() sets state to false", () => {
-      handleShortcutEnable();
+      enableShortcutMode();
       expect(shortcutModeActive.value).toBe(true);
 
       reset();
@@ -381,7 +350,7 @@ describe("shortcuts store", () => {
     });
 
     it("should-ignore-non-action-keys", () => {
-      handleShortcutEnable();
+      enableShortcutMode();
       const event = new KeyboardEvent("keydown", { key: "a" });
       const preventDefaultSpy = vi.spyOn(event, "preventDefault");
 
@@ -413,7 +382,7 @@ describe("shortcuts store", () => {
         mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
         mockProjectsStore.activeWorkspacePath.value = "/ws1";
 
-        handleShortcutEnable();
+        enableShortcutMode();
         const event = new KeyboardEvent("keydown", { key: "ArrowDown" });
         handleKeyDown(event);
 
@@ -438,7 +407,7 @@ describe("shortcuts store", () => {
         mockProjectsStore.findWorkspaceIndex.mockReturnValue(1);
         mockProjectsStore.activeWorkspacePath.value = "/ws2";
 
-        handleShortcutEnable();
+        enableShortcutMode();
         const event = new KeyboardEvent("keydown", { key: "ArrowUp" });
         handleKeyDown(event);
 
@@ -462,7 +431,7 @@ describe("shortcuts store", () => {
         mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
         mockProjectsStore.activeWorkspacePath.value = "/ws1";
 
-        handleShortcutEnable();
+        enableShortcutMode();
         const event = new KeyboardEvent("keydown", { key: "ArrowUp" });
         handleKeyDown(event);
 
@@ -486,7 +455,7 @@ describe("shortcuts store", () => {
         mockProjectsStore.findWorkspaceIndex.mockReturnValue(2);
         mockProjectsStore.activeWorkspacePath.value = "/ws3";
 
-        handleShortcutEnable();
+        enableShortcutMode();
         const event = new KeyboardEvent("keydown", { key: "ArrowDown" });
         handleKeyDown(event);
 
@@ -503,7 +472,7 @@ describe("shortcuts store", () => {
       it("should-not-navigate-when-no-workspaces", () => {
         mockProjectsStore.getAllWorkspaces.mockReturnValue([]);
 
-        handleShortcutEnable();
+        enableShortcutMode();
         const event = new KeyboardEvent("keydown", { key: "ArrowDown" });
         handleKeyDown(event);
 
@@ -515,7 +484,7 @@ describe("shortcuts store", () => {
           { path: "/ws1", name: "ws1", branch: null },
         ]);
 
-        handleShortcutEnable();
+        enableShortcutMode();
         const event = new KeyboardEvent("keydown", { key: "ArrowDown" });
         handleKeyDown(event);
 
@@ -541,7 +510,7 @@ describe("shortcuts store", () => {
             })
         );
 
-        handleShortcutEnable();
+        enableShortcutMode();
 
         // Fire rapid keypresses
         handleKeyDown(new KeyboardEvent("keydown", { key: "ArrowDown" }));
@@ -580,7 +549,7 @@ describe("shortcuts store", () => {
           (i: number) => workspaceRefs[i]
         );
 
-        handleShortcutEnable();
+        enableShortcutMode();
 
         // Test key "5" -> index 4 -> workspace 5
         handleKeyDown(new KeyboardEvent("keydown", { key: "5" }));
@@ -603,7 +572,7 @@ describe("shortcuts store", () => {
           (i: number) => workspaceRefs[i]
         );
 
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "0" }));
 
         await vi.waitFor(() => {
@@ -624,7 +593,7 @@ describe("shortcuts store", () => {
           (i: number) => workspaceRefs[i]
         );
 
-        handleShortcutEnable();
+        enableShortcutMode();
         // Try to jump to workspace 5 when only 3 exist
         handleKeyDown(new KeyboardEvent("keydown", { key: "5" }));
 
@@ -637,7 +606,7 @@ describe("shortcuts store", () => {
         // activeProject now has id (ProjectWithId)
         mockProjectsStore.activeProject.value = { id: "project-12345678", path: "/project" };
 
-        handleShortcutEnable();
+        enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
         handleKeyDown(new KeyboardEvent("keydown", { key: "Enter" }));
@@ -650,7 +619,7 @@ describe("shortcuts store", () => {
       it("should-not-open-create-dialog-when-no-active-project", () => {
         mockProjectsStore.activeProject.value = null;
 
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "Enter" }));
 
         expect(mockDialogState.openCreateDialog).not.toHaveBeenCalled();
@@ -665,7 +634,7 @@ describe("shortcuts store", () => {
         };
         mockProjectsStore.activeWorkspace.value = workspaceRef;
 
-        handleShortcutEnable();
+        enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
         handleKeyDown(new KeyboardEvent("keydown", { key: "Delete" }));
@@ -683,7 +652,7 @@ describe("shortcuts store", () => {
         };
         mockProjectsStore.activeWorkspace.value = workspaceRef;
 
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "Backspace" }));
 
         expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith(workspaceRef);
@@ -692,7 +661,7 @@ describe("shortcuts store", () => {
       it("should-not-open-remove-dialog-when-no-active-workspace", () => {
         mockProjectsStore.activeWorkspace.value = null;
 
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "Delete" }));
 
         expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
@@ -704,7 +673,7 @@ describe("shortcuts store", () => {
           path: "/project",
         };
 
-        handleShortcutEnable();
+        enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
         handleKeyDown(new KeyboardEvent("keydown", { key: "Enter" }));
@@ -715,7 +684,7 @@ describe("shortcuts store", () => {
 
     describe("project actions", () => {
       it("should-trigger-folder-picker-on-o-key", async () => {
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "o" }));
 
         await vi.waitFor(() => {
@@ -724,7 +693,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-trigger-folder-picker-on-O-key", async () => {
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "O" }));
 
         await vi.waitFor(() => {
@@ -733,7 +702,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-deactivate-shortcut-mode-before-opening-folder-picker", async () => {
-        handleShortcutEnable();
+        enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
         handleKeyDown(new KeyboardEvent("keydown", { key: "o" }));
@@ -745,7 +714,7 @@ describe("shortcuts store", () => {
       it("should-open-project-when-folder-selected", async () => {
         mockApi.ui.selectFolder.mockResolvedValue("/selected/path");
 
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "o" }));
 
         await vi.waitFor(() => {
@@ -756,7 +725,7 @@ describe("shortcuts store", () => {
       it("should-not-open-project-when-folder-selection-cancelled", async () => {
         mockApi.ui.selectFolder.mockResolvedValue(null);
 
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "o" }));
 
         await vi.waitFor(() => {
@@ -786,7 +755,7 @@ describe("shortcuts store", () => {
         mockProjectsStore.activeWorkspacePath.value = "/ws1";
         mockApi.ui.switchWorkspace.mockRejectedValue(new Error("Switch failed"));
 
-        handleShortcutEnable();
+        enableShortcutMode();
         handleKeyDown(new KeyboardEvent("keydown", { key: "ArrowDown" }));
 
         await vi.waitFor(() => {

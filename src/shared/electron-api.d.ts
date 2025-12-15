@@ -3,7 +3,13 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { SetupProgress, SetupErrorPayload, SetupReadyResponse } from "./ipc";
+import type {
+  SetupProgress,
+  SetupErrorPayload,
+  SetupReadyResponse,
+  UIModeChangedEvent,
+} from "./ipc";
+import type { UIMode } from "./ipc";
 
 import type {
   Project,
@@ -102,6 +108,7 @@ export interface Api {
     switchWorkspace(projectId: string, workspaceName: string, focus?: boolean): Promise<void>;
     setDialogMode(isOpen: boolean): Promise<void>;
     focusActiveWorkspace(): Promise<void>;
+    setMode(mode: UIMode): Promise<void>;
   };
   lifecycle: {
     getState(): Promise<AppStateType>;
@@ -115,6 +122,13 @@ export interface Api {
    * @returns Unsubscribe function
    */
   on<T>(event: string, callback: (event: T) => void): Unsubscribe;
+
+  /**
+   * Subscribe to UI mode change events.
+   * @param callback - Called when UI mode changes (workspace, shortcut, dialog)
+   * @returns Unsubscribe function to remove the listener
+   */
+  onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe;
 }
 
 declare global {
