@@ -205,22 +205,54 @@ They can click "Open Project" to try again.
 
 ### Closing a Project
 
-**Flow:**
+**Flow (project with no workspaces):**
 
 1. Hover project row → [×] button becomes visible
 2. Click [×]
 3. Project removed from sidebar immediately
-4. **NO files or git data deleted** (worktrees remain on disk)
-5. If active workspace was in closed project → switch to another project's workspace
-6. If no projects remain → show empty state
+4. **NO files or git data deleted**
+
+**Flow (project with workspaces):**
+
+1. Hover project row → [×] button becomes visible
+2. Click [×]
+3. **Confirmation dialog** opens showing workspace count
+4. Two options:
+   - **Close Project** (default): Workspaces remain on disk
+   - **Remove & Close** (checkbox): All workspaces AND their branches are deleted, then project closes
+
+**Close Project Dialog:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Close Project                                          [×]  │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  This project has 3 workspaces that will remain on disk      │
+│  after closing.                                              │
+│                                                              │
+│  ☐ Remove all workspaces and their branches                  │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│                    [Cancel]  [Close Project]                 │
+│                              ↑                               │
+│                    Button changes to "Remove & Close"        │
+│                    when checkbox is checked                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Post-close behavior:**
+
+- If active workspace was in closed project → switch to another project's workspace
+- If no projects remain → show empty state
 
 **Hover state:**
 
 ```
-┌────────────────────────────────┐
+┌────────────────────────────────────────┐
 │ 📁 my-project    [+][×]        │  ← [×] visible on hover
 │   └─ 🌿 feature          [×]   │
-└────────────────────────────────┘
+└────────────────────────────────────────┘
 ```
 
 ### Selecting a Workspace
@@ -235,9 +267,11 @@ They can click "Open Project" to try again.
 **Visual feedback:**
 
 ```
-│ 📁 my-project           [+][×] │
-│   └─ 🌿 feature           [×]  │  ← Normal
-│   └─ 🌿 bugfix            [×]  │  ← ACTIVE (highlighted)
+
+│ 📁 my-project [+][×] │
+│ └─ 🌿 feature [×] │ ← Normal
+│ └─ 🌿 bugfix [×] │ ← ACTIVE (highlighted)
+
 ```
 
 ### Creating a Workspace
@@ -275,29 +309,33 @@ They can click "Open Project" to try again.
 Initial (loading branches):
 
 ```
+
 ┌──────────────────────────────────────────┐
-│  Create Workspace                        │
-│                                          │
-│  Project                                 │
-│  [my-project_______________________▼]    │  ← Defaults to active project
-│                                          │
-│  Name                                    │
-│  [________________________________]      │
-│                                          │
-│  Base Branch                       [◐]   │  ← Spinner while fetching
-│  [main_____________________________▼]    │
-│                                          │
-│                    [Cancel]  [OK]        │
-│                              ~~~~        │  ← Disabled until valid
+│ Create Workspace │
+│ │
+│ Project │
+│ [my-project_______________________▼] │ ← Defaults to active project
+│ │
+│ Name │
+│ [________________________________] │
+│ │
+│ Base Branch [◐] │ ← Spinner while fetching
+│ [main_____________________________▼] │
+│ │
+│ [Cancel] [OK] │
+│ ~~~~ │ ← Disabled until valid
 └──────────────────────────────────────────┘
+
 ```
 
 Validation error:
 
 ```
-│  Name                                    │
-│  [-invalid____________________________]  │  ← Red border
-│  ⚠ Must start with letter or number     │
+
+│ Name │
+│ [-invalid____________________________] │ ← Red border
+│ ⚠ Must start with letter or number │
+
 ```
 
 Note: Name uniqueness is validated against the selected project's existing workspaces.
@@ -305,35 +343,41 @@ Note: Name uniqueness is validated against the selected project's existing works
 Valid state:
 
 ```
-│  Project                                 │
-│  [my-project_______________________▼]    │
-│                                          │
-│  Name                                    │
-│  [my-feature__________________________]  │
-│                                          │
-│  Base Branch                             │
-│  [origin/main______________________▼]    │
-│                                          │
-│                    [Cancel]  [OK]        │
-│                              ════        │  ← Enabled
+
+│ Project │
+│ [my-project_______________________▼] │
+│ │
+│ Name │
+│ [my-feature__________________________] │
+│ │
+│ Base Branch │
+│ [origin/main______________________▼] │
+│ │
+│ [Cancel] [OK] │
+│ ════ │ ← Enabled
+
 ```
 
 Creating:
 
 ```
-│                    [Cancel]  [◐ Creating...]  │
-│                    ~~~~~~~~  ~~~~~~~~~~~~~~~  │  ← Both disabled
+
+│ [Cancel] [◐ Creating...] │
+│ ~~~~~~~~ ~~~~~~~~~~~~~~~ │ ← Both disabled
+
 ```
 
 Error:
 
 ```
-│  ┌────────────────────────────────────┐  │
-│  │ ⚠ Failed to create workspace.      │  │
-│  │   Please try again.                │  │
-│  └────────────────────────────────────┘  │
-│                                          │
-│                    [Cancel]  [OK]        │  ← OK re-enabled for retry
+
+│ ┌────────────────────────────────────┐ │
+│ │ ⚠ Failed to create workspace. │ │
+│ │ Please try again. │ │
+│ └────────────────────────────────────┘ │
+│ │
+│ [Cancel] [OK] │ ← OK re-enabled for retry
+
 ```
 
 ### Removing a Workspace
@@ -355,64 +399,74 @@ Error:
 **Hover state:**
 
 ```
-│   └─ 🌿 feature              [×]  │  ← [×] appears on hover
+
+│ └─ 🌿 feature [×] │ ← [×] appears on hover
+
 ```
 
 **Confirmation dialog (clean):**
 
 ```
+
 ┌────────────────────────────────────────────┐
-│  Remove Workspace                          │
-│                                            │
-│  Remove workspace "feature-auth"?          │
-│                                            │
-│  ☑ Delete branch                           │
-│                                            │
-│                    [Cancel]  [Remove]      │
+│ Remove Workspace │
+│ │
+│ Remove workspace "feature-auth"? │
+│ │
+│ ☑ Delete branch │
+│ │
+│ [Cancel] [Remove] │
 └────────────────────────────────────────────┘
+
 ```
 
 **Confirmation dialog (checking state):**
 
 ```
+
 ┌────────────────────────────────────────────┐
-│  Remove Workspace                          │
-│                                            │
-│  Remove workspace "feature-auth"?          │
-│                                            │
-│  Checking for uncommitted changes...       │
-│                                            │
-│  ☐ Delete branch                           │
-│                                            │
-│                    [Cancel]  [Remove]      │
-│                              ~~~~~~~~      │  ← Disabled
+│ Remove Workspace │
+│ │
+│ Remove workspace "feature-auth"? │
+│ │
+│ Checking for uncommitted changes... │
+│ │
+│ ☐ Delete branch │
+│ │
+│ [Cancel] [Remove] │
+│ ~~~~~~~~ │ ← Disabled
 └────────────────────────────────────────────┘
+
 ```
 
 **Confirmation dialog (uncommitted changes warning):**
 
 ```
+
 ┌────────────────────────────────────────────┐
-│  Remove Workspace                          │
-│                                            │
-│  Remove workspace "feature-auth"?          │
-│                                            │
-│  ┌────────────────────────────────────┐    │
-│  │ ⚠ This workspace has uncommitted   │    │
-│  │   changes that will be lost.       │    │
-│  └────────────────────────────────────┘    │
-│                                            │
-│  ☑ Delete branch                           │
-│                                            │
-│                    [Cancel]  [Remove]      │
+│ Remove Workspace │
+│ │
+│ Remove workspace "feature-auth"? │
+│ │
+│ ┌────────────────────────────────────┐ │
+│ │ ⚠ This workspace has uncommitted │ │
+│ │ changes that will be lost. │ │
+│ └────────────────────────────────────┘ │
+│ │
+│ ☑ Delete branch │
+│ │
+│ [Cancel] [Remove] │
 └────────────────────────────────────────────┘
+
 ```
 
 **Removing state:**
 
 ```
-│                    [Cancel]  [Removing...] │
-│                    ~~~~~~~~  ~~~~~~~~~~~~  │  ← Both disabled
+
+│ [Cancel] [Removing...] │
+│ ~~~~~~~~ ~~~~~~~~~~~~ │ ← Both disabled
+
 ```
 
 ### Agent Status Monitoring
@@ -437,10 +491,12 @@ Error:
 **Sidebar with status:**
 
 ```
-│ 📁 my-project           [+][×] │
-│   └─ 🌿 feature        🟢 [×]  │  ← Idle (or waiting for permission)
-│   └─ 🌿 bugfix         🔴 [×]  │  ← Busy (processing)
-│   └─ 🌿 hotfix            [×]  │  ← No agent running
+
+│ 📁 my-project [+][×] │
+│ └─ 🌿 feature 🟢 [×] │ ← Idle (or waiting for permission)
+│ └─ 🌿 bugfix 🔴 [×] │ ← Busy (processing)
+│ └─ 🌿 hotfix [×] │ ← No agent running
+
 ```
 
 ## Keyboard Navigation
@@ -508,24 +564,28 @@ Error:
 **Normal state:**
 
 ```
-│  📁 my-project           [+][×] │
-│    └─ 🌿 feature-auth      [×] │
-│    └─ 🌿 bugfix-123        [×] │
-│  📁 other-project        [+][×] │
-│    └─ 🌿 experiment        [×] │
+
+│ 📁 my-project [+][×] │
+│ └─ 🌿 feature-auth [×] │
+│ └─ 🌿 bugfix-123 [×] │
+│ 📁 other-project [+][×] │
+│ └─ 🌿 experiment [×] │
+
 ```
 
 **Shortcut mode active:**
 
 ```
-│  📁 my-project           [+][×] │
-│    └─ 1 🌿 feature-auth    [×] │  ← Index numbers appear
-│    └─ 2 🌿 bugfix-123      [×] │
-│  📁 other-project        [+][×] │
-│    └─ 3 🌿 experiment      [×] │
-│    └─ · 🌿 eleventh-ws     [×] │  ← Dot for workspaces 11+
-│                                 │
-│    O [Open Project]             │  ← "O" prefix appears
+
+│ 📁 my-project [+][×] │
+│ └─ 1 🌿 feature-auth [×] │ ← Index numbers appear
+│ └─ 2 🌿 bugfix-123 [×] │
+│ 📁 other-project [+][×] │
+│ └─ 3 🌿 experiment [×] │
+│ └─ · 🌿 eleventh-ws [×] │ ← Dot for workspaces 11+
+│ │
+│ O [Open Project] │ ← "O" prefix appears
+
 ```
 
 Index display rules:
@@ -537,9 +597,11 @@ Index display rules:
 **Overlay (bottom center):**
 
 ```
+
 ┌───────────────────────────────────────────────────────┐
-│  ↑↓ Navigate   ⏎ New   ⌫ Del   1-0 Jump   O Open     │
+│ ↑↓ Navigate ⏎ New ⌫ Del 1-0 Jump O Open │
 └───────────────────────────────────────────────────────┘
+
 ```
 
 **Note**: Some hints are conditionally hidden based on application state:
@@ -562,26 +624,36 @@ Index display rules:
 ### Empty State (no projects)
 
 ```
+
 ┌────────────────────────┐
-│  PROJECTS              │
-│                        │
-│  No projects open.     │
-│                        │
-│  [Open Project]        │
+│ PROJECTS │
+│ │
+│ No projects open. │
+│ │
+│ [Open Project] │
 └────────────────────────┘
+
 ```
 
 ### Loading State
 
 ```
-│  📁 my-project           [+][×] │
-│    ◐ Loading workspaces...     │
+
+│ 📁 my-project [+][×] │
+│ ◐ Loading workspaces... │
+
 ```
 
 ### Error State
 
 ```
-│  📁 my-project           [+][×] │
-│    ⚠ Failed to load workspaces │
-│    [Retry]                      │
+
+│ 📁 my-project [+][×] │
+│ ⚠ Failed to load workspaces │
+│ [Retry] │
+
+```
+
+```
+
 ```

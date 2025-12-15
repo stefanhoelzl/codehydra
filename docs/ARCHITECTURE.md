@@ -399,6 +399,7 @@ All methods throw `FileSystemError` (extends `ServiceError`) with mapped error c
 | Dialog                | Base dialog component with focus trap, accessibility |
 | CreateWorkspaceDialog | New workspace form with validation, branch selection |
 | RemoveWorkspaceDialog | Confirmation with uncommitted changes warning        |
+| CloseProjectDialog    | Confirmation when closing project with workspaces    |
 | BranchDropdown        | Searchable combobox for branch selection             |
 | ShortcutOverlay       | Keyboard shortcut hints (shown during shortcut mode) |
 | SetupScreen           | Setup progress display with indeterminate bar        |

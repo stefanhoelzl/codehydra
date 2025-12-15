@@ -50,6 +50,7 @@ import {
   dialogState,
   openCreateDialog,
   openRemoveDialog,
+  openCloseProjectDialog,
   closeDialog,
   reset,
 } from "./dialogs.svelte.js";
@@ -170,6 +171,40 @@ describe("dialog state store", () => {
     });
   });
 
+  describe("openCloseProjectDialog", () => {
+    it("sets type to 'close-project' with projectId", () => {
+      openCloseProjectDialog(testProjectId);
+
+      expect(dialogState.value).toEqual({
+        type: "close-project",
+        projectId: testProjectId,
+      });
+    });
+
+    it("stores only projectId, not full project object", () => {
+      openCloseProjectDialog(activeProjectId);
+
+      // Verify state contains only projectId
+      const state = dialogState.value;
+      expect(state.type).toBe("close-project");
+      if (state.type === "close-project") {
+        expect(state.projectId).toBe(activeProjectId);
+        expect(Object.keys(state)).toEqual(["type", "projectId"]);
+      }
+    });
+  });
+
+  describe("closeDialog from close-project", () => {
+    it("resets state to closed from close-project", () => {
+      openCloseProjectDialog(testProjectId);
+      expect(dialogState.value.type).toBe("close-project");
+
+      closeDialog();
+
+      expect(dialogState.value).toEqual({ type: "closed" });
+    });
+  });
+
   describe("opening new dialog closes previous (exclusive)", () => {
     it("opening create dialog after remove closes remove", () => {
       const workspaceRef = createWorkspaceRef(testProjectId, "ws1", "/test/workspace");
@@ -187,6 +222,22 @@ describe("dialog state store", () => {
       const workspaceRef = createWorkspaceRef(testProjectId, "ws1", "/test/workspace");
       openRemoveDialog(workspaceRef);
       expect(dialogState.value.type).toBe("remove");
+    });
+
+    it("opening close-project dialog after create closes create", () => {
+      openCreateDialog(testProjectId);
+      expect(dialogState.value.type).toBe("create");
+
+      openCloseProjectDialog(activeProjectId);
+      expect(dialogState.value.type).toBe("close-project");
+    });
+
+    it("opening create dialog after close-project closes close-project", () => {
+      openCloseProjectDialog(testProjectId);
+      expect(dialogState.value.type).toBe("close-project");
+
+      openCreateDialog(activeProjectId);
+      expect(dialogState.value.type).toBe("create");
     });
   });
 });

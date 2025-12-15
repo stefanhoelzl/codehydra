@@ -11,7 +11,8 @@ import { activeWorkspace, projects } from "./projects.svelte.js";
 export type DialogState =
   | { type: "closed" }
   | { type: "create"; projectId: ProjectId }
-  | { type: "remove"; workspaceRef: WorkspaceRef };
+  | { type: "remove"; workspaceRef: WorkspaceRef }
+  | { type: "close-project"; projectId: ProjectId };
 
 // ============ State ============
 
@@ -45,6 +46,14 @@ export function openCreateDialog(defaultProjectId?: ProjectId): void {
  */
 export function openRemoveDialog(workspaceRef: WorkspaceRef): void {
   _dialogState = { type: "remove", workspaceRef };
+}
+
+/**
+ * Open the close project dialog.
+ * @param projectId - ID of the project to close
+ */
+export function openCloseProjectDialog(projectId: ProjectId): void {
+  _dialogState = { type: "close-project", projectId };
 }
 
 /**

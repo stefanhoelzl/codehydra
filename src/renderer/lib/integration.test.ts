@@ -246,7 +246,8 @@ describe("Integration tests", () => {
     });
 
     it("close project: click [×] → closeProject → project:closed event → project removed from sidebar", async () => {
-      const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
+      // Use project with no workspaces for direct close (projects with workspaces show dialog)
+      const project = createProject("my-project", []);
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);

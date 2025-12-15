@@ -31,7 +31,12 @@
     addWorkspace,
     removeWorkspace,
   } from "$lib/stores/projects.svelte.js";
-  import { dialogState, openCreateDialog, openRemoveDialog } from "$lib/stores/dialogs.svelte.js";
+  import {
+    dialogState,
+    openCreateDialog,
+    openRemoveDialog,
+    openCloseProjectDialog,
+  } from "$lib/stores/dialogs.svelte.js";
   import { shortcutModeActive } from "$lib/stores/shortcuts.svelte.js";
   import { updateStatus, setAllStatuses } from "$lib/stores/agent-status.svelte.js";
   import { setupDomainEvents } from "$lib/utils/domain-events";
@@ -39,6 +44,7 @@
   import Sidebar from "./Sidebar.svelte";
   import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
+  import CloseProjectDialog from "./CloseProjectDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import type { AggregatedAgentStatus } from "@shared/ipc";
@@ -221,7 +227,16 @@
 
   // Handle closing a project
   async function handleCloseProject(projectId: ProjectId): Promise<void> {
-    await api.projects.close(projectId);
+    const project = projects.value.find((p) => p.id === projectId);
+    if (!project) {
+      // Project already closed or not in store - early return
+      return;
+    }
+    if (project.workspaces.length > 0) {
+      openCloseProjectDialog(projectId);
+    } else {
+      await api.projects.close(projectId);
+    }
   }
 
   // Handle switching workspace
@@ -258,6 +273,8 @@
     <CreateWorkspaceDialog open={true} projectId={dialogState.value.projectId} />
   {:else if dialogState.value.type === "remove"}
     <RemoveWorkspaceDialog open={true} workspaceRef={dialogState.value.workspaceRef} />
+  {:else if dialogState.value.type === "close-project"}
+    <CloseProjectDialog open={true} projectId={dialogState.value.projectId} />
   {/if}
 
   <ShortcutOverlay
