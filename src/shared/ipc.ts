@@ -50,6 +50,8 @@ export interface Workspace {
   readonly path: string;
   /** Branch checked out in workspace, null if detached HEAD */
   readonly branch: string | null;
+  /** Base branch the workspace was created from (fallback: branch ?? name) */
+  readonly baseBranch: string;
 }
 
 /**

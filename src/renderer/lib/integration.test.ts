@@ -135,6 +135,7 @@ function createWorkspace(name: string, projectPath: string, projectId?: string):
     name,
     path: `${projectPath}/.worktrees/${name}`,
     branch: name,
+    baseBranch: "main",
     // v2 API adds projectId to workspaces
     ...(projectId ? { projectId } : {}),
   };

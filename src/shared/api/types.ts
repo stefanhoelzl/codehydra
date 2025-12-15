@@ -93,6 +93,8 @@ export interface Workspace {
   readonly name: WorkspaceName;
   /** Current branch name, or null for detached HEAD state */
   readonly branch: string | null;
+  /** Base branch the workspace was created from (fallback: branch ?? name) */
+  readonly baseBranch: string;
   readonly path: string;
 }
 

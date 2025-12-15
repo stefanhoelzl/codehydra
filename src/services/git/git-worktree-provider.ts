@@ -15,6 +15,9 @@ import type { FileSystemLayer } from "../platform/filesystem";
  * Each workspace is a git worktree, allowing parallel work on different branches.
  */
 export class GitWorktreeProvider implements IWorkspaceProvider {
+  /** Git config key for storing the base branch a workspace was created from */
+  private static readonly BASE_CONFIG_KEY = "codehydra.base";
+
   readonly projectRoot: string;
   private readonly gitClient: IGitClient;
   private readonly workspacesDir: string;
@@ -105,14 +108,38 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
   async discover(): Promise<readonly Workspace[]> {
     const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
 
-    // Filter out the main worktree
-    return worktrees
-      .filter((wt) => !wt.isMain)
-      .map((wt) => ({
+    // Filter out the main worktree and map to Workspace objects with baseBranch
+    const workspaces: Workspace[] = [];
+    for (const wt of worktrees) {
+      if (wt.isMain) continue;
+
+      // Try to get baseBranch from git config, with fallback logic
+      let baseBranch: string;
+      try {
+        const configValue = wt.branch
+          ? await this.gitClient.getBranchConfig(
+              this.projectRoot,
+              wt.branch,
+              GitWorktreeProvider.BASE_CONFIG_KEY
+            )
+          : null;
+        // Fallback: config > branch > name
+        baseBranch = configValue ?? wt.branch ?? wt.name;
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.warn(`Failed to get base branch config for ${wt.name}: ${message}`);
+        // Use fallback on error
+        baseBranch = wt.branch ?? wt.name;
+      }
+
+      workspaces.push({
         name: wt.name,
         path: wt.path,
         branch: wt.branch,
-      }));
+        baseBranch,
+      });
+    }
+    return workspaces;
   }
 
   async listBases(): Promise<readonly BaseInfo[]> {
@@ -200,10 +227,24 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       throw new WorkspaceError(`Failed to create worktree: ${message}`);
     }
 
+    // Save base branch in git config (non-critical - log warning on failure)
+    try {
+      await this.gitClient.setBranchConfig(
+        this.projectRoot,
+        name,
+        GitWorktreeProvider.BASE_CONFIG_KEY,
+        baseBranch
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.warn(`Failed to save base branch config for ${name}: ${message}`);
+    }
+
     return {
       name,
       path: worktreePath,
       branch: name,
+      baseBranch,
     };
   }
 

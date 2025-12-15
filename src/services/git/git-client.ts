@@ -114,4 +114,25 @@ export interface IGitClient {
    * @throws GitError if not a git repository
    */
   listRemotes(repoPath: string): Promise<readonly string[]>;
+
+  /**
+   * Get a branch-specific configuration value.
+   * @param repoPath Absolute path to the git repository
+   * @param branch Name of the branch
+   * @param key Configuration key (without the branch prefix)
+   * @returns Promise resolving to the config value, or null if not set
+   * @throws GitError if not a git repository
+   */
+  getBranchConfig(repoPath: string, branch: string, key: string): Promise<string | null>;
+
+  /**
+   * Set a branch-specific configuration value.
+   * @param repoPath Absolute path to the git repository
+   * @param branch Name of the branch
+   * @param key Configuration key (without the branch prefix)
+   * @param value Value to set
+   * @returns Promise resolving when config is set
+   * @throws GitError if not a git repository
+   */
+  setBranchConfig(repoPath: string, branch: string, key: string, value: string): Promise<void>;
 }

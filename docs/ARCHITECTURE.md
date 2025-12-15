@@ -191,6 +191,37 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 - Re-checks worktree registration before each deletion (TOCTOU protection)
 - Concurrency guard prevents multiple cleanups running simultaneously
 
+### Git Configuration Storage
+
+CodeHydra stores workspace metadata in git config using the `branch.<name>.<key>` pattern:
+
+| Config Key                     | Purpose                                | Example                                  |
+| ------------------------------ | -------------------------------------- | ---------------------------------------- |
+| `branch.<name>.codehydra.base` | Base branch workspace was created from | `branch.feature-x.codehydra.base = main` |
+
+**Storage location**: Repository's `.git/config` file
+
+**Why git config?**
+
+- Portable: survives app reinstall, stored with the repository
+- Standard mechanism: git provides CLI and library support
+- Per-branch: each workspace/branch has isolated config
+
+**Caveats**:
+
+- Lost if branch is renamed (same as `branch.<name>.remote`)
+- Not a standard git key, but git allows arbitrary branch config
+
+**Fallback logic** (for backwards compatibility):
+
+```
+baseBranch = config ?? branch ?? name
+```
+
+- First: git config value (if set)
+- Second: current branch name (if not detached HEAD)
+- Third: workspace directory name (fallback for detached HEAD)
+
 ### Platform Abstractions Overview
 
 All external system access goes through abstraction interfaces defined in `src/services/platform/`. This architecture enables:

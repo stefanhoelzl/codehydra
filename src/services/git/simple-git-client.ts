@@ -230,4 +230,43 @@ export class SimpleGitClient implements IGitClient {
       return remotes.map((r) => r.name);
     }, "Failed to list remotes");
   }
+
+  async getBranchConfig(repoPath: string, branch: string, key: string): Promise<string | null> {
+    // First, verify it's a git repository
+    const isRepo = await this.isGitRepository(repoPath);
+    if (!isRepo) {
+      throw new GitError(`Not a git repository: ${repoPath}`);
+    }
+
+    try {
+      const git = this.getGit(repoPath);
+      const configKey = `branch.${branch}.${key}`;
+      const value = await git.raw(["config", "--get", configKey]);
+      return value.trim() || null;
+    } catch (error: unknown) {
+      // Exit code 1 means key not found - return null
+      // Exit code 128 or other errors mean git error
+      if (error instanceof Error && error.message.includes("exit code 1")) {
+        return null;
+      }
+      const message =
+        error instanceof Error
+          ? `Failed to get branch config: ${error.message}`
+          : "Failed to get branch config";
+      throw new GitError(message);
+    }
+  }
+
+  async setBranchConfig(
+    repoPath: string,
+    branch: string,
+    key: string,
+    value: string
+  ): Promise<void> {
+    return this.wrapGitOperation(async () => {
+      const git = this.getGit(repoPath);
+      const configKey = `branch.${branch}.${key}`;
+      await git.raw(["config", configKey, value]);
+    }, `Failed to set branch config branch.${branch}.${key}`);
+  }
 }

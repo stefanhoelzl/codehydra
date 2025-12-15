@@ -342,4 +342,81 @@ describe("SimpleGitClient", () => {
       });
     });
   });
+
+  describe("getBranchConfig and setBranchConfig", () => {
+    it("getBranchConfig returns null for non-existent config", async () => {
+      const value = await client.getBranchConfig(repoPath, "main", "nonexistent");
+
+      expect(value).toBeNull();
+    });
+
+    it("setBranchConfig stores value retrievable by getBranchConfig", async () => {
+      await client.setBranchConfig(repoPath, "main", "base", "develop");
+
+      const value = await client.getBranchConfig(repoPath, "main", "base");
+      expect(value).toBe("develop");
+    });
+
+    it("config persists across client instances", async () => {
+      await client.setBranchConfig(repoPath, "main", "base", "feature-branch");
+
+      // Create a new client instance
+      const newClient = new SimpleGitClient();
+      const value = await newClient.getBranchConfig(repoPath, "main", "base");
+      expect(value).toBe("feature-branch");
+    });
+
+    it("config works with branch names containing slashes", async () => {
+      // Create a branch with slashes
+      await client.createBranch(repoPath, "feature/foo/bar", "main");
+
+      await client.setBranchConfig(repoPath, "feature/foo/bar", "base", "main");
+
+      const value = await client.getBranchConfig(repoPath, "feature/foo/bar", "base");
+      expect(value).toBe("main");
+    });
+
+    it("setBranchConfig succeeds for non-existent branch", async () => {
+      // Git allows setting config for non-existent branches
+      // (config is just a key-value store)
+      await expect(
+        client.setBranchConfig(repoPath, "nonexistent-branch", "base", "main")
+      ).resolves.not.toThrow();
+
+      const value = await client.getBranchConfig(repoPath, "nonexistent-branch", "base");
+      expect(value).toBe("main");
+    });
+
+    it("getBranchConfig throws GitError for non-repo path", async () => {
+      const tempDir = await createTempDir();
+      try {
+        await expect(client.getBranchConfig(tempDir.path, "main", "base")).rejects.toThrow(
+          GitError
+        );
+      } finally {
+        await tempDir.cleanup();
+      }
+    });
+
+    it("concurrent setBranchConfig calls don't corrupt config", async () => {
+      // Run multiple concurrent setBranchConfig calls for different branches
+      const branches = ["branch-1", "branch-2", "branch-3", "branch-4", "branch-5"];
+
+      // Create all branches first
+      await Promise.all(branches.map((branch) => client.createBranch(repoPath, branch, "main")));
+
+      // Set config concurrently
+      await Promise.all(
+        branches.map((branch) =>
+          client.setBranchConfig(repoPath, branch, "base", `base-for-${branch}`)
+        )
+      );
+
+      // Verify all values are correct
+      for (const branch of branches) {
+        const value = await client.getBranchConfig(repoPath, branch, "base");
+        expect(value).toBe(`base-for-${branch}`);
+      }
+    });
+  });
 });

@@ -150,7 +150,7 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
     internalProject: {
       path: string;
       name: string;
-      workspaces: ReadonlyArray<{ path: string; branch?: string | null }>;
+      workspaces: ReadonlyArray<{ path: string; branch?: string | null; baseBranch: string }>;
     },
     defaultBaseBranch?: string
   ): Project {
@@ -169,13 +169,14 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
    */
   private toApiWorkspace(
     projectId: ProjectId,
-    internalWorkspace: { path: string; branch?: string | null }
+    internalWorkspace: { path: string; branch?: string | null; baseBranch: string }
   ): Workspace {
     const name = this.extractWorkspaceName(internalWorkspace.path) as WorkspaceName;
     return {
       projectId,
       name,
       branch: internalWorkspace.branch ?? null,
+      baseBranch: internalWorkspace.baseBranch,
       path: internalWorkspace.path,
     };
   }

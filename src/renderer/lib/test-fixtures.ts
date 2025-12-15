@@ -35,12 +35,14 @@ type WorkspaceOverrides = Partial<Omit<Workspace, "name" | "projectId" | "branch
  * @param overrides - Optional properties to override defaults (accepts plain strings for name)
  */
 export function createMockWorkspace(overrides: WorkspaceOverrides = {}): Workspace {
+  const branch = "branch" in overrides ? overrides.branch : "feature-1";
   return {
     projectId: overrides.projectId ?? DEFAULT_PROJECT_ID,
     path: overrides.path ?? "/test/project/.worktrees/feature-1",
     name: (overrides.name ?? "feature-1") as WorkspaceName,
     // Use "in" check to allow explicit null for branch (detached HEAD)
-    branch: "branch" in overrides ? overrides.branch : "feature-1",
+    branch,
+    baseBranch: overrides.baseBranch ?? branch ?? "main",
   };
 }
 
