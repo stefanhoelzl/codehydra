@@ -75,8 +75,8 @@ describe("RemoveWorkspaceDialog component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    // v2 API returns WorkspaceRemovalResult
-    mockRemoveWorkspace.mockResolvedValue({ branchDeleted: true });
+    // Fire-and-forget API returns { started: true }
+    mockRemoveWorkspace.mockResolvedValue({ started: true });
     // v2 API returns WorkspaceStatus
     mockGetStatus.mockResolvedValue({ isDirty: false, agent: { type: "none" } });
   });
@@ -201,13 +201,13 @@ describe("RemoveWorkspaceDialog component", () => {
     });
   });
 
-  describe("submit flow", () => {
+  describe("submit flow (fire-and-forget)", () => {
     it("OK calls workspaces.remove with keepBranch=false when checkbox unchecked (default)", async () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
       // Click OK with checkbox unchecked (default)
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
+      const okButton = screen.getByRole("button", { name: /^remove$/i });
       await fireEvent.click(okButton);
 
       await vi.runAllTimersAsync();
@@ -227,7 +227,7 @@ describe("RemoveWorkspaceDialog component", () => {
       await fireEvent(checkbox, new Event("change", { bubbles: true }));
 
       // Click OK
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
+      const okButton = screen.getByRole("button", { name: /^remove$/i });
       await fireEvent.click(okButton);
 
       await vi.runAllTimersAsync();
@@ -235,102 +235,32 @@ describe("RemoveWorkspaceDialog component", () => {
       expect(workspaces.remove).toHaveBeenCalledWith(testProjectId, testWorkspaceName, true);
     });
 
-    it("OK shows spinner during submit", async () => {
-      mockRemoveWorkspace.mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 1000))
-      );
-
+    it("OK closes dialog immediately (fire-and-forget)", async () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
+      const okButton = screen.getByRole("button", { name: /^remove$/i });
       await fireEvent.click(okButton);
 
-      // Should show submitting state
-      expect(screen.getByRole("button", { name: /removing/i })).toBeInTheDocument();
-
-      await vi.runAllTimersAsync();
-    });
-
-    it("checkbox and buttons disabled during submit", async () => {
-      mockRemoveWorkspace.mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 1000))
-      );
-
-      render(RemoveWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
-      await fireEvent.click(okButton);
-
-      const checkbox = getKeepBranchCheckbox();
-      expect(checkbox).toBeDisabled();
-
-      await vi.runAllTimersAsync();
-    });
-
-    it('aria-busy="true" during submit', async () => {
-      mockRemoveWorkspace.mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 1000))
-      );
-
-      render(RemoveWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
-      await fireEvent.click(okButton);
-
-      const dialog = screen.getByRole("dialog");
-      expect(dialog).toHaveAttribute("aria-busy", "true");
-
-      await vi.runAllTimersAsync();
-    });
-
-    it("success closes dialog", async () => {
-      render(RemoveWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
-      await fireEvent.click(okButton);
-
-      await vi.runAllTimersAsync();
-
+      // Dialog should close immediately without waiting for API response
       expect(mockCloseDialog).toHaveBeenCalled();
     });
-  });
 
-  describe("error handling", () => {
-    it('api.removeWorkspace failure displays error in role="alert"', async () => {
-      mockRemoveWorkspace.mockRejectedValue(new Error("Cannot remove workspace"));
-
-      render(RemoveWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
-      await fireEvent.click(okButton);
-
-      await vi.runAllTimersAsync();
-
-      const errorElement = screen.getByText(/cannot remove workspace/i);
-      expect(errorElement).toBeInTheDocument();
-      expect(errorElement.closest("[role='alert']")).toBeInTheDocument();
-    });
-
-    it("error re-enables form for retry", async () => {
-      mockRemoveWorkspace.mockRejectedValue(new Error("Network error"));
+    it("does not block on remove API call (fire-and-forget)", async () => {
+      // Verify that the remove call doesn't block dialog close
+      // Use a slow mock to verify dialog closes before API resolves
+      mockRemoveWorkspace.mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve({ started: true }), 10000))
+      );
 
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const okButton = screen.getByRole("button", { name: /ok|remove/i });
+      const okButton = screen.getByRole("button", { name: /^remove$/i });
       await fireEvent.click(okButton);
 
-      await vi.runAllTimersAsync();
-
-      // Form should be re-enabled
-      const checkbox = getKeepBranchCheckbox();
-      expect(checkbox).not.toBeDisabled();
-      expect(okButton).not.toBeDisabled();
+      // Dialog should close immediately even though remove hasn't resolved (10s timeout)
+      expect(mockCloseDialog).toHaveBeenCalled();
     });
   });
 });

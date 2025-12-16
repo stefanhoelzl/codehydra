@@ -12,7 +12,6 @@ import type {
   Workspace,
   WorkspaceRef,
   WorkspaceStatus,
-  WorkspaceRemovalResult,
   SetupResult,
   AppState as AppStateType,
   BaseInfo as ApiBaseInfo,
@@ -43,11 +42,22 @@ export interface Api {
   };
   workspaces: {
     create(projectId: string, name: string, base: string): Promise<Workspace>;
+    /**
+     * Start workspace removal (fire-and-forget).
+     * Progress is emitted via workspace:deletion-progress events.
+     * Returns immediately with { started: true }.
+     */
     remove(
       projectId: string,
       workspaceName: string,
       keepBranch?: boolean
-    ): Promise<WorkspaceRemovalResult>;
+    ): Promise<{ started: true }>;
+    /**
+     * Force remove a workspace (skip cleanup operations).
+     * Used for "Close Anyway" when deletion fails.
+     * Removes workspace from internal state without running cleanup.
+     */
+    forceRemove(projectId: string, workspaceName: string): Promise<void>;
     get(projectId: string, workspaceName: string): Promise<Workspace | undefined>;
     getStatus(projectId: string, workspaceName: string): Promise<WorkspaceStatus>;
     setMetadata(

@@ -36,8 +36,10 @@ window.api = mockApi;
 // Import after mock setup
 import Sidebar from "./Sidebar.svelte";
 import { createMockProjectWithId, createMockWorkspace } from "$lib/test-fixtures";
-import type { ProjectPath } from "@shared/ipc";
+import type { ProjectPath, WorkspacePath } from "@shared/ipc";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
+import * as deletionStore from "$lib/stores/deletion.svelte.js";
+import type { ProjectId, WorkspaceName } from "@shared/api/types";
 
 describe("getStatusText helper", () => {
   it('returns "No agents running" for (0, 0)', () => {
@@ -1069,6 +1071,136 @@ describe("Sidebar component", () => {
       // In expanded state, AgentStatusIndicator should be rendered (as part of workspace-item)
       const indicators = container.querySelectorAll('[role="status"]');
       expect(indicators.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("deletion indicator", () => {
+    const createDeletionProgress = (workspacePath: string) => ({
+      workspacePath: workspacePath as WorkspacePath,
+      workspaceName: "ws1" as WorkspaceName,
+      projectId: "test-12345678" as ProjectId,
+      keepBranch: false,
+      operations: [
+        { id: "cleanup-vscode" as const, label: "Cleanup VS Code", status: "pending" as const },
+        {
+          id: "cleanup-workspace" as const,
+          label: "Cleanup workspace",
+          status: "pending" as const,
+        },
+      ],
+      completed: false,
+      hasErrors: false,
+    });
+
+    beforeEach(() => {
+      deletionStore.reset();
+    });
+
+    it("shows spinner when workspace is deleting (expanded layout)", async () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set deletion state
+      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      // Should have progress-ring (spinner) instead of status indicator
+      expect(container.querySelector("vscode-progress-ring.deletion-spinner")).toBeInTheDocument();
+      // Should NOT have regular status indicator for this workspace
+      // Note: getByRole would find the workspace-item status, but we deleted it
+    });
+
+    it("shows spinner when workspace is deleting (minimized layout)", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set deletion state
+      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
+      });
+
+      // In minimized state, should show spinner
+      expect(container.querySelector("vscode-progress-ring.deletion-spinner")).toBeInTheDocument();
+    });
+
+    it("shows agent status indicator when not deleting", async () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // No deletion state set
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      // Should have status indicator, NOT spinner
+      expect(
+        container.querySelector("vscode-progress-ring.deletion-spinner")
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+
+    it("minimized layout aria-label shows Deleting when workspace is being deleted", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        name: "test",
+        workspaces: [ws],
+      });
+
+      // Set deletion state
+      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
+      });
+
+      // The button aria-label should say "Deleting" instead of agent status
+      const statusButton = screen.getByRole("button", { name: /ws1 in test.*deleting/i });
+      expect(statusButton).toBeInTheDocument();
+    });
+
+    it("shows spinner for deleting workspace and status for non-deleting", async () => {
+      const ws1 = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const ws2 = createMockWorkspace({ path: "/test/.worktrees/ws2", name: "ws2" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws1, ws2],
+      });
+
+      // Set deletion state only for ws1
+      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      // Should have one spinner (ws1) and one status indicator (ws2)
+      expect(container.querySelectorAll("vscode-progress-ring.deletion-spinner")).toHaveLength(1);
+      expect(screen.getAllByRole("status")).toHaveLength(1);
     });
   });
 });

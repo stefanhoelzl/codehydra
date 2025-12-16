@@ -935,8 +935,13 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
       ];
+      const branches: BranchInfo[] = [
+        { name: "main", isRemote: false },
+        { name: "feature-x", isRemote: false },
+      ];
       const mockClient = createMockGitClient({
         listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        listBranches: vi.fn().mockResolvedValue(branches),
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -985,6 +990,116 @@ describe("GitWorktreeProvider", () => {
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(false);
       expect(mockClient.deleteBranch).not.toHaveBeenCalled();
+    });
+
+    it("returns success when worktree already removed (idempotent)", async () => {
+      const worktreePath = "/data/workspaces/feature-x";
+      // Worktree is NOT in the list - already removed
+      const worktrees: WorktreeInfo[] = [
+        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+      ];
+      const mockClient = createMockGitClient({
+        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      // Should NOT throw - returns success
+      const result = await provider.removeWorkspace(worktreePath, false);
+
+      expect(result.workspaceRemoved).toBe(true);
+      expect(mockClient.removeWorktree).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Worktree already removed"));
+      warnSpy.mockRestore();
+    });
+
+    it("returns success when branch already deleted (idempotent)", async () => {
+      const worktreePath = "/data/workspaces/feature-x";
+      const worktrees: WorktreeInfo[] = [
+        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
+      ];
+      // Branch list does NOT include "feature-x" - already deleted
+      const branches: BranchInfo[] = [{ name: "main", isRemote: false }];
+      const mockClient = createMockGitClient({
+        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        listBranches: vi.fn().mockResolvedValue(branches),
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      // Request branch deletion, but branch doesn't exist
+      const result = await provider.removeWorkspace(worktreePath, true);
+
+      expect(result.workspaceRemoved).toBe(true);
+      expect(result.baseDeleted).toBe(true); // Success - branch already gone
+      expect(mockClient.deleteBranch).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Branch already deleted"));
+      warnSpy.mockRestore();
+    });
+
+    it("multiple calls return success (full idempotent flow)", async () => {
+      const worktreePath = "/data/workspaces/feature-x";
+      const worktreesWithWorkspace: WorktreeInfo[] = [
+        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
+      ];
+      const worktreesWithoutWorkspace: WorktreeInfo[] = [
+        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
+      ];
+      const branchesWithFeature: BranchInfo[] = [
+        { name: "main", isRemote: false },
+        { name: "feature-x", isRemote: false },
+      ];
+      const branchesWithoutFeature: BranchInfo[] = [{ name: "main", isRemote: false }];
+
+      const mockClient = createMockGitClient({
+        listWorktrees: vi
+          .fn()
+          .mockResolvedValueOnce(worktreesWithWorkspace) // First call
+          .mockResolvedValueOnce(worktreesWithoutWorkspace), // Second call
+        listBranches: vi
+          .fn()
+          .mockResolvedValueOnce(branchesWithFeature) // First call
+          .mockResolvedValueOnce(branchesWithoutFeature), // Second call
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs
+      );
+
+      // First call - actually removes
+      const result1 = await provider.removeWorkspace(worktreePath, true);
+      expect(result1.workspaceRemoved).toBe(true);
+      expect(result1.baseDeleted).toBe(true);
+      expect(mockClient.removeWorktree).toHaveBeenCalledTimes(1);
+      expect(mockClient.deleteBranch).toHaveBeenCalledTimes(1);
+
+      // Second call - idempotent, returns success without operations
+      // Note: baseDeleted is false because we can't determine the branch name
+      // when the worktree is already removed (branchName comes from listWorktrees)
+      const result2 = await provider.removeWorkspace(worktreePath, true);
+      expect(result2.workspaceRemoved).toBe(true);
+      expect(result2.baseDeleted).toBe(false); // Can't verify - worktree already gone
+      // removeWorktree not called again
+      expect(mockClient.removeWorktree).toHaveBeenCalledTimes(1);
+      // deleteBranch not called again (couldn't determine branch name)
+      expect(mockClient.deleteBranch).toHaveBeenCalledTimes(1);
+
+      warnSpy.mockRestore();
     });
   });
 
@@ -1187,8 +1302,13 @@ describe("GitWorktreeProvider", () => {
           isMain: false,
         },
       ];
+      const branches: BranchInfo[] = [
+        { name: "main", isRemote: false },
+        { name: "feature-x", isRemote: false },
+      ];
       const mockClient = createMockGitClient({
         listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        listBranches: vi.fn().mockResolvedValue(branches),
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,

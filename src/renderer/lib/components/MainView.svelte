@@ -48,10 +48,16 @@
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
+  import DeletionProgressView from "./DeletionProgressView.svelte";
   import Logo from "./Logo.svelte";
+  import {
+    setDeletionState,
+    clearDeletion,
+    getDeletionState,
+  } from "$lib/stores/deletion.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import type { AggregatedAgentStatus } from "@shared/ipc";
-  import type { Project, WorkspaceStatus, AgentStatus } from "@shared/api/types";
+  import type { Project, WorkspaceStatus, AgentStatus, DeletionProgress } from "@shared/api/types";
 
   const logger = createLogger("ui");
 
@@ -112,11 +118,28 @@
     syncMode();
   });
 
+  // Derive deletion state for active workspace
+  const activeDeletionState = $derived(
+    activeWorkspacePath.value ? getDeletionState(activeWorkspacePath.value) : undefined
+  );
+
   // Initialize and subscribe to domain events on mount
   onMount(() => {
     // Create notification service for chime sounds when agents become idle
     // This must be created before setupDomainEvents so we can seed it with initial statuses
     const notificationService = new AgentNotificationService();
+
+    // Subscribe to deletion progress events
+    const unsubscribeDeletionProgress = api.on<DeletionProgress>(
+      "workspace:deletion-progress",
+      (progress) => {
+        setDeletionState(progress);
+        // Auto-clear on successful completion
+        if (progress.completed && !progress.hasErrors) {
+          clearDeletion(progress.workspacePath);
+        }
+      }
+    );
 
     // Initialize - load projects, agent statuses, and optionally auto-open picker
     const initProjectsAndStatuses = async (): Promise<void> => {
@@ -225,7 +248,10 @@
     );
 
     // Cleanup subscriptions on unmount
-    return cleanup;
+    return () => {
+      cleanup();
+      unsubscribeDeletionProgress();
+    };
   });
 
   // Handle opening a project
@@ -269,6 +295,34 @@
     logger.debug("Dialog opened", { type: "remove-workspace" });
     openRemoveDialog(workspaceRef);
   }
+
+  // Handle retry deletion
+  function handleRetry(): void {
+    if (!activeDeletionState) return;
+    logger.debug("Retrying deletion", { workspaceName: activeDeletionState.workspaceName });
+    // Fire-and-forget - new progress events will update the state
+    void api.workspaces.remove(
+      activeDeletionState.projectId,
+      activeDeletionState.workspaceName,
+      activeDeletionState.keepBranch
+    );
+  }
+
+  // Handle close anyway (force remove)
+  async function handleCloseAnyway(): Promise<void> {
+    if (!activeDeletionState) return;
+    logger.debug("Force removing workspace", { workspaceName: activeDeletionState.workspaceName });
+    try {
+      await api.workspaces.forceRemove(
+        activeDeletionState.projectId,
+        activeDeletionState.workspaceName
+      );
+      clearDeletion(activeDeletionState.workspacePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Force remove failed";
+      logger.warn("Force remove failed", { error: message });
+    }
+  }
 </script>
 
 <div class="main-view" bind:this={containerRef}>
@@ -302,7 +356,14 @@
   />
 
   <!-- Backdrop shown only when no workspace is active, to avoid white background -->
-  {#if activeWorkspacePath.value === null}
+  <!-- Show DeletionProgressView if active workspace is being deleted -->
+  {#if activeDeletionState}
+    <DeletionProgressView
+      progress={activeDeletionState}
+      onRetry={handleRetry}
+      onCloseAnyway={handleCloseAnyway}
+    />
+  {:else if activeWorkspacePath.value === null}
     <div class="empty-backdrop" aria-hidden="true">
       <div class="backdrop-logo">
         <Logo animated={false} />

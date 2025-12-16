@@ -4,8 +4,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "@shared/api/types";
+import type { WorkspacePath } from "@shared/ipc";
 import { createMockProject } from "$lib/test-fixtures";
 
 // Helper to create typed ProjectId
@@ -39,7 +40,8 @@ const mockApi = vi.hoisted(() => ({
   // Flat API structure - workspaces namespace
   workspaces: {
     create: vi.fn().mockResolvedValue({}),
-    remove: vi.fn().mockResolvedValue({ branchDeleted: true }),
+    remove: vi.fn().mockResolvedValue({ started: true }),
+    forceRemove: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
     get: vi.fn().mockResolvedValue(undefined),
   },
@@ -105,6 +107,8 @@ import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
+import * as deletionStore from "$lib/stores/deletion.svelte.js";
+import type { DeletionProgress } from "@shared/api/types";
 
 describe("MainView component", () => {
   beforeEach(() => {
@@ -114,6 +118,7 @@ describe("MainView component", () => {
     dialogsStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
+    deletionStore.reset();
     // Clear event callbacks between tests
     clearEventCallbacks();
     // Default to returning empty projects
@@ -894,6 +899,332 @@ describe("MainView component", () => {
         // API provides the project ID directly - should be first project
         expect(dialogsStore.dialogState.value.projectId).toBe(emptyProject1.id);
       }
+    });
+  });
+
+  describe("deletion progress", () => {
+    // Helper to create deletion progress payload
+    function createDeletionProgress(
+      workspacePath: string,
+      overrides: Partial<DeletionProgress> = {}
+    ): DeletionProgress {
+      return {
+        workspacePath: workspacePath as WorkspacePath,
+        workspaceName: "feature" as WorkspaceName,
+        projectId: asProjectId("test-project-12345678"),
+        keepBranch: false,
+        operations: [
+          { id: "cleanup-vscode", label: "Cleanup VS Code", status: "pending" },
+          { id: "cleanup-workspace", label: "Cleanup workspace", status: "pending" },
+        ],
+        completed: false,
+        hasErrors: false,
+        ...overrides,
+      };
+    }
+
+    it("subscribes to workspace:deletion-progress on mount", async () => {
+      render(MainView);
+
+      await waitFor(() => {
+        const onCalls = mockApi.on.mock.calls;
+        const eventNames = onCalls.map((call: unknown[]) => call[0]);
+        expect(eventNames).toContain("workspace:deletion-progress");
+      });
+    });
+
+    it("unsubscribes from workspace:deletion-progress on unmount", async () => {
+      const unsubscribers: ReturnType<typeof vi.fn>[] = [];
+      mockApi.on.mockImplementation((event: string, callback: EventCallback) => {
+        eventCallbacks.set(event, callback);
+        const unsub = vi.fn();
+        unsubscribers.push(unsub);
+        return unsub;
+      });
+
+      const { unmount } = render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      unmount();
+
+      // All unsubscribers should have been called (including deletion-progress)
+      expect(unsubscribers.length).toBeGreaterThan(0);
+      for (const unsub of unsubscribers) {
+        expect(unsub).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it("shows DeletionProgressView when active workspace is deleting", async () => {
+      const projectWithWorkspace = {
+        id: asProjectId("test-project-12345678"),
+        path: "/test/project",
+        name: "test-project",
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/feature",
+            name: "feature" as WorkspaceName,
+            branch: "feature",
+          },
+        ],
+      };
+      mockApi.projects.list.mockResolvedValue([projectWithWorkspace]);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Set active workspace
+      projectsStore.setActiveWorkspace("/test/.worktrees/feature");
+
+      // Simulate deletion progress event
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(createDeletionProgress("/test/.worktrees/feature"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Removing workspace")).toBeInTheDocument();
+        expect(screen.getByText(/"feature"/)).toBeInTheDocument();
+      });
+    });
+
+    it("does not show DeletionProgressView for non-active deleting workspace", async () => {
+      const projectWithWorkspaces = {
+        id: asProjectId("test-project-12345678"),
+        path: "/test/project",
+        name: "test-project",
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/feature",
+            name: "feature" as WorkspaceName,
+            branch: "feature",
+          },
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/bugfix",
+            name: "bugfix" as WorkspaceName,
+            branch: "bugfix",
+          },
+        ],
+      };
+      mockApi.projects.list.mockResolvedValue([projectWithWorkspaces]);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Set active workspace to feature
+      projectsStore.setActiveWorkspace("/test/.worktrees/feature");
+
+      // Simulate deletion of bugfix (not active)
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(
+        createDeletionProgress("/test/.worktrees/bugfix", {
+          workspaceName: "bugfix" as WorkspaceName,
+        })
+      );
+
+      // Should NOT show deletion view (bugfix is not active)
+      await waitFor(() => {
+        expect(screen.queryByText("Removing workspace")).not.toBeInTheDocument();
+      });
+    });
+
+    it("auto-clears deletion state on successful completion", async () => {
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Set active workspace
+      projectsStore.setActiveWorkspace("/test/.worktrees/feature");
+
+      // Simulate deletion progress event
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(createDeletionProgress("/test/.worktrees/feature"));
+
+      // Verify deletion state is set
+      expect(deletionStore.isDeleting("/test/.worktrees/feature")).toBe(true);
+
+      // Simulate successful completion
+      callback!(
+        createDeletionProgress("/test/.worktrees/feature", {
+          operations: [
+            { id: "cleanup-vscode", label: "Cleanup VS Code", status: "done" },
+            { id: "cleanup-workspace", label: "Cleanup workspace", status: "done" },
+          ],
+          completed: true,
+          hasErrors: false,
+        })
+      );
+
+      // Deletion state should be cleared
+      expect(deletionStore.isDeleting("/test/.worktrees/feature")).toBe(false);
+    });
+
+    it("does not clear deletion state on completion with errors", async () => {
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Simulate deletion progress with error completion
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(
+        createDeletionProgress("/test/.worktrees/feature", {
+          operations: [
+            { id: "cleanup-vscode", label: "Cleanup VS Code", status: "done" },
+            {
+              id: "cleanup-workspace",
+              label: "Cleanup workspace",
+              status: "error",
+              error: "Failed",
+            },
+          ],
+          completed: true,
+          hasErrors: true,
+        })
+      );
+
+      // Deletion state should NOT be cleared (user needs to see error and retry/close anyway)
+      expect(deletionStore.isDeleting("/test/.worktrees/feature")).toBe(true);
+    });
+
+    it("calls workspaces.remove on retry", async () => {
+      const projectWithWorkspace = {
+        id: asProjectId("test-project-12345678"),
+        path: "/test/project",
+        name: "test-project",
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/feature",
+            name: "feature" as WorkspaceName,
+            branch: "feature",
+          },
+        ],
+      };
+      mockApi.projects.list.mockResolvedValue([projectWithWorkspace]);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Set active workspace
+      projectsStore.setActiveWorkspace("/test/.worktrees/feature");
+
+      // Simulate deletion with error
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(
+        createDeletionProgress("/test/.worktrees/feature", {
+          operations: [
+            { id: "cleanup-vscode", label: "Cleanup VS Code", status: "done" },
+            {
+              id: "cleanup-workspace",
+              label: "Cleanup workspace",
+              status: "error",
+              error: "Failed",
+            },
+          ],
+          completed: true,
+          hasErrors: true,
+        })
+      );
+
+      // Find and click Retry button
+      await waitFor(() => {
+        expect(screen.getByText("Retry")).toBeInTheDocument();
+      });
+
+      const retryButton = screen.getByText("Retry").closest("vscode-button");
+      expect(retryButton).not.toBeNull();
+      await fireEvent.click(retryButton!);
+
+      // Should have called workspaces.remove with stored values
+      await waitFor(() => {
+        expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
+          "test-project-12345678",
+          "feature",
+          false // keepBranch from the stored progress
+        );
+      });
+    });
+
+    it("calls workspaces.forceRemove and clears state on close anyway", async () => {
+      const projectWithWorkspace = {
+        id: asProjectId("test-project-12345678"),
+        path: "/test/project",
+        name: "test-project",
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/feature",
+            name: "feature" as WorkspaceName,
+            branch: "feature",
+          },
+        ],
+      };
+      mockApi.projects.list.mockResolvedValue([projectWithWorkspace]);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Set active workspace
+      projectsStore.setActiveWorkspace("/test/.worktrees/feature");
+
+      // Simulate deletion with error
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(
+        createDeletionProgress("/test/.worktrees/feature", {
+          operations: [
+            { id: "cleanup-vscode", label: "Cleanup VS Code", status: "done" },
+            {
+              id: "cleanup-workspace",
+              label: "Cleanup workspace",
+              status: "error",
+              error: "Failed",
+            },
+          ],
+          completed: true,
+          hasErrors: true,
+        })
+      );
+
+      // Find and click Close Anyway button
+      await waitFor(() => {
+        expect(screen.getByText("Close Anyway")).toBeInTheDocument();
+      });
+
+      const closeAnywayButton = screen.getByText("Close Anyway").closest("vscode-button");
+      expect(closeAnywayButton).not.toBeNull();
+      await fireEvent.click(closeAnywayButton!);
+
+      // Should have called workspaces.forceRemove
+      await waitFor(() => {
+        expect(mockApi.workspaces.forceRemove).toHaveBeenCalledWith(
+          "test-project-12345678",
+          "feature"
+        );
+      });
+
+      // State should be cleared
+      await waitFor(() => {
+        expect(deletionStore.isDeleting("/test/.worktrees/feature")).toBe(false);
+      });
     });
   });
 });

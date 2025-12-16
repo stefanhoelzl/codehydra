@@ -301,47 +301,63 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       throw new WorkspaceError("Cannot remove the main worktree");
     }
 
-    // Get the branch name before removal
+    // Get the branch name before removal (also checks if worktree exists)
     const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
     const worktree = worktrees.find(
       (wt) => this.normalizeWorktreePath(wt.path) === normalizedWorkspacePath
     );
     const branchName = worktree?.branch;
 
-    // Remove the worktree - handle partial failures
-    try {
-      await this.gitClient.removeWorktree(this.projectRoot, workspacePath);
-    } catch (error) {
-      // Check if worktree was unregistered despite error
-      const currentWorktrees = await this.gitClient.listWorktrees(this.projectRoot);
-      const stillRegistered = currentWorktrees.some(
-        (wt) => this.normalizeWorktreePath(wt.path) === normalizedWorkspacePath
-      );
+    // Idempotent: skip worktree removal if not registered
+    if (worktree) {
+      // Remove the worktree - handle partial failures
+      try {
+        await this.gitClient.removeWorktree(this.projectRoot, workspacePath);
+      } catch (error) {
+        // Check if worktree was unregistered despite error
+        const currentWorktrees = await this.gitClient.listWorktrees(this.projectRoot);
+        const stillRegistered = currentWorktrees.some(
+          (wt) => this.normalizeWorktreePath(wt.path) === normalizedWorkspacePath
+        );
 
-      if (stillRegistered) {
-        throw error; // Truly failed - still registered
+        if (stillRegistered) {
+          throw error; // Truly failed - still registered
+        }
+
+        // Unregistered but directory remains - log and continue
+        console.warn(
+          `Worktree unregistered but directory remains: ${workspacePath}. ` +
+            `Will be cleaned up on next startup.`
+        );
       }
 
-      // Unregistered but directory remains - log and continue
-      console.warn(
-        `Worktree unregistered but directory remains: ${workspacePath}. ` +
-          `Will be cleaned up on next startup.`
-      );
+      // Prune stale worktree entries
+      await this.gitClient.pruneWorktrees(this.projectRoot);
+    } else {
+      // Worktree already removed - log and continue (idempotent)
+      console.warn(`Worktree already removed, skipping: ${workspacePath}`);
     }
 
-    // Prune stale worktree entries
-    await this.gitClient.pruneWorktrees(this.projectRoot);
-
-    // Optionally delete the branch
+    // Optionally delete the branch (idempotent - check if exists first)
     let baseDeleted = false;
     if (deleteBase && branchName) {
-      try {
-        await this.gitClient.deleteBranch(this.projectRoot, branchName);
+      // Check if branch exists before attempting deletion
+      const branches = await this.gitClient.listBranches(this.projectRoot);
+      const branchExists = branches.some((b) => b.name === branchName && !b.isRemote);
+
+      if (branchExists) {
+        try {
+          await this.gitClient.deleteBranch(this.projectRoot, branchName);
+          baseDeleted = true;
+        } catch {
+          // Branch deletion can fail (e.g., if branch is checked out elsewhere)
+          // This is not a critical error
+          baseDeleted = false;
+        }
+      } else {
+        // Branch already deleted - treat as success (idempotent)
+        console.warn(`Branch already deleted, skipping: ${branchName}`);
         baseDeleted = true;
-      } catch {
-        // Branch deletion can fail (e.g., if branch is checked out elsewhere)
-        // This is not a critical error
-        baseDeleted = false;
       }
     }
 

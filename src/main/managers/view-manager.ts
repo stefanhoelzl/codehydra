@@ -285,30 +285,39 @@ export class ViewManager implements IViewManager {
   /**
    * Destroys a workspace view.
    *
+   * Idempotent: safe to call multiple times for the same workspace.
    * Navigates to about:blank before closing to ensure resources are released.
    * Uses a timeout to ensure destruction completes even if navigation hangs.
    *
    * @param workspacePath - Absolute path to the workspace directory
    */
   async destroyWorkspaceView(workspacePath: string): Promise<void> {
-    const view = this.workspaceViews.get(workspacePath);
-    if (!view) {
+    // Idempotent: early return if workspace not in maps
+    if (!this.workspaceViews.has(workspacePath)) {
       return;
     }
 
+    const view = this.workspaceViews.get(workspacePath)!;
     const workspaceName = basename(workspacePath);
 
     // Save partition name before removing from map (needed for storage clearing)
     const partitionName = this.workspacePartitions.get(workspacePath);
 
-    // Unregister from shortcut controller
-    this.shortcutController.unregisterView(view.webContents);
-
-    // Remove from maps first to ensure cleanup even if view is destroyed
+    // Remove from maps FIRST to prevent re-entry during async operations
+    // This makes the operation idempotent even if called concurrently
     this.workspaceViews.delete(workspacePath);
     this.workspaceUrls.delete(workspacePath);
     this.loadedWorkspaces.delete(workspacePath);
     this.workspacePartitions.delete(workspacePath);
+
+    // Unregister from shortcut controller (safe even if view is destroyed)
+    try {
+      if (!view.webContents.isDestroyed()) {
+        this.shortcutController.unregisterView(view.webContents);
+      }
+    } catch {
+      // Ignore errors - view may be in inconsistent state
+    }
 
     // If this was the active workspace, clear it
     if (this.activeWorkspacePath === workspacePath) {
@@ -322,9 +331,14 @@ export class ViewManager implements IViewManager {
 
     try {
       // Remove from window only if window is not destroyed
+      // Wrap in try-catch - view might already be removed
       const window = this.windowManager.getWindow();
       if (!window.isDestroyed()) {
-        window.contentView.removeChildView(view);
+        try {
+          window.contentView.removeChildView(view);
+        } catch {
+          // View might already be removed - ignore
+        }
       }
 
       // Navigate to about:blank before closing (to release resources)
@@ -339,6 +353,7 @@ export class ViewManager implements IViewManager {
         await Promise.race([view.webContents.loadURL("about:blank"), timeoutPromise]);
 
         // Close webContents after navigation (or timeout)
+        // Re-check isDestroyed() since navigation might have completed or view might have been destroyed
         if (!view.webContents.isDestroyed()) {
           view.webContents.close();
         }

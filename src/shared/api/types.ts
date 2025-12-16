@@ -3,6 +3,8 @@
  * Provides branded types for compile-time safety and runtime type guards for validation.
  */
 
+import type { WorkspacePath } from "../ipc";
+
 // =============================================================================
 // Branded Type Symbols
 // =============================================================================
@@ -252,3 +254,41 @@ export type ApiError =
   | { readonly type: "not-found"; readonly resource: "project" | "workspace"; readonly id: string }
   | { readonly type: "validation"; readonly message: string; readonly field?: string }
   | { readonly type: "service"; readonly cause: SerializedServiceError };
+
+// =============================================================================
+// Deletion Progress Types
+// =============================================================================
+
+/**
+ * Identifiers for deletion operations.
+ */
+export type DeletionOperationId = "cleanup-vscode" | "cleanup-workspace";
+
+/**
+ * Status of a deletion operation.
+ */
+export type DeletionOperationStatus = "pending" | "in-progress" | "done" | "error";
+
+/**
+ * A single operation in the deletion process.
+ */
+export interface DeletionOperation {
+  readonly id: DeletionOperationId;
+  readonly label: string;
+  readonly status: DeletionOperationStatus;
+  readonly error?: string;
+}
+
+/**
+ * Progress state for workspace deletion.
+ * Contains the full state of all operations, emitted with each update.
+ */
+export interface DeletionProgress {
+  readonly workspacePath: WorkspacePath;
+  readonly workspaceName: WorkspaceName;
+  readonly projectId: ProjectId;
+  readonly keepBranch: boolean;
+  readonly operations: readonly DeletionOperation[];
+  readonly completed: boolean;
+  readonly hasErrors: boolean;
+}

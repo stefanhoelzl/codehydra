@@ -21,10 +21,11 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  WorkspaceRemovalResult,
   SetupResult,
   AppState as AppStateType,
   SetupStep as ApiSetupStep,
+  DeletionProgress,
+  DeletionOperation,
 } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
 import type {
@@ -34,6 +35,11 @@ import type {
 import { generateProjectId } from "./id-utils";
 
 type EventHandler<T = unknown> = (event: T) => void;
+
+/**
+ * Callback for emitting deletion progress events.
+ */
+export type DeletionProgressCallback = (progress: DeletionProgress) => void;
 
 /**
  * Implementation of the CodeHydra API.
@@ -53,6 +59,12 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
   protected readonly electronApp: typeof Electron.app;
   protected readonly vscodeSetup: IVscodeSetup | undefined;
 
+  // Deletion progress callback (injected for IPC emission)
+  private readonly emitDeletionProgress: DeletionProgressCallback;
+
+  // Track in-progress deletions to prevent double-deletion
+  private readonly inProgressDeletions: Set<string> = new Set();
+
   // Cleanup function for ViewManager mode change subscription
   private readonly unsubscribeViewManagerModeChange: Unsubscribe;
 
@@ -62,12 +74,15 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
     dialog: typeof Electron.dialog,
     app: typeof Electron.app,
     vscodeSetup?: IVscodeSetup,
-    existingLifecycleApi?: ILifecycleApi
+    existingLifecycleApi?: ILifecycleApi,
+    emitDeletionProgress?: DeletionProgressCallback
   ) {
     this.viewManager = viewManager;
     this.dialog = dialog;
     this.electronApp = app;
     this.vscodeSetup = vscodeSetup;
+    // Default to no-op if not provided
+    this.emitDeletionProgress = emitDeletionProgress ?? (() => {});
 
     // Initialize domain APIs
     this.projects = this.createProjectApi();
@@ -251,6 +266,150 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
   }
 
   // ==========================================================================
+  // Deletion Execution
+  // ==========================================================================
+
+  /**
+   * Execute deletion operations asynchronously with progress events.
+   * This method is fire-and-forget from the caller's perspective.
+   * Always emits completion event, even on unexpected errors.
+   */
+  private async executeDeletion(
+    projectId: ProjectId,
+    projectPath: string,
+    workspacePath: string,
+    workspaceName: WorkspaceName,
+    keepBranch: boolean
+  ): Promise<void> {
+    // Build mutable operations array for tracking
+    const operations: DeletionOperation[] = [
+      { id: "cleanup-vscode", label: "Cleanup VS Code", status: "pending" },
+      { id: "cleanup-workspace", label: "Cleanup workspace", status: "pending" },
+    ];
+
+    // Helper to emit full state
+    const emitProgress = (completed: boolean, hasErrors: boolean): void => {
+      this.emitDeletionProgress({
+        workspacePath,
+        workspaceName,
+        projectId,
+        keepBranch,
+        operations: [...operations], // Copy to ensure immutability
+        completed,
+        hasErrors,
+      });
+    };
+
+    // Helper to update operation status
+    const updateOp = (
+      id: "cleanup-vscode" | "cleanup-workspace",
+      status: "pending" | "in-progress" | "done" | "error",
+      error?: string
+    ): void => {
+      const idx = operations.findIndex((op) => op.id === id);
+      const existing = operations[idx];
+      if (idx !== -1 && existing) {
+        operations[idx] = {
+          id: existing.id,
+          label: existing.label,
+          status,
+          ...(error !== undefined && { error }),
+        };
+      }
+    };
+
+    try {
+      // Emit initial state
+      emitProgress(false, false);
+
+      // Check if removed workspace was active BEFORE destroying it
+      const wasActive = this.viewManager.getActiveWorkspacePath() === workspacePath;
+
+      // ======================================================================
+      // Operation 1: Cleanup VS Code (view destruction)
+      // ======================================================================
+      updateOp("cleanup-vscode", "in-progress");
+      emitProgress(false, false);
+
+      try {
+        await this.viewManager.destroyWorkspaceView(workspacePath);
+        updateOp("cleanup-vscode", "done");
+        emitProgress(false, false);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "View cleanup failed";
+        updateOp("cleanup-vscode", "error", message);
+        emitProgress(false, true);
+        // Continue to next operation - don't bail out
+      }
+
+      // ======================================================================
+      // Operation 2: Cleanup workspace (git worktree removal)
+      // ======================================================================
+      updateOp("cleanup-workspace", "in-progress");
+      emitProgress(
+        false,
+        operations.some((op) => op.status === "error")
+      );
+
+      try {
+        // Get workspace provider
+        const provider = this.appState.getWorkspaceProvider(projectPath);
+        if (provider) {
+          // Remove workspace via provider (deleteBase is inverted from keepBranch)
+          await provider.removeWorkspace(workspacePath, !keepBranch);
+        }
+        updateOp("cleanup-workspace", "done");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Workspace cleanup failed";
+        updateOp("cleanup-workspace", "error", message);
+      }
+
+      // ======================================================================
+      // Finalize
+      // ======================================================================
+      const hasErrors = operations.some((op) => op.status === "error");
+
+      // Emit final progress state
+      emitProgress(true, hasErrors);
+
+      // Only emit workspace:removed and update AppState if no errors
+      if (!hasErrors) {
+        // Update AppState (removes from internal tracking)
+        await this.appState.removeWorkspace(projectPath, workspacePath);
+
+        // Emit event
+        this.emit("workspace:removed", {
+          projectId,
+          workspaceName,
+          path: workspacePath,
+        });
+
+        // If the removed workspace was active, switch to another workspace
+        if (wasActive) {
+          await this.switchToNextWorkspaceAfterRemoval(projectPath, workspacePath);
+        }
+      }
+    } catch (error) {
+      // Unexpected error - always emit completion so UI isn't stuck in limbo
+      console.error("Unexpected error during workspace deletion:", error);
+      const message = error instanceof Error ? error.message : "Deletion failed";
+
+      // Mark any in-progress operation as error
+      for (let i = 0; i < operations.length; i++) {
+        const op = operations[i];
+        if (op && op.status === "in-progress") {
+          operations[i] = { id: op.id, label: op.label, status: "error", error: message };
+        }
+      }
+
+      emitProgress(true, true);
+    } finally {
+      // Always clear from in-progress set
+      this.inProgressDeletions.delete(workspacePath);
+    }
+  }
+
+  // ==========================================================================
   // Domain API Implementations
   // ==========================================================================
 
@@ -376,7 +535,7 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
         projectId: ProjectId,
         workspaceName: WorkspaceName,
         keepBranch = true
-      ): Promise<WorkspaceRemovalResult> => {
+      ): Promise<{ started: true }> => {
         // Resolve project ID to path
         const projectPath = await this.resolveProjectPath(projectId);
         if (!projectPath) {
@@ -396,21 +555,55 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
           throw new Error(`Workspace not found: ${workspaceName}`);
         }
 
-        // Get workspace provider
-        const provider = this.appState.getWorkspaceProvider(projectPath);
-        if (!provider) {
-          throw new Error(`No workspace provider for project: ${projectId}`);
+        // Check if deletion already in progress - return early (idempotent)
+        if (this.inProgressDeletions.has(workspace.path)) {
+          return { started: true };
         }
 
-        // Check if removed workspace was active BEFORE destroying it
-        // (removeWorkspace clears activeWorkspacePath, so we must check first)
+        // Mark as in-progress
+        this.inProgressDeletions.add(workspace.path);
+
+        // Fire-and-forget: execute deletion asynchronously
+        void this.executeDeletion(
+          projectId,
+          projectPath,
+          workspace.path,
+          workspaceName,
+          keepBranch
+        );
+
+        // Return immediately
+        return { started: true };
+      },
+
+      forceRemove: async (projectId: ProjectId, workspaceName: WorkspaceName): Promise<void> => {
+        // Resolve project ID to path
+        const projectPath = await this.resolveProjectPath(projectId);
+        if (!projectPath) {
+          throw new Error(`Project not found: ${projectId}`);
+        }
+
+        // Find workspace path
+        const internalProject = this.appState.getProject(projectPath);
+        if (!internalProject) {
+          throw new Error(`Project not found: ${projectId}`);
+        }
+
+        const workspace = internalProject.workspaces.find(
+          (w) => this.extractWorkspaceName(w.path) === workspaceName
+        );
+        if (!workspace) {
+          throw new Error(`Workspace not found: ${workspaceName}`);
+        }
+
+        // Check if removed workspace was active
         const wasActive = this.viewManager.getActiveWorkspacePath() === workspace.path;
 
-        // Remove workspace via provider (deleteBase is inverted from keepBranch)
-        const result = await provider.removeWorkspace(workspace.path, !keepBranch);
-
-        // Update AppState (async - kills OpenCode processes, cleans up view)
+        // Clean up internal state WITHOUT running cleanup operations
         await this.appState.removeWorkspace(projectPath, workspace.path);
+
+        // Clear in-progress deletion tracking
+        this.inProgressDeletions.delete(workspace.path);
 
         // Emit event
         this.emit("workspace:removed", {
@@ -423,12 +616,6 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
         if (wasActive) {
           await this.switchToNextWorkspaceAfterRemoval(projectPath, workspace.path);
         }
-
-        return {
-          branchDeleted: result.baseDeleted,
-          ...(result.baseDeleted === false &&
-            !keepBranch && { branchDeleteError: "Branch deletion failed" }),
-        };
       },
 
       get: async (

@@ -624,7 +624,7 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
   });
 
   describe("remove()", () => {
-    it("should remove a workspace", async () => {
+    it("should start workspace removal and return immediately", async () => {
       const mockProvider = {
         removeWorkspace: vi.fn().mockResolvedValue({ workspaceRemoved: true, baseDeleted: false }),
       } as unknown as IWorkspaceProvider;
@@ -637,14 +637,13 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
       vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
       vi.mocked(appState.getWorkspaceProvider).mockReturnValue(mockProvider);
 
+      // Fire-and-forget: returns immediately with { started: true }
       const result = await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-      // keepBranch defaults to true, so deleteBase should be false
-      expect(mockProvider.removeWorkspace).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, false);
-      expect(result.branchDeleted).toBe(false);
+      expect(result.started).toBe(true);
     });
 
-    it("should emit workspace:removed event", async () => {
+    it("should emit workspace:removed event after async deletion", async () => {
       const mockProvider = {
         removeWorkspace: vi.fn().mockResolvedValue({ workspaceRemoved: true, baseDeleted: false }),
       } as unknown as IWorkspaceProvider;
@@ -661,7 +660,10 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
       await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-      expect(handler).toHaveBeenCalledTimes(1);
+      // Wait for async deletion to complete
+      await vi.waitFor(() => {
+        expect(handler).toHaveBeenCalledTimes(1);
+      });
       expect(handler).toHaveBeenCalledWith({
         projectId: TEST_PROJECT_ID,
         workspaceName: TEST_WORKSPACE_NAME,
@@ -669,7 +671,7 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
       });
     });
 
-    it("should call appState.removeWorkspace to update state", async () => {
+    it("should call appState.removeWorkspace after async deletion", async () => {
       const mockProvider = {
         removeWorkspace: vi.fn().mockResolvedValue({ workspaceRemoved: true, baseDeleted: false }),
       } as unknown as IWorkspaceProvider;
@@ -684,7 +686,13 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
       await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-      expect(appState.removeWorkspace).toHaveBeenCalledWith(TEST_PROJECT_PATH, TEST_WORKSPACE_PATH);
+      // Wait for async deletion to complete
+      await vi.waitFor(() => {
+        expect(appState.removeWorkspace).toHaveBeenCalledWith(
+          TEST_PROJECT_PATH,
+          TEST_WORKSPACE_PATH
+        );
+      });
     });
 
     it("should delete branch when keepBranch is false", async () => {
@@ -700,11 +708,12 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
       vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
       vi.mocked(appState.getWorkspaceProvider).mockReturnValue(mockProvider);
 
-      const result = await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME, false);
+      await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME, false);
 
-      // keepBranch=false means deleteBase=true
-      expect(mockProvider.removeWorkspace).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, true);
-      expect(result.branchDeleted).toBe(true);
+      // Wait for async deletion to complete, then check deleteBase=true was passed
+      await vi.waitFor(() => {
+        expect(mockProvider.removeWorkspace).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, true);
+      });
     });
 
     it("should throw if workspace not found", async () => {
@@ -744,8 +753,11 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
         await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-        // Should switch to the other workspace in the same project
-        expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(OTHER_WORKSPACE_PATH, false);
+        // Wait for async deletion to complete
+        await vi.waitFor(() => {
+          // Should switch to the other workspace in the same project
+          expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(OTHER_WORKSPACE_PATH, false);
+        });
         expect(switchHandler).toHaveBeenCalledWith({
           projectId: TEST_PROJECT_ID,
           workspaceName: OTHER_WORKSPACE_NAME,
@@ -792,11 +804,14 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
         await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-        // Should switch to workspace in another project
-        expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(
-          OTHER_PROJECT_WORKSPACE_PATH,
-          false
-        );
+        // Wait for async deletion to complete
+        await vi.waitFor(() => {
+          // Should switch to workspace in another project
+          expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(
+            OTHER_PROJECT_WORKSPACE_PATH,
+            false
+          );
+        });
         expect(switchHandler).toHaveBeenCalledWith({
           projectId: OTHER_PROJECT_ID,
           workspaceName: OTHER_PROJECT_WORKSPACE_NAME,
@@ -826,8 +841,11 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
         await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-        // Should set active to null
-        expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(null, false);
+        // Wait for async deletion to complete
+        await vi.waitFor(() => {
+          // Should set active to null
+          expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(null, false);
+        });
         expect(switchHandler).toHaveBeenCalledWith(null);
       });
 
@@ -858,6 +876,117 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
         expect(viewManager.setActiveWorkspace).not.toHaveBeenCalled();
         expect(switchHandler).not.toHaveBeenCalled();
       });
+    });
+
+    describe("double-deletion prevention", () => {
+      it("should prevent double-deletion by returning early on second call", async () => {
+        // Set up a provider that delays to simulate a slow operation
+        let removeWorkspaceCallCount = 0;
+        const mockProvider = {
+          removeWorkspace: vi.fn().mockImplementation(async () => {
+            removeWorkspaceCallCount++;
+            // Delay to allow second call to be made while first is in progress
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            return { workspaceRemoved: true, baseDeleted: false };
+          }),
+        } as unknown as IWorkspaceProvider;
+        const mockInternalProject = createInternalProject({
+          workspaces: [
+            {
+              name: "feature-branch",
+              path: TEST_WORKSPACE_PATH,
+              branch: "feature-branch",
+              metadata: { base: "main" },
+            },
+          ],
+        });
+        vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+        vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+        vi.mocked(appState.getWorkspaceProvider).mockReturnValue(mockProvider);
+
+        // Start first removal (fire-and-forget)
+        const result1 = await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+        expect(result1.started).toBe(true);
+
+        // Immediately call second removal - should return early
+        const result2 = await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+        expect(result2.started).toBe(true);
+
+        // Wait for the deletion to complete
+        await vi.waitFor(() => {
+          expect(appState.removeWorkspace).toHaveBeenCalled();
+        });
+
+        // The removeWorkspace should only have been called once
+        expect(removeWorkspaceCallCount).toBe(1);
+      });
+    });
+  });
+
+  describe("forceRemove()", () => {
+    it("should remove workspace from state without running cleanup operations", async () => {
+      const mockProvider = {
+        removeWorkspace: vi.fn(),
+      } as unknown as IWorkspaceProvider;
+      const mockInternalProject = createInternalProject({
+        workspaces: [
+          {
+            name: "feature-branch",
+            path: TEST_WORKSPACE_PATH,
+            branch: "feature-branch",
+            metadata: { base: "main" },
+          },
+        ],
+      });
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+      vi.mocked(appState.getWorkspaceProvider).mockReturnValue(mockProvider);
+
+      await api.workspaces.forceRemove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+
+      // Should NOT call provider.removeWorkspace (no git cleanup)
+      expect(mockProvider.removeWorkspace).not.toHaveBeenCalled();
+      // Should NOT call viewManager.destroyWorkspaceView (no view cleanup)
+      expect(viewManager.destroyWorkspaceView).not.toHaveBeenCalled();
+      // SHOULD update AppState
+      expect(appState.removeWorkspace).toHaveBeenCalledWith(TEST_PROJECT_PATH, TEST_WORKSPACE_PATH);
+    });
+
+    it("should emit workspace:removed event", async () => {
+      const mockInternalProject = createInternalProject({
+        workspaces: [
+          {
+            name: "feature-branch",
+            path: TEST_WORKSPACE_PATH,
+            branch: "feature-branch",
+            metadata: { base: "main" },
+          },
+        ],
+      });
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+
+      const handler = vi.fn();
+      api.on("workspace:removed", handler);
+
+      await api.workspaces.forceRemove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith({
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        path: TEST_WORKSPACE_PATH,
+      });
+    });
+
+    it("should throw if workspace not found", async () => {
+      const mockInternalProject = createInternalProject();
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+
+      await expect(
+        api.workspaces.forceRemove(TEST_PROJECT_ID, "nonexistent" as WorkspaceName)
+      ).rejects.toThrow(/not found/i);
     });
   });
 

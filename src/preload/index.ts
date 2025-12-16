@@ -41,11 +41,20 @@ contextBridge.exposeInMainWorld("api", {
   workspaces: {
     create: (projectId: string, name: string, base: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_CREATE, { projectId, name, base }),
-    remove: (projectId: string, workspaceName: string, keepBranch?: boolean) =>
+    remove: (
+      projectId: string,
+      workspaceName: string,
+      keepBranch?: boolean
+    ): Promise<{ started: true }> =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_REMOVE, {
         projectId,
         workspaceName,
         keepBranch,
+      }),
+    forceRemove: (projectId: string, workspaceName: string): Promise<void> =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_FORCE_REMOVE, {
+        projectId,
+        workspaceName,
       }),
     get: (projectId: string, workspaceName: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET, { projectId, workspaceName }),

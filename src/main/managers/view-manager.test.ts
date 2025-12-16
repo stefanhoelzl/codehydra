@@ -974,6 +974,75 @@ describe("ViewManager", () => {
       // Should be called again for the new view
       expect(mockFromPartition).toHaveBeenCalled();
     });
+
+    it("destroyWorkspaceView-idempotent: multiple calls are no-op", async () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        createSilentLogger()
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // First destroy
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Second destroy should be no-op (no throw)
+      await expect(manager.destroyWorkspaceView("/path/to/workspace")).resolves.not.toThrow();
+
+      // Third destroy should also be no-op
+      await expect(manager.destroyWorkspaceView("/path/to/workspace")).resolves.not.toThrow();
+    });
+
+    it("destroyWorkspaceView-idempotent-never-existed: no throw for workspace that never existed", async () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        createSilentLogger()
+      );
+
+      // Destroy workspace that was never created
+      await expect(manager.destroyWorkspaceView("/nonexistent/workspace")).resolves.not.toThrow();
+    });
+
+    it("destroyWorkspaceView-map-cleanup-order: map cleanup happens before async operations", async () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        createSilentLogger()
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Get view before destroy
+      const view = manager.getWorkspaceView("/path/to/workspace");
+      expect(view).toBeDefined();
+
+      // Start destroy but don't await
+      const destroyPromise = manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Map should be cleared immediately (before async operations complete)
+      expect(manager.getWorkspaceView("/path/to/workspace")).toBeUndefined();
+
+      await destroyPromise;
+    });
   });
 
   describe("getWorkspaceView", () => {

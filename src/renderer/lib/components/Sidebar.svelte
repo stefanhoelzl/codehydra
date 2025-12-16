@@ -61,6 +61,7 @@
   import EmptyState from "./EmptyState.svelte";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
+  import { isDeleting } from "$lib/stores/deletion.svelte.js";
   import { uiMode, setSidebarExpanded } from "$lib/stores/ui-mode.svelte.js";
 
   interface SidebarProps {
@@ -224,6 +225,7 @@
                   agentStatus.counts.busy
                 )}
                 {@const isActive = workspace.path === activeWorkspacePath}
+                {@const workspaceIsDeleting = isDeleting(workspace.path)}
                 {@const workspaceRef = {
                   projectId: project.id,
                   workspaceName: workspace.name as WorkspaceName,
@@ -262,10 +264,14 @@
                     >
                       &times;
                     </button>
-                    <AgentStatusIndicator
-                      idleCount={agentStatus.counts.idle}
-                      busyCount={agentStatus.counts.busy}
-                    />
+                    {#if workspaceIsDeleting}
+                      <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                    {:else}
+                      <AgentStatusIndicator
+                        idleCount={agentStatus.counts.idle}
+                        busyCount={agentStatus.counts.busy}
+                      />
+                    {/if}
                   </li>
                 {:else}
                   <!-- Minimized layout: clickable status indicators -->
@@ -278,14 +284,18 @@
                     <button
                       type="button"
                       class="status-indicator-btn"
-                      aria-label={`${workspace.name} in ${project.name} - ${statusText}`}
+                      aria-label={`${workspace.name} in ${project.name} - ${workspaceIsDeleting ? "Deleting" : statusText}`}
                       aria-current={isActive ? "true" : undefined}
                       onclick={() => onSwitchWorkspace(workspaceRef)}
                     >
-                      <AgentStatusIndicator
-                        idleCount={agentStatus.counts.idle}
-                        busyCount={agentStatus.counts.busy}
-                      />
+                      {#if workspaceIsDeleting}
+                        <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                      {:else}
+                        <AgentStatusIndicator
+                          idleCount={agentStatus.counts.idle}
+                          busyCount={agentStatus.counts.busy}
+                        />
+                      {/if}
                       <span class="ch-visually-hidden">{workspace.name}</span>
                     </button>
                   </li>
@@ -581,5 +591,11 @@
 
   .badge-dimmed {
     opacity: 0.4;
+  }
+
+  .deletion-spinner {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
   }
 </style>

@@ -231,6 +231,15 @@ export function registerApiHandlers(api: ICodeHydraApi, logger: Logger): void {
     })
   );
 
+  ipcMain.handle(ApiIpcChannels.WORKSPACE_FORCE_REMOVE, async (_event, payload: unknown) =>
+    logged(logger, ApiIpcChannels.WORKSPACE_FORCE_REMOVE, async () => {
+      const p = payload as Record<string, unknown>;
+      const projectId = validateProjectId(p?.projectId, "projectId");
+      const workspaceName = validateWorkspaceName(p?.workspaceName, "workspaceName");
+      return await api.workspaces.forceRemove(projectId, workspaceName);
+    })
+  );
+
   ipcMain.handle(ApiIpcChannels.WORKSPACE_GET, async (_event, payload: unknown) =>
     logged(logger, ApiIpcChannels.WORKSPACE_GET, async () => {
       const p = payload as Record<string, unknown>;

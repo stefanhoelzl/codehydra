@@ -48,7 +48,9 @@ describe("createMockApi", () => {
     expect(workspace.name).toBe("ws");
 
     const removeResult = await api.workspaces.remove("id", "name");
-    expect(removeResult.branchDeleted).toBe(false);
+    expect(removeResult.started).toBe(true);
+
+    expect(await api.workspaces.forceRemove("id", "name")).toBeUndefined();
 
     expect(await api.workspaces.get("id", "name")).toBeUndefined();
 

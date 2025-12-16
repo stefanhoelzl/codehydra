@@ -15,8 +15,6 @@
 
   // Form state
   let keepBranch = $state(false);
-  let submitError = $state<string | null>(null);
-  let isSubmitting = $state(false);
   let isDirty = $state(false);
   let isCheckingDirty = $state(true);
 
@@ -44,35 +42,13 @@
       });
   });
 
-  // Handle form submission
-  async function handleSubmit(): Promise<void> {
-    if (isSubmitting) return;
-
-    submitError = null;
-    isSubmitting = true;
-
-    try {
-      logger.debug("Dialog submitted", { type: "remove-workspace" });
-      const result = await workspaces.remove(
-        workspaceRef.projectId,
-        workspaceRef.workspaceName,
-        keepBranch
-      );
-
-      // If branch deletion failed, show warning but still close dialog
-      if (!keepBranch && !result.branchDeleted && result.branchDeleteError) {
-        // Show brief error then close
-        submitError = `Workspace removed, but branch deletion failed: ${result.branchDeleteError}`;
-        setTimeout(() => closeDialog(), 2000);
-      } else {
-        closeDialog();
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to remove workspace";
-      logger.warn("UI error", { component: "RemoveWorkspaceDialog", error: message });
-      submitError = message;
-      isSubmitting = false;
-    }
+  // Handle form submission (fire-and-forget)
+  function handleSubmit(): void {
+    logger.debug("Dialog submitted", { type: "remove-workspace" });
+    // Fire-and-forget: start deletion and close dialog immediately
+    // Progress is shown via DeletionProgressView in MainView
+    void workspaces.remove(workspaceRef.projectId, workspaceRef.workspaceName, keepBranch);
+    closeDialog();
   }
 
   // Handle cancel
@@ -95,7 +71,7 @@
 <Dialog
   {open}
   onClose={handleCancel}
-  busy={isSubmitting}
+  busy={false}
   {titleId}
   {descriptionId}
   initialFocusSelector="vscode-button"
@@ -119,30 +95,16 @@
     {/if}
 
     <div class="checkbox-row">
-      <vscode-checkbox
-        checked={keepBranch}
-        onchange={handleCheckboxChange}
-        disabled={isSubmitting}
-        label="Keep branch"
+      <vscode-checkbox checked={keepBranch} onchange={handleCheckboxChange} label="Keep branch"
       ></vscode-checkbox>
     </div>
-
-    {#if submitError}
-      <div class="submit-error" role="alert">
-        {submitError}
-      </div>
-    {/if}
   {/snippet}
 
   {#snippet actions()}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <vscode-button onclick={handleSubmit} disabled={isSubmitting}>
-      {isSubmitting ? "Removing..." : "Remove"}
-    </vscode-button>
+    <vscode-button onclick={handleSubmit}>Remove</vscode-button>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <vscode-button secondary={true} onclick={handleCancel} disabled={isSubmitting}>
-      Cancel
-    </vscode-button>
+    <vscode-button secondary={true} onclick={handleCancel}>Cancel</vscode-button>
   {/snippet}
 </Dialog>
 
@@ -185,14 +147,5 @@
 
   .checkbox-row {
     margin-bottom: 16px;
-  }
-
-  .submit-error {
-    margin-bottom: 16px;
-    padding: 8px;
-    background: var(--ch-error-bg);
-    color: var(--ch-error-fg);
-    border-radius: 2px;
-    font-size: 13px;
   }
 </style>

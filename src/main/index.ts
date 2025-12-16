@@ -310,13 +310,25 @@ async function startServices(): Promise<void> {
 
   // Create and register API-based handlers
   // Reuse the existing lifecycleApi from bootstrap() if available
+  // Capture viewManager for deletion progress emission
+  const viewManagerForDeletion = viewManager;
   codeHydraApi = new CodeHydraApiImpl(
     appState,
     viewManager,
     dialog,
     app,
     vscodeSetupService ?? undefined,
-    lifecycleApi ?? undefined
+    lifecycleApi ?? undefined,
+    // Deletion progress callback - emits to renderer
+    (progress) => {
+      try {
+        viewManagerForDeletion
+          ?.getUIWebContents()
+          ?.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
+      } catch {
+        // Log but don't throw - deletion continues even if UI disconnected
+      }
+    }
   );
 
   // Register API handlers

@@ -193,6 +193,7 @@ export const ApiIpcChannels = {
   // Workspace commands
   WORKSPACE_CREATE: "api:workspace:create",
   WORKSPACE_REMOVE: "api:workspace:remove",
+  WORKSPACE_FORCE_REMOVE: "api:workspace:force-remove",
   WORKSPACE_GET: "api:workspace:get",
   WORKSPACE_GET_STATUS: "api:workspace:get-status",
   WORKSPACE_SET_METADATA: "api:workspace:set-metadata",
@@ -220,6 +221,7 @@ export const ApiIpcChannels = {
   WORKSPACE_SWITCHED: "api:workspace:switched",
   WORKSPACE_STATUS_CHANGED: "api:workspace:status-changed",
   WORKSPACE_METADATA_CHANGED: "api:workspace:metadata-changed",
+  WORKSPACE_DELETION_PROGRESS: "api:workspace:deletion-progress",
   UI_MODE_CHANGED: "api:ui:mode-changed",
   SHORTCUT_KEY: "api:shortcut:key",
   SETUP_PROGRESS: "api:setup:progress",
