@@ -56,7 +56,7 @@
     "eslint-plugin-svelte": "^3.13.1",
     "globals": "^16.5.0",
     "happy-dom": "^20.0.11",
-    "opencode-ai": "^1.0.138",
+    "opencode-ai": "*",
     "prettier": "^3.7.4",
     "prettier-plugin-svelte": "^3.4.0",
     "svelte": "^5.45.6",
