@@ -3,6 +3,7 @@
  */
 
 export { VscodeSetupService } from "./vscode-setup-service";
+export { generateScript, generateScripts } from "./bin-scripts";
 export {
   CURRENT_SETUP_VERSION,
   type IVscodeSetup,
@@ -14,4 +15,7 @@ export {
   type SetupMarker,
   type ProcessRunner,
   type ProcessResult,
+  type BinTargetPaths,
+  type GeneratedScript,
+  type ScriptFilename,
 } from "./types";

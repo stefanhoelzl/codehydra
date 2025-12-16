@@ -11,8 +11,10 @@ import type { SpawnedProcess } from "../platform/process";
 import type { PathProvider } from "../platform/path-provider";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createMockFileSystemLayer } from "../platform/filesystem.test-utils";
+import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { FileSystemError, VscodeSetupError } from "../errors";
 import type { FileSystemLayer } from "../platform/filesystem";
+import type { PlatformInfo } from "../platform/platform-info";
 
 /**
  * Create a mock SpawnedProcess with controllable wait() result.
@@ -39,6 +41,7 @@ describe("VscodeSetupService", () => {
   let mockProcessRunner: ProcessRunner;
   let mockPathProvider: PathProvider;
   let mockFs: FileSystemLayer;
+  let mockPlatformInfo: PlatformInfo;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -52,8 +55,10 @@ describe("VscodeSetupService", () => {
       vscodeUserDataDir: "/mock/vscode/user-data",
       vscodeSetupMarkerPath: "/mock/vscode/.setup-completed",
       vscodeAssetsDir: "/mock/assets",
+      binDir: "/mock/bin",
     });
     mockFs = createMockFileSystemLayer();
+    mockPlatformInfo = createMockPlatformInfo({ platform: "linux" });
   });
 
   describe("isSetupComplete", () => {
@@ -624,6 +629,182 @@ describe("VscodeSetupService", () => {
       if (!result.success) {
         expect(result.error.type).toBe("network");
       }
+    });
+  });
+
+  describe("setupBinDirectory", () => {
+    it("creates bin directory", async () => {
+      const createdDirs: string[] = [];
+      const writtenFiles = new Map<string, string>();
+
+      mockFs = createMockFileSystemLayer({
+        mkdir: {
+          implementation: async (path) => {
+            createdDirs.push(path);
+          },
+        },
+        writeFile: {
+          implementation: async (path, content) => {
+            writtenFiles.set(path, content);
+          },
+        },
+        makeExecutable: { implementation: async () => {} },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs,
+        mockPlatformInfo
+      );
+      await service.setupBinDirectory();
+
+      expect(createdDirs).toContain("/mock/bin");
+    });
+
+    it("generates scripts for current platform", async () => {
+      const writtenFiles = new Map<string, string>();
+
+      mockFs = createMockFileSystemLayer({
+        mkdir: { implementation: async () => {} },
+        writeFile: {
+          implementation: async (path, content) => {
+            writtenFiles.set(path, content);
+          },
+        },
+        makeExecutable: { implementation: async () => {} },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs,
+        createMockPlatformInfo({ platform: "linux" })
+      );
+      await service.setupBinDirectory();
+
+      // Should generate code script (opencode may be skipped if not found)
+      // Note: code-server wrapper is not generated - we launch code-server directly
+      expect(writtenFiles.has("/mock/bin/code")).toBe(true);
+
+      // Scripts should be Unix-style (shebang)
+      const codeScript = writtenFiles.get("/mock/bin/code");
+      expect(codeScript).toMatch(/^#!/);
+    });
+
+    it("calls makeExecutable on Unix scripts", async () => {
+      const executablePaths: string[] = [];
+
+      mockFs = createMockFileSystemLayer({
+        mkdir: { implementation: async () => {} },
+        writeFile: { implementation: async () => {} },
+        makeExecutable: {
+          implementation: async (path) => {
+            executablePaths.push(path);
+          },
+        },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs,
+        createMockPlatformInfo({ platform: "linux" })
+      );
+      await service.setupBinDirectory();
+
+      // Should call makeExecutable for each Unix script (code, and opencode if found)
+      // Note: code-server wrapper is not generated - we launch code-server directly
+      expect(executablePaths).toContain("/mock/bin/code");
+    });
+
+    it("does not call makeExecutable on Windows", async () => {
+      const executablePaths: string[] = [];
+
+      mockFs = createMockFileSystemLayer({
+        mkdir: { implementation: async () => {} },
+        writeFile: { implementation: async () => {} },
+        makeExecutable: {
+          implementation: async (path) => {
+            executablePaths.push(path);
+          },
+        },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs,
+        createMockPlatformInfo({ platform: "win32" })
+      );
+      await service.setupBinDirectory();
+
+      // Should NOT call makeExecutable for Windows scripts
+      expect(executablePaths).toHaveLength(0);
+    });
+
+    it("handles mkdir failure", async () => {
+      mockFs = createMockFileSystemLayer({
+        mkdir: {
+          error: new FileSystemError("EACCES", "/mock/bin", "Permission denied"),
+        },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs,
+        mockPlatformInfo
+      );
+
+      await expect(service.setupBinDirectory()).rejects.toThrow("Permission denied");
+    });
+
+    it("handles writeFile failure", async () => {
+      mockFs = createMockFileSystemLayer({
+        mkdir: { implementation: async () => {} },
+        writeFile: {
+          error: new FileSystemError("EACCES", "/mock/bin/code", "Permission denied"),
+        },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs,
+        mockPlatformInfo
+      );
+
+      await expect(service.setupBinDirectory()).rejects.toThrow("Permission denied");
+    });
+
+    it("emits progress event", async () => {
+      mockFs = createMockFileSystemLayer({
+        mkdir: { implementation: async () => {} },
+        writeFile: { implementation: async () => {} },
+        makeExecutable: { implementation: async () => {} },
+      });
+      const progressCallback = vi.fn();
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        "/mock/code-server",
+        mockFs,
+        mockPlatformInfo
+      );
+      await service.setupBinDirectory(progressCallback);
+
+      expect(progressCallback).toHaveBeenCalledWith({
+        step: "config",
+        message: "Creating CLI wrapper scripts...",
+      });
     });
   });
 });

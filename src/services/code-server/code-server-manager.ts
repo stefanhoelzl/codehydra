@@ -3,6 +3,7 @@
  * Handles starting, stopping, and health checking of code-server processes.
  */
 
+import { join, delimiter } from "node:path";
 import type { CodeServerConfig, InstanceState } from "./types";
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
 import type { HttpClient, PortManager } from "../platform/network";
@@ -188,6 +189,25 @@ export class CodeServerManager {
           delete cleanEnv[key];
         }
       }
+
+      // Prepend binDir to PATH so CLI tools are available in terminal
+      // Handle both PATH (Unix/most Windows) and Path (some Windows configs)
+      const existingPath = cleanEnv.PATH ?? cleanEnv.Path ?? "";
+      cleanEnv.PATH = this.config.binDir + delimiter + existingPath;
+      // Remove lowercase Path to avoid duplicates on Windows
+      delete cleanEnv.Path;
+
+      // Set EDITOR and GIT_SEQUENCE_EDITOR for git operations
+      // Uses absolute path to the code wrapper with flags for proper behavior:
+      // --wait: Don't return until the file is closed
+      // --reuse-window: Open in existing window instead of creating new one
+      const isWindows = process.platform === "win32";
+      const codeCmd = isWindows
+        ? `"${join(this.config.binDir, "code.cmd")}"`
+        : join(this.config.binDir, "code");
+      const editorValue = `${codeCmd} --wait --reuse-window`;
+      cleanEnv.EDITOR = editorValue;
+      cleanEnv.GIT_SEQUENCE_EDITOR = editorValue;
 
       this.process = this.processRunner.run("code-server", args, {
         cwd: this.config.runtimeDir,

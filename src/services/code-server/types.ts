@@ -19,6 +19,8 @@ export interface CodeServerConfig {
   readonly extensionsDir: string;
   /** Directory for VS Code user data */
   readonly userDataDir: string;
+  /** Directory for CLI wrapper scripts (added to PATH) */
+  readonly binDir: string;
 }
 
 /**

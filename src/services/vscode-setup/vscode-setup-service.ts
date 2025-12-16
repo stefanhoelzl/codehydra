@@ -3,9 +3,10 @@
  * Installs extensions and writes configuration files.
  */
 
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
 import type { FileSystemLayer } from "../platform/filesystem";
+import type { PlatformInfo } from "../platform/platform-info";
 import { VscodeSetupError } from "../errors";
 import {
   CURRENT_SETUP_VERSION,
@@ -15,7 +16,9 @@ import {
   type SetupMarker,
   type ProcessRunner,
   type ExtensionsConfig,
+  type BinTargetPaths,
 } from "./types";
+import { generateScripts } from "./bin-scripts";
 
 /**
  * Service for managing VS Code setup process.
@@ -26,18 +29,25 @@ export class VscodeSetupService implements IVscodeSetup {
   private readonly codeServerBinaryPath: string;
   private readonly fs: FileSystemLayer;
   private readonly assetsDir: string;
+  private readonly platformInfo: PlatformInfo;
 
   constructor(
     processRunner: ProcessRunner,
     pathProvider: PathProvider,
     codeServerBinaryPath: string,
-    fs: FileSystemLayer
+    fs: FileSystemLayer,
+    platformInfo?: PlatformInfo
   ) {
     this.processRunner = processRunner;
     this.pathProvider = pathProvider;
     this.codeServerBinaryPath = codeServerBinaryPath;
     this.fs = fs;
     this.assetsDir = pathProvider.vscodeAssetsDir;
+    // Default to node process.platform if not provided
+    this.platformInfo = platformInfo ?? {
+      platform: process.platform,
+      homeDir: process.env.HOME ?? process.env.USERPROFILE ?? "",
+    };
   }
 
   /**
@@ -60,6 +70,7 @@ export class VscodeSetupService implements IVscodeSetup {
    * Postconditions on success:
    * - All extensions installed
    * - Config files written
+   * - CLI wrapper scripts created in bin directory
    * - Marker file written with version
    *
    * @param onProgress Optional callback for progress updates
@@ -78,7 +89,10 @@ export class VscodeSetupService implements IVscodeSetup {
     // Step 2: Write config files
     await this.writeConfigFiles(onProgress);
 
-    // Step 3: Write completion marker
+    // Step 3: Create CLI wrapper scripts
+    await this.setupBinDirectory(onProgress);
+
+    // Step 4: Write completion marker
     await this.writeCompletionMarker(onProgress);
 
     return { success: true };
@@ -167,6 +181,142 @@ export class VscodeSetupService implements IVscodeSetup {
       this.pathProvider.vscodeSetupMarkerPath,
       JSON.stringify(marker, null, 2)
     );
+  }
+
+  /**
+   * Set up the bin directory with CLI wrapper scripts.
+   * Creates scripts for: code, and optionally opencode.
+   *
+   * Note: code-server wrapper is not generated because we launch code-server
+   * directly with an absolute path.
+   *
+   * @param onProgress Optional callback for progress updates
+   */
+  async setupBinDirectory(onProgress?: ProgressCallback): Promise<void> {
+    onProgress?.({ step: "config", message: "Creating CLI wrapper scripts..." });
+
+    const binDir = this.pathProvider.binDir;
+
+    // Create bin directory
+    await this.fs.mkdir(binDir);
+
+    // Resolve target binary paths
+    const targetPaths = this.resolveTargetPaths();
+
+    // Generate scripts for this platform
+    const scripts = generateScripts(this.platformInfo, targetPaths);
+
+    // Write each script
+    for (const script of scripts) {
+      const scriptPath = join(binDir, script.filename);
+      await this.fs.writeFile(scriptPath, script.content);
+
+      // Make executable on Unix
+      if (script.needsExecutable) {
+        await this.fs.makeExecutable(scriptPath);
+      }
+    }
+  }
+
+  /**
+   * Resolve paths to target binaries for wrapper script generation.
+   *
+   * The code-server path resolution:
+   * - Uses the codeServerBinaryPath provided at construction
+   * - Derives the remote-cli path from code-server's installation directory
+   *
+   * The opencode path resolution:
+   * - Attempts to find opencode in common locations
+   * - Returns null if not found (wrapper script not generated)
+   *
+   * Note: code-server wrapper is not generated because we launch code-server
+   * directly with an absolute path.
+   *
+   * @returns Target paths for script generation
+   */
+  private resolveTargetPaths(): BinTargetPaths {
+    // For the code command, we need the remote-cli script that code-server provides
+    // This is at <code-server>/lib/vscode/bin/remote-cli/code-<platform>.sh (Unix)
+    // or <code-server>/lib/vscode/bin/remote-cli/code.cmd (Windows)
+    const codeServerDir = this.resolveCodeServerDirectory();
+    const remoteCli = this.resolveRemoteCliPath(codeServerDir);
+
+    return {
+      codeRemoteCli: remoteCli,
+      opencodeBinary: this.resolveOpencodePath(),
+    };
+  }
+
+  /**
+   * Resolve the code-server installation directory.
+   * For "code-server" command, we need to find the actual installation.
+   */
+  private resolveCodeServerDirectory(): string {
+    // If codeServerBinaryPath is just "code-server", try to resolve via require
+    // For now, we assume it's resolvable from node_modules in dev
+    // or bundled at a known location in production
+    try {
+      // In dev: node_modules/code-server/out/node/entry.js
+      // The package.json "bin" points to out/node/entry.js
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const codeServerEntry = require.resolve("code-server");
+      // Navigate from entry.js to the root: code-server/out/node/entry.js -> code-server/
+      const codeServerRoot = join(codeServerEntry, "..", "..", "..");
+      return codeServerRoot;
+    } catch {
+      // require.resolve failed (bundled Electron context)
+      // If codeServerBinaryPath is an absolute path ending in entry.js, derive the root
+      if (isAbsolute(this.codeServerBinaryPath) && this.codeServerBinaryPath.endsWith("entry.js")) {
+        // Navigate from entry.js to the root: code-server/out/node/entry.js -> code-server/
+        return join(this.codeServerBinaryPath, "..", "..", "..");
+      }
+      // Fallback: assume code-server is in PATH and we can't determine the directory
+      // In this case, the scripts will reference the binary directly
+      return "";
+    }
+  }
+
+  /**
+   * Resolve the path to the remote-cli script for the `code` command.
+   */
+  private resolveRemoteCliPath(codeServerDir: string): string {
+    if (!codeServerDir) {
+      // If we couldn't find the code-server directory, just use "code-server"
+      // The wrapper will invoke code-server directly
+      return this.codeServerBinaryPath;
+    }
+
+    const isWindows = this.platformInfo.platform === "win32";
+
+    if (isWindows) {
+      return join(codeServerDir, "lib", "vscode", "bin", "remote-cli", "code.cmd");
+    }
+
+    // Unix: the script is named based on platform
+    const platform = this.platformInfo.platform === "darwin" ? "darwin" : "linux";
+    return join(codeServerDir, "lib", "vscode", "bin", "remote-cli", `code-${platform}.sh`);
+  }
+
+  /**
+   * Attempt to find the opencode binary.
+   * Returns null if not found (opencode wrapper will not be generated).
+   *
+   * IMPORTANT: Returns the absolute path to the entry point resolved by require.resolve(),
+   * NOT a relative bin path. This avoids infinite recursion when bin/ is first in PATH.
+   */
+  private resolveOpencodePath(): string | null {
+    try {
+      // Try to resolve opencode-ai package (if installed as dependency)
+      // require.resolve returns the absolute path to the package entry point
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const opencodeEntry = require.resolve("opencode-ai");
+      // Return the resolved entry point directly - this is already an absolute path
+      return opencodeEntry;
+    } catch {
+      // opencode not installed as npm package
+      // Could check PATH here, but for now just return null
+      return null;
+    }
   }
 
   /**

@@ -94,6 +94,16 @@ export interface MockCopyTreeOptions {
 }
 
 /**
+ * Options for mock makeExecutable method.
+ */
+export interface MockMakeExecutableOptions {
+  /** Error to throw */
+  readonly error?: FileSystemError;
+  /** Custom implementation */
+  readonly implementation?: (path: string) => Promise<void>;
+}
+
+/**
  * Options for creating a mock FileSystemLayer.
  */
 export interface MockFileSystemLayerOptions {
@@ -111,6 +121,8 @@ export interface MockFileSystemLayerOptions {
   readonly rm?: MockRmOptions;
   /** Mock copyTree: return result or throw error */
   readonly copyTree?: MockCopyTreeOptions;
+  /** Mock makeExecutable: succeed or throw error */
+  readonly makeExecutable?: MockMakeExecutableOptions;
 }
 
 // ============================================================================
@@ -213,6 +225,16 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
         throw options.copyTree.error;
       }
       return options?.copyTree?.result ?? { copiedCount: 0, skippedSymlinks: [] };
+    },
+
+    async makeExecutable(path: string): Promise<void> {
+      if (options?.makeExecutable?.implementation) {
+        return options.makeExecutable.implementation(path);
+      }
+      if (options?.makeExecutable?.error) {
+        throw options.makeExecutable.error;
+      }
+      // Default: succeed silently
     },
   };
 }

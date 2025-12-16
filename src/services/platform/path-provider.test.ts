@@ -22,6 +22,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.electronDataDir).toBe("/test/app-data/electron");
     expect(pathProvider.vscodeAssetsDir).toBe("/mock/assets");
     expect(pathProvider.appIconPath).toBe("/test/resources/icon.png");
+    expect(pathProvider.binDir).toBe("/test/app-data/bin");
   });
 
   it("accepts override for individual paths", () => {
@@ -47,6 +48,7 @@ describe("createMockPathProvider", () => {
       electronDataDir: "/g",
       vscodeAssetsDir: "/h",
       appIconPath: "/h/icon.png",
+      binDir: "/i",
     });
 
     expect(pathProvider.dataRootDir).toBe("/a");
@@ -58,6 +60,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.electronDataDir).toBe("/g");
     expect(pathProvider.vscodeAssetsDir).toBe("/h");
     expect(pathProvider.appIconPath).toBe("/h/icon.png");
+    expect(pathProvider.binDir).toBe("/i");
   });
 
   it("getProjectWorkspacesDir returns path with project hash", () => {
@@ -93,6 +96,7 @@ describe("createMockPathProvider", () => {
     expect(typeof pathProvider.electronDataDir).toBe("string");
     expect(typeof pathProvider.vscodeAssetsDir).toBe("string");
     expect(typeof pathProvider.appIconPath).toBe("string");
+    expect(typeof pathProvider.binDir).toBe("string");
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
   });
 });
@@ -116,6 +120,7 @@ describe("DefaultPathProvider", () => {
       );
       expect(pathProvider.electronDataDir).toMatch(/app-data[/\\]electron$/);
       expect(pathProvider.appIconPath).toMatch(/resources[/\\]icon\.png$/);
+      expect(pathProvider.binDir).toMatch(/app-data[/\\]bin$/);
     });
 
     it("returns vscodeAssetsDir based on appPath", () => {
@@ -178,6 +183,21 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.vscodeAssetsDir).toBe(
         "/opt/codehydra/resources/app.asar/out/main/assets"
       );
+      expect(pathProvider.binDir).toBe("/home/testuser/.local/share/codehydra/bin");
+    });
+
+    it("binDir is under dataRootDir", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
+      const platformInfo = createMockPlatformInfo({
+        platform: "linux",
+        homeDir: "/home/testuser",
+      });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pathProvider.binDir.startsWith(pathProvider.dataRootDir)).toBe(true);
     });
   });
 

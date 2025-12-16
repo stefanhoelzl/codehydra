@@ -148,3 +148,56 @@ describe("DefaultFileSystemLayer.copyTree", () => {
     });
   });
 });
+
+describe("DefaultFileSystemLayer.makeExecutable", () => {
+  let fs: DefaultFileSystemLayer;
+  let tempDir: { path: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    fs = new DefaultFileSystemLayer();
+    tempDir = await createTempDir();
+  });
+
+  afterEach(async () => {
+    await tempDir.cleanup();
+  });
+
+  // Note: Platform-specific behavior (Windows no-op) is tested in boundary tests
+  // since we can't easily mock process.platform in unit tests.
+
+  it("sets file permissions to 0o755 on Unix", async () => {
+    // Skip on Windows - permissions work differently
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const filePath = join(tempDir.path, "script.sh");
+    await nodeWriteFile(filePath, "#!/bin/sh\necho hello", "utf-8");
+
+    await fs.makeExecutable(filePath);
+
+    // Verify permissions
+    const { stat } = await import("node:fs/promises");
+    const stats = await stat(filePath);
+    // Check that execute bits are set (owner, group, other)
+    expect(stats.mode & 0o111).toBe(0o111);
+  });
+
+  it("throws ENOENT for non-existent file", async () => {
+    // Skip on Windows - permissions work differently
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const filePath = join(tempDir.path, "non-existent.sh");
+
+    await expect(fs.makeExecutable(filePath)).rejects.toThrow(FileSystemError);
+
+    try {
+      await fs.makeExecutable(filePath);
+    } catch (error) {
+      expect(error).toBeInstanceOf(FileSystemError);
+      expect((error as FileSystemError).fsCode).toBe("ENOENT");
+    }
+  });
+});

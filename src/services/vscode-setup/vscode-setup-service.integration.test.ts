@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { VscodeSetupService } from "./vscode-setup-service";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { createSilentLogger } from "../logging";
+import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import {
   CURRENT_SETUP_VERSION,
   type SetupMarker,
@@ -41,6 +42,7 @@ describe("VscodeSetupService Integration", () => {
     userDataDir: string;
     markerPath: string;
     assetsDir: string;
+    binDir: string;
   };
 
   /**
@@ -139,6 +141,7 @@ describe("VscodeSetupService Integration", () => {
       userDataDir: join(tempDir, "vscode", "user-data"),
       markerPath: join(tempDir, "vscode", ".setup-completed"),
       assetsDir: join(tempDir, "assets"),
+      binDir: join(tempDir, "bin"),
     };
 
     // Create mock asset files
@@ -152,6 +155,7 @@ describe("VscodeSetupService Integration", () => {
       vscodeUserDataDir: mockPaths.userDataDir,
       vscodeSetupMarkerPath: mockPaths.markerPath,
       vscodeAssetsDir: mockPaths.assetsDir,
+      binDir: mockPaths.binDir,
     });
   });
 
@@ -411,6 +415,69 @@ describe("VscodeSetupService Integration", () => {
     it("getCodeServerTestPath returns valid path", () => {
       const path = getCodeServerTestPath();
       expect(path).toBe("code-server"); // In dev, available via PATH
+    });
+  });
+
+  describe("Setup with bin scripts", () => {
+    it("setup() calls setupBinDirectory()", async () => {
+      // Update pathProvider to include binDir
+      const binDir = join(tempDir, "bin");
+      testPathProvider = createMockPathProvider({
+        dataRootDir: tempDir,
+        vscodeDir: mockPaths.vscodeDir,
+        vscodeExtensionsDir: mockPaths.extensionsDir,
+        vscodeUserDataDir: mockPaths.userDataDir,
+        vscodeSetupMarkerPath: mockPaths.markerPath,
+        vscodeAssetsDir: mockPaths.assetsDir,
+        binDir,
+      });
+
+      const processRunner = createMockProcessRunner();
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer,
+        createMockPlatformInfo({ platform: "linux" })
+      );
+
+      const result = await service.setup();
+
+      expect(result.success).toBe(true);
+
+      // Verify bin directory was created with scripts
+      // Note: code-server wrapper is not generated - we launch code-server directly
+      const entries = await import("node:fs/promises").then((fs) => fs.readdir(binDir));
+      expect(entries).toContain("code");
+    });
+
+    it("emits progress callback for bin scripts", async () => {
+      const binDir = join(tempDir, "bin");
+      testPathProvider = createMockPathProvider({
+        dataRootDir: tempDir,
+        vscodeDir: mockPaths.vscodeDir,
+        vscodeExtensionsDir: mockPaths.extensionsDir,
+        vscodeUserDataDir: mockPaths.userDataDir,
+        vscodeSetupMarkerPath: mockPaths.markerPath,
+        vscodeAssetsDir: mockPaths.assetsDir,
+        binDir,
+      });
+
+      const processRunner = createMockProcessRunner();
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        "mock-code-server",
+        fsLayer,
+        createMockPlatformInfo({ platform: "linux" })
+      );
+
+      const progressMessages: string[] = [];
+      await service.setup((progress) => {
+        progressMessages.push(progress.message);
+      });
+
+      expect(progressMessages).toContain("Creating CLI wrapper scripts...");
     });
   });
 

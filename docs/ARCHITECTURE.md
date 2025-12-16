@@ -1135,6 +1135,10 @@ out/main/assets/ (ASAR in prod)
 
 ```
 <app-data>/
+├── bin/                           # CLI wrapper scripts (generated during setup)
+│   ├── code (code.cmd)            # VS Code CLI wrapper
+│   ├── code-server (code-server.cmd) # code-server wrapper
+│   └── opencode (opencode.cmd)    # OpenCode wrapper (if installed)
 ├── vscode/
 │   ├── .setup-completed           # JSON: { version: N, completedAt: "ISO" }
 │   ├── codehydra.vscode-0.0.1.vsix # Copied from assets for installation
@@ -1162,6 +1166,47 @@ The custom codehydra extension (packaged as `.vsix` at build time) runs on VS Co
 3. Clean up empty editor groups
 
 This provides an optimized layout for AI agent workflows.
+
+### CLI Wrapper Scripts
+
+During VS Code setup, CLI wrapper scripts are generated in `<app-data>/bin/`. These scripts enable command-line tools to work in the integrated terminal.
+
+**Generated Scripts:**
+
+| Script                            | Purpose                                |
+| --------------------------------- | -------------------------------------- |
+| `code` / `code.cmd`               | VS Code CLI (code-server's remote-cli) |
+| `code-server` / `code-server.cmd` | code-server binary                     |
+| `opencode` / `opencode.cmd`       | OpenCode binary (if installed)         |
+
+**Environment Configuration (in CodeServerManager):**
+
+When spawning code-server, the manager modifies the environment:
+
+1. **PATH prepend**: `<app-data>/bin/` is prepended to PATH
+2. **EDITOR**: Set to `<binDir>/code --wait --reuse-window`
+3. **GIT_SEQUENCE_EDITOR**: Set to same value as EDITOR
+
+**Script Generation (in VscodeSetupService):**
+
+```
+setupBinDirectory()
+    │
+    ├── mkdir bin/
+    ├── resolveTargetPaths() → { codeRemoteCli, codeServerBinary, opencodeBinary }
+    ├── generateScripts(platformInfo, targetPaths) → GeneratedScript[]
+    └── for each script:
+        ├── writeFile(binDir + filename, content)
+        └── if needsExecutable: makeExecutable(path) [Unix only]
+```
+
+**Git Integration:**
+
+With EDITOR configured, git operations open in code-server:
+
+- `git commit` - Opens commit message editor
+- `git rebase -i` - Opens interactive rebase editor
+- Any tool respecting `$EDITOR`
 
 ## Keyboard Capture System
 

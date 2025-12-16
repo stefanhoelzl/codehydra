@@ -188,6 +188,19 @@ export interface FileSystemLayer {
    * console.log(`Copied ${result.copiedCount} files`);
    */
   copyTree(src: string, dest: string): Promise<CopyTreeResult>;
+
+  /**
+   * Make a file executable (sets mode 0o755).
+   * On Windows, this is a no-op since executability is determined by file extension.
+   *
+   * @param path - Absolute path to file
+   * @throws FileSystemError with code ENOENT if file not found
+   * @throws FileSystemError with code EACCES if permission denied
+   *
+   * @example Make script executable
+   * await fs.makeExecutable('/path/to/script.sh');
+   */
+  makeExecutable(path: string): Promise<void>;
 }
 
 // ============================================================================
@@ -493,5 +506,18 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       skippedSymlinks: skippedSymlinks.length,
     });
     return { copiedCount, skippedSymlinks };
+  }
+
+  async makeExecutable(filePath: string): Promise<void> {
+    // On Windows, executability is determined by file extension, not permissions
+    if (process.platform === "win32") {
+      return;
+    }
+
+    try {
+      await fs.chmod(filePath, 0o755);
+    } catch (error) {
+      throw mapError(error, filePath);
+    }
   }
 }

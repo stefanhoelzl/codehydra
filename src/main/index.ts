@@ -149,6 +149,7 @@ function createCodeServerConfig(): CodeServerConfig {
     runtimeDir: nodePath.join(pathProvider.dataRootDir, "runtime"),
     extensionsDir: pathProvider.vscodeExtensionsDir,
     userDataDir: pathProvider.vscodeUserDataDir,
+    binDir: pathProvider.binDir,
   };
 }
 
@@ -438,11 +439,20 @@ async function bootstrap(): Promise<void> {
   // 2. Create VscodeSetupService early (needed for LifecycleApi)
   // Store processRunner in module-level variable for reuse by CodeServerManager
   processRunner = new ExecaProcessRunner();
+
+  // Resolve absolute path to code-server binary
+  // In development, code-server is in node_modules
+  // In production, assume bundled or in PATH
+  const codeServerBinaryPath = buildInfo.isDevelopment
+    ? nodePath.join(process.cwd(), "node_modules", "code-server", "out", "node", "entry.js")
+    : "code-server";
+
   vscodeSetupService = new VscodeSetupService(
     processRunner,
     pathProvider,
-    "code-server",
-    fileSystemLayer
+    codeServerBinaryPath,
+    fileSystemLayer,
+    platformInfo
   );
 
   // 3. Check if setup is already complete (determines code-server startup)

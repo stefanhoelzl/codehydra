@@ -35,6 +35,9 @@ export interface PathProvider {
   /** Path to the application icon: `resources/icon.png` */
   readonly appIconPath: string;
 
+  /** Directory for CLI wrapper scripts: `<dataRoot>/bin/` */
+  readonly binDir: string;
+
   /**
    * Get the workspaces directory for a project.
    * @param projectPath Absolute path to the project
@@ -64,6 +67,7 @@ export class DefaultPathProvider implements PathProvider {
   readonly electronDataDir: string;
   readonly vscodeAssetsDir: string;
   readonly appIconPath: string;
+  readonly binDir: string;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
     this.dataRootDir = this.computeDataRootDir(buildInfo, platformInfo);
@@ -76,6 +80,7 @@ export class DefaultPathProvider implements PathProvider {
     // Assets are bundled at out/main/assets/ (same path in dev and prod)
     this.vscodeAssetsDir = join(buildInfo.appPath, "out", "main", "assets");
     this.appIconPath = this.computeAppIconPath(buildInfo);
+    this.binDir = join(this.dataRootDir, "bin");
   }
 
   /**

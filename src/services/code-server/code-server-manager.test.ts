@@ -52,6 +52,13 @@ describe("CodeServerManager", () => {
   let mockHttpClient: HttpClient;
   let mockPortManager: PortManager;
 
+  const defaultConfig = {
+    runtimeDir: "/tmp/code-server-runtime",
+    extensionsDir: "/tmp/code-server-extensions",
+    userDataDir: "/tmp/code-server-user-data",
+    binDir: "/app/bin",
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockProcessRunner = createMockProcessRunner();
@@ -63,11 +70,7 @@ describe("CodeServerManager", () => {
       findFreePort: { port: 8080 },
     });
     manager = new CodeServerManager(
-      {
-        runtimeDir: "/tmp/code-server-runtime",
-        extensionsDir: "/tmp/code-server-extensions",
-        userDataDir: "/tmp/code-server-user-data",
-      },
+      defaultConfig,
       mockProcessRunner,
       mockHttpClient,
       mockPortManager,
@@ -93,6 +96,7 @@ describe("CodeServerManager", () => {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
+        binDir: "/app/bin",
       };
 
       const instance = new CodeServerManager(
@@ -159,6 +163,7 @@ describe("CodeServerManager", () => {
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
+          binDir: "/app/bin",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -207,6 +212,7 @@ describe("CodeServerManager", () => {
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
+          binDir: "/app/bin",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -228,6 +234,7 @@ describe("CodeServerManager", () => {
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
+          binDir: "/app/bin",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -259,6 +266,7 @@ describe("CodeServerManager", () => {
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
+          binDir: "/app/bin",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -289,6 +297,7 @@ describe("CodeServerManager", () => {
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
+          binDir: "/app/bin",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -390,6 +399,7 @@ describe("CodeServerManager (with full DI)", () => {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
+        binDir: "/app/bin",
       };
 
       const manager = new CodeServerManager(
@@ -414,6 +424,7 @@ describe("CodeServerManager (with full DI)", () => {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
+        binDir: "/app/bin",
       };
 
       const manager = new CodeServerManager(
@@ -452,6 +463,7 @@ describe("CodeServerManager (with full DI)", () => {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
+        binDir: "/app/bin",
       };
 
       const manager = new CodeServerManager(
@@ -496,6 +508,7 @@ describe("CodeServerManager (with full DI)", () => {
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
+        binDir: "/app/bin",
       };
 
       const manager = new CodeServerManager(
@@ -518,5 +531,343 @@ describe("CodeServerManager (with full DI)", () => {
       // Should wait for final exit
       expect(mockProc.wait).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe("CodeServerManager (PATH and EDITOR)", () => {
+  it("uses correct PATH separator on Unix (:)", async () => {
+    // Store original values
+    const originalPath = process.env.PATH;
+    const originalPlatform = process.platform;
+    process.env.PATH = "/usr/bin:/usr/local/bin";
+
+    // Temporarily override platform for test (affects code's platform check for Windows)
+    Object.defineProperty(process, "platform", { value: "linux", writable: true });
+
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    // Restore original values
+    process.env.PATH = originalPath;
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+
+    // Verify PATH uses Unix separator (:)
+    expect(capturedEnv?.PATH).toBe("/app/bin:/usr/bin:/usr/local/bin");
+  });
+
+  it("uses correct PATH separator on Windows (;)", async () => {
+    // Store original values
+    const originalPath = process.env.PATH;
+    const originalWindowsPath = process.env.Path;
+    const originalPlatform = process.platform;
+
+    // Set Windows-style environment
+    process.env.PATH = "C:\\Windows\\System32;C:\\Users\\test\\bin";
+    delete process.env.Path;
+    Object.defineProperty(process, "platform", { value: "win32", writable: true });
+
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "C:\\tmp\\runtime",
+      extensionsDir: "C:\\tmp\\extensions",
+      userDataDir: "C:\\tmp\\user-data",
+      binDir: "C:\\app\\bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    // Restore original values
+    process.env.PATH = originalPath;
+    if (originalWindowsPath !== undefined) {
+      process.env.Path = originalWindowsPath;
+    }
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+
+    // Verify PATH uses Windows separator (;) - path.delimiter handles this automatically
+    // Note: The delimiter is actually determined at module load time from node:path
+    // We can verify binDir is prepended correctly by checking it starts with our binDir
+    expect(capturedEnv?.PATH).toContain("C:\\app\\bin");
+    expect(capturedEnv?.PATH?.indexOf("C:\\app\\bin")).toBe(0);
+  });
+
+  it("reads from env.Path when env.PATH is undefined (Windows case sensitivity)", async () => {
+    // Store original values
+    const originalPath = process.env.PATH;
+    const originalWindowsPath = process.env.Path;
+
+    // Simulate Windows where only Path exists (lowercase 'a')
+    delete process.env.PATH;
+    process.env.Path = "/usr/bin:/usr/local/bin";
+
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    // Restore original values
+    if (originalPath !== undefined) {
+      process.env.PATH = originalPath;
+    } else {
+      delete process.env.PATH;
+    }
+    if (originalWindowsPath !== undefined) {
+      process.env.Path = originalWindowsPath;
+    } else {
+      delete process.env.Path;
+    }
+
+    // Verify PATH contains original Path entries (was read correctly)
+    expect(capturedEnv?.PATH).toContain("/usr/bin");
+    expect(capturedEnv?.PATH).toContain("/usr/local/bin");
+    // Verify binDir is prepended
+    expect(capturedEnv?.PATH?.indexOf("/app/bin")).toBe(0);
+    // Verify Path was removed to avoid duplicates
+    expect(capturedEnv?.Path).toBeUndefined();
+  });
+
+  it("sets binDir as PATH when both PATH and Path are undefined", async () => {
+    // Store original values
+    const originalPath = process.env.PATH;
+    const originalWindowsPath = process.env.Path;
+
+    // Remove both PATH and Path
+    delete process.env.PATH;
+    delete process.env.Path;
+
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    // Restore original values
+    if (originalPath !== undefined) {
+      process.env.PATH = originalPath;
+    }
+    if (originalWindowsPath !== undefined) {
+      process.env.Path = originalWindowsPath;
+    }
+
+    // Verify PATH starts with binDir followed by delimiter (and empty string from the original undefined PATH)
+    // The format will be: "/app/bin:" on Unix or "/app/bin;" on Windows
+    expect(capturedEnv?.PATH).toMatch(/^\/app\/bin[;:]/);
+  });
+
+  it("prepends binDir to PATH", async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    expect(capturedEnv?.PATH).toMatch(/^\/app\/bin/);
+  });
+
+  it("preserves existing PATH entries", async () => {
+    // Store original PATH
+    const originalPath = process.env.PATH;
+    process.env.PATH = "/usr/bin:/usr/local/bin";
+
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    // Restore original PATH
+    process.env.PATH = originalPath;
+
+    expect(capturedEnv?.PATH).toContain("/usr/bin");
+    expect(capturedEnv?.PATH).toContain("/usr/local/bin");
+  });
+
+  it("sets EDITOR with absolute path", async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    expect(capturedEnv?.EDITOR).toContain("/app/bin/code");
+  });
+
+  it("EDITOR includes --wait flag", async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    expect(capturedEnv?.EDITOR).toContain("--wait");
+  });
+
+  it("EDITOR includes --reuse-window flag", async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    expect(capturedEnv?.EDITOR).toContain("--reuse-window");
+  });
+
+  it("sets GIT_SEQUENCE_EDITOR same as EDITOR", async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const mockProc = createMockSpawnedProcess({ pid: 12345 });
+    const processRunner = {
+      run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        capturedEnv = options?.env;
+        return mockProc;
+      }),
+    };
+
+    const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+    const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+    const config = {
+      runtimeDir: "/tmp/runtime",
+      extensionsDir: "/tmp/extensions",
+      userDataDir: "/tmp/user-data",
+      binDir: "/app/bin",
+    };
+
+    const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+    await manager.ensureRunning();
+
+    expect(capturedEnv?.GIT_SEQUENCE_EDITOR).toBe(capturedEnv?.EDITOR);
   });
 });

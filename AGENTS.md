@@ -72,6 +72,26 @@ out/main/assets/ (ASAR in prod)
 - Node.js `fs` module reads transparently from ASAR in production
 - Files are copied to app-data before use (external processes can't read ASAR)
 
+## CLI Wrapper Scripts
+
+During VS Code setup, CLI wrapper scripts are generated in `<app-data>/bin/`:
+
+| Script                      | Purpose                                |
+| --------------------------- | -------------------------------------- |
+| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli) |
+| `opencode` / `opencode.cmd` | OpenCode binary (if installed)         |
+
+These scripts are available in the integrated terminal because:
+
+1. `<app-data>/bin/` is prepended to `PATH` when spawning code-server
+2. `EDITOR` and `GIT_SEQUENCE_EDITOR` are set to `<binDir>/code --wait --reuse-window`
+
+**Git Integration**: With EDITOR configured, git operations open in code-server:
+
+- `git commit` - Opens commit message editor
+- `git rebase -i` - Opens interactive rebase editor
+- Any tool respecting `$EDITOR`
+
 ## View Detachment Pattern
 
 For GPU optimization, workspace views use **detachment** instead of zero-bounds hiding:

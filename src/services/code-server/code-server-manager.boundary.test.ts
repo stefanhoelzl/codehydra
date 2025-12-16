@@ -55,6 +55,7 @@ function createTestConfig(baseDir: string): CodeServerConfig {
     runtimeDir: baseDir,
     extensionsDir: `${baseDir}/extensions`,
     userDataDir: `${baseDir}/user-data`,
+    binDir: `${baseDir}/bin`,
   };
 }
 
