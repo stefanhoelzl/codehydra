@@ -111,6 +111,55 @@ describe("FilterableDropdown component", () => {
   });
 
   describe("filtering", () => {
+    it("shows all options when opened with pre-selected value", async () => {
+      // Regression test: When value="Apple" is pre-selected, all options should show
+      // not just ones containing "Apple". The selected value should only affect display,
+      // not filtering.
+      render(FilterableDropdown, { props: { ...defaultProps, value: "Apple" } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Wait for debounce to complete
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      // ALL options should be visible, not just Apple
+      expect(screen.getByText("Apple")).toBeInTheDocument();
+      expect(screen.getByText("Banana")).toBeInTheDocument();
+      expect(screen.getByText("Cherry")).toBeInTheDocument();
+    });
+
+    it("allows filtering after opening with pre-selected value", async () => {
+      // Edge case: Verify that filtering works correctly after dropdown opens with
+      // a pre-selected value. This tests the displayText/filterText separation.
+      render(FilterableDropdown, { props: { ...defaultProps, value: "Apple" } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Wait for initial debounce
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      // All options should be visible initially
+      expect(screen.getByText("Apple")).toBeInTheDocument();
+      expect(screen.getByText("Banana")).toBeInTheDocument();
+      expect(screen.getByText("Cherry")).toBeInTheDocument();
+
+      // Type to filter
+      await fireEvent.input(input, { target: { value: "Ban" } });
+
+      // Wait for debounce
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      // Only Banana should be visible - filtering works after pre-selection
+      expect(screen.queryByText("Apple")).not.toBeInTheDocument();
+      expect(screen.getByText("Banana")).toBeInTheDocument();
+      expect(screen.queryByText("Cherry")).not.toBeInTheDocument();
+    });
+
     it("filters options using callback", async () => {
       render(FilterableDropdown, { props: defaultProps });
 

@@ -468,6 +468,15 @@ Remember to recalculate position on window resize when the dropdown is open.
 - ARIA combobox accessibility pattern
 - Snippet slot for custom option rendering
 
+**displayText/filterText Separation:**
+
+The component uses two separate text values internally:
+
+- `displayText`: What's shown in the input (selected value OR user's typed text)
+- `filterText`: What controls filtering (only user's typed text, empty = show all options)
+
+Why this matters: When a value is pre-selected (e.g., `value="Apple"`), the input displays "Apple" but filtering uses empty string. This ensures opening the dropdown shows all options, not just ones matching the pre-selected value. Once the user types, their input controls both display and filtering.
+
 **Props:**
 
 ```typescript

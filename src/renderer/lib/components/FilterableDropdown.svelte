@@ -45,8 +45,11 @@
   let dropdownPosition = $state<{ top: number; left: number; width: number } | null>(null);
 
   // Track local filter text separately from prop value
+  // displayText: shown in input field (selected value or user's typed text)
+  // filterText: used for filtering options (only user's typed text, empty shows all)
   let localFilterOverride = $state<string | null>(null);
-  const filterText = $derived(localFilterOverride ?? value);
+  const displayText = $derived(localFilterOverride ?? value);
+  const filterText = $derived(localFilterOverride ?? "");
 
   // IDs for ARIA
   const baseId = $derived(id ?? `filterable-dropdown-${Math.random().toString(36).slice(2, 9)}`);
@@ -235,7 +238,7 @@
     aria-activedescendant={highlightedId}
     aria-autocomplete="list"
     aria-haspopup="listbox"
-    value={filterText}
+    value={displayText}
     {disabled}
     {placeholder}
     onfocus={handleFocus}

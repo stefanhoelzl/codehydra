@@ -924,6 +924,89 @@ describe("CreateWorkspaceDialog component", () => {
       expect(branchCombobox.value).toBe("develop");
     });
 
+    it("sets selectedBranch from new project's defaultBaseBranch when user changes project", async () => {
+      // Scenario: User changes to a different project that has a defaultBaseBranch set.
+      // The effect should pick up the new project's default branch since selectedBranch
+      // is cleared when changing projects.
+
+      // test-project has no defaultBaseBranch, other-project has "develop" as default
+      const projectWithoutDefault = mockProjectsList[0]!;
+      const projectWithDefault = {
+        ...mockProjectsList[1]!,
+        defaultBaseBranch: "develop",
+      };
+      const testProjects = [projectWithoutDefault, projectWithDefault];
+      mockProjectsStore.mockReturnValue(testProjects);
+      mockGetProjectById.mockImplementation((id: ProjectId) =>
+        testProjects.find((p) => p.id === id)
+      );
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // Initially branch should be empty (test-project has no default)
+      let branchCombobox = getBranchDropdown() as HTMLInputElement;
+      expect(branchCombobox.value).toBe("");
+
+      // Change to other-project which has defaultBaseBranch: "develop"
+      const projectDropdown = getProjectDropdown();
+      await fireEvent.focus(projectDropdown);
+      await fireEvent.input(projectDropdown, { target: { value: "" } });
+      await vi.runAllTimersAsync();
+
+      const projectListbox = document.getElementById("project-dropdown-listbox");
+      const options = projectListbox?.querySelectorAll('[role="option"]');
+      const otherProjectOption = Array.from(options ?? []).find(
+        (opt) => opt.textContent?.trim() === "other-project"
+      ) as HTMLElement;
+      await fireEvent.mouseDown(otherProjectOption);
+      await vi.runAllTimersAsync();
+
+      // Re-query the dropdown and check that it's now set to the new project's default
+      branchCombobox = getBranchDropdown() as HTMLInputElement;
+      expect(branchCombobox.value).toBe("develop");
+    });
+
+    it("does not override user's branch selection when defaultBaseBranch becomes available", async () => {
+      // User selects a branch before defaultBaseBranch is loaded - should not be overwritten
+
+      // Start with project that has no defaultBaseBranch
+      mockProjectsStore.mockReturnValue(mockProjectsList);
+      mockGetProjectById.mockImplementation((id: ProjectId) =>
+        mockProjectsList.find((p) => p.id === id)
+      );
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // User selects a branch manually
+      const branchDropdown = getBranchDropdown();
+      await fireEvent.focus(branchDropdown);
+      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
+      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+
+      // Verify user's selection
+      expect((branchDropdown as HTMLInputElement).value).toBe("main");
+
+      // Now simulate defaultBaseBranch becoming available with different value
+      const projectWithDefault = {
+        ...mockProjectsList[0],
+        defaultBaseBranch: "develop", // Different from user's selection
+      };
+      const otherProject = mockProjectsList[1]!;
+      const projectsWithDefault = [projectWithDefault, otherProject];
+      mockProjectsStore.mockReturnValue(projectsWithDefault);
+      mockGetProjectById.mockImplementation((id: ProjectId) =>
+        projectsWithDefault.find((p) => p.id === id)
+      );
+
+      // Trigger reactivity
+      await vi.runAllTimersAsync();
+
+      // User's selection should NOT be overwritten
+      expect((branchDropdown as HTMLInputElement).value).toBe("main");
+    });
+
     it("initializes selectedBranch to empty string when defaultBaseBranch is undefined", async () => {
       // mockProjectsList[0] has no defaultBaseBranch
       mockProjectsStore.mockReturnValue(mockProjectsList);
