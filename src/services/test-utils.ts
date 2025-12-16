@@ -4,24 +4,28 @@
  * with automatic cleanup.
  */
 
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, realpath } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { simpleGit } from "simple-git";
 
 /**
  * Create a temporary directory with automatic cleanup.
+ * Uses realpath to resolve Windows 8.3 short paths (e.g., RUNNER~1 -> runneradmin).
  * @returns Object with path and cleanup function
  */
 export async function createTempDir(): Promise<{
   path: string;
   cleanup: () => Promise<void>;
 }> {
-  const path = await mkdtemp(join(tmpdir(), "codehydra-test-"));
+  const tempPath = await mkdtemp(join(tmpdir(), "codehydra-test-"));
+  // Resolve to canonical path - this fixes Windows 8.3 short paths (e.g., RUNNER~1)
+  // that can cause path comparison mismatches in tests
+  const resolvedPath = await realpath(tempPath);
   return {
-    path,
+    path: resolvedPath,
     cleanup: async () => {
-      await rm(path, { recursive: true, force: true });
+      await rm(resolvedPath, { recursive: true, force: true });
     },
   };
 }
