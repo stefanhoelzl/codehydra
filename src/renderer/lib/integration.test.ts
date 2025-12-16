@@ -567,7 +567,10 @@ describe("Integration tests", () => {
       expect(screen.getAllByRole("combobox")).toHaveLength(2);
     });
 
-    it("removeWorkspace rejects → error shown in dialog, form re-enabled", async () => {
+    it("removeWorkspace uses fire-and-forget pattern → dialog closes immediately", async () => {
+      // Note: RemoveWorkspaceDialog uses fire-and-forget pattern.
+      // The dialog closes immediately after clicking Remove, and any errors
+      // are shown via DeletionProgressView (tested in DeletionProgressView.test.ts).
       const workspace = createWorkspace("feature-x", "/test/my-project");
       const project = createProject("my-project", [workspace]);
       mockApi.projects.list.mockResolvedValue([project]);
@@ -586,9 +589,6 @@ describe("Integration tests", () => {
         expect(screen.getByRole("dialog")).toBeInTheDocument();
       });
 
-      // Make v2.workspaces.remove fail
-      mockApi.workspaces.remove.mockRejectedValue(new Error("Workspace has uncommitted changes"));
-
       // Use the dialog's Remove button (vscode-button web component)
       const dialog = screen.getByRole("dialog");
       const removeConfirmButton = Array.from(dialog.querySelectorAll("vscode-button")).find(
@@ -596,13 +596,17 @@ describe("Integration tests", () => {
       ) as HTMLElement;
       await fireEvent.click(removeConfirmButton);
 
-      // Verify error is shown
+      // Dialog closes immediately (fire-and-forget pattern)
       await waitFor(() => {
-        expect(screen.getByText(/workspace has uncommitted changes/i)).toBeInTheDocument();
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       });
 
-      // Verify button is re-enabled
-      expect(removeConfirmButton).not.toBeDisabled();
+      // API was called
+      expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
+        project.id,
+        workspace.name,
+        false // keepBranch default
+      );
     });
   });
 
