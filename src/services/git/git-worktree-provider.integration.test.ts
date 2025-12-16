@@ -211,7 +211,7 @@ describe("GitWorktreeProvider with KeepFilesService (integration)", () => {
    * Initialize a git repository in the given directory.
    */
   async function initGitRepo(dir: string): Promise<void> {
-    execSync("git init", { cwd: dir, stdio: "ignore" });
+    execSync("git init --initial-branch=main", { cwd: dir, stdio: "ignore" });
     execSync('git config user.email "test@test.com"', { cwd: dir, stdio: "ignore" });
     execSync('git config user.name "Test"', { cwd: dir, stdio: "ignore" });
     // Create initial commit so branches work
