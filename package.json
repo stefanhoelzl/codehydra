@@ -38,7 +38,7 @@
     "patch-package": "^8.0.1",
     "pidtree": "^0.6.0",
     "simple-git": "^3.30.0",
-    "systeminformation": "^5.27.11",
+    "systeminformation": "5.27.12",
     "zod": "^4.1.13"
   },
   "devDependencies": {
