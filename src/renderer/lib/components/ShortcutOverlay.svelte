@@ -23,7 +23,7 @@
   Content is always rendered (no {#if}) so fade-out transition works smoothly.
   aria-hidden prevents screen readers from reading invisible content.
   Dynamic sr-only text announces state changes for aria-live region.
-  Use visibility:hidden (not display:none) for unavailable hints to prevent layout shifts.
+  Hidden hints use display:none for dynamic sizing (elements don't change while overlay is visible).
 -->
 <div class="shortcut-overlay" class:active role="status" aria-live="polite" aria-hidden={!active}>
   {#if active}
@@ -38,10 +38,10 @@
   </span>
   <span
     class="shortcut-hint"
-    class:shortcut-hint--hidden={!showNew}
-    aria-label="Enter key to create new workspace"
+    class:shortcut-hint--hidden={!showJump}
+    aria-label="Number keys 1 through 0 to jump"
   >
-    <vscode-badge>⏎</vscode-badge> New
+    <vscode-badge>1-0</vscode-badge> Jump
   </span>
   <span
     class="shortcut-hint"
@@ -52,10 +52,10 @@
   </span>
   <span
     class="shortcut-hint"
-    class:shortcut-hint--hidden={!showJump}
-    aria-label="Number keys 1 through 0 to jump"
+    class:shortcut-hint--hidden={!showNew}
+    aria-label="Enter key to create new workspace"
   >
-    <vscode-badge>1-0</vscode-badge> Jump
+    <vscode-badge>⏎</vscode-badge> New
   </span>
   <span class="shortcut-hint" aria-label="O to open project">
     <vscode-badge>O</vscode-badge> Open
@@ -86,12 +86,7 @@
     opacity: 1;
   }
 
-  .shortcut-hint {
-    transition: opacity 150ms ease-out;
-  }
-
   .shortcut-hint--hidden {
-    visibility: hidden;
-    opacity: 0;
+    display: none;
   }
 </style>
