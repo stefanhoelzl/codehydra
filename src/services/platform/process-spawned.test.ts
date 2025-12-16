@@ -323,16 +323,17 @@ describe("ExecaSpawnedProcess", () => {
       }
     });
 
-    it("handles non-executable file", async () => {
+    // Skip on Windows: Windows doesn't have Unix-style execute permissions.
+    // Executability is determined by file extension (.exe, .bat, .cmd), not permissions.
+    // Running a .txt file on Windows may hang or behave unpredictably.
+    it.skipIf(process.platform === "win32")("handles non-executable file", async () => {
       // Create a temp file that exists but isn't executable
       const tempDir = await mkdtemp(join(tmpdir(), "process-test-"));
       const tempFile = join(tempDir, "not-executable.txt");
       await writeFile(tempFile, "just text, not executable code");
 
-      if (process.platform !== "win32") {
-        // Ensure no execute permission on Unix
-        await chmod(tempFile, 0o644);
-      }
+      // Ensure no execute permission on Unix
+      await chmod(tempFile, 0o644);
 
       try {
         const subprocess = execa(tempFile, [], {
@@ -344,15 +345,9 @@ describe("ExecaSpawnedProcess", () => {
 
         const result = await spawned.wait();
 
-        // Platform-specific behavior:
-        // - Unix: fails with EACCES (no execute permission)
-        // - Windows: fails because .txt isn't executable
-        if (process.platform === "win32") {
-          expect(result.exitCode).not.toBe(0);
-        } else {
-          expect(result.exitCode).toBeNull();
-          expect(result.stderr.toLowerCase()).toMatch(/eacces|permission/);
-        }
+        // Unix: fails with EACCES (no execute permission)
+        expect(result.exitCode).toBeNull();
+        expect(result.stderr.toLowerCase()).toMatch(/eacces|permission/);
       } finally {
         await rm(tempDir, { recursive: true, force: true });
       }
