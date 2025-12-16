@@ -84,6 +84,9 @@
   --ch-shadow-color: rgba(0, 0, 0, 0.3);
   --ch-shadow: 0 2px 8px var(--ch-shadow-color);
 
+  /* Logo backdrop opacity */
+  --ch-logo-backdrop-opacity: 0.15;
+
   /* Layout variables (theme-independent) */
   --ch-sidebar-width: 250px;
   --ch-sidebar-minimized-width: 20px;

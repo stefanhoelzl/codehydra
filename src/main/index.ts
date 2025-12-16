@@ -410,13 +410,13 @@ async function bootstrap(): Promise<void> {
   // 3. Check if setup is already complete (determines code-server startup)
   const setupComplete = await vscodeSetupService.isSetupComplete();
 
-  // 4. Create WindowManager with appropriate title
+  // 4. Create WindowManager with appropriate title and icon
   // In dev mode, show branch name: "CodeHydra (branch-name)"
   const windowTitle =
     buildInfo.isDevelopment && buildInfo.gitBranch
       ? `CodeHydra (${buildInfo.gitBranch})`
       : "CodeHydra";
-  windowManager = WindowManager.create(windowTitle);
+  windowManager = WindowManager.create(windowTitle, pathProvider.appIconPath);
 
   // 5. Create ViewManager with port=0 initially
   // Port will be updated when startServices() runs

@@ -169,7 +169,22 @@ describe("MainView component", () => {
       expect(backdrop).toBeInTheDocument();
     });
 
-    it("hides empty-backdrop when a workspace is active", async () => {
+    it("renders Logo in empty-backdrop when no workspace is active", async () => {
+      render(MainView);
+
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      // Logo should be inside the backdrop
+      const backdrop = document.querySelector(".empty-backdrop");
+      const logo = backdrop?.querySelector("img");
+      expect(logo).toBeInTheDocument();
+      // Logo should not be animated in backdrop
+      expect(logo).not.toHaveClass("animated");
+    });
+
+    it("hides empty-backdrop and Logo when a workspace is active", async () => {
       const projectWithWorkspace = [
         {
           id: asProjectId("test-project-12345678"),
@@ -200,6 +215,9 @@ describe("MainView component", () => {
       await waitFor(() => {
         const backdrop = document.querySelector(".empty-backdrop");
         expect(backdrop).not.toBeInTheDocument();
+        // Logo should also be hidden (it's inside the backdrop)
+        const backdropLogo = document.querySelector(".backdrop-logo");
+        expect(backdropLogo).not.toBeInTheDocument();
       });
     });
   });

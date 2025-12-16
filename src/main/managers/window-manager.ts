@@ -3,7 +3,7 @@
  * Handles BaseWindow creation, resize events, and lifecycle management.
  */
 
-import { BaseWindow } from "electron";
+import { BaseWindow, nativeImage } from "electron";
 
 /**
  * Function to unsubscribe from an event.
@@ -56,11 +56,13 @@ export class WindowManager {
    * Configuration:
    * - Size: 1200x800 (default), minimum 800x600
    * - Title: Configurable, defaults to "CodeHydra"
+   * - Icon: Loaded from iconPath if provided
    * - No application menu
    *
    * @param title - Window title (defaults to "CodeHydra")
+   * @param iconPath - Absolute path to the window icon (e.g., from PathProvider.appIconPath)
    */
-  static create(title: string = "CodeHydra"): WindowManager {
+  static create(title: string = "CodeHydra", iconPath?: string): WindowManager {
     const window = new BaseWindow({
       width: 1200,
       height: 800,
@@ -68,6 +70,19 @@ export class WindowManager {
       minHeight: 600,
       title,
     });
+
+    // Set the window icon for taskbar/dock display
+    if (iconPath) {
+      try {
+        const icon = nativeImage.createFromPath(iconPath);
+        if (!icon.isEmpty()) {
+          window.setIcon(icon);
+        }
+      } catch {
+        // Icon loading failed, continue without icon
+        // This is non-critical - the window will use the default icon
+      }
+    }
 
     return new WindowManager(window);
   }

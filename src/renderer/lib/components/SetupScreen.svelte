@@ -3,6 +3,8 @@
    * Setup screen component displayed during first-run setup.
    * Shows an indeterminate progress bar with current step message.
    */
+  import Logo from "./Logo.svelte";
+
   interface Props {
     currentStep: string;
   }
@@ -11,6 +13,7 @@
 </script>
 
 <div class="setup-screen">
+  <Logo animated={true} />
   <h1>Setting up VSCode...</h1>
   <p class="step-message" aria-live="polite">{currentStep}</p>
   <vscode-progress-bar class="progress-bar" indeterminate={true} aria-label="Setting up VSCode"
@@ -20,6 +23,10 @@
 <style>
   .setup-screen {
     display: contents;
+  }
+
+  .setup-screen :global(img) {
+    margin-bottom: 2rem;
   }
 
   h1 {

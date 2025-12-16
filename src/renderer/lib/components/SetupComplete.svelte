@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Logo from "./Logo.svelte";
 
   /**
    * Success screen component displayed briefly after setup completes.
@@ -23,6 +24,7 @@
 </script>
 
 <div class="setup-complete" role="status" aria-live="polite">
+  <Logo animated={false} />
   <span class="checkmark" aria-hidden="true">&#10003;</span>
   <p>Setup complete!</p>
 </div>
@@ -30,6 +32,10 @@
 <style>
   .setup-complete {
     display: contents;
+  }
+
+  .setup-complete :global(img) {
+    margin-bottom: 1rem;
   }
 
   .checkmark {

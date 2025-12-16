@@ -21,6 +21,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeSetupMarkerPath).toBe("/test/app-data/vscode/.setup-completed");
     expect(pathProvider.electronDataDir).toBe("/test/app-data/electron");
     expect(pathProvider.vscodeAssetsDir).toBe("/mock/assets");
+    expect(pathProvider.appIconPath).toBe("/test/resources/icon.png");
   });
 
   it("accepts override for individual paths", () => {
@@ -45,6 +46,7 @@ describe("createMockPathProvider", () => {
       vscodeSetupMarkerPath: "/f",
       electronDataDir: "/g",
       vscodeAssetsDir: "/h",
+      appIconPath: "/h/icon.png",
     });
 
     expect(pathProvider.dataRootDir).toBe("/a");
@@ -55,6 +57,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeSetupMarkerPath).toBe("/f");
     expect(pathProvider.electronDataDir).toBe("/g");
     expect(pathProvider.vscodeAssetsDir).toBe("/h");
+    expect(pathProvider.appIconPath).toBe("/h/icon.png");
   });
 
   it("getProjectWorkspacesDir returns path with project hash", () => {
@@ -89,6 +92,7 @@ describe("createMockPathProvider", () => {
     expect(typeof pathProvider.vscodeSetupMarkerPath).toBe("string");
     expect(typeof pathProvider.electronDataDir).toBe("string");
     expect(typeof pathProvider.vscodeAssetsDir).toBe("string");
+    expect(typeof pathProvider.appIconPath).toBe("string");
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
   });
 });
@@ -111,6 +115,7 @@ describe("DefaultPathProvider", () => {
         /app-data[/\\]vscode[/\\]\.setup-completed$/
       );
       expect(pathProvider.electronDataDir).toMatch(/app-data[/\\]electron$/);
+      expect(pathProvider.appIconPath).toMatch(/resources[/\\]icon\.png$/);
     });
 
     it("returns vscodeAssetsDir based on appPath", () => {

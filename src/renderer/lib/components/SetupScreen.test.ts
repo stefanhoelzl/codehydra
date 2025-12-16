@@ -13,6 +13,16 @@ describe("SetupScreen component", () => {
     expect(screen.getByRole("heading", { name: /setting up vscode/i })).toBeInTheDocument();
   });
 
+  it("renders Logo with animation", () => {
+    const { container } = render(SetupScreen, {
+      props: { currentStep: "Installing extensions..." },
+    });
+
+    const logo = container.querySelector("img");
+    expect(logo).toBeInTheDocument();
+    expect(logo).toHaveClass("animated");
+  });
+
   it("displays current step message", () => {
     render(SetupScreen, { props: { currentStep: "Installing extensions..." } });
 

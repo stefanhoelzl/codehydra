@@ -37,6 +37,14 @@ describe("SetupComplete component", () => {
     expect(checkElement).toBeInTheDocument();
   });
 
+  it("renders Logo without animation", () => {
+    const { container } = render(SetupComplete, { props: {} });
+
+    const logo = container.querySelector("img");
+    expect(logo).toBeInTheDocument();
+    expect(logo).not.toHaveClass("animated");
+  });
+
   describe("accessibility", () => {
     it("has role='status' for announcements", () => {
       render(SetupComplete, { props: {} });

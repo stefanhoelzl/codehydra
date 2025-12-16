@@ -3,39 +3,52 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock Electron before imports
-const { mockBaseWindow, MockBaseWindowClass, mockMenuSetApplicationMenu } = vi.hoisted(() => {
-  const mockWindow = {
-    getBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
-    getContentBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
-    on: vi.fn().mockReturnThis(),
-    close: vi.fn(),
-    maximize: vi.fn(),
-    setTitle: vi.fn(),
-    contentView: {
-      addChildView: vi.fn(),
-      removeChildView: vi.fn(),
-    },
-  };
+const { mockBaseWindow, MockBaseWindowClass, mockMenuSetApplicationMenu, mockNativeImage } =
+  vi.hoisted(() => {
+    const mockWindow = {
+      getBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
+      getContentBounds: vi.fn(() => ({ width: 1200, height: 800, x: 0, y: 0 })),
+      on: vi.fn().mockReturnThis(),
+      close: vi.fn(),
+      maximize: vi.fn(),
+      setTitle: vi.fn(),
+      setIcon: vi.fn(),
+      contentView: {
+        addChildView: vi.fn(),
+        removeChildView: vi.fn(),
+      },
+    };
 
-  // Create a mock constructor function
-  function MockBaseWindowClass(this: typeof mockWindow): typeof mockWindow {
-    return mockWindow;
-  }
+    // Create a mock constructor function
+    function MockBaseWindowClass(this: typeof mockWindow): typeof mockWindow {
+      return mockWindow;
+    }
 
-  return {
-    mockBaseWindow: mockWindow,
-    MockBaseWindowClass: vi.fn(MockBaseWindowClass) as unknown as typeof MockBaseWindowClass & {
-      mock: { calls: Array<[Record<string, unknown>]> };
-    },
-    mockMenuSetApplicationMenu: vi.fn(),
-  };
-});
+    const mockImage = {
+      isEmpty: vi.fn(() => false),
+    };
+
+    const mockNativeImage = {
+      createFromPath: vi.fn(() => mockImage),
+      _mockImage: mockImage,
+    };
+
+    return {
+      mockBaseWindow: mockWindow,
+      MockBaseWindowClass: vi.fn(MockBaseWindowClass) as unknown as typeof MockBaseWindowClass & {
+        mock: { calls: Array<[Record<string, unknown>]> };
+      },
+      mockMenuSetApplicationMenu: vi.fn(),
+      mockNativeImage,
+    };
+  });
 
 vi.mock("electron", () => ({
   BaseWindow: MockBaseWindowClass,
   Menu: {
     setApplicationMenu: mockMenuSetApplicationMenu,
   },
+  nativeImage: mockNativeImage,
 }));
 
 import { WindowManager } from "./window-manager";
@@ -78,6 +91,38 @@ describe("WindowManager", () => {
       const manager = WindowManager.create();
 
       expect(manager).toBeInstanceOf(WindowManager);
+    });
+
+    it("sets window icon from provided icon path", () => {
+      WindowManager.create("CodeHydra", "/app/resources/icon.png");
+
+      expect(mockNativeImage.createFromPath).toHaveBeenCalledWith("/app/resources/icon.png");
+      expect(mockBaseWindow.setIcon).toHaveBeenCalledWith(mockNativeImage._mockImage);
+    });
+
+    it("does not set icon when nativeImage returns empty", () => {
+      mockNativeImage._mockImage.isEmpty.mockReturnValueOnce(true);
+
+      WindowManager.create("CodeHydra", "/app/resources/icon.png");
+
+      expect(mockNativeImage.createFromPath).toHaveBeenCalled();
+      expect(mockBaseWindow.setIcon).not.toHaveBeenCalled();
+    });
+
+    it("handles icon loading errors gracefully", () => {
+      mockNativeImage.createFromPath.mockImplementationOnce(() => {
+        throw new Error("Failed to load icon");
+      });
+
+      // Should not throw
+      expect(() => WindowManager.create("CodeHydra", "/app/resources/icon.png")).not.toThrow();
+    });
+
+    it("does not attempt to load icon when iconPath is not provided", () => {
+      WindowManager.create("CodeHydra");
+
+      expect(mockNativeImage.createFromPath).not.toHaveBeenCalled();
+      expect(mockBaseWindow.setIcon).not.toHaveBeenCalled();
     });
   });
 

@@ -47,6 +47,7 @@
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
+  import Logo from "./Logo.svelte";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import type { AggregatedAgentStatus } from "@shared/ipc";
   import type { Project, WorkspaceStatus, AgentStatus } from "@shared/api/types";
@@ -288,7 +289,11 @@
 
   <!-- Backdrop shown only when no workspace is active, to avoid white background -->
   {#if activeWorkspacePath.value === null}
-    <div class="empty-backdrop" aria-hidden="true"></div>
+    <div class="empty-backdrop" aria-hidden="true">
+      <div class="backdrop-logo">
+        <Logo animated={false} />
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -310,5 +315,17 @@
     left: var(--ch-sidebar-minimized-width, 20px);
     background: var(--ch-background);
     z-index: -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .backdrop-logo {
+    opacity: var(--ch-logo-backdrop-opacity, 0.15);
+  }
+
+  .backdrop-logo :global(img) {
+    width: min(256px, 30vw);
+    height: min(256px, 30vw);
   }
 </style>

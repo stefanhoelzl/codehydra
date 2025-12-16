@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Logo from "./Logo.svelte";
 
   /**
    * Error screen component displayed when first-run setup fails.
@@ -35,6 +36,7 @@
 </script>
 
 <div class="setup-error">
+  <Logo animated={false} />
   <div class="error-content" role="alert">
     <h1>Setup Failed</h1>
     <p class="error-description">Failed to install VSCode extensions.</p>
@@ -52,6 +54,10 @@
 <style>
   .setup-error {
     display: contents;
+  }
+
+  .setup-error :global(img) {
+    margin-bottom: 1rem;
   }
 
   .error-content {

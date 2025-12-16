@@ -34,6 +34,14 @@ describe("SetupError component", () => {
     expect(screen.getByText(/failed to install extensions/i)).toBeInTheDocument();
   });
 
+  it("renders Logo without animation", () => {
+    const { container } = render(SetupError, { props: { errorMessage: "Test error" } });
+
+    const logo = container.querySelector("img");
+    expect(logo).toBeInTheDocument();
+    expect(logo).not.toHaveClass("animated");
+  });
+
   describe("accessibility", () => {
     it("has role='alert' on error container", () => {
       render(SetupError, { props: { errorMessage: "Test error" } });

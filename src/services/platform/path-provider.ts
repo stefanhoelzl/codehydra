@@ -32,6 +32,9 @@ export interface PathProvider {
   /** Directory for VS Code assets bundled with the app: `<appPath>/out/main/assets/` */
   readonly vscodeAssetsDir: string;
 
+  /** Path to the application icon: `resources/icon.png` */
+  readonly appIconPath: string;
+
   /**
    * Get the workspaces directory for a project.
    * @param projectPath Absolute path to the project
@@ -60,6 +63,7 @@ export class DefaultPathProvider implements PathProvider {
   readonly vscodeSetupMarkerPath: string;
   readonly electronDataDir: string;
   readonly vscodeAssetsDir: string;
+  readonly appIconPath: string;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
     this.dataRootDir = this.computeDataRootDir(buildInfo, platformInfo);
@@ -71,6 +75,21 @@ export class DefaultPathProvider implements PathProvider {
     this.electronDataDir = join(this.dataRootDir, "electron");
     // Assets are bundled at out/main/assets/ (same path in dev and prod)
     this.vscodeAssetsDir = join(buildInfo.appPath, "out", "main", "assets");
+    this.appIconPath = this.computeAppIconPath(buildInfo);
+  }
+
+  /**
+   * Compute the path to the application icon.
+   * In development: relative to process.cwd()
+   * In production: relative to __dirname (bundled resources)
+   */
+  private computeAppIconPath(buildInfo: BuildInfo): string {
+    if (buildInfo.isDevelopment) {
+      return join(process.cwd(), "resources", "icon.png");
+    }
+    // In production, resources are in the app.asar or extracted resources folder
+    // electron-vite places resources at the root level next to the app
+    return join(process.cwd(), "resources", "icon.png");
   }
 
   /**
