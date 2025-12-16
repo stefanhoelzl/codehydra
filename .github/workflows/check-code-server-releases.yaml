@@ -1,0 +1,123 @@
+name: Check code-server releases
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 6 AM UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Show what would be built without triggering builds"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write # Required to trigger other workflows
+
+env:
+  MIN_VERSION: "4.106.0"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check mode
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::DRY RUN MODE - will not trigger builds"
+          fi
+
+      - name: Get code-server releases from npm
+        id: upstream
+        run: |
+          # Get all versions from npm
+          ALL_VERSIONS=$(npm view code-server versions --json | jq -r '.[]')
+
+          # Filter to versions >= MIN_VERSION
+          MIN="${{ env.MIN_VERSION }}"
+          FILTERED_VERSIONS=$(echo "$ALL_VERSIONS" | while read -r version; do
+            # Compare versions using sort -V
+            if [ "$(printf '%s\n' "$MIN" "$version" | sort -V | head -n1)" = "$MIN" ]; then
+              # Exclude pre-release versions (containing -)
+              if [[ ! "$version" =~ - ]]; then
+                echo "$version"
+              fi
+            fi
+          done)
+
+          COUNT=$(echo "$FILTERED_VERSIONS" | grep -c . || echo "0")
+          echo "::notice::Found $COUNT upstream versions >= $MIN"
+
+          # Convert to JSON array
+          VERSIONS_JSON=$(echo "$FILTERED_VERSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "versions=$VERSIONS_JSON" >> $GITHUB_OUTPUT
+
+      - name: Get existing Windows builds
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get all releases with code-server-windows prefix
+          EXISTING=$(gh release list \
+            --repo "${{ github.repository }}" \
+            --limit 1000 \
+            --json tagName \
+            --jq '.[] | select(.tagName | startswith("code-server-windows-v")) | .tagName | ltrimstr("code-server-windows-v")')
+
+          COUNT=$(echo "$EXISTING" | grep -c . || echo "0")
+          echo "::notice::Found $COUNT existing Windows builds"
+
+          # Convert to JSON array
+          EXISTING_JSON=$(echo "$EXISTING" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "versions=$EXISTING_JSON" >> $GITHUB_OUTPUT
+
+      - name: Find missing versions
+        id: missing
+        run: |
+          UPSTREAM='${{ steps.upstream.outputs.versions }}'
+          EXISTING='${{ steps.existing.outputs.versions }}'
+
+          # Find versions in upstream but not in existing
+          MISSING=$(jq -n \
+            --argjson upstream "$UPSTREAM" \
+            --argjson existing "$EXISTING" \
+            '$upstream - $existing')
+
+          COUNT=$(echo "$MISSING" | jq 'length')
+
+          if [ "$COUNT" -gt 0 ]; then
+            MISSING_LIST=$(echo "$MISSING" | jq -r '. | join(", ")')
+            echo "::notice::Missing $COUNT versions: $MISSING_LIST"
+          fi
+
+          echo "versions=$MISSING" >> $GITHUB_OUTPUT
+          echo "missing_count=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Trigger builds for missing versions
+        if: steps.missing.outputs.missing_count != '0' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MISSING='${{ steps.missing.outputs.versions }}'
+
+          echo "$MISSING" | jq -r '.[]' | while read -r version; do
+            gh workflow run build-code-server-windows.yaml \
+              --repo "${{ github.repository }}" \
+              -f version="$version"
+
+            # Small delay to avoid rate limiting
+            sleep 2
+          done
+
+      - name: Summary
+        run: |
+          COUNT="${{ steps.missing.outputs.missing_count }}"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::notice::All versions up to date!"
+          elif [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::DRY RUN - Would build $COUNT versions"
+          else
+            echo "::notice::Triggered $COUNT builds"
+          fi

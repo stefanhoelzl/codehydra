@@ -1,0 +1,240 @@
+name: Build code-server for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "code-server version to build (e.g., 4.106.3)"
+        required: true
+        type: string
+      dry_run:
+        description: "Test build without creating release (uploads as artifact instead)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # Required to create releases
+  id-token: write # Required for artifact attestation
+  attestations: write # Required for artifact attestation
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      PACKAGE_DIR: code-server-${{ inputs.version }}-win32-x64
+      ZIP_NAME: code-server-${{ inputs.version }}-win32-x64.zip
+    steps:
+      - name: Validate version format
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format '$VERSION'. Expected semver (e.g., 4.106.3)"
+            exit 1
+          fi
+          echo "::notice::Building code-server version $VERSION"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::DRY RUN MODE - will upload as artifact instead of creating release"
+          fi
+
+      - name: Check if release already exists
+        if: ${{ inputs.dry_run == false }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "code-server-windows-v$VERSION" --repo ${{ github.repository }} &>/dev/null; then
+            echo "::error::Release code-server-windows-v$VERSION already exists"
+            exit 1
+          fi
+
+      - name: Verify version exists on npm
+        shell: bash
+        run: |
+          if ! npm view "code-server@$VERSION" version &>/dev/null; then
+            echo "::error::code-server@$VERSION not found on npm"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Create build directory
+        shell: bash
+        run: mkdir -p build
+
+      - name: Install code-server
+        shell: bash
+        working-directory: build
+        run: npm install "code-server@$VERSION"
+
+      - name: Create package directory with flattened structure
+        shell: bash
+        working-directory: build
+        run: |
+          mkdir -p "$PACKAGE_DIR"
+
+          # Move contents of node_modules/code-server to package root (flattened)
+          # This includes lib/node (bundled Node.js), lib/vscode, and license files
+          cp -r node_modules/code-server/* "$PACKAGE_DIR/"
+
+          # Verify bundled Node exists
+          if [ ! -f "$PACKAGE_DIR/lib/node" ]; then
+            echo "::error::Bundled Node.js not found at lib/node"
+            exit 1
+          fi
+
+      - name: Create launcher script
+        shell: bash
+        working-directory: build
+        run: |
+          mkdir -p "$PACKAGE_DIR/bin"
+
+          # Create Windows batch launcher script
+          cat > "$PACKAGE_DIR/bin/code-server.cmd" << 'LAUNCHER'
+          @echo off
+          setlocal
+
+          :: Get the directory where this script is located
+          set "SCRIPT_DIR=%~dp0"
+
+          :: Go up one level to package root
+          set "ROOT_DIR=%SCRIPT_DIR%.."
+
+          :: Run code-server with bundled node
+          "%ROOT_DIR%\lib\node" "%ROOT_DIR%\out\node\entry.js" %*
+          LAUNCHER
+
+      - name: Test package
+        shell: bash
+        working-directory: build
+        run: |
+          # Run code-server --version using bundled node and entry point
+          VERSION_OUTPUT=$("$PACKAGE_DIR/lib/node" "$PACKAGE_DIR/out/node/entry.js" --version)
+
+          if [ $? -ne 0 ]; then
+            echo "::error::Package test failed - code-server --version returned non-zero exit code"
+            exit 1
+          fi
+
+          echo "::notice::Test passed: $VERSION_OUTPUT"
+
+      - name: Create zip package
+        shell: pwsh
+        working-directory: build
+        run: Compress-Archive -Path $env:PACKAGE_DIR -DestinationPath $env:ZIP_NAME
+
+      - name: Calculate SHA256 checksum
+        id: checksum
+        shell: pwsh
+        working-directory: build
+        run: |
+          $hash = (Get-FileHash -Path $env:ZIP_NAME -Algorithm SHA256).Hash.ToLower()
+          echo "sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Generate artifact attestation
+        if: ${{ inputs.dry_run == false }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: build/${{ env.ZIP_NAME }}
+
+      - name: Upload artifact (dry run)
+        if: ${{ inputs.dry_run == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: build/${{ env.ZIP_NAME }}
+          retention-days: 7
+
+      - name: Create GitHub Release
+        if: ${{ inputs.dry_run == false }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA256: ${{ steps.checksum.outputs.sha256 }}
+        working-directory: build
+        run: |
+          TAG="code-server-windows-v$VERSION"
+          BUNDLED_NODE_VERSION=$("$PACKAGE_DIR/lib/node" --version)
+
+          # Create release notes
+          cat > release-notes.md << 'EOF'
+          ## code-server $VERSION for Windows
+
+          Windows build of [code-server $VERSION](https://github.com/coder/code-server/releases/tag/v$VERSION).
+
+          ### Contents
+
+          This is a standalone package that includes:
+          - code-server $VERSION
+          - Node.js $NODE_VERSION (bundled)
+
+          Package layout matches official Linux/macOS releases.
+
+          ### Usage
+
+          Extract the zip and run:
+
+          ```powershell
+          bin\code-server.cmd --help
+          ```
+
+          Or directly with the bundled node:
+
+          ```powershell
+          lib\node out\node\entry.js --help
+          ```
+
+          ### Official Release Notes
+
+          See the [upstream release notes](https://github.com/coder/code-server/releases/tag/v$VERSION) for changes in this version.
+
+          ### Checksums
+
+          **SHA256:**
+          ```
+          $SHA256  $ZIP_NAME
+          ```
+
+          ### Supply Chain Security
+
+          This release includes an artifact attestation for supply chain security.
+          Verify with: `gh attestation verify $ZIP_NAME --repo ${{ github.repository }}`
+
+          ### License
+
+          code-server is licensed under the MIT License. See included LICENSE file.
+          Node.js is also MIT licensed.
+          EOF
+
+          # Replace placeholders
+          sed -i "s/\$VERSION/$VERSION/g" release-notes.md
+          sed -i "s/\$ZIP_NAME/$ZIP_NAME/g" release-notes.md
+          sed -i "s/\$SHA256/$SHA256/g" release-notes.md
+          sed -i "s/\$NODE_VERSION/$BUNDLED_NODE_VERSION/g" release-notes.md
+
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "code-server $VERSION for Windows" \
+            --notes-file release-notes.md \
+            "$ZIP_NAME"
+
+      - name: Summary
+        shell: bash
+        env:
+          SHA256: ${{ steps.checksum.outputs.sha256 }}
+        working-directory: build
+        run: |
+          BUNDLED_NODE_VERSION=$("$PACKAGE_DIR/lib/node" --version)
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::DRY RUN complete - Package: $ZIP_NAME, Node: $BUNDLED_NODE_VERSION, SHA256: $SHA256"
+          else
+            echo "::notice::Release created: code-server-windows-v$VERSION - Package: $ZIP_NAME, Node: $BUNDLED_NODE_VERSION, SHA256: $SHA256"
+          fi

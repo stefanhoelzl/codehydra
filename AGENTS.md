@@ -92,6 +92,55 @@ These scripts are available in the integrated terminal because:
 - `git rebase -i` - Opens interactive rebase editor
 - Any tool respecting `$EDITOR`
 
+## code-server Windows Builds
+
+code-server doesn't publish Windows binaries. CodeHydra automatically builds and publishes Windows versions via GitHub Actions.
+
+### Release Naming Convention
+
+| Item           | Format                                | Example                             |
+| -------------- | ------------------------------------- | ----------------------------------- |
+| Git tag        | `code-server-windows-v{version}`      | `code-server-windows-v4.106.3`      |
+| Release title  | `code-server {version} for Windows`   | `code-server 4.106.3 for Windows`   |
+| Asset filename | `code-server-{version}-win32-x64.zip` | `code-server-4.106.3-win32-x64.zip` |
+
+### Automation
+
+- **Daily check**: `check-code-server-releases.yaml` runs at 6 AM UTC
+- **Build trigger**: Automatically triggers builds for missing versions (>= 4.106.0)
+- **Releases**: Published to GitHub Releases in this repository
+
+### Package Layout
+
+Matches official Linux/macOS releases:
+
+```
+code-server-{version}-win32-x64/
+├── bin/
+│   └── code-server.cmd       # Windows launcher script
+├── lib/
+│   ├── node                  # Bundled Node.js (from code-server npm package)
+│   └── vscode/               # VS Code distribution
+├── out/
+│   └── node/
+│       └── entry.js          # Main entry point
+├── package.json
+├── LICENSE                   # MIT license from code-server
+└── ThirdPartyNotices.txt     # Third-party licenses
+```
+
+### Manual Triggering
+
+Both workflows support manual dispatch:
+
+```bash
+# Build a specific version (dry run for testing)
+gh workflow run build-code-server-windows.yaml -f version="4.106.3" -f dry_run=true
+
+# Check for missing versions (dry run)
+gh workflow run check-code-server-releases.yaml -f dry_run=true
+```
+
 ## View Detachment Pattern
 
 For GPU optimization, workspace views use **detachment** instead of zero-bounds hiding:
