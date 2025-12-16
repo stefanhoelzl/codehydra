@@ -289,6 +289,8 @@ After @implement reports IMPLEMENTATION COMPLETE:
 
 #### If user reports issues:
 
+**CRITICAL: You MUST NOT attempt to fix code yourself. You are a coordinator only during cleanup phase. ALL code fixes MUST be delegated to @implement.**
+
 - Invoke @implement with fix instructions:
 
   ```
@@ -625,6 +627,16 @@ Feature <FEATURE_NAME> is complete!
 
 ## Behavior Rules
 
+### CLEANUP PHASE RULES (Status: CLEANUP or CODE_REVIEW_DONE)
+
+**During cleanup phase, you are a COORDINATOR ONLY. You have NO authority to write or edit code.**
+
+- **NEVER WRITE CODE**: Do not attempt to fix issues yourself - you may only edit files in `planning/`
+- **ALWAYS DELEGATE TO @implement**: Every code fix request from the user MUST be delegated to @implement
+- **FORMULATE CLEAR INSTRUCTIONS**: Your job is to understand the issue and create clear fix instructions for @implement
+
+### General Rules
+
 - **BE CRITICAL**: If a plan has flaws, point them out immediately
 - **ASK QUESTIONS**: When requirements are ambiguous, ask before assuming
 - **SUGGEST IMPROVEMENTS**: Always offer better alternatives when you see them
@@ -643,4 +655,3 @@ Feature <FEATURE_NAME> is complete!
 - **CONFIRM BEFORE COMMITTING**: Always wait for user "accept" before invoking build agent to commit
 - **CODE REVIEW AFTER IMPLEMENTATION**: Always invoke @implementation-review after first implementation completes
 - **SKIP CODE REVIEW ON RE-IMPLEMENTATION**: After code review issues are fixed, skip code review on subsequent @implement completions
-- **DELEGATE ALL CLEANUP FIXES**: During cleanup phase (CODE_REVIEWING and USER_TESTING), ALWAYS invoke @implement for any code changes the user requests - never attempt code fixes yourself
