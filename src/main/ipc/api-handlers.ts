@@ -253,6 +253,50 @@ export function registerApiHandlers(api: ICodeHydraApi): void {
 }
 
 // =============================================================================
+// Window Title Formatting
+// =============================================================================
+
+/**
+ * Configuration for dynamic window title updates.
+ */
+export interface TitleConfig {
+  /** Function to set the window title */
+  setTitle: (title: string) => void;
+  /** Default title (used when no workspace active) */
+  defaultTitle: string;
+  /** Dev branch name (from buildInfo.gitBranch), undefined in production */
+  devBranch?: string;
+  /** Function to resolve project name from workspace path */
+  getProjectName: (workspacePath: string) => string | undefined;
+}
+
+/**
+ * Formats the window title based on current workspace.
+ *
+ * Format: "CodeHydra - <project> / <workspace> - (<devBranch>)"
+ * No workspace: "CodeHydra - (<devBranch>)" or "CodeHydra"
+ *
+ * @param projectName - Name of the active project, or undefined
+ * @param workspaceName - Name of the active workspace, or undefined
+ * @param devBranch - Development branch name (from buildInfo.gitBranch), or undefined
+ * @returns Formatted window title
+ */
+export function formatWindowTitle(
+  projectName: string | undefined,
+  workspaceName: string | undefined,
+  devBranch?: string
+): string {
+  const base = "CodeHydra";
+  const devSuffix = devBranch ? ` - (${devBranch})` : "";
+
+  if (projectName && workspaceName) {
+    return `${base} - ${projectName} / ${workspaceName}${devSuffix}`;
+  }
+
+  return `${base}${devSuffix}`;
+}
+
+// =============================================================================
 // Event Wiring
 // =============================================================================
 
@@ -260,14 +304,17 @@ export function registerApiHandlers(api: ICodeHydraApi): void {
  * Wire API events to IPC emission.
  *
  * Subscribes to all API events and forwards them to the renderer via webContents.send().
+ * Optionally updates window title on workspace switches.
  *
  * @param api - The ICodeHydraApi instance to subscribe to
  * @param getWebContents - Function to get the WebContents to send events to
+ * @param titleConfig - Optional configuration for window title updates
  * @returns Cleanup function that unsubscribes from all events
  */
 export function wireApiEvents(
   api: ICodeHydraApi,
-  getWebContents: () => WebContents | null
+  getWebContents: () => WebContents | null,
+  titleConfig?: TitleConfig
 ): Unsubscribe {
   const unsubscribers: Unsubscribe[] = [];
 
@@ -314,6 +361,17 @@ export function wireApiEvents(
   unsubscribers.push(
     api.on("workspace:switched", (event) => {
       send(ApiIpcChannels.WORKSPACE_SWITCHED, event);
+
+      // Update window title if configured
+      if (titleConfig) {
+        if (event) {
+          const projectName = titleConfig.getProjectName(event.path);
+          const title = formatWindowTitle(projectName, event.workspaceName, titleConfig.devBranch);
+          titleConfig.setTitle(title);
+        } else {
+          titleConfig.setTitle(titleConfig.defaultTitle);
+        }
+      }
     })
   );
 

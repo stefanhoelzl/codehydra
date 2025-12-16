@@ -21,7 +21,7 @@ vi.mock("electron", () => {
 });
 
 // Import after mock
-import { registerApiHandlers, wireApiEvents } from "./api-handlers";
+import { registerApiHandlers, wireApiEvents, formatWindowTitle } from "./api-handlers";
 
 // =============================================================================
 // Mock API Factory
@@ -59,6 +59,50 @@ function createMockApi(): ICodeHydraApi {
     dispose: vi.fn(),
   };
 }
+
+// =============================================================================
+// formatWindowTitle Tests
+// =============================================================================
+
+describe("formatWindowTitle", () => {
+  it("formats title with project, workspace, and dev branch", () => {
+    const title = formatWindowTitle("my-app", "feature-login", "main");
+
+    expect(title).toBe("CodeHydra - my-app / feature-login - (main)");
+  });
+
+  it("formats title with project and workspace, no dev branch", () => {
+    const title = formatWindowTitle("my-app", "feature-login", undefined);
+
+    expect(title).toBe("CodeHydra - my-app / feature-login");
+  });
+
+  it("formats title with only dev branch when no workspace", () => {
+    const title = formatWindowTitle(undefined, undefined, "main");
+
+    expect(title).toBe("CodeHydra - (main)");
+  });
+
+  it("formats title as plain CodeHydra when no workspace and no dev branch", () => {
+    const title = formatWindowTitle(undefined, undefined, undefined);
+
+    expect(title).toBe("CodeHydra");
+  });
+
+  it("formats title without project name (uses only dev branch)", () => {
+    // Edge case: workspace name provided but no project name
+    const title = formatWindowTitle(undefined, "feature", "main");
+
+    expect(title).toBe("CodeHydra - (main)");
+  });
+
+  it("formats title without workspace name (uses only dev branch)", () => {
+    // Edge case: project name provided but no workspace name
+    const title = formatWindowTitle("my-app", undefined, "main");
+
+    expect(title).toBe("CodeHydra - (main)");
+  });
+});
 
 // =============================================================================
 // Test Data
@@ -557,6 +601,83 @@ describe("wireApiEvents", () => {
 
     // After cleanup, handlers should be removed
     expect(eventHandlers.size).toBe(0);
+  });
+
+  describe("with titleConfig", () => {
+    let mockSetTitle: (title: string) => void;
+
+    beforeEach(() => {
+      mockSetTitle = vi.fn();
+    });
+
+    it("updates window title on workspace:switched event", () => {
+      wireApiEvents(mockApi, () => mockWebContents as never, {
+        setTitle: mockSetTitle,
+        defaultTitle: "CodeHydra - (main)",
+        devBranch: "main",
+        getProjectName: () => "my-project",
+      });
+
+      const handler = eventHandlers.get("workspace:switched");
+      handler?.({
+        projectId: TEST_PROJECT_ID,
+        workspaceName: "feature-x" as WorkspaceName,
+        path: "/home/user/.worktrees/feature-x",
+      });
+
+      expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - my-project / feature-x - (main)");
+    });
+
+    it("uses default title when workspace:switched event is null", () => {
+      wireApiEvents(mockApi, () => mockWebContents as never, {
+        setTitle: mockSetTitle,
+        defaultTitle: "CodeHydra - (main)",
+        devBranch: "main",
+        getProjectName: () => "my-project",
+      });
+
+      const handler = eventHandlers.get("workspace:switched");
+      handler?.(null);
+
+      expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - (main)");
+    });
+
+    it("formats title correctly when project name not found", () => {
+      wireApiEvents(mockApi, () => mockWebContents as never, {
+        setTitle: mockSetTitle,
+        defaultTitle: "CodeHydra - (dev)",
+        devBranch: "dev",
+        getProjectName: () => undefined, // Project not found
+      });
+
+      const handler = eventHandlers.get("workspace:switched");
+      handler?.({
+        projectId: TEST_PROJECT_ID,
+        workspaceName: "feature-x" as WorkspaceName,
+        path: "/home/user/.worktrees/feature-x",
+      });
+
+      // Without project name, falls back to just dev branch
+      expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - (dev)");
+    });
+
+    it("formats title without dev branch in production", () => {
+      wireApiEvents(mockApi, () => mockWebContents as never, {
+        setTitle: mockSetTitle,
+        defaultTitle: "CodeHydra",
+        // No devBranch - production mode
+        getProjectName: () => "my-project",
+      });
+
+      const handler = eventHandlers.get("workspace:switched");
+      handler?.({
+        projectId: TEST_PROJECT_ID,
+        workspaceName: "feature-x" as WorkspaceName,
+        path: "/home/user/.worktrees/feature-x",
+      });
+
+      expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - my-project / feature-x");
+    });
   });
 });
 

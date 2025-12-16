@@ -10,6 +10,7 @@ const { mockBaseWindow, MockBaseWindowClass, mockMenuSetApplicationMenu } = vi.h
     on: vi.fn().mockReturnThis(),
     close: vi.fn(),
     maximize: vi.fn(),
+    setTitle: vi.fn(),
     contentView: {
       addChildView: vi.fn(),
       removeChildView: vi.fn(),
@@ -172,6 +173,16 @@ describe("WindowManager", () => {
       // Callback should not be called after unsubscribe
       resizeCallback();
       expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("setTitle", () => {
+    it("sets the window title", () => {
+      const manager = WindowManager.create();
+
+      manager.setTitle("CodeHydra - my-app / feature - (main)");
+
+      expect(mockBaseWindow.setTitle).toHaveBeenCalledWith("CodeHydra - my-app / feature - (main)");
     });
   });
 

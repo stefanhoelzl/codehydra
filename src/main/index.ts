@@ -28,7 +28,12 @@ import {
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { AppState } from "./app-state";
-import { registerApiHandlers, wireApiEvents, registerLifecycleHandlers } from "./ipc";
+import {
+  registerApiHandlers,
+  wireApiEvents,
+  registerLifecycleHandlers,
+  formatWindowTitle,
+} from "./ipc";
 import { CodeHydraApiImpl } from "./api/codehydra-api";
 import { LifecycleApi } from "./api/lifecycle-api";
 import { generateProjectId } from "./api/id-utils";
@@ -287,15 +292,31 @@ async function startServices(): Promise<void> {
   // Register API handlers
   registerApiHandlers(codeHydraApi);
 
-  // Wire API events to IPC emission
-  apiEventCleanup = wireApiEvents(codeHydraApi, () => {
-    return viewManager?.getUIView().webContents ?? null;
-  });
+  // Default window title (used when no workspace is active)
+  const defaultTitle = formatWindowTitle(undefined, undefined, buildInfo.gitBranch);
+
+  // Capture references for closures (TypeScript narrow refinement doesn't persist)
+  const windowManagerRef = windowManager;
+  const appStateRef = appState;
+
+  // Wire API events to IPC emission (with window title updates)
+  apiEventCleanup = wireApiEvents(
+    codeHydraApi,
+    () => viewManager?.getUIView().webContents ?? null,
+    {
+      setTitle: (title) => windowManagerRef?.setTitle(title),
+      defaultTitle,
+      ...(buildInfo.gitBranch && { devBranch: buildInfo.gitBranch }),
+      getProjectName: (workspacePath) => {
+        const project = appStateRef?.findProjectForWorkspace(workspacePath);
+        return project?.name;
+      },
+    }
+  );
 
   // Wire agent status changes to API events
   // This bridges the AgentStatusManager callback to the v2 API event system
   const api = codeHydraApi as CodeHydraApiImpl;
-  const appStateRef = appState; // Capture for closure (appState is guaranteed non-null here)
   agentStatusCleanup = agentStatusManager.onStatusChanged((workspacePath, aggregatedStatus) => {
     // Find the project containing this workspace
     const project = appStateRef.findProjectForWorkspace(workspacePath);
@@ -343,6 +364,12 @@ async function startServices(): Promise<void> {
     const firstWorkspace = projects[0]?.workspaces[0];
     if (firstWorkspace) {
       viewManager.setActiveWorkspace(firstWorkspace.path);
+
+      // Set initial window title (workspace:switched event not emitted for startup activation)
+      const projectName = projects[0]?.name;
+      const workspaceName = firstWorkspace.path.split("/").pop();
+      const title = formatWindowTitle(projectName, workspaceName, buildInfo.gitBranch);
+      windowManager.setTitle(title);
     }
   }
 }

@@ -121,6 +121,15 @@ export class WindowManager {
   }
 
   /**
+   * Sets the window title.
+   *
+   * @param title - The new window title
+   */
+  setTitle(title: string): void {
+    this.window.setTitle(title);
+  }
+
+  /**
    * Closes the window.
    */
   close(): void {
