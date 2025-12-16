@@ -11,6 +11,7 @@ import { VscodeSetupService } from "./vscode-setup-service";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
+import { createSilentLogger } from "../logging";
 import { createTempDir } from "../test-utils";
 import type { ProcessRunner, ProcessResult } from "./types";
 import type { SpawnedProcess } from "../platform/process";
@@ -37,7 +38,7 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
 
   beforeEach(async () => {
     tempDir = await createTempDir();
-    fs = new DefaultFileSystemLayer();
+    fs = new DefaultFileSystemLayer(createSilentLogger());
   });
 
   afterEach(async () => {

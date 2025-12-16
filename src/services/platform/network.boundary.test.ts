@@ -8,7 +8,7 @@
  * @vitest-environment node
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { createServer, type Server } from "net";
 import { DefaultNetworkLayer, type HttpClient, type PortManager } from "./network";
 import { createTestServer, type TestServer } from "./network.test-utils";
@@ -184,30 +184,34 @@ describe("DefaultNetworkLayer boundary tests", () => {
 
   describe("PortManager.getListeningPorts()", () => {
     let networkLayer: PortManager;
-    let testServer: Server | null = null;
+    let testServers: Server[] = [];
 
     beforeEach(() => {
       networkLayer = new DefaultNetworkLayer(createSilentLogger());
     });
 
-    afterAll(async () => {
-      if (testServer) {
-        await new Promise<void>((resolve, reject) => {
-          testServer!.close((err) => {
-            if (err) reject(err);
-            else resolve();
-          });
-        }).catch(() => {
-          // Server already closed
-        });
-        testServer = null;
-      }
+    afterEach(async () => {
+      // Close all servers with timeout to prevent hanging
+      await Promise.all(
+        testServers.map(
+          (server) =>
+            new Promise<void>((resolve) => {
+              const timeout = setTimeout(() => resolve(), 1000);
+              server.close(() => {
+                clearTimeout(timeout);
+                resolve();
+              });
+            })
+        )
+      );
+      testServers = [];
     });
 
     it("getListeningPorts returns array of ListeningPort", async () => {
       // Create a server to ensure at least one listening port
-      testServer = createServer();
-      await new Promise<void>((resolve) => testServer!.listen(0, () => resolve()));
+      const server = createServer();
+      testServers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, () => resolve()));
 
       const ports = await networkLayer.getListeningPorts();
 
@@ -226,10 +230,11 @@ describe("DefaultNetworkLayer boundary tests", () => {
 
     it("getListeningPorts includes our test server port", async () => {
       // Create a server on a specific port
-      testServer = createServer();
-      await new Promise<void>((resolve) => testServer!.listen(0, () => resolve()));
+      const server = createServer();
+      testServers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, () => resolve()));
 
-      const serverAddress = testServer.address();
+      const serverAddress = server.address();
       const serverPort =
         typeof serverAddress === "object" && serverAddress ? serverAddress.port : 0;
 
@@ -241,7 +246,6 @@ describe("DefaultNetworkLayer boundary tests", () => {
     });
 
     it("getListeningPorts detects multiple servers", async () => {
-      const servers: Server[] = [];
       const serverPorts: number[] = [];
 
       // Create 3 servers
@@ -253,28 +257,16 @@ describe("DefaultNetworkLayer boundary tests", () => {
         if (addr && typeof addr === "object") {
           serverPorts.push(addr.port);
         }
-        servers.push(server);
+        testServers.push(server);
       }
 
-      try {
-        const ports = await networkLayer.getListeningPorts();
+      const ports = await networkLayer.getListeningPorts();
 
-        // All our server ports should be detected
-        for (const serverPort of serverPorts) {
-          const found = ports.find((p) => p.port === serverPort);
-          expect(found).toBeDefined();
-          expect(found?.pid).toBe(process.pid);
-        }
-      } finally {
-        // Cleanup all servers
-        await Promise.all(
-          servers.map(
-            (s) =>
-              new Promise<void>((resolve) => {
-                s.close(() => resolve());
-              })
-          )
-        );
+      // All our server ports should be detected
+      for (const serverPort of serverPorts) {
+        const found = ports.find((p) => p.port === serverPort);
+        expect(found).toBeDefined();
+        expect(found?.pid).toBe(process.pid);
       }
     });
   });
