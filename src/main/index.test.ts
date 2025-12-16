@@ -17,11 +17,14 @@ import nodePath from "node:path";
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
 
-// Mock Electron app module with getter
+// Mock Electron app module with getters and methods
 vi.mock("electron", () => ({
   app: {
     get isPackaged() {
       return mockIsPackaged;
+    },
+    getAppPath() {
+      return "/mock/app/path";
     },
   },
 }));

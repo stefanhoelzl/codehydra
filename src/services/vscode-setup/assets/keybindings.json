@@ -1,0 +1,4 @@
+[
+  { "key": "ctrl+j", "command": "-workbench.action.togglePanel" },
+  { "key": "alt+t", "command": "workbench.action.togglePanel" }
+]

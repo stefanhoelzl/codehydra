@@ -6,7 +6,7 @@
 import { join } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
 import type { FileSystemLayer } from "../platform/filesystem";
-import { VscodeSetupError, FileSystemError } from "../errors";
+import { VscodeSetupError } from "../errors";
 import {
   CURRENT_SETUP_VERSION,
   type IVscodeSetup,
@@ -14,8 +14,7 @@ import {
   type ProgressCallback,
   type SetupMarker,
   type ProcessRunner,
-  type VscodeSettings,
-  type VscodeKeybinding,
+  type ExtensionsConfig,
 } from "./types";
 
 /**
@@ -26,6 +25,7 @@ export class VscodeSetupService implements IVscodeSetup {
   private readonly pathProvider: PathProvider;
   private readonly codeServerBinaryPath: string;
   private readonly fs: FileSystemLayer;
+  private readonly assetsDir: string;
 
   constructor(
     processRunner: ProcessRunner,
@@ -37,6 +37,7 @@ export class VscodeSetupService implements IVscodeSetup {
     this.pathProvider = pathProvider;
     this.codeServerBinaryPath = codeServerBinaryPath;
     this.fs = fs;
+    this.assetsDir = pathProvider.vscodeAssetsDir;
   }
 
   /**
@@ -50,15 +51,11 @@ export class VscodeSetupService implements IVscodeSetup {
 
   /**
    * Run the full setup process.
-   * @param onProgress Optional callback for progress updates
-   * @returns Result indicating success or failure with error details
-   */
-  /**
-   * Run the full setup process.
    *
    * Preconditions:
    * - code-server binary exists at codeServerBinaryPath
    * - Network connectivity for extension marketplace
+   * - Asset files exist in assetsDir
    *
    * Postconditions on success:
    * - All extensions installed
@@ -69,19 +66,19 @@ export class VscodeSetupService implements IVscodeSetup {
    * @returns Result indicating success or failure with error details
    */
   async setup(onProgress?: ProgressCallback): Promise<SetupResult> {
-    // Step 1: Install custom extensions (codehydra)
-    await this.installCustomExtensions(onProgress);
+    // Step 0: Validate required assets exist
+    await this.validateAssets();
 
-    // Step 2: Install marketplace extensions (OpenCode)
-    const marketplaceResult = await this.installMarketplaceExtensions(onProgress);
-    if (!marketplaceResult.success) {
-      return marketplaceResult;
+    // Step 1: Install extensions (bundled and marketplace)
+    const extensionsResult = await this.installExtensions(onProgress);
+    if (!extensionsResult.success) {
+      return extensionsResult;
     }
 
-    // Step 3: Write config files
+    // Step 2: Write config files
     await this.writeConfigFiles(onProgress);
 
-    // Step 4: Write completion marker
+    // Step 3: Write completion marker
     await this.writeCompletionMarker(onProgress);
 
     return { success: true };
@@ -99,8 +96,8 @@ export class VscodeSetupService implements IVscodeSetup {
     // Security: Validate path is under app data directory
     if (!vscodeDir.startsWith(appDataRoot)) {
       throw new VscodeSetupError(
-        "path-validation",
-        `Invalid vscode directory path: ${vscodeDir} is not under ${appDataRoot}`
+        `Invalid vscode directory path: ${vscodeDir} is not under ${appDataRoot}`,
+        "path-validation"
       );
     }
 
@@ -109,84 +106,33 @@ export class VscodeSetupService implements IVscodeSetup {
   }
 
   /**
-   * Install custom extensions (codehydra extension).
-   * @param onProgress Optional callback for progress updates
+   * Validate that required asset files exist.
+   * @throws VscodeSetupError with type "missing-assets" if any asset is missing
    */
-  async installCustomExtensions(onProgress?: ProgressCallback): Promise<void> {
-    onProgress?.({ step: "extensions", message: "Installing codehydra extension..." });
+  async validateAssets(): Promise<void> {
+    const requiredAssets = ["settings.json", "keybindings.json", "extensions.json"];
+    const missingAssets: string[] = [];
 
-    const extensionDir = join(
-      this.pathProvider.vscodeExtensionsDir,
-      "codehydra.vscode-0.0.1-universal"
-    );
-    const packageJsonPath = join(extensionDir, "package.json");
-
-    // Check if extension already exists (idempotency) by trying to read the file
-    try {
-      await this.fs.readFile(packageJsonPath);
-      // Extension already exists, skip installation
-      return;
-    } catch (error) {
-      // File doesn't exist (ENOENT), proceed with installation
-      // Any other error is also fine to ignore - we'll just reinstall
-      if (error instanceof FileSystemError && error.fsCode !== "ENOENT") {
-        // Unexpected error reading file - log but proceed anyway
+    for (const asset of requiredAssets) {
+      try {
+        await this.fs.readFile(join(this.assetsDir, asset));
+      } catch {
+        missingAssets.push(asset);
       }
     }
 
-    await this.fs.mkdir(extensionDir);
-
-    // package.json content
-    const packageJson = {
-      name: "codehydra",
-      displayName: "Codehydra",
-      description: "Codehydra integration for VS Code",
-      version: "0.0.1",
-      publisher: "codehydra",
-      engines: {
-        vscode: "^1.74.0",
-      },
-      activationEvents: ["onStartupFinished"],
-      main: "./extension.js",
-      contributes: {},
-    };
-
-    // extension.js content
-    const extensionJs = `const vscode = require("vscode");
-
-async function activate(context) {
-  // Wait briefly for VS Code UI to stabilize
-  setTimeout(async () => {
-    try {
-      // Hide sidebars to maximize editor space
-      await vscode.commands.executeCommand("workbench.action.closeSidebar");
-      await vscode.commands.executeCommand("workbench.action.closeAuxiliaryBar");
-      // Open OpenCode terminal automatically for AI workflow
-      await vscode.commands.executeCommand("opencode.openTerminal");
-      // Unlock the editor group so files open in the same tab group
-      await vscode.commands.executeCommand("workbench.action.unlockEditorGroup");
-      // Clean up empty editor groups created by terminal opening
-      await vscode.commands.executeCommand("workbench.action.closeEditorsInOtherGroups");
-    } catch (err) {
-      console.error("codehydra extension error:", err);
+    if (missingAssets.length > 0) {
+      throw new VscodeSetupError(
+        `Required asset files not found: ${missingAssets.join(", ")}. ` +
+          `Expected at: ${this.assetsDir}`,
+        "missing-assets"
+      );
     }
-  }, 100);
-}
-
-function deactivate() {}
-
-module.exports = { activate, deactivate };
-`;
-
-    await this.fs.writeFile(
-      join(extensionDir, "package.json"),
-      JSON.stringify(packageJson, null, 2)
-    );
-    await this.fs.writeFile(join(extensionDir, "extension.js"), extensionJs);
   }
 
   /**
    * Write VS Code configuration files (settings.json, keybindings.json).
+   * Copies files from assets directory to user data directory.
    * @param onProgress Optional callback for progress updates
    */
   async writeConfigFiles(onProgress?: ProgressCallback): Promise<void> {
@@ -195,33 +141,13 @@ module.exports = { activate, deactivate };
     const userDir = join(this.pathProvider.vscodeUserDataDir, "User");
     await this.fs.mkdir(userDir);
 
-    // VS Code settings
-    // Auto-detect system theme so VS Code matches the UI layer's prefers-color-scheme
-    const settings: VscodeSettings = {
-      "workbench.startupEditor": "none",
-      "workbench.colorTheme": "Default Dark+",
-      "window.autoDetectColorScheme": true,
-      "workbench.preferredDarkColorTheme": "Default Dark+",
-      "workbench.preferredLightColorTheme": "Default Light+",
-      "extensions.autoUpdate": false,
-      "telemetry.telemetryLevel": "off",
-      "window.menuBarVisibility": "hidden",
-      "terminal.integrated.gpuAcceleration": "off",
-      "security.workspace.trust.enabled": false,
-      "security.workspace.trust.untrustedFiles": "open",
-      "security.workspace.trust.startupPrompt": "never",
-    };
+    // Copy settings.json from assets
+    await this.fs.copyTree(join(this.assetsDir, "settings.json"), join(userDir, "settings.json"));
 
-    // Keybindings: Remap Ctrl+J (Toggle Panel) to Alt+T
-    const keybindings: VscodeKeybinding[] = [
-      { key: "ctrl+j", command: "-workbench.action.togglePanel" },
-      { key: "alt+t", command: "workbench.action.togglePanel" },
-    ];
-
-    await this.fs.writeFile(join(userDir, "settings.json"), JSON.stringify(settings, null, 2));
-    await this.fs.writeFile(
-      join(userDir, "keybindings.json"),
-      JSON.stringify(keybindings, null, 2)
+    // Copy keybindings.json from assets
+    await this.fs.copyTree(
+      join(this.assetsDir, "keybindings.json"),
+      join(userDir, "keybindings.json")
     );
   }
 
@@ -244,16 +170,54 @@ module.exports = { activate, deactivate };
   }
 
   /**
-   * Install marketplace extensions (OpenCode).
+   * Install all extensions (bundled vsix and marketplace).
    * @param onProgress Optional callback for progress updates
    * @returns Result indicating success or failure
    */
-  async installMarketplaceExtensions(onProgress?: ProgressCallback): Promise<SetupResult> {
-    onProgress?.({ step: "extensions", message: "Installing OpenCode extension..." });
+  async installExtensions(onProgress?: ProgressCallback): Promise<SetupResult> {
+    // Load extensions config from assets
+    const configContent = await this.fs.readFile(join(this.assetsDir, "extensions.json"));
+    const config = JSON.parse(configContent) as ExtensionsConfig;
 
+    // Install bundled extensions (vsix files)
+    for (const vsixFilename of config.bundled) {
+      onProgress?.({ step: "extensions", message: `Installing ${vsixFilename}...` });
+
+      // Copy vsix from assets to vscode directory for installation
+      const srcPath = join(this.assetsDir, vsixFilename);
+      const destPath = join(this.pathProvider.vscodeDir, vsixFilename);
+      await this.fs.mkdir(this.pathProvider.vscodeDir);
+      await this.fs.copyTree(srcPath, destPath);
+
+      // Install the extension using code-server
+      const result = await this.runInstallExtension(destPath);
+      if (!result.success) {
+        return result;
+      }
+    }
+
+    // Install marketplace extensions
+    for (const extensionId of config.marketplace) {
+      onProgress?.({ step: "extensions", message: `Installing ${extensionId}...` });
+
+      const result = await this.runInstallExtension(extensionId);
+      if (!result.success) {
+        return result;
+      }
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Run code-server to install an extension.
+   * @param extensionIdOrPath Extension ID (marketplace) or path to vsix file
+   * @returns Result indicating success or failure
+   */
+  private async runInstallExtension(extensionIdOrPath: string): Promise<SetupResult> {
     const proc = this.processRunner.run(this.codeServerBinaryPath, [
       "--install-extension",
-      "sst-dev.opencode",
+      extensionIdOrPath,
       "--extensions-dir",
       this.pathProvider.vscodeExtensionsDir,
     ]);
@@ -276,7 +240,7 @@ module.exports = { activate, deactivate };
         success: false,
         error: {
           type: "network",
-          message: "Failed to install OpenCode extension",
+          message: `Failed to install extension: ${extensionIdOrPath}`,
           code: "EXTENSION_INSTALL_FAILED",
         },
       };

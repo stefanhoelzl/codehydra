@@ -39,6 +39,7 @@ describe("VscodeSetupService Integration", () => {
     extensionsDir: string;
     userDataDir: string;
     markerPath: string;
+    assetsDir: string;
   };
 
   /**
@@ -51,6 +52,53 @@ describe("VscodeSetupService Integration", () => {
     );
     await mkdir(dir, { recursive: true });
     return dir;
+  }
+
+  /**
+   * Creates mock asset files in the assets directory.
+   */
+  async function createMockAssets(assetsDir: string): Promise<void> {
+    await mkdir(assetsDir, { recursive: true });
+
+    // settings.json
+    await writeFile(
+      join(assetsDir, "settings.json"),
+      JSON.stringify({
+        "workbench.startupEditor": "none",
+        "workbench.colorTheme": "Default Dark+",
+        "window.autoDetectColorScheme": true,
+        "workbench.preferredDarkColorTheme": "Default Dark+",
+        "workbench.preferredLightColorTheme": "Default Light+",
+        "extensions.autoUpdate": false,
+        "telemetry.telemetryLevel": "off",
+        "window.menuBarVisibility": "hidden",
+        "terminal.integrated.gpuAcceleration": "off",
+        "security.workspace.trust.enabled": false,
+        "security.workspace.trust.untrustedFiles": "open",
+        "security.workspace.trust.startupPrompt": "never",
+      })
+    );
+
+    // keybindings.json
+    await writeFile(
+      join(assetsDir, "keybindings.json"),
+      JSON.stringify([
+        { key: "ctrl+j", command: "-workbench.action.togglePanel" },
+        { key: "alt+t", command: "workbench.action.togglePanel" },
+      ])
+    );
+
+    // extensions.json
+    await writeFile(
+      join(assetsDir, "extensions.json"),
+      JSON.stringify({
+        marketplace: ["sst-dev.opencode"],
+        bundled: ["codehydra.vscode-0.0.1.vsix"],
+      })
+    );
+
+    // Create a mock vsix file (just needs to exist for the test)
+    await writeFile(join(assetsDir, "codehydra.vscode-0.0.1.vsix"), "mock-vsix-content");
   }
 
   /**
@@ -89,7 +137,11 @@ describe("VscodeSetupService Integration", () => {
       extensionsDir: join(tempDir, "vscode", "extensions"),
       userDataDir: join(tempDir, "vscode", "user-data"),
       markerPath: join(tempDir, "vscode", ".setup-completed"),
+      assetsDir: join(tempDir, "assets"),
     };
+
+    // Create mock asset files
+    await createMockAssets(mockPaths.assetsDir);
 
     // Create PathProvider pointing to our temp directory
     testPathProvider = createMockPathProvider({
@@ -98,6 +150,7 @@ describe("VscodeSetupService Integration", () => {
       vscodeExtensionsDir: mockPaths.extensionsDir,
       vscodeUserDataDir: mockPaths.userDataDir,
       vscodeSetupMarkerPath: mockPaths.markerPath,
+      vscodeAssetsDir: mockPaths.assetsDir,
     });
   });
 
@@ -121,17 +174,12 @@ describe("VscodeSetupService Integration", () => {
 
       expect(result.success).toBe(true);
 
-      // Verify codehydra extension files
-      const extensionDir = join(mockPaths.extensionsDir, "codehydra.vscode-0.0.1-universal");
-      const packageJson = JSON.parse(await readFile(join(extensionDir, "package.json"), "utf-8"));
-      expect(packageJson.name).toBe("codehydra");
-      expect(packageJson.version).toBe("0.0.1");
+      // Verify vsix was copied to vscodeDir
+      const vsixPath = join(mockPaths.vscodeDir, "codehydra.vscode-0.0.1.vsix");
+      const vsixContent = await readFile(vsixPath, "utf-8");
+      expect(vsixContent).toBe("mock-vsix-content");
 
-      const extensionJs = await readFile(join(extensionDir, "extension.js"), "utf-8");
-      expect(extensionJs).toContain("function activate");
-      expect(extensionJs).toContain("opencode.openTerminal");
-
-      // Verify config files
+      // Verify config files were copied from assets
       const userDir = join(mockPaths.userDataDir, "User");
       const settings = JSON.parse(await readFile(join(userDir, "settings.json"), "utf-8"));
       expect(settings["workbench.colorTheme"]).toBe("Default Dark+");
@@ -169,14 +217,15 @@ describe("VscodeSetupService Integration", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(progressMessages).toContain("Installing codehydra extension...");
-      expect(progressMessages).toContain("Installing OpenCode extension...");
+      // New asset-based flow: bundled vsix first, then marketplace
+      expect(progressMessages).toContain("Installing codehydra.vscode-0.0.1.vsix...");
+      expect(progressMessages).toContain("Installing sst-dev.opencode...");
       expect(progressMessages).toContain("Writing configuration...");
       expect(progressMessages).toContain("Finalizing setup...");
 
-      // Verify order
-      const codehydraIndex = progressMessages.indexOf("Installing codehydra extension...");
-      const opencodeIndex = progressMessages.indexOf("Installing OpenCode extension...");
+      // Verify order: bundled extension, then marketplace, then config, then finalize
+      const codehydraIndex = progressMessages.indexOf("Installing codehydra.vscode-0.0.1.vsix...");
+      const opencodeIndex = progressMessages.indexOf("Installing sst-dev.opencode...");
       const configIndex = progressMessages.indexOf("Writing configuration...");
       const finalizeIndex = progressMessages.indexOf("Finalizing setup...");
 
@@ -221,7 +270,7 @@ describe("VscodeSetupService Integration", () => {
       await expect(access(mockPaths.markerPath)).rejects.toThrow();
     });
 
-    it("custom extension is created before marketplace extension", async () => {
+    it("bundled vsix is copied before extension install is attempted", async () => {
       const processRunner = createMockProcessRunner(1, "Failed");
       const service = new VscodeSetupService(
         processRunner,
@@ -232,10 +281,10 @@ describe("VscodeSetupService Integration", () => {
 
       await service.setup();
 
-      // Custom extension should exist (created before marketplace failure)
-      const extensionDir = join(mockPaths.extensionsDir, "codehydra.vscode-0.0.1-universal");
-      const packageJson = await readFile(join(extensionDir, "package.json"), "utf-8");
-      expect(JSON.parse(packageJson).name).toBe("codehydra");
+      // Vsix file should be copied (happens before install command)
+      const vsixPath = join(mockPaths.vscodeDir, "codehydra.vscode-0.0.1.vsix");
+      const vsixContent = await readFile(vsixPath, "utf-8");
+      expect(vsixContent).toBe("mock-vsix-content");
     });
   });
 
@@ -376,7 +425,8 @@ describe("VscodeSetupService Integration", () => {
       const service = new VscodeSetupService(
         realProcessRunner,
         testPathProvider,
-        getCodeServerTestPath()
+        getCodeServerTestPath(),
+        fsLayer
       );
 
       // Clean up any existing state first

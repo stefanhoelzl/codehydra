@@ -41,6 +41,7 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     vscodeSetupMarkerPath:
       overrides?.vscodeSetupMarkerPath ?? "/test/app-data/vscode/.setup-completed",
     electronDataDir: overrides?.electronDataDir ?? "/test/app-data/electron",
+    vscodeAssetsDir: overrides?.vscodeAssetsDir ?? "/mock/assets",
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

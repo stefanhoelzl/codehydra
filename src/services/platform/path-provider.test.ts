@@ -20,6 +20,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeUserDataDir).toBe("/test/app-data/vscode/user-data");
     expect(pathProvider.vscodeSetupMarkerPath).toBe("/test/app-data/vscode/.setup-completed");
     expect(pathProvider.electronDataDir).toBe("/test/app-data/electron");
+    expect(pathProvider.vscodeAssetsDir).toBe("/mock/assets");
   });
 
   it("accepts override for individual paths", () => {
@@ -43,6 +44,7 @@ describe("createMockPathProvider", () => {
       vscodeUserDataDir: "/e",
       vscodeSetupMarkerPath: "/f",
       electronDataDir: "/g",
+      vscodeAssetsDir: "/h",
     });
 
     expect(pathProvider.dataRootDir).toBe("/a");
@@ -52,6 +54,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeUserDataDir).toBe("/e");
     expect(pathProvider.vscodeSetupMarkerPath).toBe("/f");
     expect(pathProvider.electronDataDir).toBe("/g");
+    expect(pathProvider.vscodeAssetsDir).toBe("/h");
   });
 
   it("getProjectWorkspacesDir returns path with project hash", () => {
@@ -85,6 +88,7 @@ describe("createMockPathProvider", () => {
     expect(typeof pathProvider.vscodeUserDataDir).toBe("string");
     expect(typeof pathProvider.vscodeSetupMarkerPath).toBe("string");
     expect(typeof pathProvider.electronDataDir).toBe("string");
+    expect(typeof pathProvider.vscodeAssetsDir).toBe("string");
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
   });
 });
@@ -92,7 +96,7 @@ describe("createMockPathProvider", () => {
 describe("DefaultPathProvider", () => {
   describe("development mode", () => {
     it("returns ./app-data/ based paths", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: true });
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
@@ -109,8 +113,16 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.electronDataDir).toMatch(/app-data[/\\]electron$/);
     });
 
+    it("returns vscodeAssetsDir based on appPath", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/dev/project" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pathProvider.vscodeAssetsDir).toBe("/dev/project/out/main/assets");
+    });
+
     it("ignores platform in development mode", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: true });
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
 
       // All platforms should get the same dev path structure
       const linuxProvider = new DefaultPathProvider(
@@ -135,7 +147,10 @@ describe("DefaultPathProvider", () => {
 
   describe("production mode - Linux", () => {
     it("returns ~/.local/share/codehydra/ based paths", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
       const platformInfo = createMockPlatformInfo({
         platform: "linux",
         homeDir: "/home/testuser",
@@ -155,12 +170,18 @@ describe("DefaultPathProvider", () => {
         "/home/testuser/.local/share/codehydra/vscode/.setup-completed"
       );
       expect(pathProvider.electronDataDir).toBe("/home/testuser/.local/share/codehydra/electron");
+      expect(pathProvider.vscodeAssetsDir).toBe(
+        "/opt/codehydra/resources/app.asar/out/main/assets"
+      );
     });
   });
 
   describe("production mode - macOS", () => {
     it("returns ~/Library/Application Support/Codehydra/ based paths", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/Applications/Codehydra.app/Contents/Resources/app.asar",
+      });
       const platformInfo = createMockPlatformInfo({
         platform: "darwin",
         homeDir: "/Users/testuser",
@@ -193,7 +214,10 @@ describe("DefaultPathProvider", () => {
 
   describe("production mode - Windows", () => {
     it("returns <home>/AppData/Roaming/Codehydra/ based paths", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "C:/Program Files/Codehydra/resources/app.asar",
+      });
       // Use forward slashes for homeDir since Node's join() on Linux doesn't handle
       // Windows backslashes. The actual Windows runtime will use native separators.
       const platformInfo = createMockPlatformInfo({
@@ -217,7 +241,10 @@ describe("DefaultPathProvider", () => {
 
   describe("getProjectWorkspacesDir", () => {
     it("returns correct structure for absolute path", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
       const platformInfo = createMockPlatformInfo({
         platform: "linux",
         homeDir: "/home/testuser",
@@ -233,7 +260,10 @@ describe("DefaultPathProvider", () => {
     });
 
     it("throws TypeError for relative path", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
@@ -242,7 +272,10 @@ describe("DefaultPathProvider", () => {
     });
 
     it("throws TypeError for empty path", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 

@@ -1,5 +1,6 @@
 import { defineConfig } from "electron-vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { viteStaticCopy } from "vite-plugin-static-copy";
 import { resolve } from "path";
 
 export default defineConfig({
@@ -11,6 +12,16 @@ export default defineConfig({
         },
       },
     },
+    plugins: [
+      viteStaticCopy({
+        targets: [
+          { src: "src/services/vscode-setup/assets/settings.json", dest: "assets" },
+          { src: "src/services/vscode-setup/assets/keybindings.json", dest: "assets" },
+          { src: "src/services/vscode-setup/assets/extensions.json", dest: "assets" },
+          { src: "src/services/vscode-setup/assets/*.vsix", dest: "assets" },
+        ],
+      }),
+    ],
   },
   preload: {
     build: {

@@ -38,6 +38,7 @@ export function getGitBranch(): string {
 export class ElectronBuildInfo implements BuildInfo {
   readonly isDevelopment: boolean;
   readonly gitBranch?: string;
+  readonly appPath: string;
 
   constructor(gitBranchFn: () => string = getGitBranch) {
     // Cache at construction time - these values should never change during runtime
@@ -46,5 +47,10 @@ export class ElectronBuildInfo implements BuildInfo {
     if (this.isDevelopment) {
       this.gitBranch = gitBranchFn();
     }
+
+    // Use app.getAppPath() for consistent resolution across dev/prod
+    // In dev: returns project root (same as process.cwd())
+    // In prod: returns path inside ASAR archive
+    this.appPath = app.getAppPath();
   }
 }

@@ -1,0 +1,15 @@
+{
+  "name": "codehydra",
+  "displayName": "Codehydra",
+  "description": "Codehydra integration for VS Code",
+  "version": "0.0.1",
+  "publisher": "codehydra",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {}
+}

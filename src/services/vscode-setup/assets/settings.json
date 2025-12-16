@@ -1,0 +1,14 @@
+{
+  "workbench.startupEditor": "none",
+  "workbench.colorTheme": "Default Dark+",
+  "window.autoDetectColorScheme": true,
+  "workbench.preferredDarkColorTheme": "Default Dark+",
+  "workbench.preferredLightColorTheme": "Default Light+",
+  "extensions.autoUpdate": false,
+  "telemetry.telemetryLevel": "off",
+  "window.menuBarVisibility": "hidden",
+  "terminal.integrated.gpuAcceleration": "off",
+  "security.workspace.trust.enabled": false,
+  "security.workspace.trust.untrustedFiles": "open",
+  "security.workspace.trust.startupPrompt": "never"
+}

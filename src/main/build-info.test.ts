@@ -4,17 +4,20 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Track mock isPackaged value using vi.hoisted
+// Track mock state values using vi.hoisted
 const { mockState } = vi.hoisted(() => {
-  const state = { isPackaged: false };
+  const state = { isPackaged: false, appPath: "/mock/app/path" };
   return { mockState: state };
 });
 
-// Mock Electron app module with getter
+// Mock Electron app module with getters
 vi.mock("electron", () => ({
   app: {
     get isPackaged() {
       return mockState.isPackaged;
+    },
+    getAppPath() {
+      return mockState.appPath;
     },
   },
 }));
@@ -57,6 +60,29 @@ describe("ElectronBuildInfo", () => {
 
       // Should still return the original cached value
       expect(buildInfo.isDevelopment).toBe(true);
+    });
+  });
+
+  describe("appPath", () => {
+    it("returns the app path from Electron", () => {
+      mockState.appPath = "/test/electron/app";
+
+      const buildInfo = new ElectronBuildInfo();
+
+      expect(buildInfo.appPath).toBe("/test/electron/app");
+    });
+
+    it("is available in both dev and prod mode", () => {
+      mockState.appPath = "/some/path";
+
+      mockState.isPackaged = false;
+      const devInfo = new ElectronBuildInfo();
+
+      mockState.isPackaged = true;
+      const prodInfo = new ElectronBuildInfo();
+
+      expect(devInfo.appPath).toBe("/some/path");
+      expect(prodInfo.appPath).toBe("/some/path");
     });
   });
 

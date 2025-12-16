@@ -17,4 +17,11 @@ export interface BuildInfo {
    * - In prod mode: undefined
    */
   readonly gitBranch?: string;
+
+  /**
+   * Application root path for locating bundled resources.
+   * - In dev mode: process.cwd() (project root)
+   * - In prod mode: app.getAppPath() (inside ASAR archive)
+   */
+  readonly appPath: string;
 }

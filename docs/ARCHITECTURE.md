@@ -959,32 +959,67 @@ app.whenReady()
   Show SetupScreen     # Blocking UI with progress bar
        │
        ▼
+  validateAssets()     # Check settings.json, keybindings.json, extensions.json exist
+       │
+       ▼
   Run setup steps:
-  1. installCustomExtensions()   # codehydra extension
-  2. installMarketplaceExtensions() # OpenCode extension
-  3. writeConfigFiles()          # settings.json, keybindings.json
-  4. writeCompletionMarker()     # .setup-completed
+  1. installExtensions()     # bundled .vsix + marketplace extensions
+  2. writeConfigFiles()      # copy settings.json, keybindings.json from assets
+  3. writeCompletionMarker() # .setup-completed
        │
        ▼
   On success: Show "Setup complete!" (1.5s) → Continue to normal startup
   On failure: Show error with Retry/Quit buttons
 ```
 
+### Asset Files
+
+VS Code setup assets are stored as dedicated files (not inline code):
+
+```
+src/services/vscode-setup/assets/
+├── settings.json              # VS Code settings (theme, telemetry, etc.)
+├── keybindings.json           # Custom keybindings (Alt+T for panel toggle)
+├── extensions.json            # Extension manifest (marketplace + bundled)
+└── codehydra-extension/       # Custom extension source
+    ├── package.json
+    └── extension.js
+```
+
+### Build Process
+
+1. `npm run build:extension` - packages `codehydra-extension/` into `codehydra.vscode-0.0.1.vsix`
+2. `vite-plugin-static-copy` - copies all assets to `out/main/assets/` during build
+3. `npm run build` - runs both steps sequentially
+
+### Runtime Asset Resolution
+
+```
+out/main/assets/ (ASAR in prod)
+    │
+    ├─► settings.json ──► <app-data>/vscode/user-data/User/settings.json
+    ├─► keybindings.json ──► <app-data>/vscode/user-data/User/keybindings.json
+    └─► *.vsix ──► <app-data>/vscode/ ──► code-server --install-extension
+```
+
+- `PathProvider.vscodeAssetsDir` resolves to `<appPath>/out/main/assets/`
+- Node.js `fs` module reads transparently from ASAR in production
+- Files are copied to app-data before use (external processes can't read ASAR)
+
 ### Directory Structure
 
 ```
 <app-data>/
 ├── vscode/
-│   ├── .setup-completed           # JSON: { version: 1, completedAt: "ISO" }
+│   ├── .setup-completed           # JSON: { version: N, completedAt: "ISO" }
+│   ├── codehydra.vscode-0.0.1.vsix # Copied from assets for installation
 │   ├── extensions/
-│   │   ├── codehydra.vscode-0.0.1-universal/
-│   │   │   ├── package.json
-│   │   │   └── extension.js       # Auto-opens OpenCode terminal
-│   │   └── sst-dev.opencode-X.X.X-<platform>/
+│   │   ├── codehydra.vscode-0.0.1/   # Installed by code-server
+│   │   └── sst-dev.opencode-X.X.X/   # Installed by code-server
 │   └── user-data/
 │       └── User/
-│           ├── settings.json      # Dark theme, no telemetry, hidden menu
-│           └── keybindings.json   # Empty array
+│           ├── settings.json      # Copied from assets
+│           └── keybindings.json   # Copied from assets
 ├── runtime/                       # code-server runtime files
 └── projects/                      # Git worktrees
 ```
@@ -995,7 +1030,7 @@ The `.setup-completed` marker contains a version number. When `CURRENT_SETUP_VER
 
 ### Codehydra Extension
 
-The custom codehydra extension runs on VS Code startup to:
+The custom codehydra extension (packaged as `.vsix` at build time) runs on VS Code startup to:
 
 1. Close sidebars to maximize editor space
 2. Open OpenCode terminal automatically

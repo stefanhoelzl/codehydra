@@ -49,7 +49,6 @@ function createWorkspace(name: string, projectId: ProjectId): Workspace {
     projectId,
     name: name as WorkspaceName,
     branch: name,
-    metadata: {},
     path: `/test/project/.worktrees/${name}`,
     metadata: { base: "main" },
   };

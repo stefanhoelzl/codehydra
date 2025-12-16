@@ -12,6 +12,8 @@ const gitignorePath = path.resolve(__dirname, ".gitignore");
 
 export default tseslint.config(
   includeIgnoreFile(gitignorePath),
+  // Ignore VS Code extension assets - processed by vsce, not our build
+  { ignores: ["src/services/vscode-setup/assets/codehydra-extension/"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...svelte.configs.recommended,

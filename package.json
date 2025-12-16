@@ -8,7 +8,8 @@
     "preinstall": "node scripts/check-path-length.cjs",
     "setup": "npm install && npm run build",
     "dev": "npm run build && electron-vite dev",
-    "build": "electron-vite build",
+    "build:extension": "cd src/services/vscode-setup/assets/codehydra-extension && vsce package --no-dependencies -o ../codehydra.vscode-0.0.1.vsix",
+    "build": "npm run build:extension && electron-vite build",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:unit": "vitest run --exclude '**/*.integration.test.ts' --exclude '**/*.boundary.test.ts'",
@@ -48,6 +49,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "^4.0.15",
+    "@vscode/vsce": "^3.7.1",
     "code-server": "*",
     "electron": "^39.2.6",
     "electron-vite": "^4.0.1",
@@ -64,6 +66,7 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.48.1",
     "vite": "^7.2.6",
+    "vite-plugin-static-copy": "^3.1.4",
     "vitest": "^4.0.15"
   }
 }

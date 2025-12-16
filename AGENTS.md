@@ -36,8 +36,41 @@
 | Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                                                                                                                           |
 | WebContentsView | Electron view for embedding (not iframe)                                                                                                                                                                  |
 | Shortcut Mode   | Keyboard-driven navigation activated by Alt+X. All key detection in main process (ShortcutController). Actions: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project. Escape exits (renderer). |
-| VS Code Setup   | First-run setup that installs extensions and config; runs once before code-server starts; marker at `<app-data>/vscode/.setup-completed`                                                                  |
+| VS Code Setup   | First-run setup that installs extensions and config; runs once before code-server starts; marker at `<app-data>/vscode/.setup-completed`. See [VS Code Assets](#vs-code-assets) for details.              |
 | .keepfiles      | Config file in project root listing files to copy to new workspaces. Uses gitignore syntax with **inverted semantics** - listed patterns are COPIED (not ignored). Supports negation with `!` prefix.     |
+
+## VS Code Assets
+
+VS Code setup assets (settings, keybindings, extensions) are stored as dedicated files instead of inline code.
+
+### Asset Files
+
+| File                                                    | Purpose                                                    |
+| ------------------------------------------------------- | ---------------------------------------------------------- |
+| `src/services/vscode-setup/assets/settings.json`        | VS Code settings (theme, telemetry, workspace trust, etc.) |
+| `src/services/vscode-setup/assets/keybindings.json`     | Custom keybindings (Alt+T for panel toggle)                |
+| `src/services/vscode-setup/assets/extensions.json`      | Extension manifest (marketplace + bundled vsix)            |
+| `src/services/vscode-setup/assets/codehydra-extension/` | Custom extension source (packaged to .vsix at build)       |
+
+### Build Process
+
+1. **Extension packaging**: `npm run build:extension` uses `@vscode/vsce` to package `codehydra-extension/` into `codehydra.vscode-0.0.1.vsix`
+2. **Asset bundling**: `vite-plugin-static-copy` copies all assets to `out/main/assets/` during build
+3. **Full build**: `npm run build` runs both steps sequentially
+
+### Runtime Flow
+
+```
+out/main/assets/ (ASAR in prod)
+    │
+    ├─► settings.json ──► <app-data>/vscode/user-data/User/settings.json
+    ├─► keybindings.json ──► <app-data>/vscode/user-data/User/keybindings.json
+    └─► *.vsix ──► <app-data>/vscode/ ──► code-server --install-extension
+```
+
+- `PathProvider.vscodeAssetsDir` resolves to `<appPath>/out/main/assets/`
+- Node.js `fs` module reads transparently from ASAR in production
+- Files are copied to app-data before use (external processes can't read ASAR)
 
 ## View Detachment Pattern
 

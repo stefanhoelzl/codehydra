@@ -10,7 +10,7 @@ export type { ProcessRunner, ProcessResult } from "../platform/process";
  * Current version of the setup process.
  * Increment when setup steps change to force re-setup on existing installs.
  */
-export const CURRENT_SETUP_VERSION = 3;
+export const CURRENT_SETUP_VERSION = 4;
 
 /**
  * Setup steps for progress tracking.
@@ -46,6 +46,7 @@ export type SetupErrorType =
   | "binary-not-found"
   | "permission"
   | "disk-full"
+  | "missing-assets"
   | "unknown";
 
 /**
@@ -65,29 +66,13 @@ export type SetupResult =
   | { readonly success: false; readonly error: SetupError };
 
 /**
- * VS Code keybinding entry for user configuration.
+ * Structure of extensions.json asset file.
  */
-export interface VscodeKeybinding {
-  readonly key: string;
-  readonly command: string;
-}
-
-/**
- * VS Code settings structure for user configuration.
- */
-export interface VscodeSettings {
-  readonly "workbench.startupEditor": string;
-  readonly "workbench.colorTheme": string;
-  readonly "window.autoDetectColorScheme": boolean;
-  readonly "workbench.preferredDarkColorTheme": string;
-  readonly "workbench.preferredLightColorTheme": string;
-  readonly "extensions.autoUpdate": boolean;
-  readonly "telemetry.telemetryLevel": string;
-  readonly "window.menuBarVisibility": string;
-  readonly "terminal.integrated.gpuAcceleration": string;
-  readonly "security.workspace.trust.enabled": boolean;
-  readonly "security.workspace.trust.untrustedFiles": string;
-  readonly "security.workspace.trust.startupPrompt": string;
+export interface ExtensionsConfig {
+  /** Marketplace extension IDs (e.g., "sst-dev.opencode") */
+  readonly marketplace: readonly string[];
+  /** Bundled .vsix filenames (e.g., "codehydra.vscode-0.0.1.vsix") */
+  readonly bundled: readonly string[];
 }
 
 /**
