@@ -252,8 +252,13 @@ describe("CodeHydraApiImpl Integration", () => {
       const removedEvent = vi.fn();
       api.on("workspace:removed", removedEvent);
 
-      // Remove workspace
+      // Remove workspace (fire-and-forget, runs async)
       await api.workspaces.remove(project.id, "feature" as WorkspaceName);
+
+      // Wait for async deletion to complete
+      await vi.waitFor(() => {
+        expect(removedEvent).toHaveBeenCalledTimes(1);
+      });
 
       // Verify event contains correct WorkspaceRef
       expect(removedEvent).toHaveBeenCalledWith({

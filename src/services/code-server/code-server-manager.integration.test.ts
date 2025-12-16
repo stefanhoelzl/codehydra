@@ -9,6 +9,9 @@ import { join, delimiter } from "node:path";
 import { CodeServerManager } from "./code-server-manager";
 import { createMockSpawnedProcess } from "../platform/process.test-utils";
 import { createMockHttpClient, createMockPortManager } from "../platform/network.test-utils";
+import { createSilentLogger } from "../logging";
+
+const testLogger = createSilentLogger();
 
 describe("CodeServerManager Integration", () => {
   let originalEnv: NodeJS.ProcessEnv;
@@ -53,7 +56,13 @@ describe("CodeServerManager Integration", () => {
         binDir: "/app/bin",
       };
 
-      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
       await manager.ensureRunning();
 
       // Verify binDir is prepended with correct delimiter
@@ -79,7 +88,13 @@ describe("CodeServerManager Integration", () => {
         binDir: "/app/bin",
       };
 
-      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
       await manager.ensureRunning();
 
       // Verify EDITOR has absolute path and required flags
@@ -111,7 +126,13 @@ describe("CodeServerManager Integration", () => {
         binDir: "/app/bin",
       };
 
-      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
       await manager.ensureRunning();
 
       // Verify GIT_SEQUENCE_EDITOR matches EDITOR
@@ -143,7 +164,13 @@ describe("CodeServerManager Integration", () => {
         binDir: "/app/bin",
       };
 
-      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
       await manager.ensureRunning();
 
       // Verify VSCODE_* vars are removed
@@ -176,7 +203,13 @@ describe("CodeServerManager Integration", () => {
         binDir: "/app/bin",
       };
 
-      const manager = new CodeServerManager(config, processRunner, httpClient, portManager);
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
       await manager.ensureRunning();
 
       // Verify other vars are preserved
