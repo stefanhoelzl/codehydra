@@ -48,6 +48,7 @@ describe("Main process wiring", () => {
         runtimeDir: nodePath.join(pathProvider.dataRootDir, "runtime"),
         extensionsDir: pathProvider.vscodeExtensionsDir,
         userDataDir: pathProvider.vscodeUserDataDir,
+        binDir: pathProvider.binDir,
       };
     }
 
@@ -73,9 +74,15 @@ describe("Main process wiring", () => {
 
       const config = createCodeServerConfig(pathProvider);
 
-      expect(config.runtimeDir).toBe("/home/testuser/.local/share/codehydra/runtime");
-      expect(config.extensionsDir).toBe("/home/testuser/.local/share/codehydra/vscode/extensions");
-      expect(config.userDataDir).toBe("/home/testuser/.local/share/codehydra/vscode/user-data");
+      expect(config.runtimeDir).toBe(
+        nodePath.join("/home/testuser", ".local", "share", "codehydra", "runtime")
+      );
+      expect(config.extensionsDir).toBe(
+        nodePath.join("/home/testuser", ".local", "share", "codehydra", "vscode", "extensions")
+      );
+      expect(config.userDataDir).toBe(
+        nodePath.join("/home/testuser", ".local", "share", "codehydra", "vscode", "user-data")
+      );
     });
   });
 
@@ -110,15 +117,17 @@ describe("Main process wiring", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       // Verify all derived paths are correct
-      expect(pathProvider.dataRootDir).toBe("/Users/test/Library/Application Support/Codehydra");
+      expect(pathProvider.dataRootDir).toBe(
+        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra")
+      );
       expect(pathProvider.projectsDir).toBe(
-        "/Users/test/Library/Application Support/Codehydra/projects"
+        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "projects")
       );
       expect(pathProvider.vscodeDir).toBe(
-        "/Users/test/Library/Application Support/Codehydra/vscode"
+        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "vscode")
       );
       expect(pathProvider.electronDataDir).toBe(
-        "/Users/test/Library/Application Support/Codehydra/electron"
+        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "electron")
       );
     });
 
@@ -134,7 +143,14 @@ describe("Main process wiring", () => {
 
       expect(workspacesDir).toContain("myproject-");
       expect(workspacesDir).toMatch(/workspaces$/);
-      expect(workspacesDir.startsWith("/home/user/.local/share/codehydra/projects/")).toBe(true);
+      const expectedPrefix = nodePath.join(
+        "/home/user",
+        ".local",
+        "share",
+        "codehydra",
+        "projects"
+      );
+      expect(workspacesDir.startsWith(expectedPrefix)).toBe(true);
     });
   });
 });

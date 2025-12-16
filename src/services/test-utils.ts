@@ -48,8 +48,8 @@ export async function createTestGitRepo(options: CreateTestGitRepoOptions = {}):
 
   const git = simpleGit(path);
 
-  // Initialize repository
-  await git.init();
+  // Initialize repository with explicit branch name for cross-platform consistency
+  await git.init(["--initial-branch=main"]);
   await git.addConfig("user.email", "test@test.com");
   await git.addConfig("user.name", "Test User");
 
@@ -159,7 +159,7 @@ export async function createTestGitRepoWithRemote(): Promise<TestRepoWithRemoteR
   // Create working repo
   await mkdir(repoPath);
   const git = simpleGit(repoPath);
-  await git.init();
+  await git.init(["--initial-branch=main"]);
   await git.addConfig("user.email", "test@test.com");
   await git.addConfig("user.name", "Test User");
 

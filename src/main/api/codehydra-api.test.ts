@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CodeHydraApiImpl } from "./codehydra-api";
+import { generateProjectId } from "./id-utils";
 import type { AppState } from "../app-state";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { ProjectId, WorkspaceName, Project, Workspace } from "../../shared/api/types";
@@ -97,7 +98,8 @@ function createMockElectronApp(): typeof Electron.app {
 // =============================================================================
 
 const TEST_PROJECT_PATH = "/home/user/projects/my-app" as ProjectPath;
-const TEST_PROJECT_ID = "my-app-b9703f12" as ProjectId;
+// Compute dynamically for cross-platform compatibility (path normalization differs on Windows)
+const TEST_PROJECT_ID = generateProjectId(TEST_PROJECT_PATH);
 const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
 const TEST_WORKSPACE_PATH = "/home/user/.codehydra/projects/my-app/workspaces/feature-branch";
 
