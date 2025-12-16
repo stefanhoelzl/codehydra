@@ -3,13 +3,16 @@
  * Handles UI layer, workspace views, bounds, and focus management.
  */
 
-import { WebContentsView, type WebContents } from "electron";
+import { WebContentsView, session, type WebContents } from "electron";
+import { basename } from "node:path";
 import type { IViewManager, Unsubscribe } from "./view-manager.interface";
 import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { WindowManager } from "./window-manager";
 import { openExternal } from "../utils/external-url";
 import { ShortcutController } from "../shortcut-controller";
+import { projectDirName } from "../../services/platform/paths";
+import type { WorkspaceName } from "../../shared/api/types";
 
 /**
  * Sidebar minimized width in pixels.
@@ -29,6 +32,12 @@ const MIN_HEIGHT = 600;
  * Matches --ch-background fallback in variables.css.
  */
 const VIEW_BACKGROUND_COLOR = "#1e1e1e";
+
+/**
+ * Timeout for navigation to about:blank before closing a view.
+ * If navigation doesn't complete within this time, we proceed with closing.
+ */
+const NAVIGATION_TIMEOUT_MS = 2000;
 
 /**
  * Configuration for creating a ViewManager.
@@ -82,6 +91,11 @@ export class ViewManager implements IViewManager {
    * Used to ensure URL is only loaded on first activation (lazy loading).
    */
   private readonly loadedWorkspaces: Set<string> = new Set();
+  /**
+   * Map of workspace paths to their Electron partition names.
+   * Used for session isolation cleanup on workspace removal.
+   */
+  private readonly workspacePartitions: Map<string, string> = new Map();
   /**
    * Reentrant guard to prevent concurrent workspace changes.
    */
@@ -189,16 +203,27 @@ export class ViewManager implements IViewManager {
    *
    * @param workspacePath - Absolute path to the workspace directory
    * @param url - URL to load in the view (code-server URL)
+   * @param projectPath - Absolute path to the project directory (for partition naming)
    * @returns The created WebContentsView
    */
-  createWorkspaceView(workspacePath: string, url: string): WebContentsView {
-    // Create workspace view with security settings
+  createWorkspaceView(workspacePath: string, url: string, projectPath: string): WebContentsView {
+    // Generate partition name for session isolation
+    // Format: persist:<projectDirName>/<workspaceName>
+    // Using persist: prefix to enable persistent storage across app restarts
+    const workspaceName = basename(workspacePath) as WorkspaceName;
+    const partitionName = `persist:${projectDirName(projectPath)}/${workspaceName}`;
+
+    // Store partition name for later cleanup
+    this.workspacePartitions.set(workspacePath, partitionName);
+
+    // Create workspace view with security settings and partition for session isolation
     // Note: No preload script - keyboard capture is handled via main-process before-input-event
     const view = new WebContentsView({
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
+        partition: partitionName,
       },
     });
 
@@ -249,13 +274,19 @@ export class ViewManager implements IViewManager {
   /**
    * Destroys a workspace view.
    *
+   * Navigates to about:blank before closing to ensure resources are released.
+   * Uses a timeout to ensure destruction completes even if navigation hangs.
+   *
    * @param workspacePath - Absolute path to the workspace directory
    */
-  destroyWorkspaceView(workspacePath: string): void {
+  async destroyWorkspaceView(workspacePath: string): Promise<void> {
     const view = this.workspaceViews.get(workspacePath);
     if (!view) {
       return;
     }
+
+    // Save partition name before removing from map (needed for storage clearing)
+    const partitionName = this.workspacePartitions.get(workspacePath);
 
     // Unregister from shortcut controller
     this.shortcutController.unregisterView(view.webContents);
@@ -264,6 +295,7 @@ export class ViewManager implements IViewManager {
     this.workspaceViews.delete(workspacePath);
     this.workspaceUrls.delete(workspacePath);
     this.loadedWorkspaces.delete(workspacePath);
+    this.workspacePartitions.delete(workspacePath);
 
     // If this was the active workspace, clear it
     if (this.activeWorkspacePath === workspacePath) {
@@ -282,9 +314,32 @@ export class ViewManager implements IViewManager {
         window.contentView.removeChildView(view);
       }
 
-      // Close webContents only if not already destroyed
+      // Navigate to about:blank before closing (to release resources)
+      // Only if webContents is not already destroyed
       if (!view.webContents.isDestroyed()) {
-        view.webContents.close();
+        // Create a timeout promise that resolves (not rejects) after NAVIGATION_TIMEOUT_MS
+        const timeoutPromise = new Promise<void>((resolve) => {
+          setTimeout(resolve, NAVIGATION_TIMEOUT_MS);
+        });
+
+        // Race navigation against timeout - both resolve, so no unhandled rejections
+        await Promise.race([view.webContents.loadURL("about:blank"), timeoutPromise]);
+
+        // Close webContents after navigation (or timeout)
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.close();
+        }
+      }
+
+      // Clear partition storage (best-effort - log errors and continue)
+      if (partitionName) {
+        try {
+          const sess = session.fromPartition(partitionName);
+          await sess.clearStorageData();
+        } catch {
+          // Intentional empty catch: Best-effort cleanup - storage clearing may fail
+          // if session is in use or already cleared. We continue regardless.
+        }
       }
     } catch {
       // Ignore errors during cleanup - view may be in an inconsistent state
@@ -353,8 +408,11 @@ export class ViewManager implements IViewManager {
 
     if (!view || !url) return;
 
-    void view.webContents.loadURL(url);
+    // Mark as loaded first to prevent re-entry
     this.loadedWorkspaces.add(workspacePath);
+
+    // Load the URL
+    void view.webContents.loadURL(url);
   }
 
   /**
@@ -600,9 +658,9 @@ export class ViewManager implements IViewManager {
     // Dispose shortcut controller
     this.shortcutController.dispose();
 
-    // Destroy all workspace views
+    // Destroy all workspace views (fire-and-forget - app is shutting down)
     for (const path of this.workspaceViews.keys()) {
-      this.destroyWorkspaceView(path);
+      void this.destroyWorkspaceView(path);
     }
 
     // Close UI view only if not already destroyed (can happen during window close)

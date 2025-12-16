@@ -213,3 +213,13 @@ export interface NonOpenCodePortEntry {
   readonly pid: number;
   readonly timestamp: number;
 }
+
+// ============ Discovered Instance ============
+
+/**
+ * Information about a discovered OpenCode instance.
+ * Contains only the port number - PID tracking is internal to DiscoveryService.
+ */
+export interface DiscoveredInstance {
+  readonly port: number;
+}

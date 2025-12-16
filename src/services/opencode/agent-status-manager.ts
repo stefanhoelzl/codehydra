@@ -4,7 +4,7 @@
  */
 
 import type { WorkspacePath, AgentStatusCounts, AggregatedAgentStatus } from "../../shared/ipc";
-import type { IDisposable, Unsubscribe, ClientStatus } from "./types";
+import type { IDisposable, Unsubscribe, ClientStatus, DiscoveredInstance } from "./types";
 import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./opencode-client";
 import type { DiscoveryService } from "./discovery-service";
 
@@ -49,15 +49,16 @@ class OpenCodeProvider implements IDisposable {
   private readonly statusChangeListeners = new Set<() => void>();
 
   /**
-   * Sync clients with discovered ports.
+   * Sync clients with discovered instances.
    * Returns ports that were newly added (need initialization).
    */
-  syncClients(ports: Set<number>): Set<number> {
+  syncClients(instances: ReadonlyArray<DiscoveredInstance>): Set<number> {
     const newPorts = new Set<number>();
+    const currentPorts = new Set(instances.map((i) => i.port));
 
     // Remove clients for ports that no longer exist
     for (const [port, client] of this.clients) {
-      if (!ports.has(port)) {
+      if (!currentPorts.has(port)) {
         client.dispose();
         this.clients.delete(port);
         this.clientStatuses.delete(port);
@@ -72,7 +73,7 @@ class OpenCodeProvider implements IDisposable {
     }
 
     // Add clients for new ports (don't connect yet - need to fetch root sessions first)
-    for (const port of ports) {
+    for (const { port } of instances) {
       if (!this.clients.has(port)) {
         const client = new OpenCodeClient(port, this.sdkFactory);
         // Subscribe to status changes from client
@@ -258,9 +259,9 @@ export class AgentStatusManager implements IDisposable {
     sdkFactory: SdkClientFactory | undefined = undefined
   ) {
     this.sdkFactory = sdkFactory;
-    // Subscribe to discovery service for port changes
-    this.discoveryUnsubscribe = discoveryService.onInstancesChanged((workspace, ports) => {
-      this.handleInstancesChanged(workspace as WorkspacePath, ports);
+    // Subscribe to discovery service for instance changes
+    this.discoveryUnsubscribe = discoveryService.onInstancesChanged((workspace, instances) => {
+      this.handleInstancesChanged(workspace as WorkspacePath, instances);
     });
   }
 
@@ -276,9 +277,9 @@ export class AgentStatusManager implements IDisposable {
     // Subscribe to status changes (includes permission changes)
     provider.onStatusChange(() => this.updateStatus(path));
 
-    // Get current ports for this workspace
-    const ports = this.discoveryService.getPortsForWorkspace(path);
-    const newPorts = provider.syncClients(ports);
+    // Get current instances for this workspace
+    const instances = this.discoveryService.getInstancesForWorkspace(path);
+    const newPorts = provider.syncClients(instances);
 
     // Initialize new clients (fetch root sessions + connect SSE)
     await provider.initializeNewClients(newPorts);
@@ -339,10 +340,13 @@ export class AgentStatusManager implements IDisposable {
     this.listeners.clear();
   }
 
-  private handleInstancesChanged(workspace: WorkspacePath, ports: Set<number>): void {
+  private handleInstancesChanged(
+    workspace: WorkspacePath,
+    instances: ReadonlyArray<DiscoveredInstance>
+  ): void {
     const provider = this.providers.get(workspace);
     if (provider) {
-      const newPorts = provider.syncClients(ports);
+      const newPorts = provider.syncClients(instances);
       // Initialize new clients (fetch root sessions + connect SSE), then fetch statuses
       void provider
         .initializeNewClients(newPorts)

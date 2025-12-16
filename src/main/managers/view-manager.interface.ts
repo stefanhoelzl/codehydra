@@ -28,18 +28,25 @@ export interface IViewManager {
    * The view starts in a detached state to minimize GPU usage.
    * URL is loaded lazily when the workspace is first activated via setActiveWorkspace.
    *
+   * Uses per-workspace Electron partitions for session isolation (localStorage, cookies).
+   * Partition name format: persist:<projectDirName>/<workspaceName>
+   *
    * @param workspacePath - Absolute path to the workspace directory
    * @param url - URL to load in the view (code-server URL) - stored for lazy loading
+   * @param projectPath - Absolute path to the project directory (for partition naming)
    * @returns The created WebContentsView (detached, URL not loaded)
    */
-  createWorkspaceView(workspacePath: string, url: string): WebContentsView;
+  createWorkspaceView(workspacePath: string, url: string, projectPath: string): WebContentsView;
 
   /**
    * Destroys a workspace view.
    *
+   * Navigates to about:blank before closing to ensure resources are released.
+   * Uses a timeout to ensure destruction completes even if navigation hangs.
+   *
    * @param workspacePath - Absolute path to the workspace directory
    */
-  destroyWorkspaceView(workspacePath: string): void;
+  destroyWorkspaceView(workspacePath: string): Promise<void>;
 
   /**
    * Gets a workspace view by path.

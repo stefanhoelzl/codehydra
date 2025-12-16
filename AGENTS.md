@@ -43,11 +43,11 @@
 
 For GPU optimization, workspace views use **detachment** instead of zero-bounds hiding:
 
-| State    | contentView | URL Loaded | GPU Usage |
-| -------- | ----------- | ---------- | --------- |
-| Created  | Detached    | No         | None      |
-| Active   | Attached    | Yes        | Active    |
-| Inactive | Detached    | Yes        | None      |
+| State    | contentView | URL Loaded | GPU Usage | Session Partition                          |
+| -------- | ----------- | ---------- | --------- | ------------------------------------------ |
+| Created  | Detached    | No         | None      | `persist:<projectDirName>/<workspaceName>` |
+| Active   | Attached    | Yes        | Active    | (same)                                     |
+| Inactive | Detached    | Yes        | None      | (same)                                     |
 
 **Key behaviors:**
 
@@ -56,6 +56,13 @@ For GPU optimization, workspace views use **detachment** instead of zero-bounds 
 - On subsequent activations: view is attached (URL already loaded)
 - On deactivation: view is detached (removed from contentView)
 - **Attach-before-detach**: New view is attached BEFORE old view is detached for visual continuity
+- **Session isolation**: Each workspace has its own Electron partition for isolated localStorage/cookies
+
+**On destruction:**
+
+1. Navigate to `about:blank` (releases page resources)
+2. Clear partition storage via `session.clearStorageData()`
+3. Close the WebContentsView
 
 **Rationale**: With >5 workspaces, zero-bounds hiding still consumed GPU resources. Detaching views entirely eliminates GPU usage for inactive workspaces.
 

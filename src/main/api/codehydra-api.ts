@@ -409,8 +409,8 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
         // Remove workspace via provider (deleteBase is inverted from keepBranch)
         const result = await provider.removeWorkspace(workspace.path, !keepBranch);
 
-        // Update AppState
-        this.appState.removeWorkspace(projectPath, workspace.path);
+        // Update AppState (async - kills OpenCode processes, cleans up view)
+        await this.appState.removeWorkspace(projectPath, workspace.path);
 
         // Emit event
         this.emit("workspace:removed", {

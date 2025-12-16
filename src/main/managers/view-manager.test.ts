@@ -16,7 +16,13 @@ vi.mock("../shortcut-controller", () => ({
 }));
 
 // Mock Electron and external-url before imports
-const { mockWindowManager, MockWebContentsViewClass, mockOpenExternal } = vi.hoisted(() => {
+const {
+  mockWindowManager,
+  MockWebContentsViewClass,
+  mockOpenExternal,
+  mockSession,
+  mockFromPartition,
+} = vi.hoisted(() => {
   const createMockView = () => ({
     setBounds: vi.fn(),
     setBackgroundColor: vi.fn(),
@@ -68,6 +74,13 @@ const { mockWindowManager, MockWebContentsViewClass, mockOpenExternal } = vi.hoi
     onResize: vi.fn(() => vi.fn()),
   };
 
+  // Mock session for partition storage clearing
+  const mockSession = {
+    clearStorageData: vi.fn(() => Promise.resolve()),
+  };
+
+  const mockFromPartition = vi.fn(() => mockSession);
+
   return {
     mockWebContentsView: createMockView(),
     mockWindowManager,
@@ -81,11 +94,16 @@ const { mockWindowManager, MockWebContentsViewClass, mockOpenExternal } = vi.hoi
     },
     createdViews,
     mockOpenExternal: vi.fn(),
+    mockSession,
+    mockFromPartition,
   };
 });
 
 vi.mock("electron", () => ({
   WebContentsView: MockWebContentsViewClass,
+  session: {
+    fromPartition: mockFromPartition,
+  },
 }));
 
 vi.mock("../utils/external-url", () => ({
@@ -191,7 +209,11 @@ describe("ViewManager", () => {
       // Clear calls from create (UI view)
       mockWindowManager.getWindow().contentView.addChildView.mockClear();
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // Workspace view should NOT be added to contentView (detached by default)
       expect(mockWindowManager.getWindow().contentView.addChildView).not.toHaveBeenCalled();
@@ -203,7 +225,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       // loadURL should NOT be called during creation (deferred to first activation)
@@ -216,7 +242,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // View should be stored in map and retrievable
       const view = manager.getWorkspaceView("/path/to/workspace");
@@ -230,14 +260,19 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
-      // Second call should be for workspace view - no preload script
+      // Second call should be for workspace view - no preload script, but has partition
       expect(MockWebContentsViewClass.mock.calls[1]?.[0]).toEqual({
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
           sandbox: true,
+          partition: expect.stringMatching(/^persist:project-[a-f0-9]+\/workspace$/),
         },
       });
     });
@@ -248,7 +283,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
 
       // URL is NOT loaded on creation (lazy loading)
@@ -267,8 +306,16 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
       const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
 
       // First activation - URL should be loaded
@@ -295,7 +342,11 @@ describe("ViewManager", () => {
       // Clear calls from UI view creation
       mockWindowManager.getWindow().contentView.addChildView.mockClear();
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // View is NOT added on creation (starts detached)
       expect(mockWindowManager.getWindow().contentView.addChildView).not.toHaveBeenCalled();
@@ -314,7 +365,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       expect(workspaceView?.webContents.setWindowOpenHandler).toHaveBeenCalled();
@@ -328,7 +383,8 @@ describe("ViewManager", () => {
 
       const view = manager.createWorkspaceView(
         "/path/to/workspace",
-        "http://localhost:8080/?folder=/path"
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
       );
 
       const expectedView = MockWebContentsViewClass.mock.results[1]?.value;
@@ -344,7 +400,11 @@ describe("ViewManager", () => {
       });
 
       // Create view (detached by default)
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // Destroy detached view - should not throw
       expect(() => manager.destroyWorkspaceView("/path/to/workspace")).not.toThrow();
@@ -356,7 +416,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // Activate the workspace (attaches it)
       manager.setActiveWorkspace("/path/to/workspace");
@@ -375,7 +439,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.destroyWorkspaceView("/path/to/workspace");
 
       // View should be gone
@@ -383,7 +451,11 @@ describe("ViewManager", () => {
 
       // If we recreate a view with same path, it should work (URL map was cleaned)
       expect(() => {
-        manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path2");
+        manager.createWorkspaceView(
+          "/path/to/workspace",
+          "http://localhost:8080/?folder=/path2",
+          "/path/to/project"
+        );
       }).not.toThrow();
     });
 
@@ -394,7 +466,11 @@ describe("ViewManager", () => {
       });
 
       // Create and activate workspace (this loads the URL)
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
@@ -404,7 +480,11 @@ describe("ViewManager", () => {
       manager.destroyWorkspaceView("/path/to/workspace");
 
       // Recreate workspace with same path
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const newWorkspaceView = MockWebContentsViewClass.mock.results[2]?.value;
 
       // URL should be NOT loaded yet (lazy loading)
@@ -421,22 +501,30 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.destroyWorkspaceView("/path/to/workspace");
 
       expect(mockWindowManager.getWindow().contentView.removeChildView).toHaveBeenCalled();
     });
 
-    it("closes webContents", () => {
+    it("closes webContents", async () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
 
-      manager.destroyWorkspaceView("/path/to/workspace");
+      await manager.destroyWorkspaceView("/path/to/workspace");
 
       expect(workspaceView?.webContents.close).toHaveBeenCalled();
     });
@@ -447,7 +535,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.destroyWorkspaceView("/path/to/workspace");
 
       expect(manager.getWorkspaceView("/path/to/workspace")).toBeUndefined();
@@ -459,7 +551,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
 
       // Simulate the view being already destroyed (e.g., window closing)
@@ -475,7 +571,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
 
       // Simulate the view being already destroyed
@@ -494,7 +594,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
 
       // Simulate the view throwing when accessing webContents (destroyed state)
@@ -509,13 +613,17 @@ describe("ViewManager", () => {
       expect(manager.getWorkspaceView("/path/to/workspace")).toBeUndefined();
     });
 
-    it("skips removeChildView when window is destroyed", () => {
+    it("skips removeChildView when window is destroyed", async () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const mockWindow = mockWindowManager.getWindow();
 
       // Simulate window being destroyed
@@ -523,13 +631,211 @@ describe("ViewManager", () => {
       mockWindow.contentView.removeChildView.mockClear();
 
       // Should not throw
-      expect(() => manager.destroyWorkspaceView("/path/to/workspace")).not.toThrow();
+      await expect(manager.destroyWorkspaceView("/path/to/workspace")).resolves.not.toThrow();
 
       // removeChildView should NOT be called on destroyed window
       expect(mockWindow.contentView.removeChildView).not.toHaveBeenCalled();
 
       // Reset for other tests
       mockWindow.isDestroyed = vi.fn(() => false);
+    });
+
+    it("destroyWorkspaceView-async: returns a Promise", async () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const result = manager.destroyWorkspaceView("/path/to/workspace");
+
+      expect(result).toBeInstanceOf(Promise);
+      await result;
+    });
+
+    it("destroyWorkspaceView-about-blank: navigates to about:blank before close", async () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      workspaceView?.webContents.loadURL.mockClear();
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Should navigate to about:blank before closing
+      expect(workspaceView?.webContents.loadURL).toHaveBeenCalledWith("about:blank");
+      expect(workspaceView?.webContents.close).toHaveBeenCalled();
+    });
+
+    it("destroyWorkspaceView-about-blank-order: about:blank called before close", async () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // Track call order
+      const callOrder: string[] = [];
+      workspaceView?.webContents.loadURL.mockImplementation(() => {
+        callOrder.push("loadURL");
+        return Promise.resolve();
+      });
+      workspaceView?.webContents.close.mockImplementation(() => {
+        callOrder.push("close");
+      });
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // loadURL (about:blank) should be called before close
+      expect(callOrder).toEqual(["loadURL", "close"]);
+    });
+
+    it("destroyWorkspaceView-timeout: continues after navigation timeout", async () => {
+      vi.useFakeTimers();
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // Make loadURL hang (never resolve)
+      workspaceView?.webContents.loadURL.mockImplementation(() => new Promise(() => {}));
+
+      // Start destroy
+      const destroyPromise = manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Advance past timeout
+      await vi.advanceTimersByTimeAsync(3000);
+
+      // Should complete despite loadURL hanging
+      await destroyPromise;
+
+      // Close should still be called after timeout
+      expect(workspaceView?.webContents.close).toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it("destroyWorkspaceView-skip-about-blank-destroyed: skips about:blank when view is destroyed", async () => {
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+      const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
+
+      // Simulate the view being already destroyed
+      workspaceView.webContents.isDestroyed = vi.fn(() => true);
+      workspaceView.webContents.loadURL.mockClear();
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Should NOT try to load about:blank on destroyed view
+      expect(workspaceView.webContents.loadURL).not.toHaveBeenCalled();
+    });
+
+    it("destroyWorkspaceView-clear-storage: calls session.clearStorageData()", async () => {
+      mockFromPartition.mockClear();
+      mockSession.clearStorageData.mockClear();
+
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Should get session for the partition and clear its storage
+      expect(mockFromPartition).toHaveBeenCalledWith(
+        expect.stringMatching(/^persist:project-[a-f0-9]+\/workspace$/)
+      );
+      expect(mockSession.clearStorageData).toHaveBeenCalled();
+    });
+
+    it("destroyWorkspaceView-clear-storage-error: handles clearStorageData errors gracefully", async () => {
+      mockFromPartition.mockClear();
+      mockSession.clearStorageData.mockClear();
+      mockSession.clearStorageData.mockRejectedValueOnce(new Error("Storage busy"));
+
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Should not throw even if clearStorageData fails
+      await expect(manager.destroyWorkspaceView("/path/to/workspace")).resolves.not.toThrow();
+    });
+
+    it("destroyWorkspaceView-partition-map-cleanup: cleans up partition name map", async () => {
+      mockFromPartition.mockClear();
+      mockSession.clearStorageData.mockClear();
+
+      const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
+        uiPreloadPath: "/path/to/preload.js",
+        codeServerPort: 8080,
+      });
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Now create a new workspace with the same path - should work (partition map was cleaned)
+      mockFromPartition.mockClear();
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Should be called again for the new view
+      expect(mockFromPartition).toHaveBeenCalled();
     });
   });
 
@@ -540,7 +846,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const view = manager.getWorkspaceView("/path/to/workspace");
 
       const expectedView = MockWebContentsViewClass.mock.results[1]?.value;
@@ -567,8 +877,16 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
       const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
       const workspaceView2 = MockWebContentsViewClass.mock.results[2]?.value;
 
@@ -599,8 +917,16 @@ describe("ViewManager", () => {
       });
 
       // Create workspaces but don't activate any
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
       const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
       const workspaceView2 = MockWebContentsViewClass.mock.results[2]?.value;
 
@@ -641,7 +967,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
       manager.updateBounds();
 
@@ -661,8 +991,16 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace1");
 
       const inactiveView = MockWebContentsViewClass.mock.results[2]?.value;
@@ -682,7 +1020,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
       manager.updateBounds();
 
@@ -704,7 +1046,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
 
       // Clear calls from create
@@ -728,8 +1074,16 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
       const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
       const workspaceView2 = MockWebContentsViewClass.mock.results[2]?.value;
 
@@ -768,8 +1122,16 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
       const workspaceView1 = MockWebContentsViewClass.mock.results[1]?.value;
 
       // Activate first workspace
@@ -793,7 +1155,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // Activate workspace
       manager.setActiveWorkspace("/path/to/workspace");
@@ -816,7 +1182,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
 
       // Activate workspace
@@ -840,7 +1210,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // Make addChildView throw only once
       mockWindowManager.getWindow().contentView.addChildView.mockImplementationOnce(() => {
@@ -857,8 +1231,16 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
 
       // Activate first workspace
       manager.setActiveWorkspace("/path/to/workspace1");
@@ -879,8 +1261,16 @@ describe("ViewManager", () => {
       });
       const uiView = MockWebContentsViewClass.mock.results[0]?.value;
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
 
       // Enable dialog mode
       manager.setMode("dialog");
@@ -904,7 +1294,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
       manager.updateBounds();
 
@@ -921,7 +1315,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
 
       // Clear mocks to track detach
@@ -943,7 +1341,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
@@ -956,7 +1358,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       workspaceView?.webContents.focus.mockClear();
 
@@ -971,7 +1377,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       workspaceView?.webContents.focus.mockClear();
 
@@ -988,7 +1398,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace", false); // Set active without focusing
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       workspaceView?.webContents.focus.mockClear();
@@ -1030,7 +1444,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
       const handler = workspaceView?.webContents.setWindowOpenHandler.mock
@@ -1050,7 +1468,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
 
@@ -1077,7 +1499,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
 
@@ -1115,22 +1541,33 @@ describe("ViewManager", () => {
       expect(unsubscribe).toHaveBeenCalled();
     });
 
-    it("destroys all workspace views", () => {
+    it("destroys all workspace views", async () => {
       const manager = ViewManager.create(mockWindowManager as unknown as WindowManager, {
         uiPreloadPath: "/path/to/preload.js",
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace1", "http://localhost:8080/?folder=/path1");
-      manager.createWorkspaceView("/path/to/workspace2", "http://localhost:8080/?folder=/path2");
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://localhost:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://localhost:8080/?folder=/path2",
+        "/path/to/project"
+      );
 
       const workspaceView1 = MockWebContentsViewClass.mock.results[1]!.value;
       const workspaceView2 = MockWebContentsViewClass.mock.results[2]!.value;
 
       manager.destroy();
 
-      expect(workspaceView1.webContents.close).toHaveBeenCalled();
-      expect(workspaceView2.webContents.close).toHaveBeenCalled();
+      // destroy() fires-and-forgets async cleanup, wait for it to complete
+      await vi.waitFor(() => {
+        expect(workspaceView1.webContents.close).toHaveBeenCalled();
+        expect(workspaceView2.webContents.close).toHaveBeenCalled();
+      });
     });
 
     it("closes UI view", () => {
@@ -1152,7 +1589,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const uiView = MockWebContentsViewClass.mock.results[0]!.value;
       const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
@@ -1189,7 +1630,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const uiView = MockWebContentsViewClass.mock.results[0]!.value;
       const workspaceView = MockWebContentsViewClass.mock.results[1]!.value;
@@ -1212,7 +1657,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       const mockWindow = mockWindowManager.getWindow();
       // Simulate window being destroyed
@@ -1259,7 +1708,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       expect(mockShortcutController.registerView).toHaveBeenCalled();
     });
@@ -1270,7 +1723,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.destroyWorkspaceView("/path/to/workspace");
 
       expect(mockShortcutController.unregisterView).toHaveBeenCalled();
@@ -1293,7 +1750,11 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
 
       // Second call is for workspace view - should NOT have preload
       const workspaceViewConfig = MockWebContentsViewClass.mock.calls[1]?.[0] as {
@@ -1331,7 +1792,11 @@ describe("ViewManager", () => {
       });
 
       // Create and activate workspace
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
 
       const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
@@ -1369,7 +1834,11 @@ describe("ViewManager", () => {
       });
 
       // Create and activate workspace
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
 
       const uiView = MockWebContentsViewClass.mock.results[0]?.value;
@@ -1408,7 +1877,11 @@ describe("ViewManager", () => {
       });
 
       // Create and activate workspace
-      manager.createWorkspaceView("/path/to/workspace", "http://localhost:8080/?folder=/path");
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/workspace");
 
       const uiView = MockWebContentsViewClass.mock.results[0]?.value;
@@ -1481,9 +1954,21 @@ describe("ViewManager", () => {
       });
 
       // Create multiple workspaces (all detached by default)
-      manager.createWorkspaceView("/path/to/ws1", "http://localhost:8080/?folder=/ws1");
-      manager.createWorkspaceView("/path/to/ws2", "http://localhost:8080/?folder=/ws2");
-      manager.createWorkspaceView("/path/to/ws3", "http://localhost:8080/?folder=/ws3");
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://localhost:8080/?folder=/ws1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/ws2",
+        "http://localhost:8080/?folder=/ws2",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/ws3",
+        "http://localhost:8080/?folder=/ws3",
+        "/path/to/project"
+      );
 
       // Verify all views exist
       expect(manager.getWorkspaceView("/path/to/ws1")).toBeDefined();
@@ -1521,7 +2006,11 @@ describe("ViewManager", () => {
       });
 
       // Create and activate workspace
-      manager.createWorkspaceView("/path/to/ws1", "http://localhost:8080/?folder=/ws1");
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://localhost:8080/?folder=/ws1",
+        "/path/to/project"
+      );
       manager.setActiveWorkspace("/path/to/ws1");
 
       // Enter dialog mode
@@ -1531,7 +2020,11 @@ describe("ViewManager", () => {
       expect(manager.getWorkspaceView("/path/to/ws1")).toBeDefined();
 
       // Create another workspace while in dialog mode
-      manager.createWorkspaceView("/path/to/ws2", "http://localhost:8080/?folder=/ws2");
+      manager.createWorkspaceView(
+        "/path/to/ws2",
+        "http://localhost:8080/?folder=/ws2",
+        "/path/to/project"
+      );
 
       // Switch workspace while in dialog mode
       manager.setActiveWorkspace("/path/to/ws2");
@@ -1554,7 +2047,11 @@ describe("ViewManager", () => {
 
       // Create workspaces
       for (let i = 0; i < 5; i++) {
-        manager.createWorkspaceView(`/path/to/ws${i}`, `http://localhost:8080/?folder=/ws${i}`);
+        manager.createWorkspaceView(
+          `/path/to/ws${i}`,
+          `http://localhost:8080/?folder=/ws${i}`,
+          "/path/to/project"
+        );
       }
 
       // Rapid switching - 10 times
@@ -1588,8 +2085,16 @@ describe("ViewManager", () => {
         codeServerPort: 8080,
       });
 
-      manager.createWorkspaceView("/path/to/ws1", "http://localhost:8080/?folder=/ws1");
-      manager.createWorkspaceView("/path/to/ws2", "http://localhost:8080/?folder=/ws2");
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://localhost:8080/?folder=/ws1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/ws2",
+        "http://localhost:8080/?folder=/ws2",
+        "/path/to/project"
+      );
 
       // Cycle between workspaces many times
       for (let i = 0; i < 20; i++) {

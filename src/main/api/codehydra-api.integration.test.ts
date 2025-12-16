@@ -196,6 +196,7 @@ describe("CodeHydraApiImpl Integration", () => {
         name: "feature",
         path: workspacePath,
         branch: "feature",
+        metadata: { base: "main" },
       };
 
       vi.mocked(appState.openProject).mockResolvedValue(internalProject);
@@ -234,6 +235,7 @@ describe("CodeHydraApiImpl Integration", () => {
         name: "feature",
         path: workspacePath,
         branch: "feature",
+        metadata: { base: "main" },
       };
       const internalProject = createInternalProject(projectPath, [workspaceObj]);
 

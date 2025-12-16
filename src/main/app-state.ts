@@ -152,7 +152,7 @@ export class AppState {
     // Create views for each workspace and initialize agent status tracking
     for (const workspace of workspaces) {
       const url = this.getWorkspaceUrl(workspace.path);
-      this.viewManager.createWorkspaceView(workspace.path, url);
+      this.viewManager.createWorkspaceView(workspace.path, url, projectPath);
 
       // Initialize agent status tracking for the workspace
       if (this.agentStatusManager) {
@@ -208,7 +208,7 @@ export class AppState {
 
     // Destroy all workspace views
     for (const workspace of openProject.project.workspaces) {
-      this.viewManager.destroyWorkspaceView(workspace.path);
+      await this.viewManager.destroyWorkspaceView(workspace.path);
     }
 
     // Remove from state
@@ -317,7 +317,7 @@ export class AppState {
 
     // Create view for the workspace
     const url = this.getWorkspaceUrl(workspace.path);
-    this.viewManager.createWorkspaceView(workspace.path, url);
+    this.viewManager.createWorkspaceView(workspace.path, url, projectPath);
 
     // Update project state
     const updatedProject: Project = {
@@ -343,14 +343,19 @@ export class AppState {
    * @param projectPath - Path to the project
    * @param workspacePath - Path to the workspace to remove
    */
-  removeWorkspace(projectPath: string, workspacePath: string): void {
+  async removeWorkspace(projectPath: string, workspacePath: string): Promise<void> {
     const openProject = this.openProjects.get(projectPath);
     if (!openProject) {
       return;
     }
 
+    // Remove agent status tracking
+    if (this.agentStatusManager) {
+      this.agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
+    }
+
     // Destroy the workspace view
-    this.viewManager.destroyWorkspaceView(workspacePath);
+    await this.viewManager.destroyWorkspaceView(workspacePath);
 
     // Update project state
     const updatedProject: Project = {
@@ -362,10 +367,5 @@ export class AppState {
       ...openProject,
       project: updatedProject,
     });
-
-    // Remove agent status tracking for the workspace
-    if (this.agentStatusManager) {
-      this.agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
-    }
   }
 }

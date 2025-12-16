@@ -137,7 +137,7 @@ describe("DiscoveryService", () => {
 
       await service.scan();
 
-      expect(listener).toHaveBeenCalledWith("/workspace/a", new Set([8080]));
+      expect(listener).toHaveBeenCalledWith("/workspace/a", [{ port: 8080 }]);
     });
 
     it("returns unsubscribe function", async () => {
@@ -320,7 +320,7 @@ describe("DiscoveryService scan", () => {
 
     await service.scan();
 
-    expect(listener).toHaveBeenCalledWith("/workspace/a", new Set([8080]));
+    expect(listener).toHaveBeenCalledWith("/workspace/a", [{ port: 8080 }]);
   });
 
   it("notifies listener when port disappears", async () => {
@@ -341,7 +341,7 @@ describe("DiscoveryService scan", () => {
 
     await service.scan();
 
-    expect(listener).toHaveBeenCalledWith("/workspace/a", new Set());
+    expect(listener).toHaveBeenCalledWith("/workspace/a", []);
   });
 
   it("cleans up stale cache entries on TTL expiry", async () => {

@@ -12,12 +12,15 @@ import type { WorkspacePath } from "../../shared/ipc";
 import { createMockSdkClient, createMockSdkFactory, createTestSession } from "./sdk-test-utils";
 import type { SdkClientFactory } from "./opencode-client";
 import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
+import type { DiscoveredInstance } from "./types";
 
 describe("AgentStatusManager", () => {
   let manager: AgentStatusManager;
   let mockDiscoveryService: DiscoveryService;
   let mockSdkFactory: SdkClientFactory;
-  let instancesChangedCallback: ((workspace: string, ports: Set<number>) => void) | null;
+  let instancesChangedCallback:
+    | ((workspace: string, instances: ReadonlyArray<DiscoveredInstance>) => void)
+    | null;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -27,6 +30,7 @@ describe("AgentStatusManager", () => {
       setCodeServerPid: vi.fn(),
       scan: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
       getPortsForWorkspace: vi.fn().mockReturnValue(new Set<number>()),
+      getInstancesForWorkspace: vi.fn().mockReturnValue([] as DiscoveredInstance[]),
       onInstancesChanged: vi.fn().mockImplementation((cb) => {
         instancesChangedCallback = cb;
         return () => {
@@ -73,7 +77,7 @@ describe("AgentStatusManager", () => {
       expect(manager.getStatus("/test/workspace" as WorkspacePath).status).toBe("none");
     });
 
-    it("gets ports from discovery service", async () => {
+    it("gets instances from discovery service", async () => {
       // Mock SDK client with empty sessions
       const mockSdk = createMockSdkClient({
         sessions: [],
@@ -81,11 +85,11 @@ describe("AgentStatusManager", () => {
       });
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
-      expect(mockDiscoveryService.getPortsForWorkspace).toHaveBeenCalledWith("/test/workspace");
+      expect(mockDiscoveryService.getInstancesForWorkspace).toHaveBeenCalledWith("/test/workspace");
     });
 
     it("shows idle status when connected but no sessions", async () => {
@@ -97,8 +101,8 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
 
-      // Return ports so provider has clients
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      // Return instances so provider has clients
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       const listener = vi.fn();
       manager.onStatusChanged(listener);
@@ -113,8 +117,8 @@ describe("AgentStatusManager", () => {
     });
 
     it("shows none status when no clients connected", async () => {
-      // No ports = no clients
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set());
+      // No instances = no clients
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -204,8 +208,8 @@ describe("AgentStatusManager", () => {
     it("updates provider when instances change", async () => {
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
-      // Simulate discovery service finding new ports
-      instancesChangedCallback?.("/test/workspace", new Set([8080, 9090]));
+      // Simulate discovery service finding new instances
+      instancesChangedCallback?.("/test/workspace", [{ port: 8080 }, { port: 9090 }]);
 
       // Should not throw
       expect(manager.getStatus("/test/workspace" as WorkspacePath)).toBeDefined();
@@ -229,12 +233,12 @@ describe("AgentStatusManager", () => {
       const listener = vi.fn();
       manager.onStatusChanged(listener);
 
-      // Initialize workspace with no ports
+      // Initialize workspace with no instances
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
       listener.mockClear();
 
-      // Simulate discovery service finding new ports
-      instancesChangedCallback?.("/test/workspace", new Set([8080]));
+      // Simulate discovery service finding new instances
+      instancesChangedCallback?.("/test/workspace", [{ port: 8080 }]);
 
       // Wait for async fetchStatuses to complete
       await vi.waitFor(() => {
@@ -263,7 +267,7 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
 
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -281,7 +285,7 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
 
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -307,7 +311,10 @@ describe("AgentStatusManager", () => {
 
       manager = new AgentStatusManager(mockDiscoveryService, factoryFn);
 
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080, 9090]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([
+        { port: 8080 },
+        { port: 9090 },
+      ]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -325,7 +332,7 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
 
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -334,7 +341,7 @@ describe("AgentStatusManager", () => {
       expect(status.counts.busy).toBe(1);
 
       // Simulate port removal via instances changed callback
-      instancesChangedCallback?.("/test/workspace", new Set());
+      instancesChangedCallback?.("/test/workspace", []);
 
       // Wait for the async Promise chain to settle
       // handleInstancesChanged has: initializeNewClients().then().then()
@@ -361,7 +368,7 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
 
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -380,7 +387,7 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
 
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -412,8 +419,11 @@ describe("AgentStatusManager", () => {
 
       manager = new AgentStatusManager(mockDiscoveryService, factoryFn);
 
-      // Two ports for the same workspace
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080, 9090]));
+      // Two instances for the same workspace
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([
+        { port: 8080 },
+        { port: 9090 },
+      ]);
 
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
 
@@ -434,7 +444,7 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(mockDiscoveryService, mockSdkFactory);
 
-      vi.mocked(mockDiscoveryService.getPortsForWorkspace).mockReturnValue(new Set([8080]));
+      vi.mocked(mockDiscoveryService.getInstancesForWorkspace).mockReturnValue([{ port: 8080 }]);
 
       // Initialize workspace (triggers first status fetch)
       await manager.initWorkspace("/test/workspace" as WorkspacePath);
@@ -448,6 +458,3 @@ describe("AgentStatusManager", () => {
     });
   });
 });
-
-// Note: OpenCodeProvider is a private class, so we test permission tracking
-// through the AgentStatusManager integration tests in services.integration.test.ts

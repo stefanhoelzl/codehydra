@@ -15,6 +15,7 @@ import {
   type IDisposable,
   type Unsubscribe,
   type NonOpenCodePortEntry,
+  type DiscoveredInstance,
 } from "./types";
 
 /**
@@ -28,8 +29,12 @@ export interface DiscoveryServiceDependencies {
 
 /**
  * Callback for instance changes.
+ * Receives discovered instances (port only - PID is internal).
  */
-export type InstancesChangedCallback = (workspacePath: string, ports: Set<number>) => void;
+export type InstancesChangedCallback = (
+  workspacePath: string,
+  instances: ReadonlyArray<DiscoveredInstance>
+) => void;
 
 /**
  * TTL for non-OpenCode port cache (5 minutes).
@@ -46,8 +51,8 @@ export class DiscoveryService implements IDisposable {
   private readonly instanceProbe: InstanceProbe;
 
   private codeServerPid: number | null = null;
-  private readonly activeInstances = new Map<string, Set<number>>();
-  private readonly knownPorts = new Map<number, string>();
+  private readonly activeInstances = new Map<string, DiscoveredInstance[]>();
+  private readonly knownPorts = new Map<number, { workspace: string; pid: number }>();
   private readonly nonOpenCodePorts = new Map<number, NonOpenCodePortEntry>();
   private scanning = false;
   private readonly listeners = new Set<InstancesChangedCallback>();
@@ -70,9 +75,22 @@ export class DiscoveryService implements IDisposable {
 
   /**
    * Get ports associated with a workspace.
+   * @deprecated Use getInstancesForWorkspace for PID tracking.
    */
   getPortsForWorkspace(workspacePath: string): Set<number> {
-    return this.activeInstances.get(workspacePath) ?? new Set();
+    const instances = this.activeInstances.get(workspacePath);
+    if (!instances) {
+      return new Set();
+    }
+    return new Set(instances.map((i) => i.port));
+  }
+
+  /**
+   * Get discovered instances for a workspace.
+   * Includes port and PID for each instance.
+   */
+  getInstancesForWorkspace(workspacePath: string): ReadonlyArray<DiscoveredInstance> {
+    return this.activeInstances.get(workspacePath) ?? [];
   }
 
   /**
@@ -124,18 +142,19 @@ export class DiscoveryService implements IDisposable {
       // Filter ports by descendant PIDs
       const candidatePorts = listeningPorts.filter((p) => descendants.has(p.pid));
 
-      // Track current scan's discovered ports
-      const currentPorts = new Map<string, Set<number>>();
+      // Track current scan's discovered instances per workspace
+      const currentInstances = new Map<string, DiscoveredInstance[]>();
 
       // Probe each candidate port
       for (const { port, pid } of candidatePorts) {
         // Skip if we already know this port
-        if (this.knownPorts.has(port)) {
-          const workspace = this.knownPorts.get(port)!;
-          if (!currentPorts.has(workspace)) {
-            currentPorts.set(workspace, new Set());
+        const known = this.knownPorts.get(port);
+        if (known) {
+          const workspace = known.workspace;
+          if (!currentInstances.has(workspace)) {
+            currentInstances.set(workspace, []);
           }
-          currentPorts.get(workspace)!.add(port);
+          currentInstances.get(workspace)!.push({ port });
           continue;
         }
 
@@ -151,12 +170,12 @@ export class DiscoveryService implements IDisposable {
 
         if (probeResult.ok) {
           const workspace = probeResult.value;
-          this.knownPorts.set(port, workspace);
+          this.knownPorts.set(port, { workspace, pid });
 
-          if (!currentPorts.has(workspace)) {
-            currentPorts.set(workspace, new Set());
+          if (!currentInstances.has(workspace)) {
+            currentInstances.set(workspace, []);
           }
-          currentPorts.get(workspace)!.add(port);
+          currentInstances.get(workspace)!.push({ port });
 
           // Remove from non-OpenCode cache if it was there
           this.nonOpenCodePorts.delete(port);
@@ -167,7 +186,7 @@ export class DiscoveryService implements IDisposable {
       }
 
       // Update active instances and notify changes
-      this.updateActiveInstances(currentPorts);
+      this.updateActiveInstances(currentInstances);
 
       return ok(undefined);
     } finally {
@@ -187,7 +206,7 @@ export class DiscoveryService implements IDisposable {
   private clearCaches(): void {
     // Notify listeners about removed workspaces
     for (const [workspace] of this.activeInstances) {
-      this.notifyListeners(workspace, new Set());
+      this.notifyListeners(workspace, []);
     }
 
     this.activeInstances.clear();
@@ -204,41 +223,55 @@ export class DiscoveryService implements IDisposable {
     }
   }
 
-  private updateActiveInstances(currentPorts: Map<string, Set<number>>): void {
+  private updateActiveInstances(currentInstances: Map<string, DiscoveredInstance[]>): void {
     // Check for removed or changed workspaces
-    for (const [workspace, oldPorts] of this.activeInstances) {
-      const newPorts = currentPorts.get(workspace) ?? new Set();
-      const changed =
-        oldPorts.size !== newPorts.size || [...oldPorts].some((p) => !newPorts.has(p));
+    for (const [workspace, oldInstances] of this.activeInstances) {
+      const newInstances = currentInstances.get(workspace) ?? [];
+      const changed = this.instancesChanged(oldInstances, newInstances);
 
       if (changed) {
-        if (newPorts.size === 0) {
+        if (newInstances.length === 0) {
           this.activeInstances.delete(workspace);
           // Clean up known ports for this workspace
-          for (const [port, ws] of this.knownPorts) {
-            if (ws === workspace) {
+          for (const [port, info] of this.knownPorts) {
+            if (info.workspace === workspace) {
               this.knownPorts.delete(port);
             }
           }
         } else {
-          this.activeInstances.set(workspace, newPorts);
+          this.activeInstances.set(workspace, newInstances);
         }
-        this.notifyListeners(workspace, newPorts);
+        this.notifyListeners(workspace, newInstances);
       }
     }
 
     // Check for new workspaces
-    for (const [workspace, ports] of currentPorts) {
+    for (const [workspace, instances] of currentInstances) {
       if (!this.activeInstances.has(workspace)) {
-        this.activeInstances.set(workspace, ports);
-        this.notifyListeners(workspace, ports);
+        this.activeInstances.set(workspace, instances);
+        this.notifyListeners(workspace, instances);
       }
     }
   }
 
-  private notifyListeners(workspace: string, ports: Set<number>): void {
+  /**
+   * Check if two instance arrays represent a change.
+   * Compares by port (PIDs may change due to process restart).
+   */
+  private instancesChanged(
+    oldInstances: DiscoveredInstance[],
+    newInstances: DiscoveredInstance[]
+  ): boolean {
+    if (oldInstances.length !== newInstances.length) {
+      return true;
+    }
+    const oldPorts = new Set(oldInstances.map((i) => i.port));
+    return newInstances.some((i) => !oldPorts.has(i.port));
+  }
+
+  private notifyListeners(workspace: string, instances: ReadonlyArray<DiscoveredInstance>): void {
     for (const listener of this.listeners) {
-      listener(workspace, ports);
+      listener(workspace, instances);
     }
   }
 }
