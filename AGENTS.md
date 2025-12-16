@@ -1048,6 +1048,31 @@ See `docs/TESTING.md` for the complete testing strategy.
 2. Wait for explicit user approval
 3. Only then add with explanatory comment
 
+## CRITICAL: API/IPC Interface Changes
+
+**NEVER modify without explicit user approval:**
+
+- IPC channel names or signatures (e.g., `api:project:*`, `api:workspace:*`)
+- API interface definitions (`ICodeHydraApi`, `ElectronApi`, etc.)
+- Preload script exposed APIs (`window.api`)
+- Event names or payload structures
+- Shared types in `src/shared/`
+
+**Why this matters:**
+
+API/IPC interfaces are contracts between processes. Changes can break:
+
+1. **Main ↔ Renderer communication**: Mismatched channel names cause silent failures
+2. **Type safety**: Interface changes require updates in multiple locations
+3. **Backwards compatibility**: Existing code depends on current signatures
+
+**Process if change needed:**
+
+1. Explain the interface change and its impact
+2. List all affected files/locations
+3. Wait for explicit user approval
+4. Update all locations atomically (main, preload, renderer, shared types)
+
 ## Validation Commands
 
 | Check      | Command              | Requirement   |
