@@ -4,6 +4,7 @@
  * Provides mock factory for ICodeHydraApi to enable easy unit testing of consumers.
  */
 
+import * as nodePath from "node:path";
 import type {
   ICodeHydraApi,
   IProjectApi,
@@ -203,7 +204,7 @@ function createMockProjectApi(options?: MockProjectApiOptions): IProjectApi {
       return {
         ...defaultProject,
         path,
-        name: path.split("/").pop() ?? "project",
+        name: nodePath.basename(path) || "project",
       };
     },
 

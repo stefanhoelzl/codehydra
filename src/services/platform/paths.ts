@@ -58,10 +58,10 @@ export function unsanitizeWorkspaceName(sanitized: string): string {
  * @param path File path to encode
  * @returns URL-safe path
  */
-export function encodePathForUrl(path: string): string {
-  // Split by path separators, encode each segment, rejoin
-  return path
-    .split("/")
+export function encodePathForUrl(filePath: string): string {
+  // Split by both path separators, encode each segment, rejoin with forward slashes
+  return filePath
+    .split(/[/\\]/)
     .map((segment) => encodeURIComponent(segment))
     .join("/");
 }

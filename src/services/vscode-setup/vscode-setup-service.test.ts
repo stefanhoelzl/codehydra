@@ -227,8 +227,6 @@ describe("VscodeSetupService", () => {
   });
 
   describe("installExtensions", () => {
-    const defaultCopyResult = { copiedCount: 1, skippedSymlinks: [] };
-
     it("copies bundled vsix to vscodeDir before install", async () => {
       const copiedFiles: Array<{ src: string; dest: string }> = [];
       mockFs = createMockFileSystemLayer({
@@ -237,7 +235,6 @@ describe("VscodeSetupService", () => {
         copyTree: {
           implementation: async (src, dest) => {
             copiedFiles.push({ src, dest });
-            return defaultCopyResult;
           },
         },
       });
@@ -263,7 +260,7 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
-        copyTree: { result: defaultCopyResult },
+        copyTree: {},
       });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({
@@ -289,7 +286,7 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
-        copyTree: { result: defaultCopyResult },
+        copyTree: {},
       });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({
@@ -315,7 +312,7 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
-        copyTree: { result: defaultCopyResult },
+        copyTree: {},
       });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({
@@ -347,7 +344,7 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
-        copyTree: { result: defaultCopyResult },
+        copyTree: {},
       });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({
@@ -374,7 +371,7 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
-        copyTree: { result: defaultCopyResult },
+        copyTree: {},
       });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({
@@ -432,8 +429,6 @@ describe("VscodeSetupService", () => {
   });
 
   describe("setup", () => {
-    const defaultCopyResult = { copiedCount: 1, skippedSymlinks: [] };
-
     it("validates assets before proceeding", async () => {
       mockFs = createMockFileSystemLayer({
         readFile: {
@@ -450,7 +445,7 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
-        copyTree: { result: defaultCopyResult },
+        copyTree: {},
         writeFile: { implementation: async () => {} },
       });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
@@ -481,7 +476,7 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
-        copyTree: { result: defaultCopyResult },
+        copyTree: {},
       });
       vi.mocked(mockProcessRunner.run).mockReturnValue(
         createMockSpawnedProcess({

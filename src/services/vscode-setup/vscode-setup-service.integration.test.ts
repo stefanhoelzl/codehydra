@@ -401,7 +401,10 @@ describe("VscodeSetupService Integration", () => {
   describe.skip("Network-dependent tests (manual only)", () => {
     it("extension install with real code-server", async () => {
       const { ExecaProcessRunner } = await import("../platform/process");
-      const realProcessRunner = new ExecaProcessRunner();
+      const { PidtreeProvider } = await import("../platform/process-tree");
+      const testLogger = createSilentLogger();
+      const processTree = new PidtreeProvider(testLogger);
+      const realProcessRunner = new ExecaProcessRunner(processTree, testLogger);
 
       const service = new VscodeSetupService(realProcessRunner, testPathProvider, fsLayer);
 

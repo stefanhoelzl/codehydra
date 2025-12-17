@@ -8,9 +8,8 @@
 
 import * as path from "node:path";
 import ignore, { type Ignore } from "ignore";
-import type { FileSystemLayer, CopyTreeResult } from "../platform/filesystem";
+import type { FileSystemLayer } from "../platform/filesystem";
 import type { IKeepFilesService, CopyResult, CopyError } from "./types";
-import { KeepFilesError } from "../errors";
 import type { Logger } from "../logging";
 
 /**
@@ -105,7 +104,7 @@ export class KeepFilesService implements IKeepFilesService {
 
   /**
    * Parse patterns from config content.
-   * Validates patterns and throws KeepFilesError for invalid ones.
+   * Skips empty lines and comments.
    */
   private parsePatterns(content: string): string[] {
     const lines = content.split(/\r?\n/);
@@ -121,31 +120,6 @@ export class KeepFilesService implements IKeepFilesService {
       // Skip comments
       if (trimmed.startsWith("#")) {
         continue;
-      }
-
-      // Validate pattern - reject absolute paths
-      if (trimmed.startsWith("/") && !trimmed.startsWith("!/")) {
-        throw new KeepFilesError(`Absolute paths are not allowed in .keepfiles: ${trimmed}`);
-      }
-
-      // Reject negation patterns with absolute paths
-      if (trimmed.startsWith("!/")) {
-        throw new KeepFilesError(`Absolute paths are not allowed in .keepfiles: ${trimmed}`);
-      }
-
-      // Reject parent references
-      if (trimmed.includes("../") || trimmed.startsWith("..")) {
-        throw new KeepFilesError(
-          `Parent references (..) are not allowed in .keepfiles: ${trimmed}`
-        );
-      }
-      if (
-        trimmed.startsWith("!") &&
-        (trimmed.includes("../") || trimmed.slice(1).startsWith(".."))
-      ) {
-        throw new KeepFilesError(
-          `Parent references (..) are not allowed in .keepfiles: ${trimmed}`
-        );
       }
 
       patterns.push(trimmed);
@@ -232,8 +206,7 @@ export class KeepFilesService implements IKeepFilesService {
             // Copy matching file
             const result = await this.tryCopyTree(entrySrcPath, entryDestPath);
             if (result.success) {
-              copiedCount += result.copiedCount;
-              skippedCount += result.skippedSymlinks;
+              copiedCount += 1;
             } else {
               errors.push({ path: entryRelativePath, message: result.error! });
             }
@@ -262,22 +235,13 @@ export class KeepFilesService implements IKeepFilesService {
   private async tryCopyTree(
     src: string,
     dest: string
-  ): Promise<{ success: boolean; copiedCount: number; skippedSymlinks: number; error?: string }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      const result: CopyTreeResult = await this.fileSystem.copyTree(src, dest);
-      return {
-        success: true,
-        copiedCount: result.copiedCount,
-        skippedSymlinks: result.skippedSymlinks.length,
-      };
+      await this.fileSystem.copyTree(src, dest);
+      return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        copiedCount: 0,
-        skippedSymlinks: 0,
-        error: message,
-      };
+      return { success: false, error: message };
     }
   }
 }

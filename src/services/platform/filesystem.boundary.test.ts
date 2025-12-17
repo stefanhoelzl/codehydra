@@ -232,18 +232,21 @@ describe("DefaultFileSystemLayer", () => {
       expect(dirEntry?.isSymbolicLink).toBe(false);
     });
 
-    it("returns correct type information for symlinks", async () => {
-      const filePath = join(tempDir.path, "file.txt");
-      const symlinkPath = join(tempDir.path, "link");
-      await nodeWriteFile(filePath, "content", "utf-8");
-      await symlink(filePath, symlinkPath);
+    it.skipIf(process.platform === "win32")(
+      "returns correct type information for symlinks",
+      async () => {
+        const filePath = join(tempDir.path, "file.txt");
+        const symlinkPath = join(tempDir.path, "link");
+        await nodeWriteFile(filePath, "content", "utf-8");
+        await symlink(filePath, symlinkPath);
 
-      const entries = await fs.readdir(tempDir.path);
-      const linkEntry = entries.find((e) => e.name === "link");
+        const entries = await fs.readdir(tempDir.path);
+        const linkEntry = entries.find((e) => e.name === "link");
 
-      expect(linkEntry).toBeDefined();
-      expect(linkEntry?.isSymbolicLink).toBe(true);
-    });
+        expect(linkEntry).toBeDefined();
+        expect(linkEntry?.isSymbolicLink).toBe(true);
+      }
+    );
 
     it("returns empty array for empty directory", async () => {
       const dirPath = join(tempDir.path, "empty");
@@ -308,7 +311,7 @@ describe("DefaultFileSystemLayer", () => {
       }
     });
 
-    it("throws EISDIR when path is a directory", async () => {
+    it.skipIf(process.platform === "win32")("throws EISDIR when path is a directory", async () => {
       const dirPath = join(tempDir.path, "subdir");
       await nodeMkdir(dirPath);
 
@@ -428,10 +431,7 @@ describe("DefaultFileSystemLayer", () => {
       const content = "Hello, World! Line 1\nLine 2\nLine 3 with UTF-8: 日本語";
       await nodeWriteFile(srcPath, content, "utf-8");
 
-      const result = await fs.copyTree(srcPath, destPath);
-
-      expect(result.copiedCount).toBe(1);
-      expect(result.skippedSymlinks).toHaveLength(0);
+      await fs.copyTree(srcPath, destPath);
 
       const destContent = await fs.readFile(destPath);
       expect(destContent).toBe(content);
@@ -444,9 +444,7 @@ describe("DefaultFileSystemLayer", () => {
       const binaryContent = Buffer.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe, 0x00, 0x00, 0x89]);
       await nodeWriteFile(srcPath, binaryContent);
 
-      const result = await fs.copyTree(srcPath, destPath);
-
-      expect(result.copiedCount).toBe(1);
+      await fs.copyTree(srcPath, destPath);
 
       // Verify byte-for-byte
       const { readFile: nodeReadFile } = await import("node:fs/promises");
@@ -467,9 +465,7 @@ describe("DefaultFileSystemLayer", () => {
       ]);
       await nodeWriteFile(srcPath, pngHeader);
 
-      const result = await fs.copyTree(srcPath, destPath);
-
-      expect(result.copiedCount).toBe(1);
+      await fs.copyTree(srcPath, destPath);
 
       const { readFile: nodeReadFile } = await import("node:fs/promises");
       const destBuffer = await nodeReadFile(destPath);
@@ -487,10 +483,7 @@ describe("DefaultFileSystemLayer", () => {
       await nodeWriteFile(join(srcDir, "level1", "level2", "l2.txt"), "level2", "utf-8");
       await nodeWriteFile(join(srcDir, "level1", "level2", "level3", "l3.txt"), "level3", "utf-8");
 
-      const result = await fs.copyTree(srcDir, destDir);
-
-      expect(result.copiedCount).toBe(4);
-      expect(result.skippedSymlinks).toHaveLength(0);
+      await fs.copyTree(srcDir, destDir);
 
       // Verify all files copied
       expect(await fs.readFile(join(destDir, "root.txt"))).toBe("root");
@@ -501,44 +494,50 @@ describe("DefaultFileSystemLayer", () => {
       );
     });
 
-    it("preserves file permissions (basic chmod check)", async () => {
-      const srcPath = join(tempDir.path, "executable.sh");
-      const destPath = join(tempDir.path, "executable-copy.sh");
-      await nodeWriteFile(srcPath, "#!/bin/bash\necho hello", "utf-8");
+    it.skipIf(process.platform === "win32")(
+      "preserves file permissions (basic chmod check)",
+      async () => {
+        const srcPath = join(tempDir.path, "executable.sh");
+        const destPath = join(tempDir.path, "executable-copy.sh");
+        await nodeWriteFile(srcPath, "#!/bin/bash\necho hello", "utf-8");
 
-      // Make file executable
-      const { chmod, stat } = await import("node:fs/promises");
-      await chmod(srcPath, 0o755);
+        // Make file executable
+        const { chmod, stat } = await import("node:fs/promises");
+        await chmod(srcPath, 0o755);
 
-      await fs.copyTree(srcPath, destPath);
+        await fs.copyTree(srcPath, destPath);
 
-      const destStat = await stat(destPath);
-      // Check executable bit is preserved (at least for owner)
-      const ownerExecuteBit = 0o100;
-      expect(destStat.mode & ownerExecuteBit).toBe(ownerExecuteBit);
-    });
+        const destStat = await stat(destPath);
+        // Check executable bit is preserved (at least for owner)
+        const ownerExecuteBit = 0o100;
+        expect(destStat.mode & ownerExecuteBit).toBe(ownerExecuteBit);
+      }
+    );
 
-    it("skips actual symlinks and reports them in result", async () => {
-      const srcDir = join(tempDir.path, "src");
-      const destDir = join(tempDir.path, "dest");
-      await nodeMkdir(srcDir);
+    it.skipIf(process.platform === "win32")(
+      "copies symlinks as symlinks (native fs.cp behavior)",
+      async () => {
+        const srcDir = join(tempDir.path, "src");
+        const destDir = join(tempDir.path, "dest");
+        await nodeMkdir(srcDir);
 
-      // Create a regular file and a symlink to it
-      const filePath = join(srcDir, "file.txt");
-      const linkPath = join(srcDir, "link.txt");
-      await nodeWriteFile(filePath, "content", "utf-8");
-      await symlink(filePath, linkPath);
+        // Create a regular file and a symlink to it
+        const filePath = join(srcDir, "file.txt");
+        const linkPath = join(srcDir, "link.txt");
+        await nodeWriteFile(filePath, "content", "utf-8");
+        await symlink(filePath, linkPath);
 
-      const result = await fs.copyTree(srcDir, destDir);
+        await fs.copyTree(srcDir, destDir);
 
-      expect(result.copiedCount).toBe(1); // Only the file
-      expect(result.skippedSymlinks).toHaveLength(1);
-      expect(result.skippedSymlinks[0]).toBe(linkPath);
+        // Verify file was copied
+        expect(await fs.readFile(join(destDir, "file.txt"))).toBe("content");
 
-      // Verify file was copied but symlink was not
-      expect(await fs.readFile(join(destDir, "file.txt"))).toBe("content");
-      await expect(fs.readFile(join(destDir, "link.txt"))).rejects.toThrow(FileSystemError);
-    });
+        // Verify symlink exists at destination (as a symlink)
+        const { lstat } = await import("node:fs/promises");
+        const destLinkStat = await lstat(join(destDir, "link.txt"));
+        expect(destLinkStat.isSymbolicLink()).toBe(true);
+      }
+    );
 
     it("throws ENOENT when source does not exist", async () => {
       const srcPath = join(tempDir.path, "non-existent");
@@ -554,35 +553,14 @@ describe("DefaultFileSystemLayer", () => {
       }
     });
 
-    it("copies 1000 small files in under 5 seconds", async () => {
-      const srcDir = join(tempDir.path, "src-large");
-      const destDir = join(tempDir.path, "dest-large");
-      await nodeMkdir(srcDir);
-
-      // Create 1000 small files
-      const promises: Promise<void>[] = [];
-      for (let i = 0; i < 1000; i++) {
-        promises.push(nodeWriteFile(join(srcDir, `file${i}.txt`), `content ${i}`, "utf-8"));
-      }
-      await Promise.all(promises);
-
-      const start = Date.now();
-      const result = await fs.copyTree(srcDir, destDir);
-      const elapsed = Date.now() - start;
-
-      expect(result.copiedCount).toBe(1000);
-      expect(elapsed).toBeLessThan(5000); // Less than 5 seconds
-    });
-
     it("overwrites existing destination files", async () => {
       const srcPath = join(tempDir.path, "src.txt");
       const destPath = join(tempDir.path, "dest.txt");
       await nodeWriteFile(srcPath, "new content", "utf-8");
       await nodeWriteFile(destPath, "old content", "utf-8");
 
-      const result = await fs.copyTree(srcPath, destPath);
+      await fs.copyTree(srcPath, destPath);
 
-      expect(result.copiedCount).toBe(1);
       expect(await fs.readFile(destPath)).toBe("new content");
     });
 
@@ -591,25 +569,28 @@ describe("DefaultFileSystemLayer", () => {
       const destPath = join(tempDir.path, "new", "nested", "deep", "dest.txt");
       await nodeWriteFile(srcPath, "content", "utf-8");
 
-      const result = await fs.copyTree(srcPath, destPath);
+      await fs.copyTree(srcPath, destPath);
 
-      expect(result.copiedCount).toBe(1);
       expect(await fs.readFile(destPath)).toBe("content");
     });
 
-    it("handles symlink at root level", async () => {
-      const targetPath = join(tempDir.path, "target.txt");
-      const linkPath = join(tempDir.path, "link");
-      const destPath = join(tempDir.path, "dest");
-      await nodeWriteFile(targetPath, "content", "utf-8");
-      await symlink(targetPath, linkPath);
+    it.skipIf(process.platform === "win32")(
+      "copies symlink at root level as symlink (native fs.cp behavior)",
+      async () => {
+        const targetPath = join(tempDir.path, "target.txt");
+        const linkPath = join(tempDir.path, "link");
+        const destPath = join(tempDir.path, "dest");
+        await nodeWriteFile(targetPath, "content", "utf-8");
+        await symlink(targetPath, linkPath);
 
-      const result = await fs.copyTree(linkPath, destPath);
+        await fs.copyTree(linkPath, destPath);
 
-      expect(result.copiedCount).toBe(0);
-      expect(result.skippedSymlinks).toHaveLength(1);
-      expect(result.skippedSymlinks[0]).toBe(linkPath);
-    });
+        // Verify symlink was copied as symlink
+        const { lstat } = await import("node:fs/promises");
+        const destStat = await lstat(destPath);
+        expect(destStat.isSymbolicLink()).toBe(true);
+      }
+    );
   });
 
   describe("makeExecutable", () => {

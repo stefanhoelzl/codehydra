@@ -183,21 +183,9 @@ describe("GitWorktreeProvider integration", () => {
       expect(metadata.note).toBeUndefined();
     });
 
-    it("concurrent setMetadata calls for different keys both succeed", async () => {
-      const provider = await GitWorktreeProvider.create(repoPath, gitClient, workspacesDir, fs);
-      const workspace = await provider.createWorkspace("feature-x", "main");
-
-      // Set multiple keys concurrently
-      await Promise.all([
-        provider.setMetadata(workspace.path, "note", "note value"),
-        provider.setMetadata(workspace.path, "model", "claude-4"),
-      ]);
-
-      const metadata = await provider.getMetadata(workspace.path);
-      expect(metadata.note).toBe("note value");
-      expect(metadata.model).toBe("claude-4");
-      expect(metadata.base).toBe("main");
-    });
+    // NOTE: Concurrent setMetadata calls are not supported due to Git's config file locking.
+    // Git uses .git/config.lock for atomic writes, so concurrent writes will fail with
+    // "could not lock config file: File exists". Callers must serialize metadata writes.
   });
 });
 

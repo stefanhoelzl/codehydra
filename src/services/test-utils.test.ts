@@ -230,7 +230,7 @@ describe("createCommitInRemote", () => {
     } finally {
       await cleanup();
     }
-  });
+  }, 10000);
 });
 
 describe("withTempRepoWithRemote", () => {

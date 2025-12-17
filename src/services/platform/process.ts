@@ -3,6 +3,8 @@
  */
 
 import { execa } from "execa";
+import type { ProcessTreeProvider } from "./process-tree";
+import type { Logger } from "../logging";
 
 export interface ProcessOptions {
   /** Working directory for the process */
@@ -35,6 +37,16 @@ export interface ProcessResult {
 }
 
 /**
+ * Result of killing a process.
+ */
+export interface KillResult {
+  /** True if the process exited successfully */
+  readonly success: boolean;
+  /** The signal that successfully terminated the process */
+  readonly reason?: "SIGTERM" | "SIGKILL";
+}
+
+/**
  * Handle for a spawned process.
  * Provides access to PID and methods to control the process.
  */
@@ -46,11 +58,14 @@ export interface SpawnedProcess {
   readonly pid: number | undefined;
 
   /**
-   * Send a signal to terminate the process.
-   * @param signal - Signal to send (default: SIGTERM)
-   * @returns true if signal was sent, false if process already dead
+   * Graceful shutdown: SIGTERM → wait → SIGKILL → wait.
+   * Also kills child processes.
+   *
+   * @param termTimeout - Wait time after SIGTERM (ms). undefined = skip wait, proceed to SIGKILL.
+   * @param killTimeout - Wait time after SIGKILL (ms). undefined = skip wait, return immediately.
+   * @returns {success: true, reason: "SIGTERM"|"SIGKILL"} if exited, {success: false} if still running
    */
-  kill(signal?: NodeJS.Signals): boolean;
+  kill(termTimeout?: number, killTimeout?: number): Promise<KillResult>;
 
   /**
    * Wait for the process to exit.
@@ -65,11 +80,10 @@ export interface SpawnedProcess {
    * const result = await proc.wait();
    *
    * @example
-   * // Wait with timeout, then kill if still running
-   * const result = await proc.wait(5000);
-   * if (result.running) {
-   *   proc.kill('SIGKILL');
-   *   await proc.wait();
+   * // Wait with timeout, then use new kill() API
+   * const result = await proc.kill(5000, 5000);
+   * if (!result.success) {
+   *   console.error('Process did not exit');
    * }
    */
   wait(timeout?: number): Promise<ProcessResult>;
@@ -110,28 +124,102 @@ const TIMEOUT_SYMBOL = Symbol("timeout");
  */
 export class ExecaSpawnedProcess implements SpawnedProcess {
   private readonly subprocess: ExecaSubprocess;
+  private readonly processTree: ProcessTreeProvider;
+  private readonly logger: Logger;
+  private readonly command: string;
   private cachedResult: ProcessResult | null = null;
+  private childPids: Set<number> = new Set();
 
-  constructor(subprocess: ExecaSubprocess) {
+  constructor(
+    subprocess: ExecaSubprocess,
+    processTree: ProcessTreeProvider,
+    logger: Logger,
+    command: string
+  ) {
     this.subprocess = subprocess;
+    this.processTree = processTree;
+    this.logger = logger;
+    this.command = command;
   }
 
   get pid(): number | undefined {
     return this.subprocess.pid;
   }
 
-  kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
-    // killed property tells us if the process was already killed
-    // If process is already dead, kill() returns false
-    try {
-      // Check if process is still running
-      if (this.subprocess.killed) {
-        return false;
+  async kill(termTimeout?: number, killTimeout?: number): Promise<KillResult> {
+    // Get child PIDs before killing (while parent is still alive)
+    await this.captureChildPids();
+
+    // 1. Send SIGTERM to parent + children
+    this.killWithSignal("SIGTERM");
+
+    // 2. If termTimeout defined, wait for exit
+    if (termTimeout !== undefined) {
+      const result = await this.wait(termTimeout);
+      if (!result.running) {
+        return { success: true, reason: "SIGTERM" };
       }
-      return this.subprocess.kill(signal);
+    }
+
+    // 3. Send SIGKILL to parent + children
+    this.killWithSignal("SIGKILL");
+
+    // 4. If killTimeout defined, wait for exit
+    if (killTimeout !== undefined) {
+      const result = await this.wait(killTimeout);
+      if (!result.running) {
+        return { success: true, reason: "SIGKILL" };
+      }
+    }
+
+    // 5. Process may still be running
+    return { success: false };
+  }
+
+  /**
+   * Capture child PIDs for later cleanup.
+   * Called before killing to ensure we have the tree.
+   */
+  private async captureChildPids(): Promise<void> {
+    const pid = this.subprocess.pid;
+    if (pid === undefined) return;
+
+    try {
+      this.childPids = await this.processTree.getDescendantPids(pid);
     } catch {
-      // Process might have already exited
-      return false;
+      // Ignore errors - process may have already exited
+      this.childPids = new Set();
+    }
+  }
+
+  /**
+   * Send a signal to the parent process and all tracked children.
+   */
+  private killWithSignal(signal: NodeJS.Signals): void {
+    const pid = this.subprocess.pid;
+
+    // Kill parent process
+    try {
+      if (!this.subprocess.killed) {
+        this.subprocess.kill(signal);
+        this.logger.warn("Killed", {
+          command: this.command,
+          pid: pid ?? 0,
+          signal,
+        });
+      }
+    } catch {
+      // Process may have already exited
+    }
+
+    // Kill all tracked child processes
+    for (const childPid of this.childPids) {
+      try {
+        process.kill(childPid, signal);
+        this.logger.debug("Killed child", { pid: childPid, signal });
+      } catch {
+        // Child may have already exited
+      }
     }
   }
 
@@ -148,6 +236,7 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
     if (timeout === undefined) {
       const result = await processPromise;
       this.cachedResult = result;
+      this.logResult(result);
       return result;
     }
 
@@ -160,6 +249,11 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
 
     if (raceResult === TIMEOUT_SYMBOL) {
       // Timeout occurred, process is still running
+      this.logger.warn("Wait timeout", {
+        command: this.command,
+        pid: this.pid ?? 0,
+        timeout,
+      });
       return {
         stdout: "",
         stderr: "",
@@ -170,7 +264,46 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
 
     // Process completed
     this.cachedResult = raceResult;
+    this.logResult(raceResult);
     return raceResult;
+  }
+
+  /**
+   * Log the result of a completed process.
+   */
+  private logResult(result: ProcessResult): void {
+    // Log stdout/stderr lines
+    this.logOutputLines(result.stdout, "stdout");
+    this.logOutputLines(result.stderr, "stderr");
+
+    // Log exit status
+    if (result.signal) {
+      // Already logged in killWithSignal
+    } else {
+      // Normal exit
+      this.logger.debug("Exited", {
+        command: this.command,
+        pid: this.pid ?? 0,
+        exitCode: result.exitCode ?? -1,
+      });
+    }
+  }
+
+  /**
+   * Log output lines (stdout or stderr) at DEBUG level.
+   */
+  private logOutputLines(output: string, stream: "stdout" | "stderr"): void {
+    if (!output) return;
+
+    const lines = output.split("\n");
+    const prefix = `[${this.command} ${this.pid ?? 0}]`;
+
+    for (const line of lines) {
+      // Skip empty lines
+      if (line.trim() === "") continue;
+
+      this.logger.debug(`${prefix} ${stream}: ${line}`);
+    }
   }
 
   private async waitForProcess(): Promise<ProcessResult> {
@@ -201,6 +334,10 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
       }
 
       // Pure spawn error (ENOENT, EACCES, etc.)
+      this.logger.error("Spawn failed", {
+        command: this.command,
+        error: err.message,
+      });
       return {
         stdout: "",
         stderr: err.message,
@@ -241,6 +378,11 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
  * Returns a SpawnedProcess handle for controlling the spawned process.
  */
 export class ExecaProcessRunner implements ProcessRunner {
+  constructor(
+    private readonly processTree: ProcessTreeProvider,
+    private readonly logger: Logger
+  ) {}
+
   run(command: string, args: readonly string[], options?: ProcessOptions): SpawnedProcess {
     const subprocess = execa(command, [...args], {
       cleanup: true,
@@ -251,6 +393,18 @@ export class ExecaProcessRunner implements ProcessRunner {
       // from the custom env are actually removed (not inherited from process.env)
       ...(options?.env && { env: options.env, extendEnv: false }),
     }) as ExecaSubprocess;
-    return new ExecaSpawnedProcess(subprocess);
+
+    const spawned = new ExecaSpawnedProcess(subprocess, this.processTree, this.logger, command);
+
+    // Check if spawn failed (no PID)
+    if (spawned.pid === undefined) {
+      // Log spawn failure when wait() is called (to get stderr with error message)
+      // Don't log here - will be logged in wait()
+    } else {
+      // Log successful spawn
+      this.logger.debug("Spawned", { command, pid: spawned.pid });
+    }
+
+    return spawned;
   }
 }

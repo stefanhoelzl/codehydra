@@ -1,6 +1,10 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import * as os from "node:os";
+import * as path from "node:path";
 import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
+import { PidtreeProvider } from "./process-tree";
+import { createSilentLogger } from "../logging";
 import {
   isWindows,
   spawnIgnoringSignals,
@@ -56,15 +60,20 @@ async function waitForProcessDeath(pid: number, maxMs = 500): Promise<boolean> {
 }
 
 describe("ExecaProcessRunner", () => {
-  const runner: ProcessRunner = new ExecaProcessRunner();
+  let runner: ProcessRunner;
   const runningProcesses: SpawnedProcess[] = [];
+
+  beforeEach(async () => {
+    const logger = createSilentLogger();
+    const processTree = new PidtreeProvider(logger);
+    runner = new ExecaProcessRunner(processTree, logger);
+  });
 
   afterEach(async () => {
     // Clean up tracked SpawnedProcess handles
     for (const proc of runningProcesses) {
       try {
-        proc.kill("SIGKILL");
-        await proc.wait(100);
+        await proc.kill(0, 100); // Immediate SIGTERM, wait 100ms for SIGKILL
       } catch {
         // Ignore errors during cleanup
       }
@@ -160,16 +169,19 @@ describe("ExecaProcessRunner", () => {
     it(
       "supports custom working directory",
       async () => {
+        // Use os.tmpdir() for cross-platform temp directory
+        const tempDir = os.tmpdir();
         // Use Node.js to print cwd - cross-platform
         const proc = runner.run(process.execPath, ["-e", "console.log(process.cwd())"], {
-          cwd: "/tmp",
+          cwd: tempDir,
         });
         runningProcesses.push(proc);
         trackProcess(proc);
 
         const result = await proc.wait();
 
-        expect(result.stdout.trim()).toBe("/tmp");
+        // Normalize paths for comparison (handles Windows path casing and trailing slashes)
+        expect(path.normalize(result.stdout.trim())).toBe(path.normalize(tempDir));
       },
       TEST_TIMEOUT
     );
@@ -192,45 +204,27 @@ describe("ExecaProcessRunner", () => {
     );
   });
 
-  describe("signal handling", () => {
+  describe("kill() behavior", () => {
     it.skipIf(isWindows)(
-      "terminates process with SIGTERM",
+      "kill() terminates process with SIGTERM when it responds",
       async () => {
         const proc = spawnLongRunning(runner, 30_000);
         runningProcesses.push(proc);
         trackProcess(proc);
 
-        const killed = proc.kill("SIGTERM");
-        expect(killed).toBe(true);
+        // kill(5000, 0) - wait up to 5s for SIGTERM, don't wait for SIGKILL
+        const killResult = await proc.kill(5000, 0);
+        expect(killResult.success).toBe(true);
+        expect(killResult.reason).toBe("SIGTERM");
 
         const result = await proc.wait();
-
-        expect(result.signal).toBe("SIGTERM");
         expect(result.exitCode).toBeNull();
       },
       TEST_TIMEOUT
     );
 
     it.skipIf(isWindows)(
-      "terminates process with SIGKILL",
-      async () => {
-        const proc = spawnLongRunning(runner, 30_000);
-        runningProcesses.push(proc);
-        trackProcess(proc);
-
-        const killed = proc.kill("SIGKILL");
-        expect(killed).toBe(true);
-
-        const result = await proc.wait();
-
-        expect(result.signal).toBe("SIGKILL");
-        expect(result.exitCode).toBeNull();
-      },
-      TEST_TIMEOUT
-    );
-
-    it.skipIf(isWindows)(
-      "SIGTERM to SIGKILL escalation for process that ignores SIGTERM",
+      "kill() escalates to SIGKILL when SIGTERM is ignored",
       async () => {
         // Spawn process that ignores SIGTERM using trap (Unix-only utility)
         const proc = spawnIgnoringSignals(runner);
@@ -240,44 +234,22 @@ describe("ExecaProcessRunner", () => {
         const pid = proc.pid;
         expect(pid).toBeDefined();
 
-        // Send SIGTERM and verify process is still running (trap ignores it)
-        const terminated = proc.kill("SIGTERM");
-        expect(terminated).toBe(true);
+        // kill(500, 1000) - wait 500ms for SIGTERM (ignored), then SIGKILL with 1s wait
+        const killResult = await proc.kill(500, 1000);
 
-        const stillRunning = await proc.wait(500);
-        expect(stillRunning.running).toBe(true);
+        // Should have escalated to SIGKILL since SIGTERM was ignored
+        expect(killResult.success).toBe(true);
+        expect(killResult.reason).toBe("SIGKILL");
 
-        // Verify process is actually still running at OS level
-        expect(isProcessRunning(pid!)).toBe(true);
-
-        // Escalate to SIGKILL using OS directly.
-        // Why process.kill() instead of proc.kill()?
-        // After the first kill() call, execa sets subprocess.killed = true internally.
-        // Subsequent proc.kill() calls check this flag and may not send new signals.
-        // Using process.kill() bypasses execa's wrapper and sends SIGKILL directly.
-        process.kill(pid!, "SIGKILL");
-
-        // Wait for process to actually die at OS level
-        const died = await waitForProcessDeath(pid!, 1000);
+        // Verify process is actually dead at OS level
+        const died = await waitForProcessDeath(pid!, 500);
         expect(died).toBe(true);
-
-        // Get final result from execa's wait()
-        const result = await proc.wait(1000);
-
-        // The reported signal may be SIGTERM or SIGKILL depending on timing:
-        // - SIGTERM if execa captured the first signal before we sent SIGKILL
-        // - SIGKILL if execa saw our direct process.kill() signal
-        // Either way, the process is dead and exitCode should be null (killed by signal)
-        if (!result.running) {
-          expect(result.exitCode).toBeNull();
-          expect(result.signal).toMatch(/^SIG(TERM|KILL)$/);
-        }
       },
       TEST_TIMEOUT
     );
 
     it(
-      "kill() returns false when process already dead",
+      "kill() on already dead process returns success with SIGTERM",
       async () => {
         const proc = spawnWithOutput(runner, "done");
         runningProcesses.push(proc);
@@ -285,32 +257,29 @@ describe("ExecaProcessRunner", () => {
 
         await proc.wait();
 
-        const killed = proc.kill();
-        expect(killed).toBe(false);
+        // kill() on dead process - SIGTERM send "succeeds" but process already done
+        const killResult = await proc.kill(100, 100);
+        // Process was already dead, kill returns success (nothing to do)
+        expect(killResult.success).toBe(true);
       },
       TEST_TIMEOUT
     );
 
     it(
-      "rapid sequential kill() calls are safe",
+      "kill() without timeouts sends SIGTERM and SIGKILL immediately",
       async () => {
         const proc = spawnLongRunning(runner, 30_000);
         runningProcesses.push(proc);
         trackProcess(proc);
 
-        // Rapid sequential calls
-        const result1 = proc.kill();
-        const result2 = proc.kill();
-        const result3 = proc.kill();
+        // kill() with no timeouts - sends SIGTERM then SIGKILL immediately
+        const killResult = await proc.kill();
+        // Process should be killed (either by SIGTERM or SIGKILL)
+        expect(killResult.success).toBe(false); // No wait, so we can't confirm exit
 
-        // First should succeed, subsequent should return false
-        expect(result1).toBe(true);
-        expect(result2).toBe(false);
-        expect(result3).toBe(false);
-
-        // Wait for process to finish
-        const result = await proc.wait();
-        expect(result.exitCode).toBeNull();
+        // Wait for process to actually exit
+        const result = await proc.wait(1000);
+        expect(result.exitCode).toBeNull(); // Killed by signal
       },
       TEST_TIMEOUT
     );
@@ -536,7 +505,10 @@ describe("ExecaProcessRunner", () => {
   });
 
   describe("error handling", () => {
-    it(
+    // Skip on Windows: execa/cross-spawn wraps unknown commands in cmd.exe which
+    // reports "command not found" via stderr and exit code 1, rather than failing
+    // the spawn with ENOENT. This is fundamental to how cross-spawn handles Windows.
+    it.skipIf(isWindows)(
       "handles ENOENT when command not found",
       async () => {
         const proc = runner.run("nonexistent-command-12345", []);
@@ -555,7 +527,7 @@ describe("ExecaProcessRunner", () => {
 
   describe("process tree cleanup", () => {
     it.skipIf(isWindows)(
-      "SIGTERM kills child processes",
+      "kill() kills child processes via SIGTERM",
       async () => {
         // Spawn parent that creates a child and echoes its PID
         const proc = runner.run("sh", ["-c", "sleep 30 & echo $!; wait"]);
@@ -565,8 +537,9 @@ describe("ExecaProcessRunner", () => {
         // Wait for child PID to be printed
         await new Promise((r) => setTimeout(r, 100));
 
-        // Kill parent with SIGTERM
-        proc.kill("SIGTERM");
+        // Kill parent with graceful shutdown (SIGTERM with 1s timeout)
+        const killResult = await proc.kill(1000, 100);
+        expect(killResult.success).toBe(true);
 
         // Get the result to capture stdout with child PID
         const result = await proc.wait(1000);
@@ -584,18 +557,20 @@ describe("ExecaProcessRunner", () => {
     );
 
     it.skipIf(isWindows)(
-      "SIGKILL kills child processes",
+      "kill() kills child processes via SIGKILL escalation",
       async () => {
-        // Spawn parent that creates a child and echoes its PID
-        const proc = runner.run("sh", ["-c", "sleep 30 & echo $!; wait"]);
+        // Spawn parent that creates a child that ignores SIGTERM
+        const proc = runner.run("sh", ["-c", "trap '' TERM; sleep 30 & echo $!; wait"]);
         runningProcesses.push(proc);
         trackProcess(proc);
 
         // Wait for child PID to be printed
         await new Promise((r) => setTimeout(r, 100));
 
-        // Kill parent with SIGKILL
-        proc.kill("SIGKILL");
+        // Kill parent with short SIGTERM timeout (will escalate to SIGKILL)
+        const killResult = await proc.kill(200, 500);
+        expect(killResult.success).toBe(true);
+        expect(killResult.reason).toBe("SIGKILL"); // Should have escalated
 
         // Get the result to capture stdout with child PID
         const result = await proc.wait(1000);

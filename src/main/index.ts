@@ -19,7 +19,6 @@ import {
   type BuildInfo,
   type LoggingService,
 } from "../services";
-import { LoggingProcessRunner } from "../services/platform/logging-process-runner";
 import { VscodeSetupService } from "../services/vscode-setup";
 import { ExecaProcessRunner } from "../services/platform/process";
 import {
@@ -27,12 +26,8 @@ import {
   DefaultArchiveExtractor,
   type BinaryDownloadService,
 } from "../services/binary-download";
-import {
-  DiscoveryService,
-  AgentStatusManager,
-  PidtreeProvider,
-  HttpInstanceProbe,
-} from "../services/opencode";
+import { PidtreeProvider } from "../services/platform/process-tree";
+import { DiscoveryService, AgentStatusManager, HttpInstanceProbe } from "../services/opencode";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { AppState } from "./app-state";
@@ -172,6 +167,12 @@ let apiEventCleanup: Unsubscribe | null = null;
 let agentStatusCleanup: Unsubscribe | null = null;
 
 /**
+ * Process tree provider for child process management.
+ * Created in bootstrap(), used by ExecaProcessRunner.
+ */
+let processTree: PidtreeProvider | null = null;
+
+/**
  * Shared ProcessRunner instance for both VscodeSetupService and CodeServerManager.
  * Created once in bootstrap() and reused for all process spawning.
  */
@@ -227,15 +228,10 @@ async function startServices(): Promise<void> {
   // Create shared network layer for all network operations
   const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
 
-  // Wrap process runner with logging decorator
-  const loggingProcessRunner = new LoggingProcessRunner(
-    processRunner!,
-    loggingService.createLogger("process")
-  );
-
+  // Use process runner directly (logging is now integrated)
   codeServerManager = new CodeServerManager(
     config,
-    loggingProcessRunner,
+    processRunner,
     networkLayer,
     networkLayer,
     loggingService.createLogger("code-server")
@@ -274,7 +270,10 @@ async function startServices(): Promise<void> {
   );
 
   // Initialize OpenCode services
-  const processTree = new PidtreeProvider(loggingService.createLogger("pidtree"));
+  // Reuse the module-level processTree (created in bootstrap())
+  if (!processTree) {
+    throw new Error("ProcessTree not initialized - startServices called before bootstrap");
+  }
   const instanceProbe = new HttpInstanceProbe(networkLayer);
 
   discoveryService = new DiscoveryService({
@@ -374,7 +373,7 @@ async function startServices(): Promise<void> {
 
     // Generate IDs
     const projectId = generateProjectId(project.path);
-    const workspaceName = workspacePath.split("/").pop() as WorkspaceName;
+    const workspaceName = nodePath.basename(workspacePath) as WorkspaceName;
 
     // Convert old AggregatedAgentStatus to v2 WorkspaceStatus format
     // Note: isDirty is not available from the status callback, so we set it to false
@@ -415,7 +414,7 @@ async function startServices(): Promise<void> {
 
       // Set initial window title (workspace:switched event not emitted for startup activation)
       const projectName = projects[0]?.name;
-      const workspaceName = firstWorkspace.path.split("/").pop();
+      const workspaceName = nodePath.basename(firstWorkspace.path);
       const title = formatWindowTitle(projectName, workspaceName, buildInfo.gitBranch);
       windowManager.setTitle(title);
     }
@@ -455,8 +454,12 @@ async function bootstrap(): Promise<void> {
   Menu.setApplicationMenu(null);
 
   // 2. Create VscodeSetupService early (needed for LifecycleApi)
+  // Create process tree provider for child process management
+  processTree = new PidtreeProvider(loggingService.createLogger("pidtree"));
+
   // Store processRunner in module-level variable for reuse by CodeServerManager
-  processRunner = new ExecaProcessRunner();
+  // Process runner now includes logging and child process cleanup
+  processRunner = new ExecaProcessRunner(processTree, loggingService.createLogger("process"));
 
   // Create network layer for binary downloads
   const networkLayerForSetup = new DefaultNetworkLayer(loggingService.createLogger("network"));

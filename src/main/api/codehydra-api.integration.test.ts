@@ -12,6 +12,7 @@
  * - Event coordination (events fired in correct order)
  * - Error handling across API boundaries
  */
+import * as nodePath from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CodeHydraApiImpl } from "./codehydra-api";
 import type { AppState } from "../app-state";
@@ -110,7 +111,7 @@ function createInternalProject(
 ): InternalProject {
   return {
     path: path as ProjectPath,
-    name: path.split("/").pop() || "project",
+    name: nodePath.basename(path) || "project",
     workspaces,
   };
 }

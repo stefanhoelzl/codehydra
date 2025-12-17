@@ -457,11 +457,11 @@ describe("CodeServerManager (with full DI)", () => {
   });
 
   describe("stop with timeout escalation", () => {
-    it("sends SIGTERM first and waits for graceful exit", async () => {
+    it("calls kill with graceful shutdown timeouts", async () => {
       // Process exits cleanly after SIGTERM
       const mockProc = createMockSpawnedProcess({
         pid: 12345,
-        killResult: true,
+        killResult: { success: true, reason: "SIGTERM" },
         waitResult: { exitCode: 0, stdout: "", stderr: "" },
       });
       const processRunner = createMockProcessRunner(mockProc);
@@ -488,27 +488,18 @@ describe("CodeServerManager (with full DI)", () => {
       await manager.ensureRunning();
       await manager.stop();
 
-      // Should send SIGTERM
-      expect(mockProc.kill).toHaveBeenCalledWith("SIGTERM");
-      // Should wait for process to exit
-      expect(mockProc.wait).toHaveBeenCalledWith(5000);
-      // Should NOT send SIGKILL if process exits cleanly
-      expect(mockProc.kill).not.toHaveBeenCalledWith("SIGKILL");
+      // Should call kill with graceful shutdown timeouts (5s SIGTERM, 5s SIGKILL)
+      expect(mockProc.kill).toHaveBeenCalledWith(5000, 5000);
+      // kill() handles the SIGTERM→SIGKILL escalation internally
+      expect(mockProc.kill).toHaveBeenCalledTimes(1);
     });
 
-    it("escalates to SIGKILL when process does not exit within timeout", async () => {
-      let waitCallCount = 0;
+    it("handles SIGKILL escalation result", async () => {
+      // Process needed SIGKILL (didn't respond to SIGTERM)
       const mockProc = createMockSpawnedProcess({
         pid: 12345,
-        killResult: true,
-        // First wait returns running:true (timeout), second returns completed after SIGKILL
-        waitResult: () => {
-          waitCallCount++;
-          if (waitCallCount === 1) {
-            return Promise.resolve({ exitCode: null, stdout: "", stderr: "", running: true });
-          }
-          return Promise.resolve({ exitCode: null, stdout: "", stderr: "", signal: "SIGKILL" });
-        },
+        killResult: { success: true, reason: "SIGKILL" },
+        waitResult: { exitCode: null, stdout: "", stderr: "", signal: "SIGKILL" },
       });
       const processRunner = createMockProcessRunner(mockProc);
       const httpClient = createMockHttpClient({
@@ -534,14 +525,10 @@ describe("CodeServerManager (with full DI)", () => {
       await manager.ensureRunning();
       await manager.stop();
 
-      // Should send SIGTERM first
-      expect(mockProc.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-      // Should wait with timeout
-      expect(mockProc.wait).toHaveBeenNthCalledWith(1, 5000);
-      // Should escalate to SIGKILL
-      expect(mockProc.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-      // Should wait for final exit
-      expect(mockProc.wait).toHaveBeenCalledTimes(2);
+      // Should call kill with graceful shutdown timeouts (5s SIGTERM, 5s SIGKILL)
+      // The new kill() API handles SIGTERM→SIGKILL escalation internally
+      expect(mockProc.kill).toHaveBeenCalledWith(5000, 5000);
+      expect(mockProc.kill).toHaveBeenCalledTimes(1);
     });
   });
 });

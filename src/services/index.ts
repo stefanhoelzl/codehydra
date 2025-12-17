@@ -71,7 +71,12 @@ export type {
   ProcessResult,
   ProcessOptions,
   SpawnedProcess,
+  KillResult,
 } from "./platform/process";
+
+// Process tree provider
+export { PidtreeProvider } from "./platform/process-tree";
+export type { ProcessTreeProvider } from "./platform/process-tree";
 
 // Network layer
 export { DefaultNetworkLayer } from "./platform/network";

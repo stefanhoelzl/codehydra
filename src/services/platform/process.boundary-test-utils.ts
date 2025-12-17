@@ -246,11 +246,8 @@ export function spawnWithChildren(runner: ProcessRunner, childCount: number): Pr
     },
 
     async cleanup(): Promise<void> {
-      // Kill parent first
-      proc.kill("SIGKILL");
-
-      // Wait briefly for parent to die
-      await proc.wait(100);
+      // Kill parent first with new API (skip wait for SIGTERM, 100ms wait for SIGKILL)
+      await proc.kill(0, 100);
 
       // Kill all tracked children
       if (childPids !== null) {

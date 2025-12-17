@@ -13,9 +13,8 @@ import {
   writeFile as nodeWriteFile,
   mkdir as nodeMkdir,
   readFile as nodeReadFile,
-  symlink,
 } from "node:fs/promises";
-import { DefaultFileSystemLayer, type CopyTreeResult } from "./filesystem";
+import { DefaultFileSystemLayer } from "./filesystem";
 import { createSilentLogger } from "../logging";
 import { FileSystemError } from "../errors";
 import { createTempDir } from "../test-utils";
@@ -40,10 +39,7 @@ describe("DefaultFileSystemLayer.copyTree", () => {
       const content = "Hello, World!";
       await nodeWriteFile(srcPath, content, "utf-8");
 
-      const result = await fs.copyTree(srcPath, destPath);
-
-      expect(result.copiedCount).toBe(1);
-      expect(result.skippedSymlinks).toHaveLength(0);
+      await fs.copyTree(srcPath, destPath);
 
       const destContent = await nodeReadFile(destPath, "utf-8");
       expect(destContent).toBe(content);
@@ -59,10 +55,7 @@ describe("DefaultFileSystemLayer.copyTree", () => {
       await nodeMkdir(join(srcDir, "subdir"));
       await nodeWriteFile(join(srcDir, "subdir", "file2.txt"), "content2", "utf-8");
 
-      const result = await fs.copyTree(srcDir, destDir);
-
-      expect(result.copiedCount).toBe(2); // Two files copied
-      expect(result.skippedSymlinks).toHaveLength(0);
+      await fs.copyTree(srcDir, destDir);
 
       // Verify structure
       const file1 = await nodeReadFile(join(destDir, "file1.txt"), "utf-8");
@@ -78,9 +71,7 @@ describe("DefaultFileSystemLayer.copyTree", () => {
       const destPath = join(tempDir.path, "nested", "deep", "dest.txt");
       await nodeWriteFile(srcPath, "content", "utf-8");
 
-      const result = await fs.copyTree(srcPath, destPath);
-
-      expect(result.copiedCount).toBe(1);
+      await fs.copyTree(srcPath, destPath);
 
       const destContent = await nodeReadFile(destPath, "utf-8");
       expect(destContent).toBe("content");
@@ -103,22 +94,6 @@ describe("DefaultFileSystemLayer.copyTree", () => {
     });
   });
 
-  describe("symlink handling", () => {
-    it("returns skipped symlinks in CopyTreeResult", async () => {
-      const srcDir = join(tempDir.path, "src");
-      const destDir = join(tempDir.path, "dest");
-      await nodeMkdir(srcDir);
-      await nodeWriteFile(join(srcDir, "file.txt"), "content", "utf-8");
-      await symlink(join(srcDir, "file.txt"), join(srcDir, "link.txt"));
-
-      const result = await fs.copyTree(srcDir, destDir);
-
-      expect(result.copiedCount).toBe(1); // Only the file
-      expect(result.skippedSymlinks).toHaveLength(1);
-      expect(result.skippedSymlinks[0]).toContain("link.txt");
-    });
-  });
-
   describe("overwrite behavior", () => {
     it("overwrites existing destination files", async () => {
       const srcPath = join(tempDir.path, "src.txt");
@@ -126,25 +101,10 @@ describe("DefaultFileSystemLayer.copyTree", () => {
       await nodeWriteFile(srcPath, "new content", "utf-8");
       await nodeWriteFile(destPath, "old content", "utf-8");
 
-      const result = await fs.copyTree(srcPath, destPath);
-
-      expect(result.copiedCount).toBe(1);
+      await fs.copyTree(srcPath, destPath);
 
       const destContent = await nodeReadFile(destPath, "utf-8");
       expect(destContent).toBe("new content");
-    });
-  });
-
-  describe("CopyTreeResult interface", () => {
-    it("has correct shape", () => {
-      // Compile-time interface check
-      const result: CopyTreeResult = {
-        copiedCount: 5,
-        skippedSymlinks: ["/path/to/link1", "/path/to/link2"],
-      };
-
-      expect(result.copiedCount).toBe(5);
-      expect(result.skippedSymlinks).toHaveLength(2);
     });
   });
 });
@@ -154,7 +114,7 @@ describe("DefaultFileSystemLayer.makeExecutable", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
-    fs = new DefaultFileSystemLayer();
+    fs = new DefaultFileSystemLayer(createSilentLogger());
     tempDir = await createTempDir();
   });
 

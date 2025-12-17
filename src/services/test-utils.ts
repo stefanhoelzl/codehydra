@@ -26,7 +26,13 @@ export async function createTempDir(): Promise<{
   return {
     path: resolvedPath,
     cleanup: async () => {
-      await rm(resolvedPath, { recursive: true, force: true });
+      await rm(resolvedPath, {
+        recursive: true,
+        force: true,
+        // Retry on EBUSY/EPERM errors - file handles may take time to release after process termination
+        maxRetries: 5,
+        retryDelay: 200,
+      });
     },
   };
 }

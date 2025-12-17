@@ -1,20 +1,23 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from "vitest";
 import { PidtreeProvider } from "./process-tree";
-import { ExecaProcessRunner } from "../platform/process";
+import { ExecaProcessRunner } from "./process";
 import { createSilentLogger } from "../logging";
 import {
   spawnWithChildren,
   spawnLongRunning,
+  isWindows,
   type ProcessWithChildren,
-} from "../platform/process.boundary-test-utils";
+} from "./process.boundary-test-utils";
 
 // Default timeout for boundary tests
 const TEST_TIMEOUT = 5000;
 
 describe("PidtreeProvider", () => {
-  const provider = new PidtreeProvider(createSilentLogger());
-  const runner = new ExecaProcessRunner();
+  const logger = createSilentLogger();
+  const provider = new PidtreeProvider(logger);
+  const processTree = new PidtreeProvider(logger);
+  const runner = new ExecaProcessRunner(processTree, logger);
 
   // Track spawned processes for cleanup
   let spawnedWithChildren: ProcessWithChildren | null = null;
@@ -29,8 +32,7 @@ describe("PidtreeProvider", () => {
 
     // Clean up simple spawned processes
     if (spawnedProcess !== null) {
-      spawnedProcess.kill("SIGKILL");
-      await spawnedProcess.wait(100);
+      await spawnedProcess.kill(0, 100);
       spawnedProcess = null;
     }
   });
@@ -70,7 +72,9 @@ describe("PidtreeProvider", () => {
     TEST_TIMEOUT
   );
 
-  it(
+  // Skip on Windows: Node.js processes may have OS-level children (e.g., conhost.exe)
+  // that aren't spawned by our code, causing pidtree to return non-empty results
+  it.skipIf(isWindows)(
     "returns empty Set for process without children",
     async () => {
       // Spawn a simple long-running process with no children

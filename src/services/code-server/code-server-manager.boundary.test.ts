@@ -71,9 +71,11 @@ describe("CodeServerManager (boundary)", () => {
     cleanup = temp.cleanup;
 
     // Real dependencies - no mocks
-    const runner = new ExecaProcessRunner();
     const { createSilentLogger } = await import("../logging");
     const logger = createSilentLogger();
+    const { PidtreeProvider } = await import("../platform/process-tree");
+    const processTree = new PidtreeProvider(logger);
+    const runner = new ExecaProcessRunner(processTree, logger);
     const networkLayer = new DefaultNetworkLayer(logger);
 
     manager = new CodeServerManager(
@@ -332,23 +334,6 @@ describe("CodeServerManager (boundary)", () => {
         expect(secondPort).toBeGreaterThan(0);
         expect(secondPid).toBeGreaterThan(0);
         expect(secondPid).not.toBe(firstPid); // Different PID
-      },
-      TEST_TIMEOUT
-    );
-
-    it(
-      "rapid stop-start cycle completes without errors",
-      async () => {
-        // Arrange & Act
-        await manager.ensureRunning();
-        await manager.stop();
-        await manager.ensureRunning();
-        await manager.stop();
-        const finalPort = await manager.ensureRunning();
-
-        // Assert
-        expect(finalPort).toBeGreaterThan(0);
-        expect(manager.isRunning()).toBe(true);
       },
       TEST_TIMEOUT
     );

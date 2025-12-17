@@ -206,13 +206,26 @@ describe("waitForPort", () => {
   });
 
   it("times out when port is not available", async () => {
+    const { createServer } = await import("net");
     const waitForPort = await getWaitForPort();
 
-    // Use a port that's almost certainly not in use
-    const unusedPort = 59999;
+    // Find an unused port by binding to 0, then immediately closing
+    // This gives us a port that was just freed and is almost certainly not listening
+    const unusedPort = await new Promise<number>((resolve, reject) => {
+      const server = createServer();
+      server.listen(0, "localhost", () => {
+        const addr = server.address();
+        if (addr && typeof addr === "object") {
+          const port = addr.port;
+          server.close(() => resolve(port));
+        } else {
+          reject(new Error("Failed to get port"));
+        }
+      });
+    });
 
     await expect(waitForPort(unusedPort, 200)).rejects.toThrow(
-      /Timeout waiting for port 59999 to become available/
+      /Timeout waiting for port \d+ to become available/
     );
   });
 

@@ -3,7 +3,6 @@
  * Public API for the opencode module.
  */
 
-export { PidtreeProvider, type ProcessTreeProvider } from "./process-tree";
 export { HttpInstanceProbe, type InstanceProbe } from "./instance-probe";
 export {
   DiscoveryService,

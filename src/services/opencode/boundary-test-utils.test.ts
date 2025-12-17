@@ -2,11 +2,10 @@
  * Tests for boundary test utilities.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
 import { checkOpencodeAvailable, startOpencode } from "./boundary-test-utils";
 import { createTestGitRepo } from "../test-utils";
-import type { ProcessResult } from "../platform/process";
 
 describe("checkOpencodeAvailable", () => {
   it("returns available:true when opencode binary is found", async () => {
@@ -62,7 +61,8 @@ describe("checkOpencodeAvailable", () => {
 
     expect(result.available).toBe(false);
     expect(result.error).toBe("opencode --version timed out");
-    expect(mockProc.kill).toHaveBeenCalledWith("SIGKILL");
+    // kill() is called fire-and-forget style (no args) to terminate the timed-out process
+    expect(mockProc.kill).toHaveBeenCalled();
   });
 
   it("parses version from 'v' prefixed output", async () => {
@@ -154,21 +154,12 @@ describe("startOpencode", () => {
     }
   });
 
-  it("stop() sends SIGTERM then SIGKILL if needed", async () => {
-    // First wait returns running=true, second returns completed
-    let waitCount = 0;
+  it("stop() uses graceful shutdown with timeouts", async () => {
+    // Mock process with graceful shutdown result
     const mockProc = createMockSpawnedProcess({
       pid: 12345,
-      waitResult: { exitCode: null, stdout: "", stderr: "", running: true },
-    });
-
-    // Override wait with a function that tracks calls
-    mockProc.wait = vi.fn().mockImplementation(async (): Promise<ProcessResult> => {
-      waitCount++;
-      if (waitCount === 1) {
-        return { exitCode: null, stdout: "", stderr: "", running: true };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
+      killResult: { success: true, reason: "SIGTERM" },
+      waitResult: { exitCode: 0, stdout: "", stderr: "" },
     });
 
     const runner = createMockProcessRunner(mockProc);
@@ -188,8 +179,9 @@ describe("startOpencode", () => {
       const proc = await startOpencode(config, runner);
       await proc.stop();
 
-      expect(mockProc.kill).toHaveBeenCalledWith("SIGTERM");
-      expect(mockProc.kill).toHaveBeenCalledWith("SIGKILL");
+      // stop() uses kill(5000, 1000) for graceful shutdown
+      expect(mockProc.kill).toHaveBeenCalledWith(5000, 1000);
+      expect(mockProc.kill).toHaveBeenCalledTimes(1);
     } finally {
       await cleanup();
     }

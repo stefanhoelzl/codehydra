@@ -6,13 +6,22 @@
  * All tests use Node.js commands for cross-platform compatibility.
  * This ensures identical behavior on Windows, macOS, and Linux.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { execa } from "execa";
 import { mkdtemp, writeFile, chmod, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
 import { ExecaSpawnedProcess } from "./process";
+import type { ProcessTreeProvider } from "./process-tree";
+import { createSilentLogger, type Logger } from "../logging";
+
+/** Create a mock ProcessTreeProvider for tests */
+function createMockProcessTree(): ProcessTreeProvider {
+  return {
+    getDescendantPids: vi.fn().mockResolvedValue(new Set<number>()),
+  };
+}
 
 /** Create a long-running Node.js process (cross-platform alternative to `sleep`) */
 const longRunningScript = "setTimeout(() => {}, 10000)";
@@ -26,29 +35,74 @@ const stderrScript = (text: string) => `console.error('${text}')`;
 /** Create a Node.js process that exits with a specific code */
 const exitScript = (code: number) => `process.exit(${code})`;
 
+/** Shared test dependencies */
+let mockProcessTree: ProcessTreeProvider;
+let logger: Logger;
+
+/**
+ * Type alias for execa subprocess - using the type from process.ts.
+ * We cast execa results to this type because execa's ResultPromise type
+ * has issues with exactOptionalPropertyTypes when specific options are provided.
+ */
+type ExecaSubprocess = ReturnType<typeof execa>;
+
+/**
+ * Helper to create ExecaSpawnedProcess with proper dependencies.
+ * Expects the subprocess to be cast to ExecaSubprocess at the call site.
+ */
+function createSpawned(subprocess: ExecaSubprocess, command = "node"): ExecaSpawnedProcess {
+  return new ExecaSpawnedProcess(subprocess, mockProcessTree, logger, command);
+}
+
+/**
+ * Helper to create execa subprocess with standard test options.
+ * Returns the subprocess cast to ExecaSubprocess to work around type issues.
+ */
+function createExecaProcess(command: string, args: string[]): ExecaSubprocess {
+  return execa(command, args, {
+    cleanup: true,
+    encoding: "utf8",
+    reject: false,
+  }) as unknown as ExecaSubprocess;
+}
+
 describe("ExecaSpawnedProcess", () => {
+  // Track spawned processes for cleanup
+  const runningProcesses: ExecaSpawnedProcess[] = [];
+
+  // Initialize shared dependencies before each test
+  beforeEach(() => {
+    mockProcessTree = createMockProcessTree();
+    logger = createSilentLogger();
+  });
+
+  afterEach(async () => {
+    // Clean up any running processes
+    for (const proc of runningProcesses) {
+      try {
+        await proc.kill(0, 100);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    runningProcesses.length = 0;
+  });
+
   describe("pid", () => {
-    it("returns process ID", () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+    it("returns process ID", async () => {
+      const subprocess = createExecaProcess("node", ["-e", longRunningScript]);
+      const spawned = createSpawned(subprocess);
+      runningProcesses.push(spawned);
 
       expect(spawned.pid).toBeGreaterThan(0);
 
       // Cleanup
-      subprocess.kill("SIGKILL");
+      await spawned.kill(0, 100);
     });
 
     it("handles spawn failure for nonexistent binary", async () => {
-      const subprocess = execa("nonexistent-binary-12345", [], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("nonexistent-binary-12345", []);
+      const spawned = createSpawned(subprocess, "nonexistent-binary-12345");
 
       // Platform-specific behavior:
       // - Unix: spawn fails immediately, pid is undefined
@@ -65,87 +119,53 @@ describe("ExecaSpawnedProcess", () => {
   });
 
   describe("kill", () => {
-    it("returns true when signal sent", () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+    it("kill() with SIGTERM timeout terminates responsive process", async () => {
+      const subprocess = createExecaProcess("node", ["-e", longRunningScript]);
+      const spawned = createSpawned(subprocess);
+      runningProcesses.push(spawned);
 
-      const result = spawned.kill("SIGTERM");
+      // kill(5000, 0) - wait up to 5s for SIGTERM, don't wait for SIGKILL
+      const result = await spawned.kill(5000, 0);
 
-      expect(result).toBe(true);
+      expect(result.success).toBe(true);
+      expect(result.reason).toBe("SIGTERM");
     });
 
-    it("returns false when process already dead", async () => {
-      const subprocess = execa("node", ["-e", echoScript("hello")], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+    it("kill() on dead process returns success", async () => {
+      const subprocess = createExecaProcess("node", ["-e", echoScript("hello")]);
+      const spawned = createSpawned(subprocess);
 
       // Wait for process to complete
       await spawned.wait();
 
-      // Now try to kill it
-      const result = spawned.kill("SIGTERM");
+      // Now try to kill it - should succeed (nothing to do)
+      const result = await spawned.kill(100, 100);
 
-      expect(result).toBe(false);
+      expect(result.success).toBe(true);
+      expect(result.reason).toBe("SIGTERM");
     });
 
-    it("sends SIGTERM by default", async () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+    it("kill() without timeouts sends signals immediately", async () => {
+      const subprocess = createExecaProcess("node", ["-e", longRunningScript]);
+      const spawned = createSpawned(subprocess);
+      runningProcesses.push(spawned);
 
-      spawned.kill();
-      const result = await spawned.wait();
+      // kill() with no timeouts - sends SIGTERM then SIGKILL, no wait
+      const result = await spawned.kill();
 
-      expect(result.signal).toBe("SIGTERM");
-    });
+      // Since we don't wait, success is false
+      expect(result.success).toBe(false);
 
-    it("sends SIGKILL when specified", async () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
-
-      spawned.kill("SIGKILL");
-      const result = await spawned.wait();
-
-      expect(result.signal).toBe("SIGKILL");
-    });
-
-    it("sends SIGINT when specified", async () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
-
-      spawned.kill("SIGINT");
-      const result = await spawned.wait();
-
-      expect(result.signal).toBe("SIGINT");
+      // But the process should be killed - wait for it
+      const waitResult = await spawned.wait(1000);
+      expect(waitResult.exitCode).toBeNull(); // Killed by signal
     });
   });
 
   describe("wait", () => {
     it("returns result on normal exit (exit 0)", async () => {
-      const subprocess = execa("node", ["-e", echoScript("hello")], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", echoScript("hello")]);
+      const spawned = createSpawned(subprocess);
 
       const result = await spawned.wait();
 
@@ -156,12 +176,8 @@ describe("ExecaSpawnedProcess", () => {
     });
 
     it("returns result on non-zero exit (no throw)", async () => {
-      const subprocess = execa("node", ["-e", exitScript(42)], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", exitScript(42)]);
+      const spawned = createSpawned(subprocess);
 
       const result = await spawned.wait();
 
@@ -169,15 +185,12 @@ describe("ExecaSpawnedProcess", () => {
       expect(result.running).toBeUndefined();
     });
 
-    it("returns signal when killed", async () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+    it("returns signal when killed via kill()", async () => {
+      const subprocess = createExecaProcess("node", ["-e", longRunningScript]);
+      const spawned = createSpawned(subprocess);
+      runningProcesses.push(spawned);
 
-      spawned.kill("SIGTERM");
+      await spawned.kill(5000, 0);
       const result = await spawned.wait();
 
       expect(result.exitCode).toBeNull();
@@ -186,12 +199,9 @@ describe("ExecaSpawnedProcess", () => {
     });
 
     it("returns running:true on timeout", async () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", longRunningScript]);
+      const spawned = createSpawned(subprocess);
+      runningProcesses.push(spawned);
 
       const result = await spawned.wait(50); // 50ms timeout
 
@@ -200,17 +210,12 @@ describe("ExecaSpawnedProcess", () => {
       expect(result.signal).toBeUndefined();
 
       // Cleanup
-      spawned.kill("SIGKILL");
-      await spawned.wait();
+      await spawned.kill(0, 100);
     });
 
     it("returns result if process exits before timeout", async () => {
-      const subprocess = execa("node", ["-e", echoScript("fast")], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", echoScript("fast")]);
+      const spawned = createSpawned(subprocess);
 
       const result = await spawned.wait(5000); // 5s timeout
 
@@ -220,12 +225,8 @@ describe("ExecaSpawnedProcess", () => {
     });
 
     it("can be called multiple times with same result", async () => {
-      const subprocess = execa("node", ["-e", echoScript("test")], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", echoScript("test")]);
+      const spawned = createSpawned(subprocess);
 
       const result1 = await spawned.wait();
       const result2 = await spawned.wait();
@@ -236,37 +237,31 @@ describe("ExecaSpawnedProcess", () => {
     });
 
     it("handles different timeouts on subsequent calls", async () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", longRunningScript]);
+      const spawned = createSpawned(subprocess);
+      runningProcesses.push(spawned);
 
       // First call with short timeout
       const result1 = await spawned.wait(50);
       expect(result1.running).toBe(true);
 
       // Second call with no timeout after killing
-      spawned.kill("SIGTERM");
+      await spawned.kill(5000, 0);
       const result2 = await spawned.wait();
       expect(result2.running).toBeUndefined();
       expect(result2.signal).toBe("SIGTERM");
     });
 
     it("resolves with signal when killed during wait", async () => {
-      const subprocess = execa("node", ["-e", longRunningScript], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", longRunningScript]);
+      const spawned = createSpawned(subprocess);
+      runningProcesses.push(spawned);
 
       // Start waiting
       const waitPromise = spawned.wait();
 
       // Kill after a small delay
-      setTimeout(() => spawned.kill("SIGTERM"), 10);
+      setTimeout(() => void spawned.kill(5000, 0), 10);
 
       const result = await waitPromise;
 
@@ -274,12 +269,8 @@ describe("ExecaSpawnedProcess", () => {
     });
 
     it("captures stdout", async () => {
-      const subprocess = execa("node", ["-e", echoScript("output text")], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", echoScript("output text")]);
+      const spawned = createSpawned(subprocess);
 
       const result = await spawned.wait();
 
@@ -287,12 +278,8 @@ describe("ExecaSpawnedProcess", () => {
     });
 
     it("captures stderr", async () => {
-      const subprocess = execa("node", ["-e", stderrScript("error message")], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("node", ["-e", stderrScript("error message")]);
+      const spawned = createSpawned(subprocess);
 
       const result = await spawned.wait();
 
@@ -302,12 +289,8 @@ describe("ExecaSpawnedProcess", () => {
 
   describe("error handling", () => {
     it("handles nonexistent binary", async () => {
-      const subprocess = execa("nonexistent-binary-xyz-123", [], {
-        cleanup: true,
-        encoding: "utf8",
-        reject: false,
-      });
-      const spawned = new ExecaSpawnedProcess(subprocess);
+      const subprocess = createExecaProcess("nonexistent-binary-xyz-123", []);
+      const spawned = createSpawned(subprocess, "nonexistent-binary-xyz-123");
 
       const result = await spawned.wait();
 
@@ -336,12 +319,8 @@ describe("ExecaSpawnedProcess", () => {
       await chmod(tempFile, 0o644);
 
       try {
-        const subprocess = execa(tempFile, [], {
-          cleanup: true,
-          encoding: "utf8",
-          reject: false,
-        });
-        const spawned = new ExecaSpawnedProcess(subprocess);
+        const subprocess = createExecaProcess(tempFile, []);
+        const spawned = createSpawned(subprocess, tempFile);
 
         const result = await spawned.wait();
 

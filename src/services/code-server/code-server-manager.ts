@@ -286,7 +286,7 @@ export class CodeServerManager {
 
   /**
    * Stop the server.
-   * Sends SIGTERM first, then SIGKILL after timeout.
+   * Uses the new kill() API with SIGTERM→SIGKILL escalation.
    *
    * @throws CodeServerError if stop fails
    */
@@ -301,19 +301,14 @@ export class CodeServerManager {
     this.state = "stopping";
 
     try {
-      // Send SIGTERM for graceful shutdown
-      proc.kill("SIGTERM");
+      // Use graceful shutdown: SIGTERM (5s wait) → SIGKILL (5s wait)
+      const result = await proc.kill(5000, 5000);
 
-      // Wait for process to exit (5s timeout)
-      const result = await proc.wait(5000);
-
-      // If still running after timeout, escalate to SIGKILL
-      if (result.running) {
-        proc.kill("SIGKILL");
-        await proc.wait();
-      }
-
-      this.logger.info("Stopped", { pid: pid ?? 0, exitCode: result.exitCode ?? 0 });
+      this.logger.info("Stopped", {
+        pid: pid ?? 0,
+        success: result.success,
+        reason: result.reason ?? "none",
+      });
     } finally {
       this.state = "stopped";
       this.currentPort = null;

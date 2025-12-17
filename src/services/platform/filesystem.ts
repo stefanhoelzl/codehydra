@@ -40,16 +40,6 @@ export interface RmOptions {
 }
 
 /**
- * Result of a copyTree operation.
- */
-export interface CopyTreeResult {
-  /** Number of files copied */
-  readonly copiedCount: number;
-  /** Paths of symlinks that were skipped (security - prevents symlink attacks) */
-  readonly skippedSymlinks: readonly string[];
-}
-
-/**
  * Error codes for filesystem operations.
  */
 export type FileSystemErrorCode =
@@ -169,25 +159,22 @@ export interface FileSystemLayer {
   /**
    * Copy a file or directory tree to a new location.
    *
-   * Uses fs.copyFile() internally for correct binary file handling.
-   * Symlinks are skipped for security reasons and reported in the result.
+   * Uses native fs.cp() for performance. Symlinks are copied as symlinks.
    * Overwrites existing files at destination.
    * Creates destination parent directories if they don't exist.
    *
    * @param src - Absolute path to source file or directory
    * @param dest - Absolute path to destination
-   * @returns Result with copy count and skipped symlinks
    * @throws FileSystemError with code ENOENT if source doesn't exist
    * @throws FileSystemError with code EACCES if permission denied
    *
    * @example Copy single file
-   * const result = await fs.copyTree('/src/config.json', '/dest/config.json');
+   * await fs.copyTree('/src/config.json', '/dest/config.json');
    *
    * @example Copy directory
-   * const result = await fs.copyTree('/src/configs', '/dest/configs');
-   * console.log(`Copied ${result.copiedCount} files`);
+   * await fs.copyTree('/src/configs', '/dest/configs');
    */
-  copyTree(src: string, dest: string): Promise<CopyTreeResult>;
+  copyTree(src: string, dest: string): Promise<void>;
 
   /**
    * Make a file executable (sets mode 0o755).
@@ -223,7 +210,6 @@ export interface FileSystemLayer {
 // ============================================================================
 
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { FileSystemError } from "../errors";
 import type { Logger } from "../logging";
 
@@ -414,113 +400,25 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async copyTree(src: string, dest: string): Promise<CopyTreeResult> {
+  async copyTree(src: string, dest: string): Promise<void> {
     this.logger.debug("CopyTree", { src, dest });
-
-    // Check if source exists and get its type using lstat (doesn't follow symlinks)
-    let srcStat;
     try {
-      srcStat = await fs.lstat(src);
+      await fs.cp(src, dest, {
+        recursive: true,
+        force: true,
+        preserveTimestamps: true,
+      });
     } catch (error) {
       const fsError = mapError(error, src);
       this.logger.warn("CopyTree failed", {
-        path: src,
+        src,
+        dest,
         code: fsError.fsCode,
         error: fsError.message,
       });
       throw fsError;
     }
-
-    // Handle symlink at root level
-    if (srcStat.isSymbolicLink()) {
-      const result = { copiedCount: 0, skippedSymlinks: [src] };
-      this.logger.debug("CopyTree complete", { copied: 0, skippedSymlinks: 1 });
-      return result;
-    }
-
-    // If source is a file, copy it directly
-    if (srcStat.isFile()) {
-      // Create parent directories
-      const destDir = path.dirname(dest);
-      await this.mkdir(destDir);
-
-      try {
-        await fs.copyFile(src, dest);
-      } catch (error) {
-        const fsError = mapError(error, dest);
-        this.logger.warn("CopyTree failed", {
-          path: dest,
-          code: fsError.fsCode,
-          error: fsError.message,
-        });
-        throw fsError;
-      }
-
-      this.logger.debug("CopyTree complete", { copied: 1, skippedSymlinks: 0 });
-      return { copiedCount: 1, skippedSymlinks: [] };
-    }
-
-    // Source is a directory - use iterative queue-based approach
-    let copiedCount = 0;
-    const skippedSymlinks: string[] = [];
-
-    // Queue contains [srcPath, destPath] pairs
-    const queue: Array<{ srcPath: string; destPath: string }> = [{ srcPath: src, destPath: dest }];
-
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-
-      // Create destination directory
-      await this.mkdir(current.destPath);
-
-      // Read source directory entries
-      let entries;
-      try {
-        entries = await fs.readdir(current.srcPath, { withFileTypes: true });
-      } catch (error) {
-        const fsError = mapError(error, current.srcPath);
-        this.logger.warn("CopyTree failed", {
-          path: current.srcPath,
-          code: fsError.fsCode,
-          error: fsError.message,
-        });
-        throw fsError;
-      }
-
-      for (const entry of entries) {
-        const entrySrcPath = path.join(current.srcPath, entry.name);
-        const entryDestPath = path.join(current.destPath, entry.name);
-
-        if (entry.isSymbolicLink()) {
-          // Skip symlinks for security
-          skippedSymlinks.push(entrySrcPath);
-        } else if (entry.isDirectory()) {
-          // Add to queue for processing
-          queue.push({ srcPath: entrySrcPath, destPath: entryDestPath });
-        } else if (entry.isFile()) {
-          // Copy file
-          try {
-            await fs.copyFile(entrySrcPath, entryDestPath);
-            copiedCount++;
-          } catch (error) {
-            const fsError = mapError(error, entryDestPath);
-            this.logger.warn("CopyTree failed", {
-              path: entryDestPath,
-              code: fsError.fsCode,
-              error: fsError.message,
-            });
-            throw fsError;
-          }
-        }
-        // Skip other entry types (sockets, FIFOs, etc.)
-      }
-    }
-
-    this.logger.debug("CopyTree complete", {
-      copied: copiedCount,
-      skippedSymlinks: skippedSymlinks.length,
-    });
-    return { copiedCount, skippedSymlinks };
+    this.logger.debug("CopyTree complete", { src, dest });
   }
 
   async makeExecutable(filePath: string): Promise<void> {

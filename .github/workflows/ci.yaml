@@ -31,12 +31,5 @@ jobs:
 
       - run: npm ci --force
 
-      # Debug: Check if code-server is available and runnable
-      - name: Check code-server availability
-        run: |
-          echo "Checking code-server..."
-          npx code-server --version || echo "code-server --version failed"
-        continue-on-error: true
-
       - run: npm run validate
       - run: npm run test:boundary

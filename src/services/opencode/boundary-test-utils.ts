@@ -7,7 +7,19 @@
 
 import { writeFileSync } from "fs";
 import { join } from "path";
-import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "../platform/process";
+import type { SpawnedProcess, ProcessRunner } from "../platform/process";
+import { ExecaProcessRunner } from "../platform/process";
+import { PidtreeProvider } from "../platform/process-tree";
+import { createSilentLogger } from "../logging";
+
+/**
+ * Creates a default ProcessRunner for boundary tests.
+ */
+function createDefaultRunner(): ProcessRunner {
+  const logger = createSilentLogger();
+  const processTree = new PidtreeProvider(logger);
+  return new ExecaProcessRunner(processTree, logger);
+}
 
 /**
  * Result of checking for the opencode binary.
@@ -35,15 +47,15 @@ export interface BinaryCheckResult {
  * ```
  */
 export async function checkOpencodeAvailable(
-  runner: ProcessRunner = new ExecaProcessRunner()
+  runner: ProcessRunner = createDefaultRunner()
 ): Promise<BinaryCheckResult> {
   const proc = runner.run("opencode", ["--version"], {});
 
   const result = await proc.wait(5000);
 
-  // If still running after timeout, kill it
+  // If still running after timeout, kill it (fire and forget)
   if (result.running) {
-    proc.kill("SIGKILL");
+    void proc.kill();
     return {
       available: false,
       error: "opencode --version timed out",
@@ -147,7 +159,7 @@ export interface OpencodeProcess {
  */
 export async function startOpencode(
   config: OpencodeTestConfig,
-  runner: ProcessRunner = new ExecaProcessRunner()
+  runner: ProcessRunner = createDefaultRunner()
 ): Promise<OpencodeProcess> {
   // Write opencode config file to the project directory
   // Opencode reads config from opencode.jsonc in the project root
@@ -177,15 +189,8 @@ export async function startOpencode(
   return {
     pid: proc.pid,
     stop: async () => {
-      // Try graceful shutdown first
-      proc.kill("SIGTERM");
-      const result = await proc.wait(5000);
-
-      // If still running, force kill
-      if (result.running) {
-        proc.kill("SIGKILL");
-        await proc.wait(1000);
-      }
+      // Use new kill() API: SIGTERM (5s wait) → SIGKILL (1s wait)
+      await proc.kill(5000, 1000);
     },
   };
 }

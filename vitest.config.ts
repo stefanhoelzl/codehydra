@@ -10,6 +10,7 @@ export default defineConfig({
     isolate: true,
     restoreMocks: true,
     clearMocks: true,
+    reporters: ["dot"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],

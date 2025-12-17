@@ -8,7 +8,7 @@ import { join } from "path";
 import { describe, it, expect, vi } from "vitest";
 import { KeepFilesService } from "./keepfiles-service";
 import { createMockFileSystemLayer, createDirEntry } from "../platform/filesystem.test-utils";
-import { FileSystemError, KeepFilesError } from "../errors";
+import { FileSystemError } from "../errors";
 import type { FileSystemLayer } from "../platform/filesystem";
 import { createSilentLogger } from "../logging";
 
@@ -243,30 +243,6 @@ describe("KeepFilesService", () => {
         expect(result.errors).toHaveLength(1);
         expect(result.errors[0]?.path).toBe(".env");
         expect(result.errors[0]?.message).toContain("Permission denied");
-      });
-    });
-
-    describe("security - pattern validation", () => {
-      it("rejects absolute paths in patterns", async () => {
-        const mockFs = createMockFileSystemLayer({
-          readFile: { content: "/etc/passwd" },
-        });
-        const service = new KeepFilesService(mockFs, createSilentLogger());
-
-        await expect(service.copyToWorkspace("/project", "/workspace")).rejects.toThrow(
-          KeepFilesError
-        );
-      });
-
-      it("rejects parent references in patterns", async () => {
-        const mockFs = createMockFileSystemLayer({
-          readFile: { content: "../other-project/.env" },
-        });
-        const service = new KeepFilesService(mockFs, createSilentLogger());
-
-        await expect(service.copyToWorkspace("/project", "/workspace")).rejects.toThrow(
-          KeepFilesError
-        );
       });
     });
 
