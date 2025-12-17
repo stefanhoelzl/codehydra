@@ -4,11 +4,17 @@
  * This script is run after `npm install` to ensure binaries are available
  * for development. In production, binaries are downloaded during app setup.
  *
+ * In git worktrees, binaries are symlinked from the main repo's app-data/
+ * directory if available, avoiding redundant downloads (~600MB).
+ * Falls back to copying if symlinks aren't supported (Windows without
+ * Developer Mode, cross-device scenarios).
+ *
  * Usage: npm run postinstall (automatically run after npm install)
  *        npx tsx scripts/download-binaries.ts (manual run)
  */
 
 import * as path from "node:path";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import { DefaultBinaryDownloadService } from "../src/services/binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../src/services/binary-download/archive-extractor";
@@ -22,6 +28,9 @@ import type { Logger, LogContext } from "../src/services/logging";
 
 // Console logger for the script
 const logger: Logger = {
+  silly(): void {
+    // Don't log silly messages in postinstall
+  },
   debug(): void {
     // Don't log debug messages in postinstall
   },
@@ -99,6 +108,90 @@ function createPlatformInfo(): PlatformInfo {
   };
 }
 
+/**
+ * Detect if we're running in a git worktree and return the main repo's app-data path.
+ *
+ * Git worktrees have a .git file (not directory) containing:
+ *   gitdir: /path/to/main/repo/.git/worktrees/<worktree-name>
+ *
+ * @returns Path to main repo's app-data directory, or null if not in a worktree
+ */
+async function findMainRepoAppData(): Promise<string | null> {
+  const gitPath = path.join(process.cwd(), ".git");
+
+  try {
+    const stat = await fs.promises.stat(gitPath);
+
+    if (stat.isFile()) {
+      // This is a worktree - .git is a file with gitdir: pointer
+      const content = await fs.promises.readFile(gitPath, "utf-8");
+      const match = content.match(/^gitdir:\s*(.+)$/m);
+      if (match) {
+        // gitdir points to .git/worktrees/<name>, go up to find main repo
+        // e.g., /repo/.git/worktrees/download -> /repo
+        const worktreeGitDir = match[1].trim();
+        const mainRepoRoot = path.resolve(worktreeGitDir, "..", "..", "..");
+        return path.join(mainRepoRoot, "app-data");
+      }
+    }
+  } catch {
+    // .git doesn't exist or can't be read - not a git repo
+  }
+
+  return null; // Main repo or not a git repo
+}
+
+/**
+ * Try to symlink a binary directory from the main repo.
+ * Falls back to copying if symlinks aren't supported.
+ *
+ * @returns true if binary was linked/copied, false if source doesn't exist
+ */
+async function linkOrCopyBinaryFromMainRepo(
+  mainAppData: string,
+  localAppData: string,
+  binaryType: "code-server" | "opencode",
+  version: string
+): Promise<boolean> {
+  const sourcePath = path.join(mainAppData, binaryType, version);
+  const destPath = path.join(localAppData, binaryType, version);
+
+  // Check if source exists in main repo
+  try {
+    const stat = await fs.promises.stat(sourcePath);
+    if (!stat.isDirectory()) {
+      return false;
+    }
+  } catch {
+    return false; // Source doesn't exist
+  }
+
+  // Ensure parent directory exists (e.g., app-data/code-server/)
+  await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+
+  // Try symlink first (saves disk space)
+  try {
+    await fs.promises.symlink(sourcePath, destPath, "dir");
+    console.log(`  ${binaryType} v${version} symlinked from main repo`);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+
+    // Symlink failed - check if it's a recoverable error
+    if (code === "EPERM" || code === "EXDEV") {
+      // EPERM: Windows without privileges
+      // EXDEV: Cross-device link not supported
+      console.log(`  Symlink not available, copying ${binaryType} from main repo...`);
+      await fs.promises.cp(sourcePath, destPath, { recursive: true });
+      console.log(`  ${binaryType} v${version} copied from main repo`);
+      return true;
+    }
+
+    // Re-throw unexpected errors
+    throw err;
+  }
+}
+
 // Format bytes for display
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -122,13 +215,30 @@ function createProgressCallback(binary: string): (progress: DownloadProgress) =>
 async function downloadBinary(
   service: DefaultBinaryDownloadService,
   binary: BinaryType,
-  version: string
+  version: string,
+  mainRepoAppData: string | null,
+  localAppData: string
 ): Promise<void> {
   const isInstalled = await service.isInstalled(binary);
 
   if (isInstalled) {
     console.log(`  ${binary} v${version} is already installed`);
     return;
+  }
+
+  // Try to link/copy from main repo if we're in a worktree
+  if (mainRepoAppData) {
+    const linked = await linkOrCopyBinaryFromMainRepo(
+      mainRepoAppData,
+      localAppData,
+      binary,
+      version
+    );
+    if (linked) {
+      return;
+    }
+    // Main repo doesn't have this version, fall through to download
+    console.log(`  ${binary} v${version} not found in main repo, downloading...`);
   }
 
   const progressCallback = createProgressCallback(binary);
@@ -148,6 +258,13 @@ async function main(): Promise<void> {
   const platformInfo = createPlatformInfo();
   const pathProvider = createDevPathProvider(platformInfo);
 
+  // Check if we're in a git worktree
+  const mainRepoAppData = await findMainRepoAppData();
+  if (mainRepoAppData) {
+    console.log(`Detected git worktree`);
+    console.log(`Main repo app-data: ${mainRepoAppData}`);
+  }
+
   console.log(`Platform: ${platformInfo.platform}-${platformInfo.arch}`);
   console.log(`Data directory: ${pathProvider.dataRootDir}\n`);
 
@@ -161,12 +278,24 @@ async function main(): Promise<void> {
     logger
   );
 
-  // Download binaries
+  // Download binaries (or link from main repo if in worktree)
   console.log("Checking code-server...");
-  await downloadBinary(service, "code-server", CODE_SERVER_VERSION);
+  await downloadBinary(
+    service,
+    "code-server",
+    CODE_SERVER_VERSION,
+    mainRepoAppData,
+    pathProvider.dataRootDir
+  );
 
   console.log("Checking opencode...");
-  await downloadBinary(service, "opencode", OPENCODE_VERSION);
+  await downloadBinary(
+    service,
+    "opencode",
+    OPENCODE_VERSION,
+    mainRepoAppData,
+    pathProvider.dataRootDir
+  );
 
   // Create wrapper scripts
   console.log("\nCreating wrapper scripts...");
