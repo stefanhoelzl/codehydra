@@ -11,6 +11,7 @@
  * Log levels in order of verbosity (most verbose to least).
  */
 export const LogLevel = {
+  silly: "silly",
   debug: "debug",
   info: "info",
   warn: "warn",
@@ -32,6 +33,7 @@ export type LoggerName =
   | "code-server" // CodeServerManager - code-server process
   | "pidtree" // PidtreeProvider - process tree lookups
   | "keepfiles" // KeepFilesService - .keepfiles copying
+  | "discovery" // DiscoveryService - OpenCode instance discovery
   | "api" // IPC handlers
   | "window" // WindowManager
   | "view" // ViewManager
@@ -73,7 +75,13 @@ export type LogContext = Record<string, string | number | boolean | null>;
  */
 export interface Logger {
   /**
-   * Log a debug message (most verbose).
+   * Log a silly message (most verbose).
+   * Use for per-iteration/per-scan details that would be overwhelming in normal debug output.
+   */
+  silly(message: string, context?: LogContext): void;
+
+  /**
+   * Log a debug message.
    * Use for detailed tracing information useful during development.
    */
   debug(message: string, context?: LogContext): void;

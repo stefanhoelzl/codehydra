@@ -80,6 +80,12 @@ class ElectronLogLogger implements Logger {
     this.scope = scope;
   }
 
+  silly(message: string, context?: LogContext): void {
+    const contextStr = formatContext(context);
+    const fullMessage = contextStr ? `${message} ${contextStr}` : message;
+    this.scope.silly(fullMessage);
+  }
+
   debug(message: string, context?: LogContext): void {
     const contextStr = formatContext(context);
     const fullMessage = contextStr ? `${message} ${contextStr}` : message;
@@ -138,6 +144,10 @@ class FilteredLogger implements Logger {
     this.inner = inner;
     // If no filter set, all loggers are enabled. Otherwise, check the set.
     this.enabled = allowedLoggers === undefined || allowedLoggers.has(name);
+  }
+
+  silly(message: string, context?: LogContext): void {
+    if (this.enabled) this.inner.silly(message, context);
   }
 
   debug(message: string, context?: LogContext): void {

@@ -205,12 +205,12 @@ For GPU optimization, workspace views use **detachment** instead of zero-bounds 
 
 ### Environment Variables
 
-| Variable                   | Values                   | Description                                 |
-| -------------------------- | ------------------------ | ------------------------------------------- |
-| `CODEHYDRA_ELECTRON_FLAGS` | Space-separated flags    | Electron command-line switches              |
-| `CODEHYDRA_LOGLEVEL`       | debug\|info\|warn\|error | Override default log level                  |
-| `CODEHYDRA_PRINT_LOGS`     | any non-empty value      | Print logs to stdout/stderr                 |
-| `CODEHYDRA_LOGGER`         | comma-separated names    | Filter logs by logger (e.g., `git,process`) |
+| Variable                   | Values                          | Description                                 |
+| -------------------------- | ------------------------------- | ------------------------------------------- |
+| `CODEHYDRA_ELECTRON_FLAGS` | Space-separated flags           | Electron command-line switches              |
+| `CODEHYDRA_LOGLEVEL`       | silly\|debug\|info\|warn\|error | Override default log level                  |
+| `CODEHYDRA_PRINT_LOGS`     | any non-empty value             | Print logs to stdout/stderr                 |
+| `CODEHYDRA_LOGGER`         | comma-separated names           | Filter logs by logger (e.g., `git,process`) |
 
 ### Common Electron Flags for GPU Issues
 
@@ -264,27 +264,28 @@ Log entries follow this format:
 [2025-12-16 10:30:00.123] [info] [process] Spawned command=code-server pid=12345
  │                        │      │         └─ message with context (key=value pairs)
  │                        │      └─ logger name (scope)
- │                        └─ level (debug|info|warn|error)
+ │                        └─ level (silly|debug|info|warn|error)
  └─ timestamp
 ```
 
 ### Logger Names
 
-| Logger          | Module                 |
-| --------------- | ---------------------- |
-| `[process]`     | Process spawning       |
-| `[network]`     | HTTP requests, ports   |
-| `[fs]`          | Filesystem operations  |
-| `[git]`         | Git operations         |
-| `[opencode]`    | OpenCode SDK           |
-| `[code-server]` | code-server process    |
-| `[pidtree]`     | Process tree lookups   |
-| `[keepfiles]`   | .keepfiles copying     |
-| `[api]`         | IPC handlers           |
-| `[window]`      | WindowManager          |
-| `[view]`        | ViewManager            |
-| `[app]`         | Application lifecycle  |
-| `[ui]`          | Renderer UI components |
+| Logger          | Module                      |
+| --------------- | --------------------------- |
+| `[process]`     | Process spawning            |
+| `[network]`     | HTTP requests, ports        |
+| `[fs]`          | Filesystem operations       |
+| `[git]`         | Git operations              |
+| `[opencode]`    | OpenCode SDK                |
+| `[code-server]` | code-server process         |
+| `[discovery]`   | OpenCode instance discovery |
+| `[pidtree]`     | Process tree lookups        |
+| `[keepfiles]`   | .keepfiles copying          |
+| `[api]`         | IPC handlers                |
+| `[window]`      | WindowManager               |
+| `[view]`        | ViewManager                 |
+| `[app]`         | Application lifecycle       |
+| `[ui]`          | Renderer UI components      |
 
 ### Debugging with Logs
 

@@ -28,7 +28,7 @@ export class PidtreeProvider implements ProcessTreeProvider {
   async getDescendantPids(pid: number): Promise<Set<number>> {
     try {
       const descendants = await pidtree(pid);
-      this.logger.debug("GetDescendants", { pid, count: descendants.length });
+      this.logger.silly("GetDescendants", { pid, count: descendants.length });
       return new Set(descendants);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);

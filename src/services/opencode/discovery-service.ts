@@ -4,8 +4,9 @@
  * and probes to identify OpenCode instances.
  */
 
+import type { Logger } from "../logging";
 import type { PortManager } from "../platform/network";
-import type { ProcessTreeProvider } from "./process-tree";
+import type { ProcessTreeProvider } from "../platform/process-tree";
 import type { InstanceProbe } from "./instance-probe";
 import {
   ok,
@@ -25,6 +26,7 @@ export interface DiscoveryServiceDependencies {
   readonly portManager: PortManager;
   readonly processTree: ProcessTreeProvider;
   readonly instanceProbe: InstanceProbe;
+  readonly logger: Logger;
 }
 
 /**
@@ -49,6 +51,7 @@ export class DiscoveryService implements IDisposable {
   private readonly portManager: PortManager;
   private readonly processTree: ProcessTreeProvider;
   private readonly instanceProbe: InstanceProbe;
+  private readonly logger: Logger;
 
   private codeServerPid: number | null = null;
   private readonly activeInstances = new Map<string, DiscoveredInstance[]>();
@@ -61,6 +64,7 @@ export class DiscoveryService implements IDisposable {
     this.portManager = deps.portManager;
     this.processTree = deps.processTree;
     this.instanceProbe = deps.instanceProbe;
+    this.logger = deps.logger;
   }
 
   /**
@@ -188,6 +192,13 @@ export class DiscoveryService implements IDisposable {
       // Update active instances and notify changes
       this.updateActiveInstances(currentInstances);
 
+      // Log scan summary at silly level for deep debugging
+      this.logger.silly("Scan complete", {
+        candidatePorts: candidatePorts.length,
+        knownPorts: this.knownPorts.size,
+        activeWorkspaces: this.activeInstances.size,
+      });
+
       return ok(undefined);
     } finally {
       this.scanning = false;
@@ -270,6 +281,14 @@ export class DiscoveryService implements IDisposable {
   }
 
   private notifyListeners(workspace: string, instances: ReadonlyArray<DiscoveredInstance>): void {
+    // Log meaningful changes
+    if (instances.length > 0) {
+      const ports = instances.map((i) => i.port).join(",");
+      this.logger.info("OpenCode discovered", { workspace, ports });
+    } else {
+      this.logger.info("OpenCode lost", { workspace });
+    }
+
     for (const listener of this.listeners) {
       listener(workspace, instances);
     }

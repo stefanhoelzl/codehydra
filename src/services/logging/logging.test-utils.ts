@@ -13,6 +13,7 @@ import type { Logger, LoggerName, LoggingService, LogContext } from "./types";
  * All method calls are recorded for assertion.
  */
 export interface MockLogger extends Logger {
+  silly: Mock<(message: string, context?: LogContext) => void>;
   debug: Mock<(message: string, context?: LogContext) => void>;
   info: Mock<(message: string, context?: LogContext) => void>;
   warn: Mock<(message: string, context?: LogContext) => void>;
@@ -57,6 +58,7 @@ export interface MockLoggingService extends LoggingService {
  */
 export function createMockLogger(): MockLogger {
   return {
+    silly: vi.fn(),
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
@@ -116,6 +118,7 @@ export function createMockLoggingService(): MockLoggingService {
  */
 export function createSilentLogger(): Logger {
   return {
+    silly: () => {},
     debug: () => {},
     info: () => {},
     warn: () => {},

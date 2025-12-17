@@ -6,9 +6,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DiscoveryService, type DiscoveryServiceDependencies } from "./discovery-service";
 import type { PortManager, ListeningPort } from "../platform/network";
-import type { ProcessTreeProvider } from "./process-tree";
+import type { ProcessTreeProvider } from "../platform/process-tree";
 import type { InstanceProbe } from "./instance-probe";
 import { ok, err } from "./types";
+import { createSilentLogger } from "../logging";
 
 /**
  * Create a mock PortManager with controllable behavior.
@@ -48,6 +49,7 @@ describe("DiscoveryService", () => {
       portManager: mockPortManager,
       processTree: mockProcessTree,
       instanceProbe: mockInstanceProbe,
+      logger: createSilentLogger(),
     };
 
     service = new DiscoveryService(deps);
@@ -190,6 +192,7 @@ describe("DiscoveryService scan", () => {
       portManager: mockPortManager,
       processTree: mockProcessTree,
       instanceProbe: mockInstanceProbe,
+      logger: createSilentLogger(),
     });
   });
 

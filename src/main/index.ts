@@ -280,6 +280,7 @@ async function startServices(): Promise<void> {
     portManager: networkLayer,
     processTree,
     instanceProbe,
+    logger: loggingService.createLogger("discovery"),
   });
 
   agentStatusManager = new AgentStatusManager(

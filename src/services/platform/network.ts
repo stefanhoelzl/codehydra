@@ -194,7 +194,7 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
       const connections = await si.default.networkConnections();
 
       if (!Array.isArray(connections)) {
-        this.logger.debug("Scanned listening ports", { count: 0 });
+        this.logger.silly("Scanned listening ports", { count: 0 });
         return [];
       }
 
@@ -212,7 +212,7 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
           pid: conn.pid,
         }));
 
-      this.logger.debug("Scanned listening ports", { count: ports.length });
+      this.logger.silly("Scanned listening ports", { count: ports.length });
       return ports;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

@@ -52,6 +52,7 @@ describe("ElectronLogService", () => {
 
     // Mock scope to return a mock logger
     mockScope.mockReturnValue({
+      silly: vi.fn(),
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
@@ -109,6 +110,12 @@ describe("ElectronLogService", () => {
       await createService({ isDevelopment: false });
       // Falls back to warn (prod mode default)
       expect(mockTransports.file.level).toBe("warn");
+    });
+
+    it("respects CODEHYDRA_LOGLEVEL=silly", async () => {
+      process.env.CODEHYDRA_LOGLEVEL = "silly";
+      await createService({ isDevelopment: true });
+      expect(mockTransports.file.level).toBe("silly");
     });
   });
 
@@ -245,8 +252,27 @@ describe("ElectronLogService", () => {
   });
 
   describe("Logger methods", () => {
+    it("calls scope.silly for silly level messages", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const service = await createService();
+      const logger = service.createLogger("network");
+
+      logger.silly("Scan details", { count: 5 });
+
+      expect(scopeLogger.silly).toHaveBeenCalledWith("Scan details count=5");
+    });
+
     it("formats context as key=value pairs", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -264,6 +290,7 @@ describe("ElectronLogService", () => {
 
     it("handles null values in context", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -281,6 +308,7 @@ describe("ElectronLogService", () => {
 
     it("handles boolean values in context", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -298,6 +326,7 @@ describe("ElectronLogService", () => {
 
     it("handles numeric values in context", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -315,6 +344,7 @@ describe("ElectronLogService", () => {
 
     it("handles message without context", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -332,6 +362,7 @@ describe("ElectronLogService", () => {
 
     it("includes Error stack in error logs", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -350,6 +381,7 @@ describe("ElectronLogService", () => {
 
     it("logs error without Error object", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -369,6 +401,7 @@ describe("ElectronLogService", () => {
   describe("CODEHYDRA_LOGGER filtering", () => {
     it("logs from all loggers when CODEHYDRA_LOGGER is not set", async () => {
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -387,6 +420,7 @@ describe("ElectronLogService", () => {
     it("filters loggers based on CODEHYDRA_LOGGER env var", async () => {
       process.env.CODEHYDRA_LOGGER = "process,network";
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -409,6 +443,7 @@ describe("ElectronLogService", () => {
     it("allows specified loggers in filter", async () => {
       process.env.CODEHYDRA_LOGGER = "git,fs";
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -433,6 +468,7 @@ describe("ElectronLogService", () => {
     it("handles whitespace in CODEHYDRA_LOGGER", async () => {
       process.env.CODEHYDRA_LOGGER = "  git , process  ";
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -451,6 +487,7 @@ describe("ElectronLogService", () => {
     it("handles empty CODEHYDRA_LOGGER by allowing all loggers", async () => {
       process.env.CODEHYDRA_LOGGER = "";
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -469,6 +506,7 @@ describe("ElectronLogService", () => {
     it("suppresses all log levels for filtered-out loggers", async () => {
       process.env.CODEHYDRA_LOGGER = "network";
       const scopeLogger = {
+        silly: vi.fn(),
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
@@ -480,11 +518,13 @@ describe("ElectronLogService", () => {
       const gitLogger = service.createLogger("git");
       const testError = new Error("Test");
 
+      gitLogger.silly("Silly");
       gitLogger.debug("Debug");
       gitLogger.info("Info");
       gitLogger.warn("Warn");
       gitLogger.error("Error", {}, testError);
 
+      expect(scopeLogger.silly).not.toHaveBeenCalled();
       expect(scopeLogger.debug).not.toHaveBeenCalled();
       expect(scopeLogger.info).not.toHaveBeenCalled();
       expect(scopeLogger.warn).not.toHaveBeenCalled();
