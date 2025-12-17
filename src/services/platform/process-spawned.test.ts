@@ -114,11 +114,19 @@ describe("ExecaSpawnedProcess", () => {
       const spawned = createSpawned(subprocess);
       runningProcesses.push(spawned);
 
-      // kill(5000, 0) - wait up to 5s for SIGTERM, don't wait for SIGKILL
-      const result = await spawned.kill(5000, 0);
+      // kill(2000, 500) - wait up to 2s for SIGTERM, then 500ms for SIGKILL
+      // Reduced from kill(5000, 0) to avoid Vitest test timeout (5000ms default)
+      // Added killTimeout so Windows can wait for forced kill to complete
+      const result = await spawned.kill(2000, 500);
 
       expect(result.success).toBe(true);
-      expect(result.reason).toBe("SIGTERM");
+      if (process.platform === "win32") {
+        // Windows: taskkill without /f doesn't work on console apps,
+        // process is killed by taskkill /f (SIGKILL equivalent)
+        expect(result.reason).toBe("SIGKILL");
+      } else {
+        expect(result.reason).toBe("SIGTERM");
+      }
     });
 
     it("kill() on dead process returns success", async () => {
@@ -148,7 +156,12 @@ describe("ExecaSpawnedProcess", () => {
 
       // But the process should be killed - wait for it
       const waitResult = await spawned.wait(1000);
-      expect(waitResult.exitCode).toBeNull(); // Killed by signal
+      if (process.platform === "win32") {
+        // Windows: taskkill sets exitCode, no POSIX signal
+        expect(waitResult.exitCode).not.toBeNull();
+      } else {
+        expect(waitResult.exitCode).toBeNull(); // Killed by signal
+      }
     });
   });
 
@@ -180,11 +193,19 @@ describe("ExecaSpawnedProcess", () => {
       const spawned = createSpawned(subprocess);
       runningProcesses.push(spawned);
 
-      await spawned.kill(5000, 0);
+      // Reduced from kill(5000, 0) to avoid Vitest test timeout
+      // Added killTimeout so Windows can wait for forced kill to complete
+      await spawned.kill(2000, 500);
       const result = await spawned.wait();
 
-      expect(result.exitCode).toBeNull();
-      expect(result.signal).toBe("SIGTERM");
+      if (process.platform === "win32") {
+        // Windows: taskkill terminates with exit code, no POSIX signal
+        expect(result.exitCode).not.toBeNull();
+        expect(result.signal).toBeUndefined();
+      } else {
+        expect(result.exitCode).toBeNull();
+        expect(result.signal).toBe("SIGTERM");
+      }
       expect(result.running).toBeUndefined();
     });
 
@@ -236,10 +257,17 @@ describe("ExecaSpawnedProcess", () => {
       expect(result1.running).toBe(true);
 
       // Second call with no timeout after killing
-      await spawned.kill(5000, 0);
+      // Reduced from kill(5000, 0) to avoid Vitest test timeout
+      // Added killTimeout so Windows can wait for forced kill to complete
+      await spawned.kill(2000, 500);
       const result2 = await spawned.wait();
       expect(result2.running).toBeUndefined();
-      expect(result2.signal).toBe("SIGTERM");
+      if (process.platform === "win32") {
+        // Windows: taskkill terminates with exit code, no POSIX signal
+        expect(result2.exitCode).not.toBeNull();
+      } else {
+        expect(result2.signal).toBe("SIGTERM");
+      }
     });
 
     it("resolves with signal when killed during wait", async () => {
@@ -251,11 +279,18 @@ describe("ExecaSpawnedProcess", () => {
       const waitPromise = spawned.wait();
 
       // Kill after a small delay
-      setTimeout(() => void spawned.kill(5000, 0), 10);
+      // Reduced from kill(5000, 0) to avoid Vitest test timeout
+      // Added killTimeout so Windows can wait for forced kill to complete
+      setTimeout(() => void spawned.kill(2000, 500), 10);
 
       const result = await waitPromise;
 
-      expect(result.signal).toBe("SIGTERM");
+      if (process.platform === "win32") {
+        // Windows: taskkill terminates with exit code, no POSIX signal
+        expect(result.exitCode).not.toBeNull();
+      } else {
+        expect(result.signal).toBe("SIGTERM");
+      }
     });
 
     it("captures stdout", async () => {

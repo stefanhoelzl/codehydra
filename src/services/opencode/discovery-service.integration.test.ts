@@ -11,7 +11,7 @@ import {
   createProcessTreeProvider,
   PidtreeProvider,
   type ProcessTreeProvider,
-} from "./process-tree";
+} from "../platform/process-tree";
 import type { PortManager } from "../platform/network";
 import type { InstanceProbe } from "./instance-probe";
 import { createSilentLogger } from "../logging";
@@ -43,6 +43,7 @@ describe("DiscoveryService integration with ProcessTreeProvider", () => {
       portManager: mockPortManager,
       processTree,
       instanceProbe: mockInstanceProbe,
+      logger: createSilentLogger(),
     };
 
     discoveryService = new DiscoveryService(deps);
@@ -112,6 +113,7 @@ describe("DiscoveryService integration with ProcessTreeProvider", () => {
       portManager: mockPortManager,
       processTree: mockProcessTree,
       instanceProbe: mockInstanceProbe,
+      logger: createSilentLogger(),
     };
 
     const service = new DiscoveryService(deps);
@@ -151,6 +153,7 @@ describe("DiscoveryService integration with ProcessTreeProvider", () => {
       portManager: mockPortManager,
       processTree: mockProcessTree,
       instanceProbe: mockProbe,
+      logger: createSilentLogger(),
     };
 
     const service = new DiscoveryService(deps);
@@ -192,6 +195,7 @@ describe("DiscoveryService integration with ProcessTreeProvider", () => {
       portManager: mockPortManager,
       processTree: mockProcessTree,
       instanceProbe: mockProbe,
+      logger: createSilentLogger(),
     };
 
     const service = new DiscoveryService(deps);

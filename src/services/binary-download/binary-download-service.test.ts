@@ -2,6 +2,7 @@
  * Unit tests for BinaryDownloadService.
  */
 
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { BinaryDownloadError } from "./errors";
@@ -42,12 +43,14 @@ describe("DefaultBinaryDownloadService", () => {
   describe("getBinaryPath", () => {
     it("returns correct path for code-server on Linux", () => {
       const path = service.getBinaryPath("code-server");
-      expect(path).toBe(`/app-data/code-server/${CODE_SERVER_VERSION}/bin/code-server`);
+      expect(path).toBe(
+        join("/app-data", "code-server", CODE_SERVER_VERSION, "bin", "code-server")
+      );
     });
 
     it("returns correct path for opencode on Linux", () => {
       const path = service.getBinaryPath("opencode");
-      expect(path).toBe(`/app-data/opencode/${OPENCODE_VERSION}/opencode`);
+      expect(path).toBe(join("/app-data", "opencode", OPENCODE_VERSION, "opencode"));
     });
 
     it("returns correct path for code-server on Windows", () => {
@@ -64,7 +67,9 @@ describe("DefaultBinaryDownloadService", () => {
       );
 
       const path = winService.getBinaryPath("code-server");
-      expect(path).toBe(`/app-data/code-server/${CODE_SERVER_VERSION}/bin/code-server.cmd`);
+      expect(path).toBe(
+        join("/app-data", "code-server", CODE_SERVER_VERSION, "bin", "code-server.cmd")
+      );
     });
 
     it("returns correct path for opencode on Windows", () => {
@@ -81,7 +86,7 @@ describe("DefaultBinaryDownloadService", () => {
       );
 
       const path = winService.getBinaryPath("opencode");
-      expect(path).toBe(`/app-data/opencode/${OPENCODE_VERSION}/opencode.exe`);
+      expect(path).toBe(join("/app-data", "opencode", OPENCODE_VERSION, "opencode.exe"));
     });
   });
 
@@ -199,7 +204,7 @@ describe("DefaultBinaryDownloadService", () => {
 
       // The binary path should be for darwin
       const path = macService.getBinaryPath("code-server");
-      expect(path).toContain("bin/code-server");
+      expect(path).toContain(join("bin", "code-server"));
       expect(path).not.toContain(".cmd");
     });
   });

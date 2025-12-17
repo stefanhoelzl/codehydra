@@ -25,34 +25,39 @@ export interface MockPathProviderOptions extends Partial<
  * @returns Mock PathProvider object
  */
 export function createMockPathProvider(overrides?: MockPathProviderOptions): PathProvider {
-  const dataRootDir = overrides?.dataRootDir ?? "/test/app-data";
-  const projectsDir = overrides?.projectsDir ?? "/test/app-data/projects";
-  const vscodeDir = overrides?.vscodeDir ?? "/test/app-data/vscode";
+  // Use join() for all paths to ensure cross-platform compatibility
+  const dataRootDir = overrides?.dataRootDir ?? join("/test", "app-data");
+  const projectsDir = overrides?.projectsDir ?? join("/test", "app-data", "projects");
+  const vscodeDir = overrides?.vscodeDir ?? join("/test", "app-data", "vscode");
 
   const defaultGetProjectWorkspacesDir = (projectPath: string): string => {
     return join(projectsDir, projectDirName(projectPath), "workspaces");
   };
 
   const codeServerDir =
-    overrides?.codeServerDir ?? `/test/app-data/code-server/${CODE_SERVER_VERSION}`;
-  const opencodeDir = overrides?.opencodeDir ?? `/test/app-data/opencode/${OPENCODE_VERSION}`;
+    overrides?.codeServerDir ?? join("/test", "app-data", "code-server", CODE_SERVER_VERSION);
+  const opencodeDir =
+    overrides?.opencodeDir ?? join("/test", "app-data", "opencode", OPENCODE_VERSION);
 
   return {
     dataRootDir,
     projectsDir,
     vscodeDir,
-    vscodeExtensionsDir: overrides?.vscodeExtensionsDir ?? "/test/app-data/vscode/extensions",
-    vscodeUserDataDir: overrides?.vscodeUserDataDir ?? "/test/app-data/vscode/user-data",
+    vscodeExtensionsDir:
+      overrides?.vscodeExtensionsDir ?? join("/test", "app-data", "vscode", "extensions"),
+    vscodeUserDataDir:
+      overrides?.vscodeUserDataDir ?? join("/test", "app-data", "vscode", "user-data"),
     vscodeSetupMarkerPath:
-      overrides?.vscodeSetupMarkerPath ?? "/test/app-data/vscode/.setup-completed",
-    electronDataDir: overrides?.electronDataDir ?? "/test/app-data/electron",
-    vscodeAssetsDir: overrides?.vscodeAssetsDir ?? "/mock/assets",
-    appIconPath: overrides?.appIconPath ?? "/test/resources/icon.png",
-    binDir: overrides?.binDir ?? "/test/app-data/bin",
+      overrides?.vscodeSetupMarkerPath ?? join("/test", "app-data", "vscode", ".setup-completed"),
+    electronDataDir: overrides?.electronDataDir ?? join("/test", "app-data", "electron"),
+    vscodeAssetsDir: overrides?.vscodeAssetsDir ?? join("/mock", "assets"),
+    appIconPath: overrides?.appIconPath ?? join("/test", "resources", "icon.png"),
+    binDir: overrides?.binDir ?? join("/test", "app-data", "bin"),
     codeServerDir,
     opencodeDir,
-    codeServerBinaryPath: overrides?.codeServerBinaryPath ?? `${codeServerDir}/bin/code-server`,
-    opencodeBinaryPath: overrides?.opencodeBinaryPath ?? `${opencodeDir}/opencode`,
+    codeServerBinaryPath:
+      overrides?.codeServerBinaryPath ?? join(codeServerDir, "bin", "code-server"),
+    opencodeBinaryPath: overrides?.opencodeBinaryPath ?? join(opencodeDir, "opencode"),
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

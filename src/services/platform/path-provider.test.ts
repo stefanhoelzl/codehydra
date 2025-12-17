@@ -254,10 +254,10 @@ describe("DefaultPathProvider", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       expect(pathProvider.codeServerDir).toBe(
-        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}`
+        join("/home/testuser", ".local", "share", "codehydra", "code-server", CODE_SERVER_VERSION)
       );
       expect(pathProvider.opencodeDir).toBe(
-        `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}`
+        join("/home/testuser", ".local", "share", "codehydra", "opencode", OPENCODE_VERSION)
       );
     });
 
@@ -273,10 +273,27 @@ describe("DefaultPathProvider", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       expect(pathProvider.codeServerBinaryPath).toBe(
-        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}/bin/code-server`
+        join(
+          "/home/testuser",
+          ".local",
+          "share",
+          "codehydra",
+          "code-server",
+          CODE_SERVER_VERSION,
+          "bin",
+          "code-server"
+        )
       );
       expect(pathProvider.opencodeBinaryPath).toBe(
-        `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}/opencode`
+        join(
+          "/home/testuser",
+          ".local",
+          "share",
+          "codehydra",
+          "opencode",
+          OPENCODE_VERSION,
+          "opencode"
+        )
       );
     });
   });
@@ -316,15 +333,29 @@ describe("DefaultPathProvider", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       expect(pathProvider.codeServerDir).toBe(
-        `/Users/testuser/Library/Application Support/Codehydra/code-server/${CODE_SERVER_VERSION}`
+        join(
+          "/Users/testuser",
+          "Library",
+          "Application Support",
+          "Codehydra",
+          "code-server",
+          CODE_SERVER_VERSION
+        )
       );
       expect(pathProvider.opencodeDir).toBe(
-        `/Users/testuser/Library/Application Support/Codehydra/opencode/${OPENCODE_VERSION}`
+        join(
+          "/Users/testuser",
+          "Library",
+          "Application Support",
+          "Codehydra",
+          "opencode",
+          OPENCODE_VERSION
+        )
       );
       // macOS uses Unix-style paths (no .exe extension)
-      expect(pathProvider.codeServerBinaryPath).toContain("/bin/code-server");
+      expect(pathProvider.codeServerBinaryPath).toContain(join("bin", "code-server"));
       expect(pathProvider.codeServerBinaryPath).not.toContain(".cmd");
-      expect(pathProvider.opencodeBinaryPath).toContain("/opencode");
+      expect(pathProvider.opencodeBinaryPath).toContain("opencode");
       expect(pathProvider.opencodeBinaryPath).not.toContain(".exe");
     });
   });
