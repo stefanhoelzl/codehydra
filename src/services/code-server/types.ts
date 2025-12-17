@@ -13,6 +13,8 @@ export type InstanceState = "stopped" | "starting" | "running" | "stopping" | "f
  * Configuration for code-server instance.
  */
 export interface CodeServerConfig {
+  /** Absolute path to the code-server binary */
+  readonly binaryPath: string;
   /** Directory for runtime files (sockets, pid files) */
   readonly runtimeDir: string;
   /** Directory for VS Code extensions */

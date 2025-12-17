@@ -201,6 +201,21 @@ export interface FileSystemLayer {
    * await fs.makeExecutable('/path/to/script.sh');
    */
   makeExecutable(path: string): Promise<void>;
+
+  /**
+   * Write binary content to file. Overwrites existing file.
+   *
+   * @param path - Absolute path to file
+   * @param content - Buffer content to write
+   * @throws FileSystemError with code ENOENT if parent directory doesn't exist
+   * @throws FileSystemError with code EACCES if permission denied
+   * @throws FileSystemError with code EISDIR if path is a directory
+   *
+   * @example Write binary data
+   * const buffer = await fetchBinaryData();
+   * await fs.writeFileBuffer('/path/to/binary', buffer);
+   */
+  writeFileBuffer(path: string, content: Buffer): Promise<void>;
 }
 
 // ============================================================================
@@ -518,6 +533,21 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       await fs.chmod(filePath, 0o755);
     } catch (error) {
       throw mapError(error, filePath);
+    }
+  }
+
+  async writeFileBuffer(filePath: string, content: Buffer): Promise<void> {
+    this.logger.debug("WriteBuffer", { path: filePath, size: content.length });
+    try {
+      await fs.writeFile(filePath, content);
+    } catch (error) {
+      const fsError = mapError(error, filePath);
+      this.logger.warn("WriteBuffer failed", {
+        path: filePath,
+        code: fsError.fsCode,
+        error: fsError.message,
+      });
+      throw fsError;
     }
   }
 }

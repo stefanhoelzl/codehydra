@@ -104,6 +104,16 @@ export interface MockMakeExecutableOptions {
 }
 
 /**
+ * Options for mock writeFileBuffer method.
+ */
+export interface MockWriteFileBufferOptions {
+  /** Error to throw */
+  readonly error?: FileSystemError;
+  /** Custom implementation */
+  readonly implementation?: (path: string, content: Buffer) => Promise<void>;
+}
+
+/**
  * Options for creating a mock FileSystemLayer.
  */
 export interface MockFileSystemLayerOptions {
@@ -123,6 +133,8 @@ export interface MockFileSystemLayerOptions {
   readonly copyTree?: MockCopyTreeOptions;
   /** Mock makeExecutable: succeed or throw error */
   readonly makeExecutable?: MockMakeExecutableOptions;
+  /** Mock writeFileBuffer: succeed or throw error */
+  readonly writeFileBuffer?: MockWriteFileBufferOptions;
 }
 
 // ============================================================================
@@ -233,6 +245,16 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       }
       if (options?.makeExecutable?.error) {
         throw options.makeExecutable.error;
+      }
+      // Default: succeed silently
+    },
+
+    async writeFileBuffer(path: string, content: Buffer): Promise<void> {
+      if (options?.writeFileBuffer?.implementation) {
+        return options.writeFileBuffer.implementation(path, content);
+      }
+      if (options?.writeFileBuffer?.error) {
+        throw options.writeFileBuffer.error;
       }
       // Default: succeed silently
     },

@@ -1065,6 +1065,70 @@ All URLs opened from code-server → external system browser:
 - Implemented via `setWindowOpenHandler` returning `{ action: 'deny' }`
 - Platform-specific: `xdg-open` (Linux), `open` (macOS), `start` (Windows)
 
+## Binary Distribution
+
+CodeHydra downloads code-server and opencode binaries from GitHub releases instead of bundling them or relying on devDependencies.
+
+### Download Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Binary Download Flow                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  npm install                          App Setup (Production)                │
+│       │                                      │                              │
+│       v                                      v                              │
+│  ┌─────────────────┐                 ┌─────────────────┐                    │
+│  │ postinstall     │                 │ VscodeSetup     │                    │
+│  │ script (tsx)    │                 │ Service         │                    │
+│  └────────┬────────┘                 └────────┬────────┘                    │
+│           │                                   │                             │
+│           └───────────────┬───────────────────┘                             │
+│                           │                                                 │
+│                           v                                                 │
+│              ┌────────────────────────┐                                     │
+│              │ BinaryDownloadService  │  (shared download logic)            │
+│              │  - isInstalled()       │                                     │
+│              │  - download()          │                                     │
+│              │  - getBinaryPath()     │                                     │
+│              │  - createWrapperScripts()                                    │
+│              └───────────┬────────────┘                                     │
+│                          │                                                  │
+│           ┌──────────────┼──────────────┐                                   │
+│           │              │              │                                   │
+│           v              v              v                                   │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                            │
+│  │ HttpClient  │ │ FileSystem  │ │ Archive     │                            │
+│  │ (fetch)     │ │ Layer       │ │ Extractor   │                            │
+│  └─────────────┘ └─────────────┘ └─────────────┘                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Version Management
+
+Binary versions are defined in `src/services/binary-download/versions.ts`:
+
+- `CODE_SERVER_VERSION` - e.g., "4.106.3"
+- `OPENCODE_VERSION` - e.g., "0.1.47"
+
+**Development**: `npm install` runs the postinstall script which downloads binaries to `./app-data/`.
+
+**Production**: The VscodeSetupService downloads binaries to the user's app-data directory during first-run setup. If `CURRENT_SETUP_VERSION` is incremented (which happens when versions change), existing installations re-run setup on next launch.
+
+### Platform-Specific Assets
+
+| Platform      | code-server Source           | opencode Source       |
+| ------------- | ---------------------------- | --------------------- |
+| macOS (x64)   | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
+| macOS (arm64) | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
+| Linux (x64)   | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
+| Linux (arm64) | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
+| Windows (x64) | stefanhoelzl/codehydra (zip) | sst/opencode (tar.gz) |
+
+**Windows Note**: code-server doesn't publish Windows binaries, so CodeHydra builds and publishes them via GitHub Actions (see `.github/workflows/build-code-server-windows.yaml`).
+
 ## VS Code Setup
 
 ### First-Run Behavior
@@ -1084,13 +1148,14 @@ app.whenReady()
   Show SetupScreen     # Blocking UI with progress bar
        │
        ▼
-  validateAssets()     # Check settings.json, keybindings.json, extensions.json exist
+   validateAssets()     # Check settings.json, keybindings.json, extensions.json exist
        │
        ▼
-  Run setup steps:
-  1. installExtensions()     # bundled .vsix + marketplace extensions
-  2. writeConfigFiles()      # copy settings.json, keybindings.json from assets
-  3. writeCompletionMarker() # .setup-completed
+   Run setup steps:
+   1. downloadBinaries()      # Download code-server + opencode from GitHub releases
+   2. installExtensions()     # bundled .vsix + marketplace extensions
+   3. setupBinDirectory()     # Create CLI wrapper scripts in bin/
+   4. writeCompletionMarker() # .setup-completed
        │
        ▼
   On success: Show "Setup complete!" (1.5s) → Continue to normal startup
@@ -1137,8 +1202,17 @@ out/main/assets/ (ASAR in prod)
 <app-data>/
 ├── bin/                           # CLI wrapper scripts (generated during setup)
 │   ├── code (code.cmd)            # VS Code CLI wrapper
-│   ├── code-server (code-server.cmd) # code-server wrapper
-│   └── opencode (opencode.cmd)    # OpenCode wrapper (if installed)
+│   └── opencode (opencode.cmd)    # OpenCode wrapper (redirects to versioned binary)
+├── code-server/
+│   └── <version>/                 # e.g., 4.106.3/
+│       ├── bin/code-server[.cmd]  # Actual code-server binary
+│       ├── lib/                   # VS Code distribution
+│       │   ├── node[.exe]         # Bundled Node.js (Windows only)
+│       │   └── vscode/
+│       └── out/node/entry.js      # Entry point
+├── opencode/
+│   └── <version>/                 # e.g., 0.1.47/
+│       └── opencode[.exe]         # Actual opencode binary
 ├── vscode/
 │   ├── .setup-completed           # JSON: { version: N, completedAt: "ISO" }
 │   ├── codehydra.vscode-0.0.1.vsix # Copied from assets for installation
@@ -1173,11 +1247,12 @@ During VS Code setup, CLI wrapper scripts are generated in `<app-data>/bin/`. Th
 
 **Generated Scripts:**
 
-| Script                            | Purpose                                |
-| --------------------------------- | -------------------------------------- |
-| `code` / `code.cmd`               | VS Code CLI (code-server's remote-cli) |
-| `code-server` / `code-server.cmd` | code-server binary                     |
-| `opencode` / `opencode.cmd`       | OpenCode binary (if installed)         |
+| Script                      | Purpose                                                     |
+| --------------------------- | ----------------------------------------------------------- |
+| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli)                      |
+| `opencode` / `opencode.cmd` | Redirects to `<app-data>/opencode/<version>/opencode[.exe]` |
+
+**Note**: code-server is launched directly via `PathProvider.codeServerBinaryPath` (absolute path), not via a wrapper script.
 
 **Environment Configuration (in CodeServerManager):**
 

@@ -36,7 +36,10 @@ export type LoggerName =
   | "window" // WindowManager
   | "view" // ViewManager
   | "app" // Application lifecycle
-  | "ui"; // Renderer UI components
+  | "ui" // Renderer UI components
+  | "binary-download" // BinaryDownloadService - binary downloads
+  | "vscode-setup" // VscodeSetupService - VS Code setup
+  | "lifecycle"; // LifecycleApi - app lifecycle
 
 /**
  * Context data for log entries.

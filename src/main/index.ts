@@ -23,6 +23,11 @@ import { LoggingProcessRunner } from "../services/platform/logging-process-runne
 import { VscodeSetupService } from "../services/vscode-setup";
 import { ExecaProcessRunner } from "../services/platform/process";
 import {
+  DefaultBinaryDownloadService,
+  DefaultArchiveExtractor,
+  type BinaryDownloadService,
+} from "../services/binary-download";
+import {
   DiscoveryService,
   AgentStatusManager,
   PidtreeProvider,
@@ -146,6 +151,7 @@ redirectElectronDataPaths();
  */
 function createCodeServerConfig(): CodeServerConfig {
   return {
+    binaryPath: pathProvider.codeServerBinaryPath,
     runtimeDir: nodePath.join(pathProvider.dataRootDir, "runtime"),
     extensionsDir: pathProvider.vscodeExtensionsDir,
     userDataDir: pathProvider.vscodeUserDataDir,
@@ -452,19 +458,26 @@ async function bootstrap(): Promise<void> {
   // Store processRunner in module-level variable for reuse by CodeServerManager
   processRunner = new ExecaProcessRunner();
 
-  // Resolve absolute path to code-server binary
-  // In development, code-server is in node_modules
-  // In production, assume bundled or in PATH
-  const codeServerBinaryPath = buildInfo.isDevelopment
-    ? nodePath.join(process.cwd(), "node_modules", "code-server", "out", "node", "entry.js")
-    : "code-server";
+  // Create network layer for binary downloads
+  const networkLayerForSetup = new DefaultNetworkLayer(loggingService.createLogger("network"));
+
+  // Create BinaryDownloadService for downloading code-server and opencode
+  const binaryDownloadService: BinaryDownloadService = new DefaultBinaryDownloadService(
+    networkLayerForSetup,
+    fileSystemLayer,
+    new DefaultArchiveExtractor(),
+    pathProvider,
+    platformInfo,
+    loggingService.createLogger("binary-download")
+  );
 
   vscodeSetupService = new VscodeSetupService(
     processRunner,
     pathProvider,
-    codeServerBinaryPath,
     fileSystemLayer,
-    platformInfo
+    platformInfo,
+    binaryDownloadService,
+    loggingService.createLogger("vscode-setup")
   );
 
   // 3. Check if setup is already complete (determines code-server startup)
@@ -514,7 +527,8 @@ async function bootstrap(): Promise<void> {
     // emitProgress callback - sends progress events to renderer
     (progress) => {
       viewManagerRef.getUIView().webContents.send(ApiIpcChannels.SETUP_PROGRESS, progress);
-    }
+    },
+    loggingService.createLogger("lifecycle")
   );
 
   // 8. Register lifecycle handlers EARLY (before loading UI)

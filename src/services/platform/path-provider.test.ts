@@ -8,6 +8,7 @@ import { createMockPathProvider } from "./path-provider.test-utils";
 import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
+import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versions";
 
 describe("createMockPathProvider", () => {
   it("returns sensible default paths", () => {
@@ -23,6 +24,14 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeAssetsDir).toBe("/mock/assets");
     expect(pathProvider.appIconPath).toBe("/test/resources/icon.png");
     expect(pathProvider.binDir).toBe("/test/app-data/bin");
+    expect(pathProvider.codeServerDir).toBe(`/test/app-data/code-server/${CODE_SERVER_VERSION}`);
+    expect(pathProvider.opencodeDir).toBe(`/test/app-data/opencode/${OPENCODE_VERSION}`);
+    expect(pathProvider.codeServerBinaryPath).toBe(
+      `/test/app-data/code-server/${CODE_SERVER_VERSION}/bin/code-server`
+    );
+    expect(pathProvider.opencodeBinaryPath).toBe(
+      `/test/app-data/opencode/${OPENCODE_VERSION}/opencode`
+    );
   });
 
   it("accepts override for individual paths", () => {
@@ -49,6 +58,10 @@ describe("createMockPathProvider", () => {
       vscodeAssetsDir: "/h",
       appIconPath: "/h/icon.png",
       binDir: "/i",
+      codeServerDir: "/j",
+      opencodeDir: "/k",
+      codeServerBinaryPath: "/j/bin/code-server",
+      opencodeBinaryPath: "/k/opencode",
     });
 
     expect(pathProvider.dataRootDir).toBe("/a");
@@ -61,6 +74,10 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeAssetsDir).toBe("/h");
     expect(pathProvider.appIconPath).toBe("/h/icon.png");
     expect(pathProvider.binDir).toBe("/i");
+    expect(pathProvider.codeServerDir).toBe("/j");
+    expect(pathProvider.opencodeDir).toBe("/k");
+    expect(pathProvider.codeServerBinaryPath).toBe("/j/bin/code-server");
+    expect(pathProvider.opencodeBinaryPath).toBe("/k/opencode");
   });
 
   it("getProjectWorkspacesDir returns path with project hash", () => {
@@ -98,6 +115,10 @@ describe("createMockPathProvider", () => {
     expect(typeof pathProvider.vscodeAssetsDir).toBe("string");
     expect(typeof pathProvider.appIconPath).toBe("string");
     expect(typeof pathProvider.binDir).toBe("string");
+    expect(typeof pathProvider.codeServerDir).toBe("string");
+    expect(typeof pathProvider.opencodeDir).toBe("string");
+    expect(typeof pathProvider.codeServerBinaryPath).toBe("string");
+    expect(typeof pathProvider.opencodeBinaryPath).toBe("string");
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
   });
 });
@@ -122,6 +143,29 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.electronDataDir).toMatch(/app-data[/\\]electron$/);
       expect(pathProvider.appIconPath).toMatch(/resources[/\\]icon\.png$/);
       expect(pathProvider.binDir).toMatch(/app-data[/\\]bin$/);
+    });
+
+    it("returns versioned binary directories", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pathProvider.codeServerDir).toMatch(
+        new RegExp(`app-data[/\\\\]code-server[/\\\\]${CODE_SERVER_VERSION}$`)
+      );
+      expect(pathProvider.opencodeDir).toMatch(
+        new RegExp(`app-data[/\\\\]opencode[/\\\\]${OPENCODE_VERSION}$`)
+      );
+    });
+
+    it("returns correct binary paths for Linux", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pathProvider.codeServerBinaryPath).toMatch(/bin[/\\]code-server$/);
+      expect(pathProvider.opencodeBinaryPath).toMatch(/opencode$/);
+      expect(pathProvider.opencodeBinaryPath).not.toMatch(/\.exe$/);
     });
 
     it("returns vscodeAssetsDir based on appPath", () => {
@@ -197,6 +241,44 @@ describe("DefaultPathProvider", () => {
 
       expect(pathProvider.binDir.startsWith(pathProvider.dataRootDir)).toBe(true);
     });
+
+    it("returns versioned binary directories", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
+      const platformInfo = createMockPlatformInfo({
+        platform: "linux",
+        homeDir: "/home/testuser",
+      });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pathProvider.codeServerDir).toBe(
+        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}`
+      );
+      expect(pathProvider.opencodeDir).toBe(
+        `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}`
+      );
+    });
+
+    it("returns correct binary paths", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
+      const platformInfo = createMockPlatformInfo({
+        platform: "linux",
+        homeDir: "/home/testuser",
+      });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pathProvider.codeServerBinaryPath).toBe(
+        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}/bin/code-server`
+      );
+      expect(pathProvider.opencodeBinaryPath).toBe(
+        `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}/opencode`
+      );
+    });
   });
 
   describe("production mode - macOS", () => {
@@ -220,6 +302,30 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.vscodeUserDataDir).toBe(join(dataRoot, "vscode", "user-data"));
       expect(pathProvider.vscodeSetupMarkerPath).toBe(join(dataRoot, "vscode", ".setup-completed"));
       expect(pathProvider.electronDataDir).toBe(join(dataRoot, "electron"));
+    });
+
+    it("returns versioned binary directories and correct paths", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/Applications/Codehydra.app/Contents/Resources/app.asar",
+      });
+      const platformInfo = createMockPlatformInfo({
+        platform: "darwin",
+        homeDir: "/Users/testuser",
+      });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pathProvider.codeServerDir).toBe(
+        `/Users/testuser/Library/Application Support/Codehydra/code-server/${CODE_SERVER_VERSION}`
+      );
+      expect(pathProvider.opencodeDir).toBe(
+        `/Users/testuser/Library/Application Support/Codehydra/opencode/${OPENCODE_VERSION}`
+      );
+      // macOS uses Unix-style paths (no .exe extension)
+      expect(pathProvider.codeServerBinaryPath).toContain("/bin/code-server");
+      expect(pathProvider.codeServerBinaryPath).not.toContain(".cmd");
+      expect(pathProvider.opencodeBinaryPath).toContain("/opencode");
+      expect(pathProvider.opencodeBinaryPath).not.toContain(".exe");
     });
   });
 
@@ -247,6 +353,22 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.vscodeDir).toBe(
         join("C:/Users/TestUser", "AppData", "Roaming", "Codehydra", "vscode")
       );
+    });
+
+    it("returns Windows binary paths with correct extensions", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "C:/Program Files/Codehydra/resources/app.asar",
+      });
+      const platformInfo = createMockPlatformInfo({
+        platform: "win32",
+        homeDir: "C:/Users/TestUser",
+      });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      // Windows uses .cmd for code-server and .exe for opencode
+      expect(pathProvider.codeServerBinaryPath).toMatch(/bin[/\\]code-server\.cmd$/);
+      expect(pathProvider.opencodeBinaryPath).toMatch(/opencode\.exe$/);
     });
   });
 

@@ -5,6 +5,20 @@
 import type { FileSystemErrorCode } from "./platform/filesystem";
 
 /**
+ * Error codes for binary download operations.
+ */
+export type BinaryDownloadErrorCode =
+  | "NETWORK_ERROR"
+  | "EXTRACTION_FAILED"
+  | "UNSUPPORTED_PLATFORM"
+  | "INVALID_VERSION";
+
+/**
+ * Error codes for archive extraction operations.
+ */
+export type ArchiveErrorCode = "INVALID_ARCHIVE" | "EXTRACTION_FAILED" | "PERMISSION_DENIED";
+
+/**
  * Serialized error format for IPC transport.
  */
 export interface SerializedError {
@@ -16,7 +30,9 @@ export interface SerializedError {
     | "opencode"
     | "vscode-setup"
     | "filesystem"
-    | "keepfiles";
+    | "keepfiles"
+    | "binary-download"
+    | "archive";
   readonly message: string;
   readonly code?: string;
   readonly path?: string;
@@ -93,6 +109,10 @@ export abstract class ServiceError extends Error {
         );
       case "keepfiles":
         return new KeepFilesError(json.message, json.code);
+      case "binary-download":
+        return new BinaryDownloadError(json.message, json.code as BinaryDownloadErrorCode);
+      case "archive":
+        return new ArchiveError(json.message, json.code as ArchiveErrorCode);
     }
   }
 }
@@ -144,6 +164,36 @@ export class VscodeSetupError extends ServiceError {
  */
 export class KeepFilesError extends ServiceError {
   readonly type = "keepfiles" as const;
+}
+
+/**
+ * Error from binary download operations (code-server, opencode).
+ */
+export class BinaryDownloadError extends ServiceError {
+  readonly type = "binary-download" as const;
+
+  constructor(
+    message: string,
+    readonly errorCode?: BinaryDownloadErrorCode
+  ) {
+    super(message, errorCode);
+    this.name = "BinaryDownloadError";
+  }
+}
+
+/**
+ * Error from archive extraction operations (tar.gz, zip).
+ */
+export class ArchiveError extends ServiceError {
+  readonly type = "archive" as const;
+
+  constructor(
+    message: string,
+    readonly errorCode?: ArchiveErrorCode
+  ) {
+    super(message, errorCode);
+    this.name = "ArchiveError";
+  }
 }
 
 /**

@@ -209,7 +209,7 @@ export class CodeServerManager {
       cleanEnv.EDITOR = editorValue;
       cleanEnv.GIT_SEQUENCE_EDITOR = editorValue;
 
-      this.process = this.processRunner.run("code-server", args, {
+      this.process = this.processRunner.run(this.config.binaryPath, args, {
         cwd: this.config.runtimeDir,
         env: cleanEnv,
       });

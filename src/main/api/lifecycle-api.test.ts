@@ -90,6 +90,7 @@ describe("LifecycleApi", () => {
       // Capture the progress callback and invoke it
       (mockSetupService.setup as ReturnType<typeof vi.fn>).mockImplementation(
         async (onProgress: (progress: { step: string; message: string }) => void) => {
+          onProgress({ step: "binary-download", message: "Setting up code-server..." });
           onProgress({ step: "extensions", message: "Installing extensions..." });
           onProgress({ step: "config", message: "Configuring settings..." });
           return { success: true };
@@ -99,7 +100,11 @@ describe("LifecycleApi", () => {
       const api = new LifecycleApi(mockSetupService, mockApp, onSetupComplete, emitProgress);
       await api.setup();
 
-      expect(emitProgress).toHaveBeenCalledTimes(2);
+      expect(emitProgress).toHaveBeenCalledTimes(3);
+      expect(emitProgress).toHaveBeenCalledWith({
+        step: "binary-download",
+        message: "Setting up code-server...",
+      });
       expect(emitProgress).toHaveBeenCalledWith({
         step: "extensions",
         message: "Installing extensions...",

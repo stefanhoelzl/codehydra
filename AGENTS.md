@@ -72,14 +72,47 @@ out/main/assets/ (ASAR in prod)
 - Node.js `fs` module reads transparently from ASAR in production
 - Files are copied to app-data before use (external processes can't read ASAR)
 
+## Binary Distribution
+
+CodeHydra downloads code-server and opencode binaries from GitHub releases. This happens automatically during:
+
+1. **Development (`npm install`)**: Downloads to `./app-data/` via postinstall script
+2. **Production (app setup)**: Downloads to user's app-data directory during first-run setup
+
+### Binary Storage Layout
+
+```
+<app-data>/
+├── bin/                              # Wrapper scripts
+│   ├── code[.cmd]                    # VS Code CLI
+│   └── opencode[.cmd]                # OpenCode CLI
+├── code-server/
+│   └── <version>/                    # e.g., 4.106.3/
+│       ├── bin/code-server[.cmd]     # Actual binary
+│       ├── lib/                      # VS Code distribution
+│       └── out/                      # Entry point
+└── opencode/
+    └── <version>/                    # e.g., 0.1.47/
+        └── opencode[.exe]            # Actual binary
+```
+
+### Version Updates
+
+Binary versions are defined in `src/services/binary-download/versions.ts`:
+
+- `CODE_SERVER_VERSION` - code-server release version
+- `OPENCODE_VERSION` - opencode release version
+
+When these are updated, `npm install` will download new versions. Production installations re-download on next app launch (setup version is incremented).
+
 ## CLI Wrapper Scripts
 
 During VS Code setup, CLI wrapper scripts are generated in `<app-data>/bin/`:
 
-| Script                      | Purpose                                |
-| --------------------------- | -------------------------------------- |
-| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli) |
-| `opencode` / `opencode.cmd` | OpenCode binary (if installed)         |
+| Script                      | Purpose                                                     |
+| --------------------------- | ----------------------------------------------------------- |
+| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli)                      |
+| `opencode` / `opencode.cmd` | Redirects to `<app-data>/opencode/<version>/opencode[.exe]` |
 
 These scripts are available in the integrated terminal because:
 
@@ -823,7 +856,8 @@ class DiscoveryService {
 // Example from bootstrap() and startServices():
 const networkLayer = new DefaultNetworkLayer();
 const processRunner = new ExecaProcessRunner();
-vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, "code-server");
+const binaryDownloadService = new DefaultBinaryDownloadService(...);
+vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, fsLayer, platformInfo, binaryDownloadService);
 codeServerManager = new CodeServerManager(config, processRunner, networkLayer, networkLayer);
 ```
 
@@ -885,13 +919,19 @@ const platformInfo = new NodePlatformInfo();
 const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
 // Services receive PathProvider via constructor
-const vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, "code-server");
+const vscodeSetupService = new VscodeSetupService(
+  processRunner,
+  pathProvider,
+  fsLayer,
+  platformInfo,
+  binaryDownloadService
+);
 
 // Tests use mock factories
 const mockPathProvider = createMockPathProvider({
   vscodeDir: "/test/vscode",
 });
-const service = new VscodeSetupService(mockRunner, mockPathProvider, "code-server");
+const service = new VscodeSetupService(mockRunner, mockPathProvider, mockFs);
 ```
 
 ### ProcessRunner Pattern
@@ -981,8 +1021,9 @@ const projectStore = new ProjectStore(projectsDir, fileSystemLayer);
 const vscodeSetupService = new VscodeSetupService(
   runner,
   pathProvider,
-  "code-server",
-  fileSystemLayer
+  fileSystemLayer,
+  platformInfo,
+  binaryDownloadService
 );
 ```
 

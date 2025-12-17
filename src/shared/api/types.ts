@@ -198,7 +198,7 @@ export interface WorkspaceRemovalResult {
 /**
  * Steps in the VS Code setup process.
  */
-export type SetupStep = "extensions" | "settings";
+export type SetupStep = "binary-download" | "extensions" | "settings";
 
 /**
  * Progress update during setup.

@@ -2,6 +2,7 @@ import { join, isAbsolute } from "node:path";
 import type { BuildInfo } from "./build-info";
 import type { PlatformInfo } from "./platform-info";
 import { projectDirName } from "./paths";
+import { CODE_SERVER_VERSION, OPENCODE_VERSION, BINARY_CONFIGS } from "../binary-download/versions";
 
 /**
  * Application path provider.
@@ -38,6 +39,18 @@ export interface PathProvider {
   /** Directory for CLI wrapper scripts: `<dataRoot>/bin/` */
   readonly binDir: string;
 
+  /** Directory for code-server binary: `<dataRoot>/code-server/<version>/` */
+  readonly codeServerDir: string;
+
+  /** Directory for opencode binary: `<dataRoot>/opencode/<version>/` */
+  readonly opencodeDir: string;
+
+  /** Absolute path to code-server binary executable */
+  readonly codeServerBinaryPath: string;
+
+  /** Absolute path to opencode binary executable */
+  readonly opencodeBinaryPath: string;
+
   /**
    * Get the workspaces directory for a project.
    * @param projectPath Absolute path to the project
@@ -68,6 +81,10 @@ export class DefaultPathProvider implements PathProvider {
   readonly vscodeAssetsDir: string;
   readonly appIconPath: string;
   readonly binDir: string;
+  readonly codeServerDir: string;
+  readonly opencodeDir: string;
+  readonly codeServerBinaryPath: string;
+  readonly opencodeBinaryPath: string;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
     this.dataRootDir = this.computeDataRootDir(buildInfo, platformInfo);
@@ -81,6 +98,21 @@ export class DefaultPathProvider implements PathProvider {
     this.vscodeAssetsDir = join(buildInfo.appPath, "out", "main", "assets");
     this.appIconPath = this.computeAppIconPath(buildInfo);
     this.binDir = join(this.dataRootDir, "bin");
+
+    // Binary directories with version
+    this.codeServerDir = join(this.dataRootDir, "code-server", CODE_SERVER_VERSION);
+    this.opencodeDir = join(this.dataRootDir, "opencode", OPENCODE_VERSION);
+
+    // Binary paths (platform-specific)
+    const platform = platformInfo.platform as "darwin" | "linux" | "win32";
+    this.codeServerBinaryPath = join(
+      this.codeServerDir,
+      BINARY_CONFIGS["code-server"].extractedBinaryPath(platform)
+    );
+    this.opencodeBinaryPath = join(
+      this.opencodeDir,
+      BINARY_CONFIGS.opencode.extractedBinaryPath(platform)
+    );
   }
 
   /**

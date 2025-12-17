@@ -23,6 +23,7 @@ import type {
   IVscodeSetup,
   SetupStep as ServiceSetupStep,
 } from "../../services/vscode-setup/types";
+import type { Logger } from "../../services/logging/index";
 
 /**
  * Minimal app interface required by LifecycleApi.
@@ -56,7 +57,8 @@ export class LifecycleApi implements ILifecycleApi {
     private readonly vscodeSetup: IVscodeSetup,
     private readonly app: MinimalApp,
     private readonly onSetupComplete: OnSetupCompleteCallback,
-    private readonly emitProgress: EmitProgressCallback
+    private readonly emitProgress: EmitProgressCallback,
+    private readonly logger?: Logger
   ) {}
 
   /**
@@ -112,6 +114,10 @@ export class LifecycleApi implements ILifecycleApi {
 
       // Run setup with progress callbacks
       const result = await this.vscodeSetup.setup((serviceProgress) => {
+        this.logger?.debug("Setup progress", {
+          step: serviceProgress.step,
+          message: serviceProgress.message,
+        });
         const apiStep = this.mapSetupStep(serviceProgress.step);
         if (apiStep) {
           this.emitProgress({
@@ -122,18 +128,22 @@ export class LifecycleApi implements ILifecycleApi {
       });
 
       if (result.success) {
+        this.logger?.info("Setup complete", {});
         // Call onSetupComplete (starts services)
         try {
           await this.onSetupComplete();
         } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.logger?.warn("Setup failed", { error: errorMessage });
           return {
             success: false,
-            message: error instanceof Error ? error.message : String(error),
+            message: errorMessage,
             code: "SERVICE_START_ERROR",
           };
         }
         return { success: true };
       } else {
+        this.logger?.warn("Setup failed", { error: result.error.message });
         return {
           success: false,
           message: result.error.message,
@@ -141,9 +151,11 @@ export class LifecycleApi implements ILifecycleApi {
         };
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger?.warn("Setup failed", { error: errorMessage });
       return {
         success: false,
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage,
         code: "UNKNOWN",
       };
     } finally {
@@ -164,6 +176,8 @@ export class LifecycleApi implements ILifecycleApi {
    */
   private mapSetupStep(serviceStep: ServiceSetupStep): ApiSetupStep | undefined {
     switch (serviceStep) {
+      case "binary-download":
+        return "binary-download";
       case "extensions":
         return "extensions";
       case "config":

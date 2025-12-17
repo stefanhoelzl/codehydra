@@ -16,6 +16,7 @@ import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { FileSystemError, VscodeSetupError } from "../errors";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
+import type { BinaryDownloadService } from "../binary-download/binary-download-service";
 
 /**
  * Create a mock SpawnedProcess with controllable wait() result.
@@ -25,6 +26,26 @@ function createMockSpawnedProcess(result: ProcessResult): SpawnedProcess {
     pid: 12345,
     kill: vi.fn().mockReturnValue(true),
     wait: vi.fn().mockResolvedValue(result),
+  };
+}
+
+/**
+ * Create a mock BinaryDownloadService with controllable behavior.
+ */
+function createMockBinaryDownloadService(
+  overrides?: Partial<{
+    isInstalled: (binary: "code-server" | "opencode") => Promise<boolean>;
+    download: (binary: "code-server" | "opencode") => Promise<void>;
+    createWrapperScripts: () => Promise<void>;
+    getBinaryPath: (binary: "code-server" | "opencode") => string;
+  }>
+): BinaryDownloadService {
+  return {
+    isInstalled: overrides?.isInstalled ?? vi.fn().mockResolvedValue(false),
+    download: overrides?.download ?? vi.fn().mockResolvedValue(undefined),
+    createWrapperScripts: overrides?.createWrapperScripts ?? vi.fn().mockResolvedValue(undefined),
+    getBinaryPath:
+      overrides?.getBinaryPath ?? vi.fn().mockImplementation((binary) => `/mock/${binary}/bin`),
   };
 }
 
@@ -72,12 +93,7 @@ describe("VscodeSetupService", () => {
         readFile: { content: JSON.stringify(marker) },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.isSetupComplete();
 
       expect(result).toBe(true);
@@ -90,12 +106,7 @@ describe("VscodeSetupService", () => {
         },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.isSetupComplete();
 
       expect(result).toBe(false);
@@ -110,12 +121,7 @@ describe("VscodeSetupService", () => {
         readFile: { content: JSON.stringify(marker) },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.isSetupComplete();
 
       expect(result).toBe(false);
@@ -126,12 +132,7 @@ describe("VscodeSetupService", () => {
         readFile: { content: "invalid json" },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.isSetupComplete();
 
       expect(result).toBe(false);
@@ -142,12 +143,7 @@ describe("VscodeSetupService", () => {
         readFile: { content: JSON.stringify({ version: "not a number" }) },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.isSetupComplete();
 
       expect(result).toBe(false);
@@ -169,12 +165,7 @@ describe("VscodeSetupService", () => {
         },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.cleanVscodeDir();
 
       expect(rmCalled).toBe(true);
@@ -189,12 +180,7 @@ describe("VscodeSetupService", () => {
         vscodeDir: "/outside/path/vscode",
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        invalidPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, invalidPathProvider, mockFs);
       await expect(service.cleanVscodeDir()).rejects.toThrow(VscodeSetupError);
       try {
         await service.cleanVscodeDir();
@@ -212,12 +198,7 @@ describe("VscodeSetupService", () => {
         },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await expect(service.cleanVscodeDir()).rejects.toThrow("Permission denied");
     });
   });
@@ -228,12 +209,7 @@ describe("VscodeSetupService", () => {
         readFile: { content: "{}" },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await expect(service.validateAssets()).resolves.not.toThrow();
     });
 
@@ -244,12 +220,7 @@ describe("VscodeSetupService", () => {
         },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await expect(service.validateAssets()).rejects.toThrow(VscodeSetupError);
       await expect(service.validateAssets()).rejects.toThrow(/extensions\.json/);
     });
@@ -278,12 +249,7 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions();
 
       // Verify vsix was copied from assets to vscode dir
@@ -307,18 +273,11 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions();
 
-      // First call is for bundled vsix
-      // Note: vsix path uses join() because service constructs it with path.join()
-      // But extensions-dir is passed directly from pathProvider without modification
-      expect(mockProcessRunner.run).toHaveBeenCalledWith("/mock/code-server", [
+      // First call is for bundled vsix - uses codeServerBinaryPath from pathProvider
+      expect(mockProcessRunner.run).toHaveBeenCalledWith(mockPathProvider.codeServerBinaryPath, [
         "--install-extension",
         join("/mock/vscode", "codehydra.vscode-0.0.1.vsix"),
         "--extensions-dir",
@@ -340,17 +299,11 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions();
 
-      // Second call is for marketplace extension
-      // extensions-dir is passed directly from pathProvider without modification
-      expect(mockProcessRunner.run).toHaveBeenCalledWith("/mock/code-server", [
+      // Second call is for marketplace extension - uses codeServerBinaryPath from pathProvider
+      expect(mockProcessRunner.run).toHaveBeenCalledWith(mockPathProvider.codeServerBinaryPath, [
         "--install-extension",
         "sst-dev.opencode",
         "--extensions-dir",
@@ -373,12 +326,7 @@ describe("VscodeSetupService", () => {
       );
       const progressCallback = vi.fn();
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions(progressCallback);
 
       // Verify order: bundled vsix first, then marketplace
@@ -409,12 +357,7 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.installExtensions();
 
       expect(result).toEqual({
@@ -441,12 +384,7 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.installExtensions();
 
       expect(result).toEqual({
@@ -472,12 +410,7 @@ describe("VscodeSetupService", () => {
       });
       const progressCallback = vi.fn();
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.writeCompletionMarker(progressCallback);
 
       // Verify marker written
@@ -508,12 +441,7 @@ describe("VscodeSetupService", () => {
         },
       });
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await expect(service.setup()).rejects.toThrow(VscodeSetupError);
       await expect(service.setup()).rejects.toThrow(/Required asset files not found/);
     });
@@ -534,12 +462,7 @@ describe("VscodeSetupService", () => {
       );
 
       const progressCallback = vi.fn();
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.setup(progressCallback);
 
       expect(result).toEqual({ success: true });
@@ -568,12 +491,7 @@ describe("VscodeSetupService", () => {
         })
       );
 
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        "/mock/code-server",
-        mockFs
-      );
+      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       const result = await service.setup();
 
       expect(result.success).toBe(false);
@@ -605,7 +523,6 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server",
         mockFs,
         mockPlatformInfo
       );
@@ -630,7 +547,6 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server",
         mockFs,
         createMockPlatformInfo({ platform: "linux" })
       );
@@ -661,7 +577,6 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server",
         mockFs,
         createMockPlatformInfo({ platform: "linux" })
       );
@@ -688,7 +603,6 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server",
         mockFs,
         createMockPlatformInfo({ platform: "win32" })
       );
@@ -708,7 +622,6 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server",
         mockFs,
         mockPlatformInfo
       );
@@ -727,7 +640,6 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server",
         mockFs,
         mockPlatformInfo
       );
@@ -746,7 +658,6 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
-        "/mock/code-server",
         mockFs,
         mockPlatformInfo
       );
@@ -756,6 +667,193 @@ describe("VscodeSetupService", () => {
         step: "config",
         message: "Creating CLI wrapper scripts...",
       });
+    });
+  });
+
+  describe("binary download integration", () => {
+    const defaultCopyResult = { copiedCount: 1, skippedSymlinks: [] };
+
+    it("downloads binaries first when BinaryDownloadService is provided", async () => {
+      const downloadOrder: string[] = [];
+      const mockBinaryService = createMockBinaryDownloadService({
+        isInstalled: vi.fn().mockResolvedValue(false),
+        download: vi.fn().mockImplementation(async (binary) => {
+          downloadOrder.push(`download:${binary}`);
+        }),
+        createWrapperScripts: vi.fn().mockImplementation(async () => {
+          downloadOrder.push("createWrapperScripts");
+        }),
+      });
+
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: createExtensionsConfig() },
+        mkdir: { implementation: async () => {} },
+        copyTree: { result: defaultCopyResult },
+        writeFile: { implementation: async () => {} },
+      });
+      vi.mocked(mockProcessRunner.run).mockReturnValue(
+        createMockSpawnedProcess({
+          stdout: "Extension installed",
+          stderr: "",
+          exitCode: 0,
+        })
+      );
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo,
+        mockBinaryService
+      );
+      const result = await service.setup();
+
+      expect(result).toEqual({ success: true });
+      // Verify binaries are downloaded before extensions
+      expect(downloadOrder).toEqual([
+        "download:code-server",
+        "download:opencode",
+        "createWrapperScripts",
+      ]);
+      expect(mockBinaryService.isInstalled).toHaveBeenCalledWith("code-server");
+      expect(mockBinaryService.isInstalled).toHaveBeenCalledWith("opencode");
+    });
+
+    it("skips download when binaries are already installed", async () => {
+      const mockBinaryService = createMockBinaryDownloadService({
+        isInstalled: vi.fn().mockResolvedValue(true), // Already installed
+        download: vi.fn(),
+        createWrapperScripts: vi.fn(),
+      });
+
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: createExtensionsConfig() },
+        mkdir: { implementation: async () => {} },
+        copyTree: { result: defaultCopyResult },
+        writeFile: { implementation: async () => {} },
+      });
+      vi.mocked(mockProcessRunner.run).mockReturnValue(
+        createMockSpawnedProcess({
+          stdout: "Extension installed",
+          stderr: "",
+          exitCode: 0,
+        })
+      );
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo,
+        mockBinaryService
+      );
+      await service.setup();
+
+      // Should check if installed but not download
+      expect(mockBinaryService.isInstalled).toHaveBeenCalled();
+      expect(mockBinaryService.download).not.toHaveBeenCalled();
+      // Should still create wrapper scripts
+      expect(mockBinaryService.createWrapperScripts).toHaveBeenCalled();
+    });
+
+    it("returns error when binary download fails", async () => {
+      const mockBinaryService = createMockBinaryDownloadService({
+        isInstalled: vi.fn().mockResolvedValue(false),
+        download: vi.fn().mockRejectedValue(new Error("Network timeout")),
+        createWrapperScripts: vi.fn(),
+      });
+
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: createExtensionsConfig() },
+      });
+
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo,
+        mockBinaryService
+      );
+      const result = await service.setup();
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe("network");
+        expect(result.error.message).toContain("Failed to download code-server");
+        expect(result.error.message).toContain("Network timeout");
+      }
+    });
+
+    it("emits progress events during binary download", async () => {
+      const mockBinaryService = createMockBinaryDownloadService({
+        isInstalled: vi.fn().mockResolvedValue(false),
+        download: vi.fn().mockResolvedValue(undefined),
+        createWrapperScripts: vi.fn().mockResolvedValue(undefined),
+      });
+
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: createExtensionsConfig() },
+        mkdir: { implementation: async () => {} },
+        copyTree: { result: defaultCopyResult },
+        writeFile: { implementation: async () => {} },
+      });
+      vi.mocked(mockProcessRunner.run).mockReturnValue(
+        createMockSpawnedProcess({
+          stdout: "Extension installed",
+          stderr: "",
+          exitCode: 0,
+        })
+      );
+
+      const progressCallback = vi.fn();
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo,
+        mockBinaryService
+      );
+      await service.setup(progressCallback);
+
+      const progressMessages = progressCallback.mock.calls.map(
+        (call) => call[0] as { message: string; step: string }
+      );
+
+      expect(progressMessages).toContainEqual({
+        step: "binary-download",
+        message: "Setting up code-server...",
+      });
+      expect(progressMessages).toContainEqual({
+        step: "binary-download",
+        message: "Setting up opencode...",
+      });
+    });
+
+    it("works without BinaryDownloadService (backward compatibility)", async () => {
+      mockFs = createMockFileSystemLayer({
+        readFile: { content: createExtensionsConfig() },
+        mkdir: { implementation: async () => {} },
+        copyTree: { result: defaultCopyResult },
+        writeFile: { implementation: async () => {} },
+      });
+      vi.mocked(mockProcessRunner.run).mockReturnValue(
+        createMockSpawnedProcess({
+          stdout: "Extension installed",
+          stderr: "",
+          exitCode: 0,
+        })
+      );
+
+      // No binaryDownloadService passed
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo
+      );
+      const result = await service.setup();
+
+      expect(result).toEqual({ success: true });
     });
   });
 });

@@ -3,10 +3,11 @@
  * Installs extensions and writes configuration files.
  */
 
-import { join, isAbsolute } from "node:path";
+import { join } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
+import type { Logger } from "../logging/index";
 import { VscodeSetupError } from "../errors";
 import {
   CURRENT_SETUP_VERSION,
@@ -19,6 +20,7 @@ import {
   type BinTargetPaths,
 } from "./types";
 import { generateScripts } from "./bin-scripts";
+import type { BinaryDownloadService } from "../binary-download/binary-download-service";
 
 /**
  * Service for managing VS Code setup process.
@@ -26,28 +28,32 @@ import { generateScripts } from "./bin-scripts";
 export class VscodeSetupService implements IVscodeSetup {
   private readonly processRunner: ProcessRunner;
   private readonly pathProvider: PathProvider;
-  private readonly codeServerBinaryPath: string;
   private readonly fs: FileSystemLayer;
   private readonly assetsDir: string;
   private readonly platformInfo: PlatformInfo;
+  private readonly binaryDownloadService: BinaryDownloadService | null;
+  private readonly logger: Logger | undefined;
 
   constructor(
     processRunner: ProcessRunner,
     pathProvider: PathProvider,
-    codeServerBinaryPath: string,
     fs: FileSystemLayer,
-    platformInfo?: PlatformInfo
+    platformInfo?: PlatformInfo,
+    binaryDownloadService?: BinaryDownloadService,
+    logger?: Logger
   ) {
     this.processRunner = processRunner;
     this.pathProvider = pathProvider;
-    this.codeServerBinaryPath = codeServerBinaryPath;
     this.fs = fs;
     this.assetsDir = pathProvider.vscodeAssetsDir;
-    // Default to node process.platform if not provided
+    // Default to node process values if not provided
     this.platformInfo = platformInfo ?? {
       platform: process.platform,
+      arch: process.arch === "arm64" ? "arm64" : "x64",
       homeDir: process.env.HOME ?? process.env.USERPROFILE ?? "",
     };
+    this.binaryDownloadService = binaryDownloadService ?? null;
+    this.logger = logger;
   }
 
   /**
@@ -63,11 +69,11 @@ export class VscodeSetupService implements IVscodeSetup {
    * Run the full setup process.
    *
    * Preconditions:
-   * - code-server binary exists at codeServerBinaryPath
-   * - Network connectivity for extension marketplace
+   * - Network connectivity for binary downloads and extension marketplace
    * - Asset files exist in assetsDir
    *
    * Postconditions on success:
+   * - Binaries downloaded (code-server, opencode)
    * - All extensions installed
    * - Config files written
    * - CLI wrapper scripts created in bin directory
@@ -80,17 +86,83 @@ export class VscodeSetupService implements IVscodeSetup {
     // Step 0: Validate required assets exist
     await this.validateAssets();
 
-    // Step 1: Install extensions (bundled and marketplace)
+    // Step 1: Download binaries (if BinaryDownloadService is provided)
+    const binaryResult = await this.downloadBinaries(onProgress);
+    if (!binaryResult.success) {
+      return binaryResult;
+    }
+
+    // Step 2: Install extensions (bundled and marketplace)
     const extensionsResult = await this.installExtensions(onProgress);
     if (!extensionsResult.success) {
       return extensionsResult;
     }
 
-    // Step 2: Create CLI wrapper scripts
+    // Step 3: Create CLI wrapper scripts
     await this.setupBinDirectory(onProgress);
 
-    // Step 3: Write completion marker
+    // Step 4: Write completion marker
     await this.writeCompletionMarker(onProgress);
+
+    return { success: true };
+  }
+
+  /**
+   * Download code-server and opencode binaries if not already installed.
+   * @param onProgress Optional callback for progress updates
+   * @returns Result indicating success or failure
+   */
+  private async downloadBinaries(onProgress?: ProgressCallback): Promise<SetupResult> {
+    if (!this.binaryDownloadService) {
+      // No binary download service - skip (for backward compatibility)
+      return { success: true };
+    }
+
+    // Download code-server
+    const codeServerInstalled = await this.binaryDownloadService.isInstalled("code-server");
+    if (!codeServerInstalled) {
+      this.logger?.info("Downloading binary", { binary: "code-server" });
+      onProgress?.({ step: "binary-download", message: "Setting up code-server..." });
+      try {
+        await this.binaryDownloadService.download("code-server");
+        this.logger?.info("Binary download complete", { binary: "code-server" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          error: {
+            type: "network",
+            message: `Failed to download code-server: ${message}`,
+            code: "BINARY_DOWNLOAD_FAILED",
+          },
+        };
+      }
+    }
+
+    // Download opencode
+    const opencodeInstalled = await this.binaryDownloadService.isInstalled("opencode");
+    if (!opencodeInstalled) {
+      this.logger?.info("Downloading binary", { binary: "opencode" });
+      onProgress?.({ step: "binary-download", message: "Setting up opencode..." });
+      try {
+        await this.binaryDownloadService.download("opencode");
+        this.logger?.info("Binary download complete", { binary: "opencode" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          error: {
+            type: "network",
+            message: `Failed to download opencode: ${message}`,
+            code: "BINARY_DOWNLOAD_FAILED",
+          },
+        };
+      }
+    }
+
+    // Create wrapper scripts for the binaries
+    this.logger?.debug("Creating wrapper scripts", {});
+    await this.binaryDownloadService.createWrapperScripts();
 
     return { success: true };
   }
@@ -240,14 +312,8 @@ export class VscodeSetupService implements IVscodeSetup {
       return codeServerRoot;
     } catch {
       // require.resolve failed (bundled Electron context)
-      // If codeServerBinaryPath is an absolute path ending in entry.js, derive the root
-      if (isAbsolute(this.codeServerBinaryPath) && this.codeServerBinaryPath.endsWith("entry.js")) {
-        // Navigate from entry.js to the root: code-server/out/node/entry.js -> code-server/
-        return join(this.codeServerBinaryPath, "..", "..", "..");
-      }
-      // Fallback: assume code-server is in PATH and we can't determine the directory
-      // In this case, the scripts will reference the binary directly
-      return "";
+      // Use pathProvider.codeServerDir directly since we know the binary location
+      return this.pathProvider.codeServerDir;
     }
   }
 
@@ -256,9 +322,8 @@ export class VscodeSetupService implements IVscodeSetup {
    */
   private resolveRemoteCliPath(codeServerDir: string): string {
     if (!codeServerDir) {
-      // If we couldn't find the code-server directory, just use "code-server"
-      // The wrapper will invoke code-server directly
-      return this.codeServerBinaryPath;
+      // If we couldn't find the code-server directory, use the binary path from pathProvider
+      return this.pathProvider.codeServerBinaryPath;
     }
 
     const isWindows = this.platformInfo.platform === "win32";
@@ -273,24 +338,13 @@ export class VscodeSetupService implements IVscodeSetup {
   }
 
   /**
-   * Attempt to find the opencode binary.
-   * Returns null if not found (opencode wrapper will not be generated).
-   *
-   * IMPORTANT: Returns the absolute path to the entry point resolved by require.resolve(),
-   * NOT a relative bin path. This avoids infinite recursion when bin/ is first in PATH.
+   * Get the path to the opencode binary from PathProvider.
+   * Returns the absolute path to the downloaded opencode binary.
    */
   private resolveOpencodePath(): string | null {
-    try {
-      // Try to resolve opencode-ai package (if installed as dependency)
-      // require.resolve returns the absolute path to the package entry point
-      const opencodeEntry = require.resolve("opencode-ai");
-      // Return the resolved entry point directly - this is already an absolute path
-      return opencodeEntry;
-    } catch {
-      // opencode not installed as npm package
-      // Could check PATH here, but for now just return null
-      return null;
-    }
+    // Return the opencode binary path from PathProvider
+    // The binary is downloaded during setup by BinaryDownloadService
+    return this.pathProvider.opencodeBinaryPath;
   }
 
   /**
@@ -339,7 +393,7 @@ export class VscodeSetupService implements IVscodeSetup {
    * @returns Result indicating success or failure
    */
   private async runInstallExtension(extensionIdOrPath: string): Promise<SetupResult> {
-    const proc = this.processRunner.run(this.codeServerBinaryPath, [
+    const proc = this.processRunner.run(this.pathProvider.codeServerBinaryPath, [
       "--install-extension",
       extensionIdOrPath,
       "--extensions-dir",

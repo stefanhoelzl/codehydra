@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import type { PathProvider } from "./path-provider";
 import { projectDirName } from "./paths";
+import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versions";
 
 /**
  * Options for createMockPathProvider.
@@ -32,6 +33,10 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     return join(projectsDir, projectDirName(projectPath), "workspaces");
   };
 
+  const codeServerDir =
+    overrides?.codeServerDir ?? `/test/app-data/code-server/${CODE_SERVER_VERSION}`;
+  const opencodeDir = overrides?.opencodeDir ?? `/test/app-data/opencode/${OPENCODE_VERSION}`;
+
   return {
     dataRootDir,
     projectsDir,
@@ -44,6 +49,10 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     vscodeAssetsDir: overrides?.vscodeAssetsDir ?? "/mock/assets",
     appIconPath: overrides?.appIconPath ?? "/test/resources/icon.png",
     binDir: overrides?.binDir ?? "/test/app-data/bin",
+    codeServerDir,
+    opencodeDir,
+    codeServerBinaryPath: overrides?.codeServerBinaryPath ?? `${codeServerDir}/bin/code-server`,
+    opencodeBinaryPath: overrides?.opencodeBinaryPath ?? `${opencodeDir}/opencode`,
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

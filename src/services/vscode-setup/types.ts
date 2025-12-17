@@ -9,13 +9,16 @@ export type { ProcessRunner, ProcessResult } from "../platform/process";
 /**
  * Current version of the setup process.
  * Increment when setup steps change to force re-setup on existing installs.
+ *
+ * Version history:
+ * - v6: Added binary download phase (code-server + opencode) before extension installation
  */
-export const CURRENT_SETUP_VERSION = 5;
+export const CURRENT_SETUP_VERSION = 6;
 
 /**
  * Setup steps for progress tracking.
  */
-export type SetupStep = "extensions" | "config" | "finalize";
+export type SetupStep = "binary-download" | "extensions" | "config" | "finalize";
 
 /**
  * Progress information for setup UI updates.
