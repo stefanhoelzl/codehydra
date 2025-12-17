@@ -2,6 +2,7 @@
  * CodeHydra API Implementation.
  * Stub file - implementation coming in subsequent steps.
  */
+import * as path from "node:path";
 import type { AppState } from "../app-state";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type {
@@ -206,10 +207,10 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
 
   /**
    * Extract workspace name from its path.
+   * Uses path.basename() for cross-platform compatibility (Unix and Windows).
    */
   private extractWorkspaceName(workspacePath: string): string {
-    const parts = workspacePath.split("/");
-    return parts[parts.length - 1] ?? "";
+    return path.basename(workspacePath);
   }
 
   /**
