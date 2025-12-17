@@ -14,23 +14,30 @@ describe("createMockPathProvider", () => {
   it("returns sensible default paths", () => {
     const pathProvider = createMockPathProvider();
 
-    expect(pathProvider.dataRootDir).toBe("/test/app-data");
-    expect(pathProvider.projectsDir).toBe("/test/app-data/projects");
-    expect(pathProvider.vscodeDir).toBe("/test/app-data/vscode");
-    expect(pathProvider.vscodeExtensionsDir).toBe("/test/app-data/vscode/extensions");
-    expect(pathProvider.vscodeUserDataDir).toBe("/test/app-data/vscode/user-data");
-    expect(pathProvider.vscodeSetupMarkerPath).toBe("/test/app-data/vscode/.setup-completed");
-    expect(pathProvider.electronDataDir).toBe("/test/app-data/electron");
-    expect(pathProvider.vscodeAssetsDir).toBe("/mock/assets");
-    expect(pathProvider.appIconPath).toBe("/test/resources/icon.png");
-    expect(pathProvider.binDir).toBe("/test/app-data/bin");
-    expect(pathProvider.codeServerDir).toBe(`/test/app-data/code-server/${CODE_SERVER_VERSION}`);
-    expect(pathProvider.opencodeDir).toBe(`/test/app-data/opencode/${OPENCODE_VERSION}`);
+    // Use join() for expected values since mock uses join() for cross-platform compatibility
+    expect(pathProvider.dataRootDir).toBe(join("/test", "app-data"));
+    expect(pathProvider.projectsDir).toBe(join("/test", "app-data", "projects"));
+    expect(pathProvider.vscodeDir).toBe(join("/test", "app-data", "vscode"));
+    expect(pathProvider.vscodeExtensionsDir).toBe(
+      join("/test", "app-data", "vscode", "extensions")
+    );
+    expect(pathProvider.vscodeUserDataDir).toBe(join("/test", "app-data", "vscode", "user-data"));
+    expect(pathProvider.vscodeSetupMarkerPath).toBe(
+      join("/test", "app-data", "vscode", ".setup-completed")
+    );
+    expect(pathProvider.electronDataDir).toBe(join("/test", "app-data", "electron"));
+    expect(pathProvider.vscodeAssetsDir).toBe(join("/mock", "assets"));
+    expect(pathProvider.appIconPath).toBe(join("/test", "resources", "icon.png"));
+    expect(pathProvider.binDir).toBe(join("/test", "app-data", "bin"));
+    expect(pathProvider.codeServerDir).toBe(
+      join("/test", "app-data", "code-server", CODE_SERVER_VERSION)
+    );
+    expect(pathProvider.opencodeDir).toBe(join("/test", "app-data", "opencode", OPENCODE_VERSION));
     expect(pathProvider.codeServerBinaryPath).toBe(
-      `/test/app-data/code-server/${CODE_SERVER_VERSION}/bin/code-server`
+      join("/test", "app-data", "code-server", CODE_SERVER_VERSION, "bin", "code-server")
     );
     expect(pathProvider.opencodeBinaryPath).toBe(
-      `/test/app-data/opencode/${OPENCODE_VERSION}/opencode`
+      join("/test", "app-data", "opencode", OPENCODE_VERSION, "opencode")
     );
   });
 
@@ -42,8 +49,8 @@ describe("createMockPathProvider", () => {
 
     expect(pathProvider.dataRootDir).toBe("/custom/root");
     expect(pathProvider.vscodeDir).toBe("/custom/vscode");
-    // Other paths should still be defaults
-    expect(pathProvider.projectsDir).toBe("/test/app-data/projects");
+    // Other paths should still be defaults (use join() for cross-platform compatibility)
+    expect(pathProvider.projectsDir).toBe(join("/test", "app-data", "projects"));
   });
 
   it("allows overriding all paths", () => {
