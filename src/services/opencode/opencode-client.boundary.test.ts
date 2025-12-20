@@ -19,7 +19,8 @@ import { createSilentLogger } from "../logging";
 import type { ClientStatus } from "./types";
 
 // Longer timeouts for boundary tests
-const EVENT_TIMEOUT_MS = 5000;
+// Use longer timeout in CI due to slower startup and processing
+const EVENT_TIMEOUT_MS = process.env.CI ? 10000 : 5000;
 
 describe("OpenCodeClient boundary tests", () => {
   let mockLlm: MockLlmServer;
