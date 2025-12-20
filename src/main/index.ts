@@ -84,6 +84,18 @@ function parseElectronFlags(flags: string | undefined): { name: string; value?: 
   return result;
 }
 
+// Module-level instances - created IMMEDIATELY after imports.
+// These are created early because:
+// 1. applyElectronFlags() needs to log
+// 2. redirectElectronDataPaths() needs pathProvider
+const buildInfo: BuildInfo = new ElectronBuildInfo();
+const platformInfo = new NodePlatformInfo();
+const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+// Create logging service - must be before any code that needs to log
+const loggingService: LoggingService = new ElectronLogService(buildInfo, pathProvider);
+const appLogger = loggingService.createLogger("app");
+
 /**
  * Applies Electron command-line flags from environment variable.
  * Must be called BEFORE app.whenReady().
@@ -102,26 +114,20 @@ function applyElectronFlags(): void {
   for (const flag of parsed) {
     if (flag.value !== undefined) {
       app.commandLine.appendSwitch(flag.name, flag.value);
+      appLogger.info("Applied Electron flag", { flag: flag.name, value: flag.value });
     } else {
       app.commandLine.appendSwitch(flag.name);
+      appLogger.info("Applied Electron flag", { flag: flag.name });
     }
   }
 }
 
-// Apply Electron command-line flags IMMEDIATELY after imports.
+// Apply Electron command-line flags IMMEDIATELY after logging is available.
 // CRITICAL: Must be before app.whenReady() and any code that might trigger GPU initialization.
 applyElectronFlags();
 
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 
-// Module-level instances - created before app.whenReady()
-// These are created early because redirectElectronDataPaths() needs pathProvider
-const buildInfo: BuildInfo = new ElectronBuildInfo();
-const platformInfo = new NodePlatformInfo();
-const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-// Create logging service - must be before any services that need loggers
-const loggingService: LoggingService = new ElectronLogService(buildInfo, pathProvider);
 const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));
 
 /**
