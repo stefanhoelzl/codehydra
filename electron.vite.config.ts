@@ -10,6 +10,7 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, "src/main/index.ts"),
         },
+        external: ["@vscode/windows-process-tree"],
       },
     },
     plugins: [
