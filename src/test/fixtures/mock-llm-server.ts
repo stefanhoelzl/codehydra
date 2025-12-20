@@ -185,7 +185,7 @@ export function createRateLimitResponse(): RateLimitResponse {
   return {
     status: 429,
     headers: {
-      "Retry-After": "5",
+      "Retry-After": "0",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
