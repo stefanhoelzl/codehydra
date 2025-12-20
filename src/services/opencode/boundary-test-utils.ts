@@ -10,6 +10,21 @@ import { join } from "path";
 import type { SpawnedProcess, ProcessRunner } from "../platform/process";
 import { ExecaProcessRunner } from "../platform/process";
 import { createSilentLogger } from "../logging";
+import { OPENCODE_VERSION } from "../binary-download/versions";
+
+/**
+ * Get the path to the opencode binary in the development app-data directory.
+ */
+function getOpencodeBinaryPath(): string {
+  const isWindows = process.platform === "win32";
+  return join(
+    process.cwd(),
+    "app-data",
+    "opencode",
+    OPENCODE_VERSION,
+    isWindows ? "opencode.exe" : "opencode"
+  );
+}
 
 /**
  * Creates a default ProcessRunner for boundary tests.
@@ -31,7 +46,7 @@ export interface BinaryCheckResult {
 /**
  * Check if the opencode binary is available and return version info.
  *
- * Uses the injected ProcessRunner for testability.
+ * Uses the actual binary path from the development app-data directory.
  *
  * @param runner - Process runner to use (defaults to ExecaProcessRunner)
  * @returns Result indicating if binary is available
@@ -40,14 +55,15 @@ export interface BinaryCheckResult {
  * ```ts
  * const result = await checkOpencodeAvailable();
  * if (!result.available) {
- *   console.log('Skipping boundary tests:', result.error);
+ *   throw new Error(`opencode not available: ${result.error}`);
  * }
  * ```
  */
 export async function checkOpencodeAvailable(
   runner: ProcessRunner = createDefaultRunner()
 ): Promise<BinaryCheckResult> {
-  const proc = runner.run("opencode", ["--version"], {});
+  const binaryPath = getOpencodeBinaryPath();
+  const proc = runner.run(binaryPath, ["--version"], {});
 
   const result = await proc.wait(5000);
 
@@ -64,7 +80,7 @@ export async function checkOpencodeAvailable(
   if (result.exitCode === null && result.stderr.includes("ENOENT")) {
     return {
       available: false,
-      error: "opencode binary not found in PATH",
+      error: `opencode binary not found at ${binaryPath}`,
     };
   }
 
@@ -172,8 +188,9 @@ export async function startOpencode(
     FORCE_COLOR: "0",
   };
 
-  // Start the opencode serve process
-  const proc: SpawnedProcess = runner.run("opencode", ["serve", "--port", String(config.port)], {
+  // Start the opencode serve process using actual binary path
+  const binaryPath = getOpencodeBinaryPath();
+  const proc: SpawnedProcess = runner.run(binaryPath, ["serve", "--port", String(config.port)], {
     cwd: config.cwd,
     env,
   });

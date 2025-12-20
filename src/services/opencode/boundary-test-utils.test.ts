@@ -2,10 +2,22 @@
  * Tests for boundary test utilities.
  */
 
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
 import { checkOpencodeAvailable, startOpencode } from "./boundary-test-utils";
 import { createTestGitRepo } from "../test-utils";
+import { OPENCODE_VERSION } from "../binary-download/versions";
+
+// Expected binary path based on platform
+const isWindows = process.platform === "win32";
+const expectedBinaryPath = join(
+  process.cwd(),
+  "app-data",
+  "opencode",
+  OPENCODE_VERSION,
+  isWindows ? "opencode.exe" : "opencode"
+);
 
 describe("checkOpencodeAvailable", () => {
   it("returns available:true when opencode binary is found", async () => {
@@ -32,7 +44,7 @@ describe("checkOpencodeAvailable", () => {
     const result = await checkOpencodeAvailable(runner);
 
     expect(result.available).toBe(false);
-    expect(result.error).toBe("opencode binary not found in PATH");
+    expect(result.error).toBe(`opencode binary not found at ${expectedBinaryPath}`);
     expect(result.version).toBeUndefined();
   });
 
@@ -103,7 +115,7 @@ describe("startOpencode", () => {
 
       expect(proc.pid).toBe(12345);
       expect(runner.run).toHaveBeenCalledWith(
-        "opencode",
+        expectedBinaryPath,
         ["serve", "--port", "14096"],
         expect.objectContaining({
           cwd,

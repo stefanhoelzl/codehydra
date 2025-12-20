@@ -15,26 +15,14 @@
  * - Edge cases
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { join } from "node:path";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { CodeServerManager } from "./code-server-manager";
 import { ExecaProcessRunner } from "../platform/process";
 import { DefaultNetworkLayer } from "../platform/network";
 import { createTempDir } from "../test-utils";
 import { CODE_SERVER_VERSION } from "../binary-download/versions";
 import type { CodeServerConfig } from "./types";
-
-/**
- * Get the path to the installed code-server binary.
- * Uses the app-data directory structure from npm postinstall.
- */
-function getCodeServerBinaryPath(): string {
-  // In development/test, binaries are downloaded to ./app-data/ via postinstall
-  // The structure is: app-data/code-server/<version>/bin/code-server
-  const appDataDir = join(process.cwd(), "app-data");
-  const binaryName = process.platform === "win32" ? "code-server.cmd" : "code-server";
-  return join(appDataDir, "code-server", CODE_SERVER_VERSION, "bin", binaryName);
-}
 
 // Platform detection for signal tests
 const isWindows = process.platform === "win32";
@@ -62,12 +50,17 @@ function isProcessRunning(pid: number): boolean {
 }
 
 /**
- * Create test config with proper typing.
- * Uses the real code-server binary but temp directories for runtime data.
+ * Create test config using the actual code-server binary from app-data.
+ * The binary is downloaded during npm install via the postinstall script.
+ *
+ * @param baseDir - Temp directory for runtime data (extensions, user-data)
  */
 function createTestConfig(baseDir: string): CodeServerConfig {
+  // Use the actual downloaded code-server binary
+  const codeServerDir = join(process.cwd(), "app-data", "code-server", CODE_SERVER_VERSION);
+
   return {
-    binaryPath: getCodeServerBinaryPath(),
+    binaryPath: join(codeServerDir, isWindows ? "bin/code-server.cmd" : "bin/code-server"),
     runtimeDir: baseDir,
     extensionsDir: `${baseDir}/extensions`,
     userDataDir: `${baseDir}/user-data`,
