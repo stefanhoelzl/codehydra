@@ -189,10 +189,11 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
   private async killProcess(pid: number, force: boolean): Promise<void> {
     if (isWindows) {
       // Use taskkill with /t for tree kill (kills all child processes)
-      const args = ["/pid", String(pid), "/t"];
-      if (force) {
-        args.push("/f");
-      }
+      // Always use /f (force) on Windows because:
+      // 1. Windows doesn't have Unix signals (SIGTERM/SIGKILL distinction)
+      // 2. taskkill without /f only works for GUI apps with windows
+      // 3. Console apps like code-server/opencode need /f to terminate
+      const args = ["/pid", String(pid), "/t", "/f"];
       try {
         await execa("taskkill", args);
       } catch {
