@@ -5,12 +5,18 @@ import { resolve } from "path";
 
 export default defineConfig({
   plugins: [svelte(), svelteTesting()],
+  // Externalize socket.io ecosystem for proper ESM/CJS interop in Node tests
+  // Fixes "this.opts.wsEngine is not a constructor" error in boundary tests
+  ssr: {
+    external: ["socket.io", "socket.io-client", "engine.io", "engine.io-client", "ws"],
+  },
   test: {
     globals: true,
     isolate: true,
     restoreMocks: true,
     clearMocks: true,
     reporters: ["dot"],
+
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],
@@ -48,6 +54,8 @@ export default defineConfig({
             "src/preload/**/*.{test,spec}.{js,ts}",
           ],
           setupFiles: ["./src/test/setup.ts"],
+          // Use forks pool for better ESM/CJS interop with native modules like ws/socket.io
+          pool: "forks",
         },
       },
     ],

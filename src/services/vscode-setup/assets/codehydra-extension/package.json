@@ -14,7 +14,16 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./extension.js",
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "node esbuild.config.js"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  },
   "contributes": {
     "configurationDefaults": {
       "workbench.startupEditor": "none",

@@ -23,6 +23,8 @@ export interface CodeServerConfig {
   readonly userDataDir: string;
   /** Directory for CLI wrapper scripts (added to PATH) */
   readonly binDir: string;
+  /** Optional port for the PluginServer (CODEHYDRA_PLUGIN_PORT env var) */
+  readonly pluginPort?: number;
 }
 
 /**

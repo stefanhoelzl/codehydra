@@ -3,3 +3,7 @@
 **/*.map
 **/*.ts
 tsconfig.json
+node_modules/**
+package-lock.json
+esbuild.config.js
+extension.js

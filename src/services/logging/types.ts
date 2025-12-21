@@ -42,7 +42,8 @@ export type LoggerName =
   | "ui" // Renderer UI components
   | "binary-download" // BinaryDownloadService - binary downloads
   | "vscode-setup" // VscodeSetupService - VS Code setup
-  | "lifecycle"; // LifecycleApi - app lifecycle
+  | "lifecycle" // LifecycleApi - app lifecycle
+  | "plugin"; // PluginServer - VS Code extension communication
 
 /**
  * Context data for log entries.

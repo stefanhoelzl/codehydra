@@ -28,6 +28,7 @@ import {
 } from "../services/binary-download";
 import { createProcessTreeProvider } from "../services/platform/process-tree";
 import { DiscoveryService, AgentStatusManager, HttpInstanceProbe } from "../services/opencode";
+import { PluginServer } from "../services/plugin-server";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { AppState } from "./app-state";
@@ -173,6 +174,12 @@ let apiEventCleanup: Unsubscribe | null = null;
 let agentStatusCleanup: Unsubscribe | null = null;
 
 /**
+ * PluginServer for VS Code extension communication.
+ * Started in startServices() before code-server.
+ */
+let pluginServer: PluginServer | null = null;
+
+/**
  * Process tree provider for child process management.
  * Created lazily in startServices() using the platform-specific factory.
  */
@@ -235,9 +242,26 @@ async function startServices(): Promise<void> {
   // Create shared network layer for all network operations
   const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
 
+  // Start PluginServer BEFORE code-server so port is available for environment variable
+  // Graceful degradation: if PluginServer fails, log warning and continue (plugin is optional)
+  try {
+    pluginServer = new PluginServer(networkLayer, loggingService.createLogger("plugin"));
+    const pluginPort = await pluginServer.start();
+    loggingService.createLogger("app").info("PluginServer started", { port: pluginPort });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    loggingService.createLogger("app").warn("PluginServer start failed", { error: message });
+    // Continue without plugin server - it's optional functionality
+    pluginServer = null;
+  }
+
   // Use process runner directly (logging is now integrated)
+  // Pass plugin port to code-server for CODEHYDRA_PLUGIN_PORT env var
+  const codeServerConfig = pluginServer?.getPort()
+    ? { ...config, pluginPort: pluginServer.getPort()! }
+    : config;
   codeServerManager = new CodeServerManager(
-    config,
+    codeServerConfig,
     processRunner,
     networkLayer,
     networkLayer,
@@ -628,6 +652,12 @@ async function cleanup(): Promise<void> {
   if (codeServerManager) {
     await codeServerManager.stop();
     codeServerManager = null;
+  }
+
+  // Close PluginServer AFTER code-server (extensions disconnect first)
+  if (pluginServer) {
+    await pluginServer.close();
+    pluginServer = null;
   }
 
   windowManager = null;

@@ -209,6 +209,11 @@ export class CodeServerManager {
       cleanEnv.EDITOR = editorValue;
       cleanEnv.GIT_SEQUENCE_EDITOR = editorValue;
 
+      // Set plugin port for VS Code extension communication
+      if (this.config.pluginPort !== undefined) {
+        cleanEnv.CODEHYDRA_PLUGIN_PORT = String(this.config.pluginPort);
+      }
+
       this.process = this.processRunner.run(this.config.binaryPath, args, {
         cwd: this.config.runtimeDir,
         env: cleanEnv,

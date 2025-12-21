@@ -1193,6 +1193,84 @@ agentStatusManager.onStatusChanged((path, status, counts) => {
 });
 ```
 
+## Plugin Interface
+
+CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  CodeHydra (Electron Main Process)                  │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │                    PluginServer (Socket.IO)                   │  │
+│  │                         :dynamic port                         │  │
+│  │                                                               │  │
+│  │   connections: Map<normalizedWorkspacePath, Socket>           │  │
+│  │                                                               │  │
+│  │   Server → Client:                                            │  │
+│  │   ───► "command" (request, ack) → client returns result      │  │
+│  │                                                               │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│            CodeServerManager spawns with:                           │
+│            CODEHYDRA_PLUGIN_PORT=<port>                             │
+└──────────────────────────────┼───────────────────────────────────────┘
+                               │ localhost:port (WebSocket)
+                               ▼
+                    ┌─────────────────┐
+                    │  codehydra      │
+                    │  extension      │
+                    │  (Socket.IO     │
+                    │   client)       │
+                    └─────────────────┘
+```
+
+### Connection Lifecycle
+
+1. **PluginServer starts** on dynamic port in main process
+2. **code-server spawns** with `CODEHYDRA_PLUGIN_PORT` env var
+3. **Extension activates** and reads env var
+4. **Extension connects** with `auth: { workspacePath }` (path.normalize'd)
+5. **Server validates** auth and stores connection by normalized path
+6. **Commands sent** with acknowledgment callbacks (10s timeout)
+
+### Environment Variable
+
+| Variable                | Purpose                                  |
+| ----------------------- | ---------------------------------------- |
+| `CODEHYDRA_PLUGIN_PORT` | Port for VS Code extension to connect to |
+
+Set automatically by CodeServerManager when spawning code-server. If not set, extension skips connection (graceful degradation).
+
+### Message Protocol
+
+**Command request (Server → Client):**
+
+```typescript
+interface CommandRequest {
+  readonly command: string; // VS Code command ID
+  readonly args?: readonly unknown[]; // Optional arguments
+}
+```
+
+**Acknowledgment result:**
+
+```typescript
+type PluginResult<T> = { success: true; data: T } | { success: false; error: string };
+```
+
+### Logging
+
+Logger name: `[plugin]`
+
+Events logged:
+
+- Server start/stop (port)
+- Client connect/disconnect (workspace path, reason)
+- Command execution (command, success/error)
+
 ## Development Workflow
 
 - **Features**: Efficient coverage - implement with tests, batch validate at end

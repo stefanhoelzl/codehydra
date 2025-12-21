@@ -176,6 +176,7 @@ Services are pure Node.js for testability without Electron:
 | VS Code Setup Service    | First-run extension and config installation                     | Implemented |
 | KeepFiles Service        | Copy gitignored files from project root to new workspaces       | Implemented |
 | NetworkLayer             | HTTP, SSE, port operations (HttpClient, SseClient, PortManager) | Implemented |
+| PluginServer             | Socket.IO server for VS Code extension communication            | Implemented |
 
 ### Workspace Cleanup
 

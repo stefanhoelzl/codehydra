@@ -50,6 +50,7 @@ describe("CodeServerManager Integration", () => {
       const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
       const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
+        binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
@@ -82,6 +83,7 @@ describe("CodeServerManager Integration", () => {
       const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
       const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
+        binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
@@ -120,6 +122,7 @@ describe("CodeServerManager Integration", () => {
       const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
       const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
+        binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
@@ -158,6 +161,7 @@ describe("CodeServerManager Integration", () => {
       const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
       const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
+        binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
@@ -197,6 +201,7 @@ describe("CodeServerManager Integration", () => {
       const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
       const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
       const config = {
+        binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
@@ -216,6 +221,74 @@ describe("CodeServerManager Integration", () => {
       expect(capturedEnv?.HOME).toBe("/home/user");
       expect(capturedEnv?.LANG).toBe("en_US.UTF-8");
       expect(capturedEnv?.MY_CUSTOM_VAR).toBe("custom-value");
+    });
+
+    it("includes CODEHYDRA_PLUGIN_PORT when pluginPort configured", async () => {
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const mockProc = createMockSpawnedProcess({ pid: 12345 });
+      const processRunner = {
+        run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+          capturedEnv = options?.env;
+          return mockProc;
+        }),
+      };
+
+      const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const config = {
+        binaryPath: "/app/code-server",
+        runtimeDir: "/tmp/runtime",
+        extensionsDir: "/tmp/extensions",
+        userDataDir: "/tmp/user-data",
+        binDir: "/app/bin",
+        pluginPort: 9876,
+      };
+
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
+      await manager.ensureRunning();
+
+      // Verify CODEHYDRA_PLUGIN_PORT is set
+      expect(capturedEnv?.CODEHYDRA_PLUGIN_PORT).toBe("9876");
+    });
+
+    it("omits CODEHYDRA_PLUGIN_PORT when pluginPort undefined", async () => {
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const mockProc = createMockSpawnedProcess({ pid: 12345 });
+      const processRunner = {
+        run: vi.fn((_cmd: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+          capturedEnv = options?.env;
+          return mockProc;
+        }),
+      };
+
+      const httpClient = createMockHttpClient({ response: new Response("", { status: 200 }) });
+      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const config = {
+        binaryPath: "/app/code-server",
+        runtimeDir: "/tmp/runtime",
+        extensionsDir: "/tmp/extensions",
+        userDataDir: "/tmp/user-data",
+        binDir: "/app/bin",
+        // Note: pluginPort not set
+      };
+
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
+      await manager.ensureRunning();
+
+      // Verify CODEHYDRA_PLUGIN_PORT is NOT set
+      expect(capturedEnv?.CODEHYDRA_PLUGIN_PORT).toBeUndefined();
     });
   });
 });
