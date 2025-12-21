@@ -120,13 +120,9 @@ describe("ExecaSpawnedProcess", () => {
       const result = await spawned.kill(2000, 500);
 
       expect(result.success).toBe(true);
-      if (process.platform === "win32") {
-        // Windows: taskkill without /f doesn't work on console apps,
-        // process is killed by taskkill /f (SIGKILL equivalent)
-        expect(result.reason).toBe("SIGKILL");
-      } else {
-        expect(result.reason).toBe("SIGTERM");
-      }
+      // On Windows, taskkill always uses /f flag (SIGTERM and SIGKILL are equivalent)
+      // so the process dies on first attempt, reporting "SIGTERM"
+      expect(result.reason).toBe("SIGTERM");
     });
 
     it("kill() on dead process returns success", async () => {
