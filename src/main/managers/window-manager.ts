@@ -3,8 +3,9 @@
  * Handles BaseWindow creation, resize events, and lifecycle management.
  */
 
-import { BaseWindow, nativeImage } from "electron";
+import { BaseWindow, nativeImage, type NativeImage } from "electron";
 import type { Logger } from "../../services/logging";
+import type { PlatformInfo } from "../../services/platform/platform-info";
 
 /**
  * Function to unsubscribe from an event.
@@ -25,11 +26,13 @@ export interface ContentBounds {
 export class WindowManager {
   private readonly window: BaseWindow;
   private readonly logger: Logger;
+  private readonly platformInfo: PlatformInfo;
   private readonly resizeCallbacks: Set<() => void> = new Set();
 
-  private constructor(window: BaseWindow, logger: Logger) {
+  private constructor(window: BaseWindow, logger: Logger, platformInfo: PlatformInfo) {
     this.window = window;
     this.logger = logger;
+    this.platformInfo = platformInfo;
 
     // Set up resize event handler
     this.window.on("resize", () => {
@@ -71,10 +74,16 @@ export class WindowManager {
    * - No application menu
    *
    * @param logger - Logger for [window] scope
+   * @param platformInfo - Platform information for OS-specific behavior
    * @param title - Window title (defaults to "CodeHydra")
    * @param iconPath - Absolute path to the window icon (e.g., from PathProvider.appIconPath)
    */
-  static create(logger: Logger, title: string = "CodeHydra", iconPath?: string): WindowManager {
+  static create(
+    logger: Logger,
+    platformInfo: PlatformInfo,
+    title: string = "CodeHydra",
+    iconPath?: string
+  ): WindowManager {
     const window = new BaseWindow({
       width: 1200,
       height: 800,
@@ -97,7 +106,7 @@ export class WindowManager {
     }
 
     logger.info("Window created");
-    return new WindowManager(window, logger);
+    return new WindowManager(window, logger, platformInfo);
   }
 
   /**
@@ -155,6 +164,30 @@ export class WindowManager {
    */
   setTitle(title: string): void {
     this.window.setTitle(title);
+  }
+
+  /**
+   * Sets the overlay icon on the taskbar (Windows only).
+   * This method is a no-op on non-Windows platforms.
+   *
+   * @param image - The overlay image, or null to clear
+   * @param description - Accessibility description for the overlay
+   */
+  setOverlayIcon(image: NativeImage | null, description: string): void {
+    // Only Windows supports overlay icons on the taskbar
+    if (this.platformInfo.platform !== "win32") {
+      return;
+    }
+
+    try {
+      this.window.setOverlayIcon(image, description);
+    } catch (error) {
+      // Log but don't throw - overlay icon is non-critical
+      this.logger.warn("Failed to set overlay icon", {
+        description,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

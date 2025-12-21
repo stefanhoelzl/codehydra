@@ -546,6 +546,36 @@ Error:
 
 > **Note**: When an agent requests permission (e.g., to run a shell command), it displays as "idle" (green) because it's waiting for user action. The agent cannot proceed until the user responds to the permission request.
 
+### App Icon Badge
+
+The app icon displays a badge showing the total count of idle workspaces across all projects. This provides an at-a-glance status when CodeHydra is minimized or in the background.
+
+**Badge behavior:**
+
+- Badge shows the sum of all idle agent counts across all workspaces
+- Badge is hidden when the idle count is 0 (no agents waiting)
+- Badge displays the actual count (e.g., 1, 5, 42) with no upper limit
+- Badge updates in real-time as agent status changes
+
+**Platform support:**
+
+| Platform | Location               | Technology                         |
+| -------- | ---------------------- | ---------------------------------- |
+| macOS    | Dock icon              | `app.dock.setBadge()`              |
+| Windows  | Taskbar icon (overlay) | 16x16 red circle with number       |
+| Linux    | Launcher icon          | `app.setBadgeCount()` (Unity only) |
+
+**What counts as "idle":**
+
+- Agents that have finished processing and are waiting for user input
+- Agents waiting for permission responses (e.g., shell command approval)
+
+**Visual appearance:**
+
+- **macOS**: Native dock badge (red circle with white number)
+- **Windows**: Taskbar overlay icon (16x16 generated image, red circle with white number)
+- **Linux**: Launcher badge count (Unity launcher only, silently fails on other desktop environments)
+
 **Sidebar with status:**
 
 ```

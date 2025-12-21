@@ -147,12 +147,13 @@ The application uses a **detachment-based visibility approach**:
 
 ### Main Process Components
 
-| Component       | Responsibility                                              |
-| --------------- | ----------------------------------------------------------- |
-| Window Manager  | BaseWindow lifecycle, resize handling, minimum size         |
-| View Manager    | WebContentsView create/destroy, bounds calculation, z-order |
-| IPC Handlers    | Bridge between renderer and services                        |
-| Preload Scripts | Secure IPC exposure, keyboard capture                       |
+| Component       | Responsibility                                                      |
+| --------------- | ------------------------------------------------------------------- |
+| Window Manager  | BaseWindow lifecycle, resize handling, minimum size, overlay icons  |
+| View Manager    | WebContentsView create/destroy, bounds calculation, z-order         |
+| Badge Manager   | App icon badge showing count of idle workspaces (platform-specific) |
+| IPC Handlers    | Bridge between renderer and services                                |
+| Preload Scripts | Secure IPC exposure, keyboard capture                               |
 
 ### Preload Scripts
 
@@ -930,6 +931,7 @@ The logging system provides comprehensive logging across both main and renderer 
 
 | Logger          | Module                 | Description                      |
 | --------------- | ---------------------- | -------------------------------- |
+| `[badge]`       | BadgeManager           | App icon badge updates           |
 | `[process]`     | LoggingProcessRunner   | Spawned processes, stdout/stderr |
 | `[network]`     | DefaultNetworkLayer    | HTTP fetch, port operations      |
 | `[fs]`          | DefaultFileSystemLayer | File read/write operations       |

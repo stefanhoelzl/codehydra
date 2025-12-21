@@ -38,6 +38,7 @@
 | Shortcut Mode   | Keyboard-driven navigation activated by Alt+X. All key detection in main process (ShortcutController). Actions: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project. Escape exits (renderer). |
 | VS Code Setup   | First-run setup that installs extensions and config; runs once before code-server starts; marker at `<app-data>/vscode/.setup-completed`. See [VS Code Assets](#vs-code-assets) for details.              |
 | .keepfiles      | Config file in project root listing files to copy to new workspaces. Uses gitignore syntax with **inverted semantics** - listed patterns are COPIED (not ignored). Supports negation with `!` prefix.     |
+| App Icon Badge  | Shows count of idle workspaces on the app icon. Platform support: macOS dock badge, Windows taskbar overlay, Linux Unity launcher. Badge hidden when count is 0.                                          |
 
 ## VS Code Assets
 
@@ -284,6 +285,7 @@ Log entries follow this format:
 | `[api]`         | IPC handlers                |
 | `[window]`      | WindowManager               |
 | `[view]`        | ViewManager                 |
+| `[badge]`       | BadgeManager                |
 | `[app]`         | Application lifecycle       |
 | `[ui]`          | Renderer UI components      |
 

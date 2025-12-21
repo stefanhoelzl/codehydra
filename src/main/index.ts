@@ -31,6 +31,8 @@ import { DiscoveryService, AgentStatusManager, HttpInstanceProbe } from "../serv
 import { PluginServer, sendStartupCommands } from "../services/plugin-server";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
+import { BadgeManager } from "./managers/badge-manager";
+import { DefaultElectronAppApi } from "./managers/electron-app-api";
 import { AppState } from "./app-state";
 import {
   registerApiHandlers,
@@ -168,6 +170,7 @@ let appState: AppState | null = null;
 let codeServerManager: CodeServerManager | null = null;
 let discoveryService: DiscoveryService | null = null;
 let agentStatusManager: AgentStatusManager | null = null;
+let badgeManager: BadgeManager | null = null;
 let scanInterval: ReturnType<typeof setInterval> | null = null;
 let codeHydraApi: ICodeHydraApi | null = null;
 let apiEventCleanup: Unsubscribe | null = null;
@@ -322,6 +325,16 @@ async function startServices(): Promise<void> {
     discoveryService,
     loggingService.createLogger("opencode")
   );
+
+  // Create and connect BadgeManager
+  const electronAppApi = new DefaultElectronAppApi();
+  badgeManager = new BadgeManager(
+    platformInfo,
+    electronAppApi,
+    windowManager,
+    loggingService.createLogger("badge")
+  );
+  badgeManager.connectToStatusManager(agentStatusManager);
 
   // Inject services into AppState
   appState.setDiscoveryService(discoveryService);
@@ -530,6 +543,7 @@ async function bootstrap(): Promise<void> {
       : "CodeHydra";
   windowManager = WindowManager.create(
     loggingService.createLogger("window"),
+    platformInfo,
     windowTitle,
     pathProvider.appIconPath
   );
@@ -616,6 +630,12 @@ async function cleanup(): Promise<void> {
   if (scanInterval) {
     clearInterval(scanInterval);
     scanInterval = null;
+  }
+
+  // Dispose badge manager
+  if (badgeManager) {
+    badgeManager.disconnect();
+    badgeManager = null;
   }
 
   // Dispose agent status manager

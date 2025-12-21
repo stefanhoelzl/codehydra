@@ -43,7 +43,8 @@ export type LoggerName =
   | "binary-download" // BinaryDownloadService - binary downloads
   | "vscode-setup" // VscodeSetupService - VS Code setup
   | "lifecycle" // LifecycleApi - app lifecycle
-  | "plugin"; // PluginServer - VS Code extension communication
+  | "plugin" // PluginServer - VS Code extension communication
+  | "badge"; // BadgeManager - app icon badge
 
 /**
  * Context data for log entries.

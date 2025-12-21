@@ -13,6 +13,7 @@ const { mockBaseWindow, MockBaseWindowClass, mockMenuSetApplicationMenu, mockNat
       maximize: vi.fn(),
       setTitle: vi.fn(),
       setIcon: vi.fn(),
+      setOverlayIcon: vi.fn(),
       contentView: {
         addChildView: vi.fn(),
         removeChildView: vi.fn(),
@@ -30,6 +31,7 @@ const { mockBaseWindow, MockBaseWindowClass, mockMenuSetApplicationMenu, mockNat
 
     const mockNativeImage = {
       createFromPath: vi.fn(() => mockImage),
+      createFromDataURL: vi.fn(() => mockImage),
       _mockImage: mockImage,
     };
 
@@ -53,6 +55,8 @@ vi.mock("electron", () => ({
 
 import { WindowManager } from "./window-manager";
 import { createSilentLogger } from "../../services/logging";
+import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
+import type { NativeImage } from "electron";
 
 describe("WindowManager", () => {
   beforeEach(() => {
@@ -65,7 +69,8 @@ describe("WindowManager", () => {
 
   describe("create", () => {
     it("creates a BaseWindow with default title", () => {
-      WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      WindowManager.create(createSilentLogger(), platformInfo);
 
       expect(MockBaseWindowClass).toHaveBeenCalledWith({
         width: 1200,
@@ -77,7 +82,8 @@ describe("WindowManager", () => {
     });
 
     it("creates a BaseWindow with custom title", () => {
-      WindowManager.create(createSilentLogger(), "CodeHydra (feature-branch)");
+      const platformInfo = createMockPlatformInfo();
+      WindowManager.create(createSilentLogger(), platformInfo, "CodeHydra (feature-branch)");
 
       expect(MockBaseWindowClass).toHaveBeenCalledWith({
         width: 1200,
@@ -89,13 +95,20 @@ describe("WindowManager", () => {
     });
 
     it("returns a WindowManager instance", () => {
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
 
       expect(manager).toBeInstanceOf(WindowManager);
     });
 
     it("sets window icon from provided icon path", () => {
-      WindowManager.create(createSilentLogger(), "CodeHydra", "/app/resources/icon.png");
+      const platformInfo = createMockPlatformInfo();
+      WindowManager.create(
+        createSilentLogger(),
+        platformInfo,
+        "CodeHydra",
+        "/app/resources/icon.png"
+      );
 
       expect(mockNativeImage.createFromPath).toHaveBeenCalledWith("/app/resources/icon.png");
       expect(mockBaseWindow.setIcon).toHaveBeenCalledWith(mockNativeImage._mockImage);
@@ -104,7 +117,13 @@ describe("WindowManager", () => {
     it("does not set icon when nativeImage returns empty", () => {
       mockNativeImage._mockImage.isEmpty.mockReturnValueOnce(true);
 
-      WindowManager.create(createSilentLogger(), "CodeHydra", "/app/resources/icon.png");
+      const platformInfo = createMockPlatformInfo();
+      WindowManager.create(
+        createSilentLogger(),
+        platformInfo,
+        "CodeHydra",
+        "/app/resources/icon.png"
+      );
 
       expect(mockNativeImage.createFromPath).toHaveBeenCalled();
       expect(mockBaseWindow.setIcon).not.toHaveBeenCalled();
@@ -115,14 +134,21 @@ describe("WindowManager", () => {
         throw new Error("Failed to load icon");
       });
 
+      const platformInfo = createMockPlatformInfo();
       // Should not throw
       expect(() =>
-        WindowManager.create(createSilentLogger(), "CodeHydra", "/app/resources/icon.png")
+        WindowManager.create(
+          createSilentLogger(),
+          platformInfo,
+          "CodeHydra",
+          "/app/resources/icon.png"
+        )
       ).not.toThrow();
     });
 
     it("does not attempt to load icon when iconPath is not provided", () => {
-      WindowManager.create(createSilentLogger(), "CodeHydra");
+      const platformInfo = createMockPlatformInfo();
+      WindowManager.create(createSilentLogger(), platformInfo, "CodeHydra");
 
       expect(mockNativeImage.createFromPath).not.toHaveBeenCalled();
       expect(mockBaseWindow.setIcon).not.toHaveBeenCalled();
@@ -132,7 +158,8 @@ describe("WindowManager", () => {
   describe("maximizeAsync", () => {
     it("maximizes the window and notifies resize callbacks after delay", async () => {
       vi.useFakeTimers();
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
       const callback = vi.fn();
       manager.onResize(callback);
       callback.mockClear();
@@ -158,7 +185,8 @@ describe("WindowManager", () => {
 
   describe("getWindow", () => {
     it("returns the created BaseWindow", () => {
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
 
       const window = manager.getWindow();
 
@@ -169,7 +197,8 @@ describe("WindowManager", () => {
   describe("getBounds", () => {
     it("returns window content bounds", () => {
       mockBaseWindow.getContentBounds.mockReturnValue({ width: 1400, height: 900, x: 100, y: 50 });
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
 
       const bounds = manager.getBounds();
 
@@ -179,7 +208,8 @@ describe("WindowManager", () => {
 
   describe("onResize", () => {
     it("registers a resize event listener", () => {
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
       const callback = vi.fn();
 
       manager.onResize(callback);
@@ -188,7 +218,8 @@ describe("WindowManager", () => {
     });
 
     it("calls callback when window resizes", () => {
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
       const callback = vi.fn();
 
       manager.onResize(callback);
@@ -205,7 +236,8 @@ describe("WindowManager", () => {
     });
 
     it("returns unsubscribe function that removes listener", () => {
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
       const callback = vi.fn();
 
       const unsubscribe = manager.onResize(callback);
@@ -226,7 +258,8 @@ describe("WindowManager", () => {
 
   describe("setTitle", () => {
     it("sets the window title", () => {
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
 
       manager.setTitle("CodeHydra - my-app / feature - (main)");
 
@@ -234,9 +267,63 @@ describe("WindowManager", () => {
     });
   });
 
+  describe("setOverlayIcon", () => {
+    it("calls BaseWindow.setOverlayIcon on Windows", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
+      const mockImage = mockNativeImage._mockImage as unknown as NativeImage;
+
+      manager.setOverlayIcon(mockImage, "3 idle agents");
+
+      expect(mockBaseWindow.setOverlayIcon).toHaveBeenCalledWith(mockImage, "3 idle agents");
+    });
+
+    it("clears overlay when null passed on Windows", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
+
+      manager.setOverlayIcon(null, "");
+
+      expect(mockBaseWindow.setOverlayIcon).toHaveBeenCalledWith(null, "");
+    });
+
+    it("no-ops on macOS", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
+      const mockImage = mockNativeImage._mockImage as unknown as NativeImage;
+
+      manager.setOverlayIcon(mockImage, "3 idle agents");
+
+      expect(mockBaseWindow.setOverlayIcon).not.toHaveBeenCalled();
+    });
+
+    it("no-ops on Linux", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
+      const mockImage = mockNativeImage._mockImage as unknown as NativeImage;
+
+      manager.setOverlayIcon(mockImage, "3 idle agents");
+
+      expect(mockBaseWindow.setOverlayIcon).not.toHaveBeenCalled();
+    });
+
+    it("handles nativeImage errors gracefully", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
+      mockBaseWindow.setOverlayIcon.mockImplementationOnce(() => {
+        throw new Error("Failed to set overlay");
+      });
+      const mockImage = mockNativeImage._mockImage as unknown as NativeImage;
+
+      // Should not throw
+      expect(() => manager.setOverlayIcon(mockImage, "3 idle agents")).not.toThrow();
+    });
+  });
+
   describe("close", () => {
     it("closes the window", () => {
-      const manager = WindowManager.create(createSilentLogger());
+      const platformInfo = createMockPlatformInfo();
+      const manager = WindowManager.create(createSilentLogger(), platformInfo);
 
       manager.close();
 
