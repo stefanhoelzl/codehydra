@@ -734,7 +734,7 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
       const OTHER_WORKSPACE_PATH = "/home/user/.codehydra/projects/my-app/workspaces/other-feature";
       const OTHER_WORKSPACE_NAME = "other-feature" as WorkspaceName;
 
-      it("should switch to another workspace in same project when active workspace is removed", async () => {
+      it("should switch to another workspace in same project immediately when active workspace removal starts", async () => {
         const mockProvider = {
           removeWorkspace: vi
             .fn()
@@ -757,11 +757,9 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
         await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-        // Wait for async deletion to complete
-        await vi.waitFor(() => {
-          // Should switch to the other workspace in the same project
-          expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(OTHER_WORKSPACE_PATH, false);
-        });
+        // Switch happens immediately in remove(), not after deletion completes
+        // Should switch to the other workspace in the same project
+        expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(OTHER_WORKSPACE_PATH, false);
         expect(switchHandler).toHaveBeenCalledWith({
           projectId: TEST_PROJECT_ID,
           workspaceName: OTHER_WORKSPACE_NAME,
@@ -769,7 +767,7 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
         });
       });
 
-      it("should switch to workspace in another project when active workspace removed and no other in same project", async () => {
+      it("should switch to workspace in another project immediately when active workspace removal starts and no other in same project", async () => {
         const OTHER_PROJECT_PATH = "/home/user/projects/other-app" as ProjectPath;
         // Compute dynamically for cross-platform compatibility (path normalization differs on Windows)
         const OTHER_PROJECT_ID = generateProjectId(OTHER_PROJECT_PATH);
@@ -809,14 +807,12 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
         await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-        // Wait for async deletion to complete
-        await vi.waitFor(() => {
-          // Should switch to workspace in another project
-          expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(
-            OTHER_PROJECT_WORKSPACE_PATH,
-            false
-          );
-        });
+        // Switch happens immediately in remove(), not after deletion completes
+        // Should switch to workspace in another project
+        expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(
+          OTHER_PROJECT_WORKSPACE_PATH,
+          false
+        );
         expect(switchHandler).toHaveBeenCalledWith({
           projectId: OTHER_PROJECT_ID,
           workspaceName: OTHER_PROJECT_WORKSPACE_NAME,
@@ -824,7 +820,7 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
         });
       });
 
-      it("should set active to null when no workspaces remain after removal", async () => {
+      it("should NOT switch when no other workspaces exist (user stays on current to see deletion progress)", async () => {
         const mockProvider = {
           removeWorkspace: vi
             .fn()
@@ -846,12 +842,9 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
         await api.workspaces.remove(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
 
-        // Wait for async deletion to complete
-        await vi.waitFor(() => {
-          // Should set active to null
-          expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(null, false);
-        });
-        expect(switchHandler).toHaveBeenCalledWith(null);
+        // Should NOT switch - user stays on current workspace to see deletion progress
+        expect(viewManager.setActiveWorkspace).not.toHaveBeenCalled();
+        expect(switchHandler).not.toHaveBeenCalled();
       });
 
       it("should not switch workspace when removed workspace was not active", async () => {

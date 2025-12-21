@@ -225,23 +225,24 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
   }
 
   /**
-   * Switch to the next available workspace after one was removed.
+   * Switch to the next available workspace, excluding the one being deleted.
    * Priority:
    * 1. Another workspace in the same project
    * 2. A workspace from another project
-   * 3. null (no workspaces remain)
+   *
+   * @returns true if switched to another workspace, false if no other workspace available
    */
-  private async switchToNextWorkspaceAfterRemoval(
+  private async switchToNextWorkspaceIfAvailable(
     currentProjectPath: string,
-    removedWorkspacePath: string
-  ): Promise<void> {
+    excludeWorkspacePath: string
+  ): Promise<boolean> {
     // Get all projects to find available workspaces
     const allProjects = await this.appState.getAllProjects();
 
     // First, try to find another workspace in the same project
     const currentProject = allProjects.find((p) => p.path === currentProjectPath);
     if (currentProject) {
-      const otherWorkspace = currentProject.workspaces.find((w) => w.path !== removedWorkspacePath);
+      const otherWorkspace = currentProject.workspaces.find((w) => w.path !== excludeWorkspacePath);
       if (otherWorkspace) {
         const projectId = generateProjectId(currentProjectPath);
         const workspaceName = this.extractWorkspaceName(otherWorkspace.path) as WorkspaceName;
@@ -251,7 +252,7 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
           workspaceName,
           path: otherWorkspace.path,
         });
-        return;
+        return true;
       }
     }
 
@@ -268,13 +269,12 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
           workspaceName,
           path: firstWorkspace.path,
         });
-        return;
+        return true;
       }
     }
 
-    // No workspaces remain, set active to null
-    this.viewManager.setActiveWorkspace(null, false);
-    this.emit("workspace:switched", null);
+    // No other workspace available - don't switch, stay on current
+    return false;
   }
 
   // ==========================================================================
@@ -289,7 +289,7 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
   private async executeDeletion(
     projectId: ProjectId,
     projectPath: string,
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     workspaceName: WorkspaceName,
     keepBranch: boolean
   ): Promise<void> {
@@ -334,8 +334,8 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
       // Emit initial state
       emitProgress(false, false);
 
-      // Check if removed workspace was active BEFORE destroying it
-      const wasActive = this.viewManager.getActiveWorkspacePath() === workspacePath;
+      // Note: Workspace switching is handled in remove() before executeDeletion is called.
+      // This ensures immediate switch to next workspace for better UX.
 
       // ======================================================================
       // Operation 1: Cleanup VS Code (view destruction)
@@ -395,11 +395,6 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
           workspaceName,
           path: workspacePath,
         });
-
-        // If the removed workspace was active, switch to another workspace
-        if (wasActive) {
-          await this.switchToNextWorkspaceAfterRemoval(projectPath, workspacePath);
-        }
       }
     } catch (error) {
       // Unexpected error - always emit completion so UI isn't stuck in limbo
@@ -583,11 +578,20 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
         // Mark as in-progress
         this.inProgressDeletions.add(workspace.path);
 
+        // If this workspace is active, try to switch to next workspace immediately.
+        // This provides better UX - user sees the next workspace right away instead of
+        // watching deletion progress. If no other workspace exists, stay on current
+        // (deletion progress view will be shown by the renderer).
+        const isActive = this.viewManager.getActiveWorkspacePath() === workspace.path;
+        if (isActive) {
+          await this.switchToNextWorkspaceIfAvailable(projectPath, workspace.path);
+        }
+
         // Fire-and-forget: execute deletion asynchronously
         void this.executeDeletion(
           projectId,
           projectPath,
-          workspace.path,
+          workspace.path as WorkspacePath,
           workspaceName,
           keepBranch
         );
@@ -619,6 +623,17 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
         // Check if removed workspace was active
         const wasActive = this.viewManager.getActiveWorkspacePath() === workspace.path;
 
+        // If active, try to switch to next workspace immediately
+        // (for forceRemove we do this before cleanup since cleanup is instant)
+        if (wasActive) {
+          const switched = await this.switchToNextWorkspaceIfAvailable(projectPath, workspace.path);
+          // If no other workspace available, set to null (workspace is being force-removed)
+          if (!switched) {
+            this.viewManager.setActiveWorkspace(null, false);
+            this.emit("workspace:switched", null);
+          }
+        }
+
         // Clean up internal state WITHOUT running cleanup operations
         await this.appState.removeWorkspace(projectPath, workspace.path);
 
@@ -631,11 +646,6 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
           workspaceName,
           path: workspace.path,
         });
-
-        // If the removed workspace was active, switch to another workspace
-        if (wasActive) {
-          await this.switchToNextWorkspaceAfterRemoval(projectPath, workspace.path);
-        }
       },
 
       get: async (
