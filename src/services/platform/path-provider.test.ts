@@ -14,23 +14,38 @@ describe("createMockPathProvider", () => {
   it("returns sensible default paths", () => {
     const pathProvider = createMockPathProvider();
 
-    expect(pathProvider.dataRootDir).toBe("/test/app-data");
-    expect(pathProvider.projectsDir).toBe("/test/app-data/projects");
-    expect(pathProvider.vscodeDir).toBe("/test/app-data/vscode");
-    expect(pathProvider.vscodeExtensionsDir).toBe("/test/app-data/vscode/extensions");
-    expect(pathProvider.vscodeUserDataDir).toBe("/test/app-data/vscode/user-data");
-    expect(pathProvider.vscodeSetupMarkerPath).toBe("/test/app-data/vscode/.setup-completed");
-    expect(pathProvider.electronDataDir).toBe("/test/app-data/electron");
-    expect(pathProvider.vscodeAssetsDir).toBe("/mock/assets");
-    expect(pathProvider.appIconPath).toBe("/test/resources/icon.png");
-    expect(pathProvider.binDir).toBe("/test/app-data/bin");
-    expect(pathProvider.codeServerDir).toBe(`/test/app-data/code-server/${CODE_SERVER_VERSION}`);
-    expect(pathProvider.opencodeDir).toBe(`/test/app-data/opencode/${OPENCODE_VERSION}`);
-    expect(pathProvider.codeServerBinaryPath).toBe(
-      `/test/app-data/code-server/${CODE_SERVER_VERSION}/bin/code-server`
+    // Use regex to match both Unix (/) and Windows (\) path separators
+    expect(pathProvider.dataRootDir).toMatch(/[/\\]test[/\\]app-data$/);
+    expect(pathProvider.projectsDir).toMatch(/[/\\]test[/\\]app-data[/\\]projects$/);
+    expect(pathProvider.vscodeDir).toMatch(/[/\\]test[/\\]app-data[/\\]vscode$/);
+    expect(pathProvider.vscodeExtensionsDir).toMatch(
+      /[/\\]test[/\\]app-data[/\\]vscode[/\\]extensions$/
     );
-    expect(pathProvider.opencodeBinaryPath).toBe(
-      `/test/app-data/opencode/${OPENCODE_VERSION}/opencode`
+    expect(pathProvider.vscodeUserDataDir).toMatch(
+      /[/\\]test[/\\]app-data[/\\]vscode[/\\]user-data$/
+    );
+    expect(pathProvider.vscodeSetupMarkerPath).toMatch(
+      /[/\\]test[/\\]app-data[/\\]vscode[/\\]\.setup-completed$/
+    );
+    expect(pathProvider.electronDataDir).toMatch(/[/\\]test[/\\]app-data[/\\]electron$/);
+    expect(pathProvider.vscodeAssetsDir).toMatch(/[/\\]mock[/\\]assets$/);
+    expect(pathProvider.appIconPath).toMatch(/[/\\]test[/\\]resources[/\\]icon\.png$/);
+    expect(pathProvider.binDir).toMatch(/[/\\]test[/\\]app-data[/\\]bin$/);
+    expect(pathProvider.codeServerDir).toMatch(
+      new RegExp(`[/\\\\]test[/\\\\]app-data[/\\\\]code-server[/\\\\]${CODE_SERVER_VERSION}$`)
+    );
+    expect(pathProvider.opencodeDir).toMatch(
+      new RegExp(`[/\\\\]test[/\\\\]app-data[/\\\\]opencode[/\\\\]${OPENCODE_VERSION}$`)
+    );
+    expect(pathProvider.codeServerBinaryPath).toMatch(
+      new RegExp(
+        `[/\\\\]test[/\\\\]app-data[/\\\\]code-server[/\\\\]${CODE_SERVER_VERSION}[/\\\\]bin[/\\\\]code-server$`
+      )
+    );
+    expect(pathProvider.opencodeBinaryPath).toMatch(
+      new RegExp(
+        `[/\\\\]test[/\\\\]app-data[/\\\\]opencode[/\\\\]${OPENCODE_VERSION}[/\\\\]opencode$`
+      )
     );
   });
 
@@ -42,8 +57,8 @@ describe("createMockPathProvider", () => {
 
     expect(pathProvider.dataRootDir).toBe("/custom/root");
     expect(pathProvider.vscodeDir).toBe("/custom/vscode");
-    // Other paths should still be defaults
-    expect(pathProvider.projectsDir).toBe("/test/app-data/projects");
+    // Other paths should still be defaults (use regex for cross-platform separators)
+    expect(pathProvider.projectsDir).toMatch(/[/\\]test[/\\]app-data[/\\]projects$/);
   });
 
   it("allows overriding all paths", () => {

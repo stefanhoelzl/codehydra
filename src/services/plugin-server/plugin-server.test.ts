@@ -71,11 +71,12 @@ describe("PluginServer", () => {
 
   describe("normalizeWorkspacePath", () => {
     it("normalizes path with trailing separator", () => {
-      expect(normalizeWorkspacePath("/test/workspace/")).toBe("/test/workspace");
+      // Use regex to match both Unix (/) and Windows (\) path separators
+      expect(normalizeWorkspacePath("/test/workspace/")).toMatch(/[/\\]test[/\\]workspace$/);
     });
 
     it("normalizes path with double separators", () => {
-      expect(normalizeWorkspacePath("/test//workspace")).toBe("/test/workspace");
+      expect(normalizeWorkspacePath("/test//workspace")).toMatch(/[/\\]test[/\\]workspace$/);
     });
 
     it("handles Windows-style paths", () => {
@@ -91,11 +92,12 @@ describe("PluginServer", () => {
     });
 
     it("handles root path", () => {
-      expect(normalizeWorkspacePath("/")).toBe("/");
+      // Root path is "/" on Unix and "\" on Windows
+      expect(normalizeWorkspacePath("/")).toMatch(/^[/\\]$/);
     });
 
     it("handles relative path", () => {
-      expect(normalizeWorkspacePath("relative/path")).toBe("relative/path");
+      expect(normalizeWorkspacePath("relative/path")).toMatch(/^relative[/\\]path$/);
     });
   });
 
