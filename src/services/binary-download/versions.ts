@@ -7,12 +7,12 @@ import type { BinaryConfig, BinaryType, SupportedArch, SupportedPlatform } from 
 /**
  * Current version of code-server to download.
  */
-export const CODE_SERVER_VERSION = "4.106.3";
+export const CODE_SERVER_VERSION = "4.107.0";
 
 /**
  * Current version of opencode to download.
  */
-export const OPENCODE_VERSION = "1.0.163";
+export const OPENCODE_VERSION = "1.0.186";
 
 /**
  * GitHub repository for Windows code-server builds.
