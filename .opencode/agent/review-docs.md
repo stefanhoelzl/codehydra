@@ -40,6 +40,7 @@ Before reviewing, read these documentation files to understand what is currently
 | `docs/ARCHITECTURE.md`   | System design, components, data flows        | Architecture, components, IPC, or data flows change     |
 | `docs/PATTERNS.md`       | Implementation patterns with code examples   | Pattern examples or code conventions change             |
 | `docs/USER_INTERFACE.md` | UI layout, user flows, dialogs, shortcuts    | UI behavior, dialogs, or keyboard shortcuts change      |
+| `docs/API.md`            | Private/Public API reference                 | API methods, events, types, or access patterns change   |
 | `AGENTS.md`              | AI agent instructions, patterns, conventions | New patterns, conventions, or project structure changes |
 
 ## Review Focus
@@ -61,6 +62,7 @@ Before reviewing, read these documentation files to understand what is currently
 - [ ] Does the plan change any behavior documented in `docs/ARCHITECTURE.md`?
 - [ ] Does the plan change any behavior documented in `docs/USER_INTERFACE.md`?
 - [ ] Does the plan introduce patterns/conventions that should be in `AGENTS.md`?
+- [ ] Does the plan change any API methods, events, types, or access patterns documented in `docs/API.md`?
 
 **If ANY checkbox is YES:**
 
@@ -75,6 +77,10 @@ Before reviewing, read these documentation files to understand what is currently
 - New components → `docs/ARCHITECTURE.md` Component Architecture section
 - New user flows/dialogs → `docs/USER_INTERFACE.md` User Flows section
 - New code patterns → `AGENTS.md` relevant section
+- New public API method → `docs/API.md` Public API section
+- New IPC channel/event → `docs/API.md` Private API Events table
+- New shared type → `docs/API.md` Type Definitions section
+- New external system accessing API → `docs/API.md` WebSocket Access section
 
 ### 3. AGENTS.md Sync Verification
 

@@ -108,13 +108,14 @@ All external system access MUST go through abstraction interfaces. Direct librar
 
 ### Key Documents
 
-| Document         | Location                       | Purpose                                    |
-| ---------------- | ------------------------------ | ------------------------------------------ |
-| Patterns         | docs/PATTERNS.md               | Implementation patterns with code examples |
-| Architecture     | docs/ARCHITECTURE.md           | System design, component relationships     |
-| UI Specification | docs/USER_INTERFACE.md         | User flows, mockups, keyboard shortcuts    |
-| Testing Strategy | docs/TESTING.md                | Test types, conventions, commands          |
-| Migration Plan   | planning/ELECTRON_MIGRATION.md | Phase details, implementation workflow     |
+| Document         | Location                       | Purpose                                          |
+| ---------------- | ------------------------------ | ------------------------------------------------ |
+| Patterns         | docs/PATTERNS.md               | Implementation patterns with code examples       |
+| Architecture     | docs/ARCHITECTURE.md           | System design, component relationships           |
+| API Reference    | docs/API.md                    | Private/Public API for internal and external use |
+| UI Specification | docs/USER_INTERFACE.md         | User flows, mockups, keyboard shortcuts          |
+| Testing Strategy | docs/TESTING.md                | Test types, conventions, commands                |
+| Migration Plan   | planning/ELECTRON_MIGRATION.md | Phase details, implementation workflow           |
 
 **Important**: Files in `planning/` are **historical records** that reflect the state at the time of planning/implementation. They may not reflect the current application state. To understand current state, read source code and `docs/` files. Read `planning/` files for design decision context and rationale.
 
