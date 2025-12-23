@@ -4,16 +4,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock Electron nativeImage
 const mockNativeImage = vi.hoisted(() => {
-  const createFromDataURL = vi.fn((url: string) => ({
+  const createFromBitmap = vi.fn((buffer: Buffer, options: { width: number; height: number }) => ({
     isEmpty: () => false,
-    toDataURL: () => "data:image/png;base64,mock",
-    _sourceUrl: url, // Store for testing
+    getSize: () => ({ width: options.width, height: options.height }),
+    toPNG: () => Buffer.from("mock-png"),
+    _buffer: buffer, // Store for testing
+    _options: options, // Store for testing
   }));
 
   return {
-    createFromDataURL,
+    createFromBitmap,
     // Helper to get calls as properly typed array
-    getCalls: () => createFromDataURL.mock.calls as Array<[string]>,
+    getCalls: () =>
+      createFromBitmap.mock.calls as Array<[Buffer, { width: number; height: number }]>,
   };
 });
 
@@ -103,7 +106,7 @@ describe("BadgeManager", () => {
 
       manager.updateBadge(3);
 
-      expect(mockNativeImage.createFromDataURL).toHaveBeenCalled();
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.image).not.toBeNull();
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("3 idle workspaces");
@@ -140,7 +143,7 @@ describe("BadgeManager", () => {
 
       manager.updateBadge(0);
 
-      expect(mockNativeImage.createFromDataURL).not.toHaveBeenCalled();
+      expect(mockNativeImage.createFromBitmap).not.toHaveBeenCalled();
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.image).toBeNull();
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("");
@@ -203,21 +206,7 @@ describe("BadgeManager", () => {
   });
 
   describe("generateBadgeImage", () => {
-    /**
-     * Helper to get the SVG content from the mock call.
-     */
-    function getSvgFromMockCall(): string {
-      const calls = mockNativeImage.getCalls();
-      expect(calls.length).toBeGreaterThan(0);
-      const lastCall = calls[calls.length - 1];
-      expect(lastCall).toBeDefined();
-      const dataUrl = lastCall![0];
-      return Buffer.from(dataUrl.replace("data:image/svg+xml;base64,", ""), "base64").toString(
-        "utf8"
-      );
-    }
-
-    it("returns valid NativeImage", () => {
+    it("creates a 16x16 bitmap image", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -231,12 +220,12 @@ describe("BadgeManager", () => {
 
       manager.updateBadge(5);
 
-      expect(mockNativeImage.createFromDataURL).toHaveBeenCalled();
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
       const calls = mockNativeImage.getCalls();
-      expect(calls[0]?.[0]).toMatch(/^data:image\/svg\+xml;base64,/);
+      expect(calls[0]?.[1]).toEqual({ width: 16, height: 16 });
     });
 
-    it("adjusts font size for 1-digit counts", () => {
+    it("creates bitmap buffer with correct size (16x16x4 = 1024 bytes)", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -250,11 +239,30 @@ describe("BadgeManager", () => {
 
       manager.updateBadge(5);
 
-      const svg = getSvgFromMockCall();
-      expect(svg).toContain('font-size="10"');
+      const calls = mockNativeImage.getCalls();
+      const buffer = calls[0]?.[0];
+      expect(buffer).toBeInstanceOf(Buffer);
+      expect(buffer?.length).toBe(16 * 16 * 4); // BGRA format
     });
 
-    it("adjusts font size for 2-digit counts", () => {
+    it("handles single digit counts", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      manager.updateBadge(5);
+
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
+    });
+
+    it("handles double digit counts", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -268,11 +276,10 @@ describe("BadgeManager", () => {
 
       manager.updateBadge(42);
 
-      const svg = getSvgFromMockCall();
-      expect(svg).toContain('font-size="8"');
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
     });
 
-    it("adjusts font size for 3+ digit counts", () => {
+    it("handles 3+ digit counts by showing overflow indicator", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -286,8 +293,7 @@ describe("BadgeManager", () => {
 
       manager.updateBadge(123);
 
-      const svg = getSvgFromMockCall();
-      expect(svg).toContain('font-size="6"');
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -310,7 +316,7 @@ describe("BadgeManager", () => {
       manager.updateBadge(5);
 
       // Should only create image once
-      expect(mockNativeImage.createFromDataURL).toHaveBeenCalledTimes(1);
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
 
       // But all calls should use the same image
       expect(windowManager.setOverlayIconCalls).toHaveLength(3);
@@ -336,7 +342,7 @@ describe("BadgeManager", () => {
       manager.updateBadge(3);
 
       // Should create 3 different images
-      expect(mockNativeImage.createFromDataURL).toHaveBeenCalledTimes(3);
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(3);
     });
   });
 });

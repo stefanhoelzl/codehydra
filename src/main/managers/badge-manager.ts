@@ -129,28 +129,216 @@ export class BadgeManager {
 
   /**
    * Generates a 16x16 badge image with the count.
-   * The image is a red circle with white text.
+   * The image is a red circle with white number.
+   *
+   * Note: SVG data URLs don't work on Windows (createFromDataURL returns empty image).
+   * We use createFromBitmap with raw BGRA pixel data instead.
    *
    * @param count - The number to display (must be > 0)
    * @returns NativeImage suitable for overlay icon
    */
   private generateBadgeImage(count: number): NativeImage {
+    const size = 16;
+    const buffer = Buffer.alloc(size * size * 4);
+
+    const centerX = size / 2;
+    const centerY = size / 2;
+    const radius = 7;
+
+    // Red color: #E51400 (R=229, G=20, B=0)
+    const red = { r: 229, g: 20, b: 0 };
+    const white = { r: 255, g: 255, b: 255 };
+
+    // Draw a filled red circle with anti-aliased edges
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = x - centerX + 0.5;
+        const dy = y - centerY + 0.5;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const offset = (y * size + x) * 4;
+
+        if (distance <= radius) {
+          // Anti-alias the edge
+          const edgeDistance = radius - distance;
+          const alpha = edgeDistance < 1 ? Math.floor(edgeDistance * 255) : 255;
+
+          // createFromBitmap uses BGRA format on Windows
+          buffer[offset] = red.b; // B
+          buffer[offset + 1] = red.g; // G
+          buffer[offset + 2] = red.r; // R
+          buffer[offset + 3] = alpha; // A
+        }
+        // Pixels outside circle remain zero (transparent)
+      }
+    }
+
+    // Draw the number using simple bitmap font
+    this.drawNumber(buffer, size, count, white);
+
+    return nativeImage.createFromBitmap(buffer, { width: size, height: size });
+  }
+
+  /**
+   * Draws a number onto the badge bitmap.
+   * Uses simple pixel patterns for digits 0-9.
+   */
+  private drawNumber(
+    buffer: Buffer,
+    size: number,
+    count: number,
+    color: { r: number; g: number; b: number }
+  ): void {
     const text = String(count);
-    // Adjust font size for larger numbers
-    const fontSize = text.length === 1 ? 10 : text.length === 2 ? 8 : 6;
 
-    const svg = `
-      <svg width="16" height="16" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="8" cy="8" r="7" fill="#E51400"/>
-        <text x="8" y="12" text-anchor="middle"
-              font-size="${fontSize}" font-weight="bold" font-family="Arial" fill="white">
-          ${text}
-        </text>
-      </svg>`;
+    // Helper to draw a pixel in BGRA format
+    const drawPixel = (x: number, y: number): void => {
+      if (x >= 0 && x < size && y >= 0 && y < size) {
+        const offset = (y * size + x) * 4;
+        buffer[offset] = color.b;
+        buffer[offset + 1] = color.g;
+        buffer[offset + 2] = color.r;
+        buffer[offset + 3] = 255;
+      }
+    };
 
-    return nativeImage.createFromDataURL(
-      `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`
-    );
+    if (text.length === 1) {
+      // Single digit - centered
+      this.drawDigit(text, 5, 4, drawPixel);
+    } else if (text.length === 2) {
+      // Two digits - side by side
+      this.drawDigit(text[0]!, 2, 4, drawPixel);
+      this.drawDigit(text[1]!, 8, 4, drawPixel);
+    } else {
+      // 3+ digits - just show "+" to indicate overflow
+      this.drawDigit("+", 5, 4, drawPixel);
+    }
+  }
+
+  /**
+   * Draws a single digit at the given position.
+   * Each digit is approximately 5x8 pixels.
+   */
+  private drawDigit(
+    digit: string,
+    startX: number,
+    startY: number,
+    drawPixel: (x: number, y: number) => void
+  ): void {
+    // Simple 5x8 pixel patterns for digits
+    const patterns: Record<string, number[][]> = {
+      "0": [
+        [0, 1, 1, 1, 0],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0],
+      ],
+      "1": [
+        [0, 0, 1, 0, 0],
+        [0, 1, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 1, 1, 1, 0],
+      ],
+      "2": [
+        [0, 1, 1, 1, 0],
+        [1, 0, 0, 0, 1],
+        [0, 0, 0, 0, 1],
+        [0, 0, 1, 1, 0],
+        [0, 1, 0, 0, 0],
+        [1, 0, 0, 0, 0],
+        [1, 1, 1, 1, 1],
+      ],
+      "3": [
+        [0, 1, 1, 1, 0],
+        [1, 0, 0, 0, 1],
+        [0, 0, 0, 0, 1],
+        [0, 0, 1, 1, 0],
+        [0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0],
+      ],
+      "4": [
+        [0, 0, 0, 1, 0],
+        [0, 0, 1, 1, 0],
+        [0, 1, 0, 1, 0],
+        [1, 0, 0, 1, 0],
+        [1, 1, 1, 1, 1],
+        [0, 0, 0, 1, 0],
+        [0, 0, 0, 1, 0],
+      ],
+      "5": [
+        [1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0],
+        [0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0],
+      ],
+      "6": [
+        [0, 1, 1, 1, 0],
+        [1, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0],
+      ],
+      "7": [
+        [1, 1, 1, 1, 1],
+        [0, 0, 0, 0, 1],
+        [0, 0, 0, 1, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+      ],
+      "8": [
+        [0, 1, 1, 1, 0],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0],
+      ],
+      "9": [
+        [0, 1, 1, 1, 0],
+        [1, 0, 0, 0, 1],
+        [1, 0, 0, 0, 1],
+        [0, 1, 1, 1, 1],
+        [0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 1],
+        [0, 1, 1, 1, 0],
+      ],
+      "+": [
+        [0, 0, 0, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [1, 1, 1, 1, 1],
+        [0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 0, 0, 0],
+      ],
+    };
+
+    const pattern = patterns[digit];
+    if (!pattern) return;
+
+    for (let row = 0; row < pattern.length; row++) {
+      const patternRow = pattern[row];
+      if (!patternRow) continue;
+      for (let col = 0; col < patternRow.length; col++) {
+        if (patternRow[col] === 1) {
+          drawPixel(startX + col, startY + row);
+        }
+      }
+    }
   }
 
   /**
