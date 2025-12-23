@@ -60,6 +60,13 @@ export interface Api {
     forceRemove(projectId: string, workspaceName: string): Promise<void>;
     get(projectId: string, workspaceName: string): Promise<Workspace | undefined>;
     getStatus(projectId: string, workspaceName: string): Promise<WorkspaceStatus>;
+    /**
+     * Get the OpenCode server port for a workspace.
+     * @param projectId Project containing the workspace
+     * @param workspaceName Name of the workspace
+     * @returns Port number if server is running, null if not running or not initialized
+     */
+    getOpencodePort(projectId: string, workspaceName: string): Promise<number | null>;
     setMetadata(
       projectId: string,
       workspaceName: string,

@@ -150,6 +150,24 @@ const codehydraApi = {
     },
 
     /**
+     * Get the OpenCode server port for this workspace.
+     * Returns the port number if the OpenCode server is running, or null if not running.
+     *
+     * @returns {Promise<number | null>} Port number or null if server not running
+     * @example
+     * ```javascript
+     * const port = await api.workspace.getOpencodePort();
+     * if (port !== null) {
+     *   console.log(`OpenCode server running on port ${port}`);
+     *   // Connect to OpenCode server at http://localhost:${port}
+     * }
+     * ```
+     */
+    getOpencodePort() {
+      return emitApiCall("api:workspace:getOpencodePort");
+    },
+
+    /**
      * Get all metadata for this workspace.
      * @returns {Promise<Record<string, string>>} Metadata record (always includes 'base' key)
      */

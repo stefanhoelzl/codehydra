@@ -258,6 +258,15 @@ export function registerApiHandlers(api: ICodeHydraApi, logger: Logger): void {
     })
   );
 
+  ipcMain.handle(ApiIpcChannels.WORKSPACE_GET_OPENCODE_PORT, async (_event, payload: unknown) =>
+    logged(logger, ApiIpcChannels.WORKSPACE_GET_OPENCODE_PORT, async () => {
+      const p = payload as Record<string, unknown>;
+      const projectId = validateProjectId(p?.projectId, "projectId");
+      const workspaceName = validateWorkspaceName(p?.workspaceName, "workspaceName");
+      return await api.workspaces.getOpencodePort(projectId, workspaceName);
+    })
+  );
+
   ipcMain.handle(ApiIpcChannels.WORKSPACE_SET_METADATA, async (_event, payload: unknown) =>
     logged(logger, ApiIpcChannels.WORKSPACE_SET_METADATA, async () => {
       const p = payload as Record<string, unknown>;

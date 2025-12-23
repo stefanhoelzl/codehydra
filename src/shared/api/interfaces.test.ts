@@ -118,6 +118,14 @@ describe("IWorkspaceApi Interface", () => {
         void workspaceName;
         return { base: "main" };
       },
+      async getOpencodePort(
+        projectId: ProjectId,
+        workspaceName: WorkspaceName
+      ): Promise<number | null> {
+        void projectId;
+        void workspaceName;
+        return null;
+      },
     };
 
     expect(api).toBeDefined();
@@ -128,6 +136,7 @@ describe("IWorkspaceApi Interface", () => {
     expect(typeof api.getStatus).toBe("function");
     expect(typeof api.setMetadata).toBe("function");
     expect(typeof api.getMetadata).toBe("function");
+    expect(typeof api.getOpencodePort).toBe("function");
   });
 });
 

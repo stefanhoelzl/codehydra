@@ -58,6 +58,14 @@ export interface IWorkspaceApi {
   get(projectId: ProjectId, workspaceName: WorkspaceName): Promise<Workspace | undefined>;
   getStatus(projectId: ProjectId, workspaceName: WorkspaceName): Promise<WorkspaceStatus>;
   /**
+   * Get the OpenCode server port for a workspace.
+   * @param projectId Project containing the workspace
+   * @param workspaceName Name of the workspace
+   * @returns Port number if server is running, null if not running or not initialized
+   * @throws Error if project or workspace not found
+   */
+  getOpencodePort(projectId: ProjectId, workspaceName: WorkspaceName): Promise<number | null>;
+  /**
    * Set a metadata value for a workspace.
    * @param projectId Project containing the workspace
    * @param workspaceName Name of the workspace

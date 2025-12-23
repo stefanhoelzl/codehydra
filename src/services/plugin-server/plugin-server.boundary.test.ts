@@ -344,6 +344,70 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(handlers.getMetadata).toHaveBeenCalledWith("/test/workspace");
     });
 
+    it("getOpencodePort Socket.IO event should return port from handler", async () => {
+      const handlers = createMockApiHandlers({
+        getOpencodePort: 12345,
+      });
+      server.onApiCall(handlers);
+
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      const result = await new Promise<{
+        success: boolean;
+        data?: number | null;
+        error?: string;
+      }>((resolve) => {
+        client.emit("api:workspace:getOpencodePort", (res) => resolve(res));
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe(12345);
+      expect(handlers.getOpencodePort).toHaveBeenCalledWith("/test/workspace");
+    });
+
+    it("getOpencodePort Socket.IO event should return null when no server", async () => {
+      const handlers = createMockApiHandlers({
+        getOpencodePort: null,
+      });
+      server.onApiCall(handlers);
+
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      const result = await new Promise<{
+        success: boolean;
+        data?: number | null;
+        error?: string;
+      }>((resolve) => {
+        client.emit("api:workspace:getOpencodePort", (res) => resolve(res));
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBeNull();
+    });
+
+    it("getOpencodePort Socket.IO event should handle handler errors gracefully", async () => {
+      const handlers = createMockApiHandlers({
+        getOpencodePort: { success: false, error: "Workspace not found" },
+      });
+      server.onApiCall(handlers);
+
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      const result = await new Promise<{
+        success: boolean;
+        data?: number | null;
+        error?: string;
+      }>((resolve) => {
+        client.emit("api:workspace:getOpencodePort", (res) => resolve(res));
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Workspace not found");
+    });
+
     it("setMetadata round-trip via real Socket.IO", async () => {
       const handlers = createMockApiHandlers();
       server.onApiCall(handlers);
@@ -447,6 +511,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
             data: { isDirty: false, agent: { type: "none" } },
           });
         }),
+        getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: null }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };
@@ -475,6 +540,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     it("handles handler exception gracefully", async () => {
       const handlers: ApiCallHandlers = {
         getStatus: vi.fn().mockRejectedValue(new Error("Database error")),
+        getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: null }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };
@@ -503,6 +569,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
               }, 5000);
             })
         ),
+        getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: null }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };
@@ -557,6 +624,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
               // Never resolves - simulates a hung operation
             })
         ),
+        getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: null }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };

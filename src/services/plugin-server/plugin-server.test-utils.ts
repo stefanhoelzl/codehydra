@@ -185,6 +185,8 @@ export function createMockCommandHandler(
 export interface MockApiHandlersOptions {
   /** Status to return from getStatus. Default: { isDirty: false, agent: { type: 'none' } } */
   readonly getStatus?: WorkspaceStatus | PluginResult<WorkspaceStatus>;
+  /** Port to return from getOpencodePort. Default: null */
+  readonly getOpencodePort?: number | null | PluginResult<number | null>;
   /** Metadata to return from getMetadata. Default: { base: 'main' } */
   readonly getMetadata?: Record<string, string> | PluginResult<Record<string, string>>;
   /** Result to return from setMetadata. Default: { success: true, data: undefined } */
@@ -237,6 +239,13 @@ export function createMockApiHandlers(options?: MockApiHandlersOptions): ApiCall
     statusResult = { success: true, data: options?.getStatus ?? defaultStatus };
   }
 
+  let portResult: PluginResult<number | null>;
+  if (isPluginResult(options?.getOpencodePort)) {
+    portResult = options.getOpencodePort;
+  } else {
+    portResult = { success: true, data: options?.getOpencodePort ?? null };
+  }
+
   let metadataResult: PluginResult<Record<string, string>>;
   if (isPluginResult(options?.getMetadata)) {
     metadataResult = options.getMetadata;
@@ -251,6 +260,7 @@ export function createMockApiHandlers(options?: MockApiHandlersOptions): ApiCall
 
   return {
     getStatus: vi.fn().mockResolvedValue(statusResult),
+    getOpencodePort: vi.fn().mockResolvedValue(portResult),
     getMetadata: vi.fn().mockResolvedValue(metadataResult),
     setMetadata: vi.fn(() => Promise.resolve(setMetadataResult)),
   };

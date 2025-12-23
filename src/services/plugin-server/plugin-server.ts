@@ -59,6 +59,13 @@ export interface ApiCallHandlers {
   getStatus(workspacePath: string): Promise<PluginResult<WorkspaceStatus>>;
 
   /**
+   * Handle getOpencodePort request.
+   * @param workspacePath - Normalized workspace path
+   * @returns Port number (null if not running) or error
+   */
+  getOpencodePort(workspacePath: string): Promise<PluginResult<number | null>>;
+
+  /**
    * Handle getMetadata request.
    * @param workspacePath - Normalized workspace path
    * @returns Metadata record or error
@@ -473,6 +480,38 @@ export class PluginServer {
           const message = error instanceof Error ? error.message : String(error);
           this.logger.error("API handler error", {
             event: "api:workspace:getStatus",
+            workspace: workspacePath,
+            error: message,
+          });
+          ack({ success: false, error: message });
+        });
+    });
+
+    // Handle api:workspace:getOpencodePort
+    socket.on("api:workspace:getOpencodePort", (ack) => {
+      if (!this.apiHandlers) {
+        this.logger.warn("API call without handlers registered", {
+          event: "api:workspace:getOpencodePort",
+          workspace: workspacePath,
+        });
+        ack({ success: false, error: "API handlers not registered" });
+        return;
+      }
+
+      this.logger.debug("API call", {
+        event: "api:workspace:getOpencodePort",
+        workspace: workspacePath,
+      });
+
+      this.apiHandlers
+        .getOpencodePort(workspacePath)
+        .then((result) => {
+          ack(result);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error("API handler error", {
+            event: "api:workspace:getOpencodePort",
             workspace: workspacePath,
             error: message,
           });

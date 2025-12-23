@@ -176,6 +176,13 @@ export interface ClientToServerEvents {
   "api:workspace:getStatus": (ack: (result: PluginResult<WorkspaceStatus>) => void) => void;
 
   /**
+   * Get the OpenCode server port for the connected workspace.
+   *
+   * @param ack - Acknowledgment callback with port number (null if not running)
+   */
+  "api:workspace:getOpencodePort": (ack: (result: PluginResult<number | null>) => void) => void;
+
+  /**
    * Get all metadata for the connected workspace.
    *
    * @param ack - Acknowledgment callback with metadata record

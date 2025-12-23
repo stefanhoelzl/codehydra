@@ -753,6 +753,37 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
         };
       },
 
+      getOpencodePort: async (
+        projectId: ProjectId,
+        workspaceName: WorkspaceName
+      ): Promise<number | null> => {
+        // Resolve project ID to path
+        const projectPath = await this.resolveProjectPath(projectId);
+        if (!projectPath) {
+          throw new Error(`Project not found: ${projectId}`);
+        }
+
+        // Find workspace path
+        const internalProject = this.appState.getProject(projectPath);
+        if (!internalProject) {
+          throw new Error(`Project not found: ${projectId}`);
+        }
+
+        const workspace = internalProject.workspaces.find(
+          (w) => this.extractWorkspaceName(w.path) === workspaceName
+        );
+        if (!workspace) {
+          throw new Error(`Workspace not found: ${workspaceName}`);
+        }
+
+        // Get port from server manager
+        const serverManager = this.appState.getServerManager();
+        const port = serverManager?.getPort(workspace.path);
+
+        // Convert undefined/0 to null for JSON compatibility (port 0 means server starting)
+        return port || null;
+      },
+
       setMetadata: async (
         projectId: ProjectId,
         workspaceName: WorkspaceName,

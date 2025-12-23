@@ -98,6 +98,7 @@ describe("renderer API layer", () => {
           getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
           setMetadata: vi.fn().mockResolvedValue(undefined),
           getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+          getOpencodePort: vi.fn().mockResolvedValue(null),
         },
         ui: {
           selectFolder: vi.fn().mockResolvedValue(null),

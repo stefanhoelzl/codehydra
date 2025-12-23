@@ -43,6 +43,7 @@ function createMockApi(): ICodeHydraApi {
       forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+      getOpencodePort: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn(),
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
     },
@@ -377,6 +378,54 @@ describe("Workspace API handlers", () => {
         TEST_WORKSPACE_NAME
       );
       expect(result).toEqual(status);
+    });
+  });
+
+  describe("api:workspace:get-opencode-port", () => {
+    it("should reject with validation error when projectId format is invalid", async () => {
+      const handler = getHandler("api:workspace:get-opencode-port");
+
+      await expect(
+        handler({}, { projectId: "invalid", workspaceName: TEST_WORKSPACE_NAME })
+      ).rejects.toThrow(/projectId/i);
+      expect(mockApi.workspaces.getOpencodePort).not.toHaveBeenCalled();
+    });
+
+    it("should reject with validation error when workspaceName is empty", async () => {
+      const handler = getHandler("api:workspace:get-opencode-port");
+
+      await expect(handler({}, { projectId: TEST_PROJECT_ID, workspaceName: "" })).rejects.toThrow(
+        /workspaceName/i
+      );
+      expect(mockApi.workspaces.getOpencodePort).not.toHaveBeenCalled();
+    });
+
+    it("should delegate to api.workspaces.getOpencodePort with validated params", async () => {
+      vi.mocked(mockApi.workspaces.getOpencodePort).mockResolvedValue(12345);
+
+      const handler = getHandler("api:workspace:get-opencode-port");
+      const result = await handler(
+        {},
+        { projectId: TEST_PROJECT_ID, workspaceName: TEST_WORKSPACE_NAME }
+      );
+
+      expect(mockApi.workspaces.getOpencodePort).toHaveBeenCalledWith(
+        TEST_PROJECT_ID,
+        TEST_WORKSPACE_NAME
+      );
+      expect(result).toBe(12345);
+    });
+
+    it("should return null when API returns null", async () => {
+      vi.mocked(mockApi.workspaces.getOpencodePort).mockResolvedValue(null);
+
+      const handler = getHandler("api:workspace:get-opencode-port");
+      const result = await handler(
+        {},
+        { projectId: TEST_PROJECT_ID, workspaceName: TEST_WORKSPACE_NAME }
+      );
+
+      expect(result).toBeNull();
     });
   });
 });

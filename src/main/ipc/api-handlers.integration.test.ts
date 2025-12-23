@@ -92,9 +92,11 @@ function createMockApiWithEvents(): {
     },
     workspaces: {
       create: vi.fn().mockResolvedValue(TEST_WORKSPACE),
-      remove: vi.fn().mockResolvedValue({ branchDeleted: false }),
+      remove: vi.fn().mockResolvedValue({ started: true }),
+      forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue(TEST_WORKSPACE),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+      getOpencodePort: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn().mockResolvedValue(undefined),
       getMetadata: vi.fn().mockResolvedValue({ base: "main", note: "test note" }),
     },
@@ -336,7 +338,7 @@ describe("Handler + API integration", () => {
     });
 
     it("should call API and return result for workspace remove", async () => {
-      vi.mocked(api.workspaces.remove).mockResolvedValue({ branchDeleted: true });
+      vi.mocked(api.workspaces.remove).mockResolvedValue({ started: true });
 
       const handler = getHandler("api:workspace:remove");
       const result = await handler(
@@ -353,7 +355,7 @@ describe("Handler + API integration", () => {
         TEST_WORKSPACE_NAME,
         false
       );
-      expect(result).toEqual({ branchDeleted: true });
+      expect(result).toEqual({ started: true });
     });
 
     it("should call API and return result for workspace getStatus", async () => {
@@ -411,6 +413,44 @@ describe("Handler + API integration", () => {
 
       expect(api.workspaces.getMetadata).toHaveBeenCalledWith(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
       expect(result).toEqual(metadata);
+    });
+
+    it("should call API and return result for getOpencodePort", async () => {
+      vi.mocked(api.workspaces.getOpencodePort).mockResolvedValue(12345);
+
+      const handler = getHandler("api:workspace:get-opencode-port");
+      const result = await handler(
+        {},
+        {
+          projectId: TEST_PROJECT_ID,
+          workspaceName: TEST_WORKSPACE_NAME,
+        }
+      );
+
+      expect(api.workspaces.getOpencodePort).toHaveBeenCalledWith(
+        TEST_PROJECT_ID,
+        TEST_WORKSPACE_NAME
+      );
+      expect(result).toEqual(12345);
+    });
+
+    it("should call API and return null for getOpencodePort when no server running", async () => {
+      vi.mocked(api.workspaces.getOpencodePort).mockResolvedValue(null);
+
+      const handler = getHandler("api:workspace:get-opencode-port");
+      const result = await handler(
+        {},
+        {
+          projectId: TEST_PROJECT_ID,
+          workspaceName: TEST_WORKSPACE_NAME,
+        }
+      );
+
+      expect(api.workspaces.getOpencodePort).toHaveBeenCalledWith(
+        TEST_PROJECT_ID,
+        TEST_WORKSPACE_NAME
+      );
+      expect(result).toBeNull();
     });
   });
 

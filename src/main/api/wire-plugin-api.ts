@@ -87,6 +87,30 @@ export function wirePluginApi(
       }
     },
 
+    async getOpencodePort(workspacePath: string) {
+      const resolved = resolveWorkspace(workspacePath);
+      if ("success" in resolved && resolved.success === false) {
+        return resolved;
+      }
+      const { projectId, workspaceName } = resolved as {
+        projectId: ProjectId;
+        workspaceName: WorkspaceName;
+      };
+
+      try {
+        const port = await api.workspaces.getOpencodePort(projectId, workspaceName);
+        logger.debug("getOpencodePort result", {
+          workspace: workspacePath,
+          port,
+        });
+        return { success: true, data: port };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("getOpencodePort error", { workspace: workspacePath, error: message });
+        return { success: false, error: message };
+      }
+    },
+
     async getMetadata(workspacePath: string) {
       const resolved = resolveWorkspace(workspacePath);
       if ("success" in resolved && resolved.success === false) {

@@ -16,6 +16,7 @@ import type {
 import type { IWorkspaceProvider } from "../../services/git/workspace-provider";
 import type { Workspace as InternalWorkspace } from "../../services/git/types";
 import type { AgentStatusManager } from "../../services/opencode/agent-status-manager";
+import type { OpenCodeServerManager } from "../../services/opencode/opencode-server-manager";
 import type { IVscodeSetup } from "../../services/vscode-setup/types";
 
 // =============================================================================
@@ -40,6 +41,8 @@ function createMockAppState(overrides: Partial<AppState> = {}): AppState {
     getDiscoveryService: vi.fn(),
     setAgentStatusManager: vi.fn(),
     getAgentStatusManager: vi.fn(),
+    setServerManager: vi.fn(),
+    getServerManager: vi.fn(),
     ...overrides,
   } as unknown as AppState;
 }
@@ -1709,6 +1712,149 @@ describe("CodeHydraApiImpl - Workspace Metadata", () => {
       await expect(
         api.workspaces.getMetadata(TEST_PROJECT_ID, TEST_WORKSPACE_NAME)
       ).rejects.toThrow(/not found/);
+    });
+  });
+});
+
+// =============================================================================
+// Tests: getOpencodePort
+// =============================================================================
+
+describe("CodeHydraApiImpl - getOpencodePort", () => {
+  let appState: AppState;
+  let viewManager: IViewManager;
+  let dialog: typeof Electron.dialog;
+  let app: typeof Electron.app;
+  let api: CodeHydraApiImpl;
+
+  beforeEach(() => {
+    appState = createMockAppState();
+    viewManager = createMockViewManager();
+    dialog = createMockElectronDialog();
+    app = createMockElectronApp();
+    api = new CodeHydraApiImpl(appState, viewManager, dialog, app);
+  });
+
+  describe("success cases", () => {
+    it("should return port number when OpenCode server is running for workspace", async () => {
+      const mockServerManager = {
+        getPort: vi.fn().mockReturnValue(12345),
+      };
+      const mockInternalProject = createInternalProject({
+        workspaces: [
+          {
+            name: "feature-branch",
+            path: TEST_WORKSPACE_PATH,
+            branch: "feature-branch",
+            metadata: { base: "main" },
+          },
+        ],
+      });
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+      vi.mocked(appState.getServerManager).mockReturnValue(
+        mockServerManager as unknown as OpenCodeServerManager
+      );
+
+      const port = await api.workspaces.getOpencodePort(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+
+      expect(port).toBe(12345);
+      expect(mockServerManager.getPort).toHaveBeenCalledWith(TEST_WORKSPACE_PATH);
+    });
+  });
+
+  describe("null return cases", () => {
+    it("should return null when server manager returns undefined (server not running)", async () => {
+      const mockServerManager = {
+        getPort: vi.fn().mockReturnValue(undefined),
+      };
+      const mockInternalProject = createInternalProject({
+        workspaces: [
+          {
+            name: "feature-branch",
+            path: TEST_WORKSPACE_PATH,
+            branch: "feature-branch",
+            metadata: { base: "main" },
+          },
+        ],
+      });
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+      vi.mocked(appState.getServerManager).mockReturnValue(
+        mockServerManager as unknown as OpenCodeServerManager
+      );
+
+      const port = await api.workspaces.getOpencodePort(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+
+      expect(port).toBeNull();
+    });
+
+    it("should return null when server manager is not initialized", async () => {
+      const mockInternalProject = createInternalProject({
+        workspaces: [
+          {
+            name: "feature-branch",
+            path: TEST_WORKSPACE_PATH,
+            branch: "feature-branch",
+            metadata: { base: "main" },
+          },
+        ],
+      });
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+      vi.mocked(appState.getServerManager).mockReturnValue(null);
+
+      const port = await api.workspaces.getOpencodePort(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+
+      expect(port).toBeNull();
+    });
+
+    it("should return null when server is starting but port not yet assigned (port = 0)", async () => {
+      const mockServerManager = {
+        getPort: vi.fn().mockReturnValue(0),
+      };
+      const mockInternalProject = createInternalProject({
+        workspaces: [
+          {
+            name: "feature-branch",
+            path: TEST_WORKSPACE_PATH,
+            branch: "feature-branch",
+            metadata: { base: "main" },
+          },
+        ],
+      });
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+      vi.mocked(appState.getServerManager).mockReturnValue(
+        mockServerManager as unknown as OpenCodeServerManager
+      );
+
+      const port = await api.workspaces.getOpencodePort(TEST_PROJECT_ID, TEST_WORKSPACE_NAME);
+
+      // Port 0 means server starting, should return null
+      expect(port).toBeNull();
+    });
+  });
+
+  describe("error cases", () => {
+    it("should throw error when projectId does not exist in AppState", async () => {
+      vi.mocked(appState.getAllProjects).mockResolvedValue([]);
+
+      await expect(
+        api.workspaces.getOpencodePort("invalid-00000000" as ProjectId, TEST_WORKSPACE_NAME)
+      ).rejects.toThrow(/not found/i);
+    });
+
+    it("should throw error when workspaceName does not exist in project", async () => {
+      const mockInternalProject = createInternalProject({
+        workspaces: [], // No workspaces
+      });
+      vi.mocked(appState.getAllProjects).mockResolvedValue([mockInternalProject]);
+      vi.mocked(appState.getProject).mockReturnValue(mockInternalProject);
+
+      await expect(
+        api.workspaces.getOpencodePort(TEST_PROJECT_ID, "nonexistent" as WorkspaceName)
+      ).rejects.toThrow(/not found/i);
     });
   });
 });

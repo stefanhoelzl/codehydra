@@ -1730,20 +1730,21 @@ All IPC channels are defined in `src/shared/ipc.ts` with TypeScript types for co
 
 ### Commands (renderer → main)
 
-| Channel                     | Payload                             | Response            | Description                       |
-| --------------------------- | ----------------------------------- | ------------------- | --------------------------------- |
-| `project:open`              | `{ path: string }`                  | `Project`           | Open project, discover workspaces |
-| `project:close`             | `{ path: string }`                  | `void`              | Close project, destroy views      |
-| `project:list`              | `void`                              | `Project[]`         | List all open projects            |
-| `project:select-folder`     | `void`                              | `string \| null`    | Show folder picker dialog         |
-| `workspace:create`          | `{ projectPath, name, baseBranch }` | `Workspace`         | Create workspace, create view     |
-| `workspace:remove`          | `{ workspacePath, deleteBranch }`   | `RemovalResult`     | Remove workspace, destroy view    |
-| `workspace:switch`          | `{ workspacePath }`                 | `void`              | Switch active workspace           |
-| `workspace:list-bases`      | `{ projectPath }`                   | `BaseInfo[]`        | List available branches           |
-| `workspace:update-bases`    | `{ projectPath }`                   | `UpdateBasesResult` | Fetch from remotes                |
-| `workspace:is-dirty`        | `{ workspacePath }`                 | `boolean`           | Check for uncommitted changes     |
-| `ui:set-dialog-mode`        | `{ isOpen: boolean }`               | `void`              | Swap UI layer z-order             |
-| `ui:focus-active-workspace` | `void`                              | `void`              | Return focus to VS Code           |
+| Channel                           | Payload                             | Response            | Description                       |
+| --------------------------------- | ----------------------------------- | ------------------- | --------------------------------- |
+| `project:open`                    | `{ path: string }`                  | `Project`           | Open project, discover workspaces |
+| `project:close`                   | `{ path: string }`                  | `void`              | Close project, destroy views      |
+| `project:list`                    | `void`                              | `Project[]`         | List all open projects            |
+| `project:select-folder`           | `void`                              | `string \| null`    | Show folder picker dialog         |
+| `workspace:create`                | `{ projectPath, name, baseBranch }` | `Workspace`         | Create workspace, create view     |
+| `workspace:remove`                | `{ workspacePath, deleteBranch }`   | `RemovalResult`     | Remove workspace, destroy view    |
+| `workspace:switch`                | `{ workspacePath }`                 | `void`              | Switch active workspace           |
+| `workspace:list-bases`            | `{ projectPath }`                   | `BaseInfo[]`        | List available branches           |
+| `workspace:update-bases`          | `{ projectPath }`                   | `UpdateBasesResult` | Fetch from remotes                |
+| `workspace:is-dirty`              | `{ workspacePath }`                 | `boolean`           | Check for uncommitted changes     |
+| `api:workspace:get-opencode-port` | `{ projectId, workspaceName }`      | `number \| null`    | Get OpenCode server port          |
+| `ui:set-dialog-mode`              | `{ isOpen: boolean }`               | `void`              | Swap UI layer z-order             |
+| `ui:focus-active-workspace`       | `void`                              | `void`              | Return focus to VS Code           |
 
 ### Events (main → renderer)
 

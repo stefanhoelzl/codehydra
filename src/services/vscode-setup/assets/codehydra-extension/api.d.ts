@@ -80,6 +80,24 @@ export interface WorkspaceApi {
   getStatus(): Promise<WorkspaceStatus>;
 
   /**
+   * Get the OpenCode server port for this workspace.
+   * Returns the port number if the OpenCode server is running, or null if not running.
+   *
+   * @returns Port number or null if server not running
+   * @throws Error if not connected or request fails
+   *
+   * @example
+   * ```typescript
+   * const port = await api.workspace.getOpencodePort();
+   * if (port !== null) {
+   *   console.log(`OpenCode server running on port ${port}`);
+   *   // Connect to OpenCode server at http://localhost:${port}
+   * }
+   * ```
+   */
+  getOpencodePort(): Promise<number | null>;
+
+  /**
    * Get all metadata for this workspace.
    * Metadata is stored in git config and persists across sessions.
    *

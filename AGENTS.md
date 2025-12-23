@@ -579,12 +579,13 @@ await api.workspace.setMetadata("my-key", "my-value");
 
 **Available Methods:**
 
-| Method                             | Returns                          | Description                           |
-| ---------------------------------- | -------------------------------- | ------------------------------------- |
-| `whenReady()`                      | `Promise<void>`                  | Resolves when connected to CodeHydra  |
-| `workspace.getStatus()`            | `Promise<WorkspaceStatus>`       | Get current workspace status          |
-| `workspace.getMetadata()`          | `Promise<Record<string,string>>` | Get all workspace metadata            |
-| `workspace.setMetadata(key,value)` | `Promise<void>`                  | Set metadata (null value deletes key) |
+| Method                             | Returns                          | Description                                    |
+| ---------------------------------- | -------------------------------- | ---------------------------------------------- |
+| `whenReady()`                      | `Promise<void>`                  | Resolves when connected to CodeHydra           |
+| `workspace.getStatus()`            | `Promise<WorkspaceStatus>`       | Get current workspace status                   |
+| `workspace.getMetadata()`          | `Promise<Record<string,string>>` | Get all workspace metadata                     |
+| `workspace.setMetadata(key,value)` | `Promise<void>`                  | Set metadata (null value deletes key)          |
+| `workspace.getOpencodePort()`      | `Promise<number \| null>`        | Get OpenCode server port (null if not running) |
 
 **Type Declarations:**
 

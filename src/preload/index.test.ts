@@ -242,6 +242,45 @@ describe("preload API", () => {
       expect(result).toEqual(mockStatus);
     });
 
+    it("workspaces.getOpencodePort should invoke WORKSPACE_GET_OPENCODE_PORT IPC channel", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue(12345);
+
+      const workspaces = exposedApi.workspaces as {
+        getOpencodePort: (projectId: string, workspaceName: string) => Promise<number | null>;
+      };
+      await workspaces.getOpencodePort("my-app-12345678", "feature");
+
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-opencode-port", {
+        projectId: "my-app-12345678",
+        workspaceName: "feature",
+      });
+    });
+
+    it("workspaces.getOpencodePort should pass projectId and workspaceName parameters", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue(54321);
+
+      const workspaces = exposedApi.workspaces as {
+        getOpencodePort: (projectId: string, workspaceName: string) => Promise<number | null>;
+      };
+      await workspaces.getOpencodePort("other-project-aaaabbbb", "main-workspace");
+
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-opencode-port", {
+        projectId: "other-project-aaaabbbb",
+        workspaceName: "main-workspace",
+      });
+    });
+
+    it("workspaces.getOpencodePort should return IPC result", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue(null);
+
+      const workspaces = exposedApi.workspaces as {
+        getOpencodePort: (projectId: string, workspaceName: string) => Promise<number | null>;
+      };
+      const result = await workspaces.getOpencodePort("my-app-12345678", "feature");
+
+      expect(result).toBeNull();
+    });
+
     it("workspaces.setMetadata calls api:workspace:set-metadata", async () => {
       mockIpcRenderer.invoke.mockResolvedValue(undefined);
 
