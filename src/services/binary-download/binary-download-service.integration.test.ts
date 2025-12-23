@@ -99,50 +99,54 @@ describe("BinaryDownloadService (integration)", () => {
       }
     });
 
-    it("sets executable permissions on the binary (Unix)", async () => {
-      // Create a test archive
-      const archivePath = await createTestTarGzWithRoot(
-        {
-          opencode: "#!/bin/sh\necho opencode",
-        },
-        `opencode-${OPENCODE_VERSION}-linux-x64`
-      );
-
-      try {
-        const archiveContent = await fs.readFile(archivePath);
-        const mockHttpClient = createMockHttpClient({
-          response: createMockDownloadResponse(archiveContent, archiveContent.length),
-        });
-
-        const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
-        const archiveExtractor = new DefaultArchiveExtractor();
-        const pathProvider = createMockPathProvider({
-          dataRootDir: tempDir,
-        });
-        const platformInfo = createMockPlatformInfo({
-          platform: "linux",
-          arch: "x64",
-        });
-
-        const service = new DefaultBinaryDownloadService(
-          mockHttpClient,
-          fileSystemLayer,
-          archiveExtractor,
-          pathProvider,
-          platformInfo
+    // Skip on Windows - Unix permissions don't apply
+    it.skipIf(process.platform === "win32")(
+      "sets executable permissions on the binary (Unix)",
+      async () => {
+        // Create a test archive
+        const archivePath = await createTestTarGzWithRoot(
+          {
+            opencode: "#!/bin/sh\necho opencode",
+          },
+          `opencode-${OPENCODE_VERSION}-linux-x64`
         );
 
-        await service.download("opencode");
+        try {
+          const archiveContent = await fs.readFile(archivePath);
+          const mockHttpClient = createMockHttpClient({
+            response: createMockDownloadResponse(archiveContent, archiveContent.length),
+          });
 
-        // Verify binary has executable permissions
-        const binaryPath = service.getBinaryPath("opencode");
-        const stats = await fs.stat(binaryPath);
-        // Check executable bit (owner executable = 0o100)
-        expect(stats.mode & 0o100).toBeTruthy();
-      } finally {
-        await cleanupTestArchive(archivePath);
+          const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
+          const archiveExtractor = new DefaultArchiveExtractor();
+          const pathProvider = createMockPathProvider({
+            dataRootDir: tempDir,
+          });
+          const platformInfo = createMockPlatformInfo({
+            platform: "linux",
+            arch: "x64",
+          });
+
+          const service = new DefaultBinaryDownloadService(
+            mockHttpClient,
+            fileSystemLayer,
+            archiveExtractor,
+            pathProvider,
+            platformInfo
+          );
+
+          await service.download("opencode");
+
+          // Verify binary has executable permissions
+          const binaryPath = service.getBinaryPath("opencode");
+          const stats = await fs.stat(binaryPath);
+          // Check executable bit (owner executable = 0o100)
+          expect(stats.mode & 0o100).toBeTruthy();
+        } finally {
+          await cleanupTestArchive(archivePath);
+        }
       }
-    });
+    );
 
     it("isInstalled returns true after download", async () => {
       const archivePath = await createTestTarGzWithRoot(
@@ -189,7 +193,8 @@ describe("BinaryDownloadService (integration)", () => {
   });
 
   describe("wrapper scripts", () => {
-    it("creates executable wrapper scripts", async () => {
+    // Skip on Windows - Unix permissions don't apply
+    it.skipIf(process.platform === "win32")("creates executable wrapper scripts", async () => {
       // Create test archives for both binaries
       const codeServerArchive = await createTestTarGzWithRoot(
         {
