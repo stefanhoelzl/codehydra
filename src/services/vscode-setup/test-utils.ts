@@ -39,7 +39,7 @@ export async function createMockSetupState(options: {
   }
 
   if (options.includeExtensions) {
-    const extensionDir = join(vscodeDir, "extensions", "codehydra.vscode-0.0.1-universal");
+    const extensionDir = join(vscodeDir, "extensions", "codehydra.sidekick-0.0.1-universal");
     await mkdir(extensionDir, { recursive: true });
     await writeFile(
       join(extensionDir, "package.json"),

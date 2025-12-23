@@ -854,7 +854,8 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
                                │ localhost:port (WebSocket)
                                ▼
                     ┌─────────────────┐
-                    │  codehydra      │
+                    │  codehydra-     │
+                    │  sidekick       │
                     │  extension      │
                     │  (Socket.IO     │
                     │   client)       │

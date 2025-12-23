@@ -145,16 +145,16 @@ VS Code setup assets (settings, keybindings, extensions) are stored as dedicated
 
 ### Asset Files
 
-| File                                                    | Purpose                                                    |
-| ------------------------------------------------------- | ---------------------------------------------------------- |
-| `src/services/vscode-setup/assets/settings.json`        | VS Code settings (theme, telemetry, workspace trust, etc.) |
-| `src/services/vscode-setup/assets/keybindings.json`     | Custom keybindings (Alt+T for panel toggle)                |
-| `src/services/vscode-setup/assets/extensions.json`      | Extension manifest (marketplace + bundled vsix)            |
-| `src/services/vscode-setup/assets/codehydra-extension/` | Custom extension source (packaged to .vsix at build)       |
+| File                                                   | Purpose                                                    |
+| ------------------------------------------------------ | ---------------------------------------------------------- |
+| `src/services/vscode-setup/assets/settings.json`       | VS Code settings (theme, telemetry, workspace trust, etc.) |
+| `src/services/vscode-setup/assets/keybindings.json`    | Custom keybindings (Alt+T for panel toggle)                |
+| `src/services/vscode-setup/assets/extensions.json`     | Extension manifest (marketplace + bundled vsix)            |
+| `src/services/vscode-setup/assets/codehydra-sidekick/` | Custom extension source (packaged to .vsix at build)       |
 
 ### Build Process
 
-1. **Extension packaging**: `npm run build:extension` uses `@vscode/vsce` to package `codehydra-extension/` into `codehydra.vscode-0.0.1.vsix`
+1. **Extension packaging**: `npm run build:extension` uses `@vscode/vsce` to package `codehydra-sidekick/` into `sidekick-0.0.1.vsix`
 2. **Asset bundling**: `vite-plugin-static-copy` copies all assets to `out/main/assets/` during build
 3. **Full build**: `npm run build` runs both steps sequentially
 
@@ -577,7 +577,7 @@ Third-party VS Code extensions can call CodeHydra API methods through the codehy
 **Accessing the API:**
 
 ```javascript
-const ext = vscode.extensions.getExtension("codehydra.codehydra");
+const ext = vscode.extensions.getExtension("codehydra.sidekick");
 const api = ext?.exports?.codehydra;
 if (!api) {
   throw new Error("codehydra extension not available");
@@ -605,7 +605,7 @@ await api.workspace.setMetadata("my-key", "my-value");
 **Type Declarations:**
 
 For TypeScript support, copy the type declarations from:
-`src/services/vscode-setup/assets/codehydra-extension/api.d.ts`
+`src/services/vscode-setup/assets/codehydra-sidekick/api.d.ts`
 
 **Error Handling:**
 

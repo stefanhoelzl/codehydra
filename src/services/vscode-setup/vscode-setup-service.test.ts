@@ -55,7 +55,7 @@ function createMockBinaryDownloadService(
 function createExtensionsConfig(): string {
   return JSON.stringify({
     marketplace: ["sst-dev.opencode"],
-    bundled: ["codehydra.vscode-0.0.1.vsix"],
+    bundled: ["codehydra-sidekick-0.0.1.vsix"],
   });
 }
 
@@ -251,8 +251,8 @@ describe("VscodeSetupService", () => {
 
       // Verify vsix was copied from assets to vscode dir
       expect(copiedFiles).toContainEqual({
-        src: join("/mock/assets", "codehydra.vscode-0.0.1.vsix"),
-        dest: join("/mock/vscode", "codehydra.vscode-0.0.1.vsix"),
+        src: join("/mock/assets", "codehydra-sidekick-0.0.1.vsix"),
+        dest: join("/mock/vscode", "codehydra-sidekick-0.0.1.vsix"),
       });
     });
 
@@ -276,7 +276,7 @@ describe("VscodeSetupService", () => {
       // First call is for bundled vsix - uses codeServerBinaryPath from pathProvider
       expect(mockProcessRunner.run).toHaveBeenCalledWith(mockPathProvider.codeServerBinaryPath, [
         "--install-extension",
-        join("/mock/vscode", "codehydra.vscode-0.0.1.vsix"),
+        join("/mock/vscode", "codehydra-sidekick-0.0.1.vsix"),
         "--extensions-dir",
         "/mock/vscode/extensions",
       ]);
@@ -329,14 +329,14 @@ describe("VscodeSetupService", () => {
       // Verify order: bundled vsix first, then marketplace
       expect(mockProcessRunner.run).toHaveBeenCalledTimes(2);
       const calls = vi.mocked(mockProcessRunner.run).mock.calls;
-      expect(calls[0]?.[1]?.[1]).toBe(join("/mock/vscode", "codehydra.vscode-0.0.1.vsix"));
+      expect(calls[0]?.[1]?.[1]).toBe(join("/mock/vscode", "codehydra-sidekick-0.0.1.vsix"));
       expect(calls[1]?.[1]?.[1]).toBe("sst-dev.opencode");
 
       // Verify progress messages
       const progressMessages = progressCallback.mock.calls.map(
         (call) => (call[0] as { message: string }).message
       );
-      expect(progressMessages).toContain("Installing codehydra.vscode-0.0.1.vsix...");
+      expect(progressMessages).toContain("Installing codehydra-sidekick-0.0.1.vsix...");
       expect(progressMessages).toContain("Installing sst-dev.opencode...");
     });
 
@@ -466,7 +466,7 @@ describe("VscodeSetupService", () => {
       const progressMessages = progressCallback.mock.calls.map(
         (call) => (call[0] as { message: string }).message
       );
-      expect(progressMessages).toContain("Installing codehydra.vscode-0.0.1.vsix...");
+      expect(progressMessages).toContain("Installing codehydra-sidekick-0.0.1.vsix...");
       expect(progressMessages).toContain("Installing sst-dev.opencode...");
       expect(progressMessages).toContain("Creating CLI wrapper scripts...");
       expect(progressMessages).toContain("Finalizing setup...");

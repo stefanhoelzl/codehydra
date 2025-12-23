@@ -82,6 +82,19 @@ export function isValidCommandRequest(payload: unknown): payload is CommandReque
 }
 
 // ============================================================================
+// Configuration Types
+// ============================================================================
+
+/**
+ * Configuration sent from server to client on connection.
+ * Used to enable development-only features in the extension.
+ */
+export interface PluginConfig {
+  /** True when running in development mode */
+  readonly isDevelopment: boolean;
+}
+
+// ============================================================================
 // Socket.IO Event Types
 // ============================================================================
 
@@ -90,6 +103,14 @@ export function isValidCommandRequest(payload: unknown): payload is CommandReque
  * Used by Socket.IO for type-safe event handling.
  */
 export interface ServerToClientEvents {
+  /**
+   * Configuration sent immediately after connection validation.
+   * Used to enable development-only features (e.g., debug commands).
+   *
+   * @param config - Configuration object with isDevelopment flag
+   */
+  config: (config: PluginConfig) => void;
+
   /**
    * Execute a VS Code command in the connected workspace.
    *

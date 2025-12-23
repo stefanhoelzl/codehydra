@@ -665,6 +665,111 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
   });
 
+  describe("config event", () => {
+    // Note: The "config" event is emitted by the server to the client. Validation of
+    // the config payload happens on the client side (in the codehydra-sidekick extension).
+    // The server always emits a valid PluginConfig object with isDevelopment: boolean.
+    // See src/services/vscode-setup/assets/codehydra-sidekick/extension.js for client-side validation.
+
+    it("sends config with isDevelopment: true when configured", async () => {
+      // Close default server and create one with isDevelopment: true
+      await server.close();
+      server = new PluginServer(networkLayer, createSilentLogger(), {
+        transports: ["polling"],
+        isDevelopment: true,
+      });
+      port = await server.start();
+
+      const client = createClient("/test/workspace");
+
+      // Listen for config event
+      const configPromise = new Promise<{ isDevelopment: boolean }>((resolve) => {
+        client.on("config", (config) => {
+          resolve(config);
+        });
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      expect(config.isDevelopment).toBe(true);
+    });
+
+    it("sends config with isDevelopment: false when configured", async () => {
+      // Close default server and create one with isDevelopment: false
+      await server.close();
+      server = new PluginServer(networkLayer, createSilentLogger(), {
+        transports: ["polling"],
+        isDevelopment: false,
+      });
+      port = await server.start();
+
+      const client = createClient("/test/workspace");
+
+      const configPromise = new Promise<{ isDevelopment: boolean }>((resolve) => {
+        client.on("config", (config) => {
+          resolve(config);
+        });
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      expect(config.isDevelopment).toBe(false);
+    });
+
+    it("sends config with isDevelopment: false by default", async () => {
+      // Default server has no isDevelopment option
+      const client = createClient("/test/workspace");
+
+      const configPromise = new Promise<{ isDevelopment: boolean }>((resolve) => {
+        client.on("config", (config) => {
+          resolve(config);
+        });
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      expect(config.isDevelopment).toBe(false);
+    });
+
+    it("sends config event on reconnection", async () => {
+      await server.close();
+      server = new PluginServer(networkLayer, createSilentLogger(), {
+        transports: ["polling"],
+        isDevelopment: true,
+      });
+      port = await server.start();
+
+      const client = createClient("/test/workspace");
+
+      // First connection
+      let configCount = 0;
+      client.on("config", () => {
+        configCount++;
+      });
+
+      await waitForConnect(client);
+      expect(configCount).toBe(1);
+
+      // Disconnect and reconnect
+      client.disconnect();
+      await waitForDisconnect(client);
+
+      // Reconnect
+      const reconnectPromise = new Promise<void>((resolve) => {
+        client.once("connect", () => resolve());
+      });
+      client.connect();
+      await reconnectPromise;
+
+      // Should receive config again
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(configCount).toBe(2);
+    });
+  });
+
   describe("onConnect callbacks", () => {
     it("invokes callback with normalized workspace path on valid connection", async () => {
       let callbackWorkspacePath: string | null = null;

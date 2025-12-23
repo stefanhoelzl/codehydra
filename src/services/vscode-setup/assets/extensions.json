@@ -1,4 +1,4 @@
 {
   "marketplace": ["sst-dev.opencode"],
-  "bundled": ["codehydra.vscode-0.0.1.vsix"]
+  "bundled": ["codehydra-sidekick-0.0.1.vsix"]
 }

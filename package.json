@@ -8,7 +8,7 @@
     "preinstall": "node scripts/check-path-length.cjs",
     "setup": "npm install && npm run build",
     "dev": "npm run build && electron-vite dev",
-    "build:extension": "cd src/services/vscode-setup/assets/codehydra-extension && npm install && npm run build && vsce package --no-dependencies -o ../codehydra.vscode-0.0.1.vsix",
+    "build:extension": "cd src/services/vscode-setup/assets/codehydra-sidekick && npm install && npm run build && vsce package --no-dependencies -o ../codehydra-sidekick-0.0.1.vsix",
     "build": "npm run build:extension && electron-vite build",
     "preview": "electron-vite preview",
     "test": "vitest run",

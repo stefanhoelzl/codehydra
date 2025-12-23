@@ -159,6 +159,37 @@ describe("PluginServer", () => {
     });
   });
 
+  describe("isDevelopment option", () => {
+    it("accepts isDevelopment: true option", () => {
+      const mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      const server = new PluginServer(mockPortManager, createSilentLogger(), {
+        isDevelopment: true,
+      });
+
+      // Should not throw
+      expect(server).toBeDefined();
+    });
+
+    it("accepts isDevelopment: false option", () => {
+      const mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      const server = new PluginServer(mockPortManager, createSilentLogger(), {
+        isDevelopment: false,
+      });
+
+      // Should not throw
+      expect(server).toBeDefined();
+    });
+
+    it("defaults to isDevelopment: false when not specified", () => {
+      const mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      // No isDevelopment option provided
+      const server = new PluginServer(mockPortManager, createSilentLogger());
+
+      // Should not throw - defaults to false internally
+      expect(server).toBeDefined();
+    });
+  });
+
   describe("onApiCall", () => {
     let server: PluginServer;
     let mockPortManager: ReturnType<typeof createMockPortManager>;

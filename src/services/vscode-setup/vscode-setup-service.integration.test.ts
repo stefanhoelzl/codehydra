@@ -68,12 +68,12 @@ describe("VscodeSetupService Integration", () => {
       join(assetsDir, "extensions.json"),
       JSON.stringify({
         marketplace: ["sst-dev.opencode"],
-        bundled: ["codehydra.vscode-0.0.1.vsix"],
+        bundled: ["codehydra-sidekick-0.0.1.vsix"],
       })
     );
 
     // Create a mock vsix file (just needs to exist for the test)
-    await writeFile(join(assetsDir, "codehydra.vscode-0.0.1.vsix"), "mock-vsix-content");
+    await writeFile(join(assetsDir, "codehydra-sidekick-0.0.1.vsix"), "mock-vsix-content");
   }
 
   /**
@@ -147,7 +147,7 @@ describe("VscodeSetupService Integration", () => {
       expect(result.success).toBe(true);
 
       // Verify vsix was copied to vscodeDir
-      const vsixPath = join(mockPaths.vscodeDir, "codehydra.vscode-0.0.1.vsix");
+      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.1.vsix");
       const vsixContent = await readFile(vsixPath, "utf-8");
       expect(vsixContent).toBe("mock-vsix-content");
 
@@ -168,13 +168,15 @@ describe("VscodeSetupService Integration", () => {
 
       expect(result.success).toBe(true);
       // Extension installation, then CLI scripts, then finalize
-      expect(progressMessages).toContain("Installing codehydra.vscode-0.0.1.vsix...");
+      expect(progressMessages).toContain("Installing codehydra-sidekick-0.0.1.vsix...");
       expect(progressMessages).toContain("Installing sst-dev.opencode...");
       expect(progressMessages).toContain("Creating CLI wrapper scripts...");
       expect(progressMessages).toContain("Finalizing setup...");
 
       // Verify order: bundled extension, then marketplace, then CLI scripts, then finalize
-      const codehydraIndex = progressMessages.indexOf("Installing codehydra.vscode-0.0.1.vsix...");
+      const codehydraIndex = progressMessages.indexOf(
+        "Installing codehydra-sidekick-0.0.1.vsix..."
+      );
       const opencodeIndex = progressMessages.indexOf("Installing sst-dev.opencode...");
       const scriptsIndex = progressMessages.indexOf("Creating CLI wrapper scripts...");
       const finalizeIndex = progressMessages.indexOf("Finalizing setup...");
@@ -217,7 +219,7 @@ describe("VscodeSetupService Integration", () => {
       await service.setup();
 
       // Vsix file should be copied (happens before install command)
-      const vsixPath = join(mockPaths.vscodeDir, "codehydra.vscode-0.0.1.vsix");
+      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.1.vsix");
       const vsixContent = await readFile(vsixPath, "utf-8");
       expect(vsixContent).toBe("mock-vsix-content");
     });
@@ -258,11 +260,11 @@ describe("VscodeSetupService Integration", () => {
 
     it("cleanVscodeDir removes entire directory", async () => {
       // Create full setup state
-      await mkdir(join(mockPaths.extensionsDir, "codehydra.vscode-0.0.1-universal"), {
+      await mkdir(join(mockPaths.extensionsDir, "codehydra.sidekick-0.0.1-universal"), {
         recursive: true,
       });
       await writeFile(
-        join(mockPaths.extensionsDir, "codehydra.vscode-0.0.1-universal", "package.json"),
+        join(mockPaths.extensionsDir, "codehydra.sidekick-0.0.1-universal", "package.json"),
         "{}",
         "utf-8"
       );

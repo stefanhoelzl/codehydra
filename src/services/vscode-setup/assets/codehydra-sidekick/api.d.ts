@@ -13,7 +13,7 @@
  * import type { CodehydraApi, WorkspaceStatus, AgentStatus } from './api';
  *
  * async function useCodehydraApi() {
- *   const ext = vscode.extensions.getExtension('codehydra.codehydra');
+ *   const ext = vscode.extensions.getExtension('codehydra.sidekick');
  *   const api: CodehydraApi | undefined = ext?.exports?.codehydra;
  *
  *   if (!api) {
@@ -140,7 +140,7 @@ export interface WorkspaceApi {
  *
  * Access via the codehydra extension's exports:
  * ```typescript
- * const ext = vscode.extensions.getExtension('codehydra.codehydra');
+ * const ext = vscode.extensions.getExtension('codehydra.sidekick');
  * const api: CodehydraApi | undefined = ext?.exports?.codehydra;
  * ```
  */

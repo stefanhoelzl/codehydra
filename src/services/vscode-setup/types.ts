@@ -74,7 +74,7 @@ export type SetupResult =
 export interface ExtensionsConfig {
   /** Marketplace extension IDs (e.g., "sst-dev.opencode") */
   readonly marketplace: readonly string[];
-  /** Bundled .vsix filenames (e.g., "codehydra.vscode-0.0.1.vsix") */
+  /** Bundled .vsix filenames (e.g., "codehydra-sidekick-0.0.1.vsix") */
   readonly bundled: readonly string[];
 }
 

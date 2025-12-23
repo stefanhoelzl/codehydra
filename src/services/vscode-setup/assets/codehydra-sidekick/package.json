@@ -1,7 +1,7 @@
 {
-  "name": "codehydra",
-  "displayName": "Codehydra",
-  "description": "Codehydra integration for VS Code",
+  "name": "sidekick",
+  "displayName": "CodeHydra Sidekick",
+  "description": "CodeHydra integration for VS Code",
   "version": "0.0.1",
   "publisher": "codehydra",
   "repository": {
@@ -25,6 +25,28 @@
     "esbuild": "^0.24.0"
   },
   "contributes": {
+    "commands": [
+      {
+        "command": "codehydra.debug.getStatus",
+        "title": "CodeHydra Debug: Get Workspace Status",
+        "enablement": "codehydra.isDevelopment"
+      },
+      {
+        "command": "codehydra.debug.getMetadata",
+        "title": "CodeHydra Debug: Get Workspace Metadata",
+        "enablement": "codehydra.isDevelopment"
+      },
+      {
+        "command": "codehydra.debug.getOpencodePort",
+        "title": "CodeHydra Debug: Get OpenCode Port",
+        "enablement": "codehydra.isDevelopment"
+      },
+      {
+        "command": "codehydra.debug.connectionInfo",
+        "title": "CodeHydra Debug: Show Connection Info",
+        "enablement": "codehydra.isDevelopment"
+      }
+    ],
     "configurationDefaults": {
       "workbench.startupEditor": "none",
       "window.autoDetectColorScheme": true,

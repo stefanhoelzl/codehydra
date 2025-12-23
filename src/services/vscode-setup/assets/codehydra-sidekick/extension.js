@@ -36,6 +36,11 @@ const { io } = require("socket.io-client");
  * @property {string | null} value
  */
 
+/**
+ * @typedef {Object} PluginConfig
+ * @property {boolean} isDevelopment
+ */
+
 /** @type {import('socket.io-client').Socket | null} */
 let socket = null;
 
@@ -47,6 +52,29 @@ let pendingReady = [];
 
 /** Timeout for API calls in milliseconds (matches COMMAND_TIMEOUT_MS) */
 const API_TIMEOUT_MS = 10000;
+
+// ============================================================================
+// Development Mode State Variables
+// ============================================================================
+
+/** @type {boolean} */
+let isDevelopment = false;
+
+/** @type {vscode.OutputChannel | null} */
+let debugOutputChannel = null;
+
+/** @type {string} */
+let currentWorkspacePath = "";
+
+/** @type {number | null} */
+let currentPluginPort = null;
+
+/** @type {vscode.ExtensionContext | null} */
+let extensionContext = null;
+
+// ============================================================================
+// Logging Utilities
+// ============================================================================
 
 /**
  * Log messages with prefix for easy identification in console.
@@ -65,6 +93,10 @@ function log(message, ...args) {
 function logError(message, ...args) {
   console.error(`[codehydra] ${message}`, ...args);
 }
+
+// ============================================================================
+// API Utilities
+// ============================================================================
 
 /**
  * Emit an API call with timeout handling.
@@ -105,13 +137,17 @@ function emitApiCall(event, request) {
   });
 }
 
+// ============================================================================
+// CodeHydra API
+// ============================================================================
+
 /**
  * CodeHydra API for VS Code extensions.
  * Provides access to workspace status and metadata.
  *
  * @example
  * ```javascript
- * const ext = vscode.extensions.getExtension('codehydra.codehydra');
+ * const ext = vscode.extensions.getExtension('codehydra.sidekick');
  * const api = ext?.exports?.codehydra;
  * if (!api) throw new Error('codehydra extension not available');
  *
@@ -187,6 +223,125 @@ const codehydraApi = {
   },
 };
 
+// ============================================================================
+// Debug Commands (Development Only)
+// ============================================================================
+
+/**
+ * Get or create the debug output channel.
+ * @returns {vscode.OutputChannel}
+ */
+function getDebugOutputChannel() {
+  if (!debugOutputChannel) {
+    debugOutputChannel = vscode.window.createOutputChannel("CodeHydra Debug");
+  }
+  return debugOutputChannel;
+}
+
+/**
+ * Safely format a result for display in output channel.
+ * @param {unknown} result
+ * @returns {string}
+ */
+function formatResult(result) {
+  try {
+    return JSON.stringify(result, null, 2);
+  } catch (e) {
+    return `[Serialization error: ${e instanceof Error ? e.message : String(e)}]`;
+  }
+}
+
+/**
+ * Log a successful debug command result to the output channel.
+ * @param {string} name - Command name
+ * @param {unknown} data - Result data
+ */
+function logDebugResult(name, data) {
+  const channel = getDebugOutputChannel();
+  const timestamp = new Date().toISOString();
+  channel.appendLine(`=== ${name} [${timestamp}] ===`);
+  channel.appendLine(formatResult(data));
+  channel.appendLine("");
+  channel.show(true); // Show but don't steal focus
+}
+
+/**
+ * Log a debug command error to the output channel.
+ * @param {string} name - Command name
+ * @param {Error} err - The error
+ */
+function logDebugError(name, err) {
+  const channel = getDebugOutputChannel();
+  const timestamp = new Date().toISOString();
+  channel.appendLine(`=== ${name} [${timestamp}] ERROR ===`);
+  channel.appendLine(err.message);
+  channel.appendLine("");
+  channel.show(true);
+}
+
+/**
+ * Run a debug command and handle result/error logging.
+ * @param {string} name - Command name for display
+ * @param {() => Promise<unknown>} fn - Async function to execute
+ */
+async function runDebugCommand(name, fn) {
+  try {
+    const result = await fn();
+    logDebugResult(name, result);
+  } catch (err) {
+    logDebugError(name, err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+/**
+ * Register debug commands for development mode.
+ * @param {vscode.ExtensionContext} context
+ */
+function registerDebugCommands(context) {
+  log("Registering debug commands (development mode)");
+
+  // Debug: Get Workspace Status
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.debug.getStatus", async () => {
+      await runDebugCommand("getStatus", () => codehydraApi.workspace.getStatus());
+    })
+  );
+
+  // Debug: Get Workspace Metadata
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.debug.getMetadata", async () => {
+      await runDebugCommand("getMetadata", () => codehydraApi.workspace.getMetadata());
+    })
+  );
+
+  // Debug: Get OpenCode Port
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.debug.getOpencodePort", async () => {
+      await runDebugCommand("getOpencodePort", () => codehydraApi.workspace.getOpencodePort());
+    })
+  );
+
+  // Debug: Show Connection Info
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.debug.connectionInfo", async () => {
+      const info = {
+        connected: isConnected,
+        workspacePath: currentWorkspacePath,
+        pluginPort: currentPluginPort,
+        socketId: socket?.id ?? null,
+        isDevelopment: isDevelopment,
+      };
+      logDebugResult("connectionInfo", info);
+    })
+  );
+
+  log("Debug commands registered: getStatus, getMetadata, getOpencodePort, connectionInfo");
+}
+
+// ============================================================================
+// PluginServer Connection
+// ============================================================================
+
 /**
  * Connect to the CodeHydra PluginServer.
  * @param {number} port - Port number to connect to
@@ -196,6 +351,10 @@ function connectToPluginServer(port, workspacePath) {
   const url = `http://localhost:${port}`;
 
   log(`Connecting to PluginServer at ${url}`);
+
+  // Store for debug commands
+  currentWorkspacePath = workspacePath;
+  currentPluginPort = port;
 
   socket = io(url, {
     transports: ["websocket"],
@@ -207,6 +366,32 @@ function connectToPluginServer(port, workspacePath) {
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
     reconnectionAttempts: Infinity,
+    // Don't connect until all handlers are registered
+    autoConnect: false,
+  });
+
+  // Handle config event - must be registered before socket.connect() is called.
+  // The server emits "config" immediately after connection validation.
+  socket.on("config", (config) => {
+    // Runtime validation
+    if (typeof config !== "object" || config === null) {
+      log("Received invalid config (not an object)");
+      return;
+    }
+    if (typeof config.isDevelopment !== "boolean") {
+      log("Received invalid config (isDevelopment not boolean)");
+      return;
+    }
+
+    isDevelopment = config.isDevelopment;
+    log(`Config received: isDevelopment=${isDevelopment}`);
+
+    // Set context for command enablement (enables commands in Command Palette)
+    vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
+
+    if (isDevelopment && extensionContext) {
+      registerDebugCommands(extensionContext);
+    }
   });
 
   socket.on("connect", () => {
@@ -247,13 +432,23 @@ function connectToPluginServer(port, workspacePath) {
       ack({ success: false, error: errorMessage });
     }
   });
+
+  // All handlers registered, now connect
+  socket.connect();
 }
 
+// ============================================================================
+// Extension Lifecycle
+// ============================================================================
+
 /**
- * @param {vscode.ExtensionContext} _context
+ * @param {vscode.ExtensionContext} context
  * @returns {{ codehydra: typeof codehydraApi }}
  */
-function activate(_context) {
+function activate(context) {
+  // Store context for debug command registration
+  extensionContext = context;
+
   // NOTE: Startup commands (close sidebars, open terminal, etc.) are now handled
   // by CodeHydra main process via PluginServer.onConnect() callback when this
   // extension connects. See src/main/index.ts startServices() and
@@ -297,6 +492,25 @@ function deactivate() {
     socket = null;
   }
   isConnected = false;
+
+  // Dispose output channel
+  if (debugOutputChannel) {
+    debugOutputChannel.dispose();
+    debugOutputChannel = null;
+  }
+
+  // Note: Debug commands registered via registerDebugCommands() are automatically
+  // disposed when the extension deactivates because they were added to context.subscriptions.
+  // No explicit cleanup is needed for them.
+
+  // Clear development context
+  vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", false);
+
+  // Clear state
+  extensionContext = null;
+  isDevelopment = false;
+  currentWorkspacePath = "";
+  currentPluginPort = null;
 
   // Reject any pending whenReady() promises
   const pending = pendingReady;

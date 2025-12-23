@@ -1276,7 +1276,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                    Third-party extension                                  │
 │                                                                           │
-│  const ext = vscode.extensions.getExtension('codehydra.codehydra');       │
+│  const ext = vscode.extensions.getExtension('codehydra.sidekick');        │
 │  const api = ext?.exports?.codehydra;                                     │
 │  if (!api) throw new Error('codehydra extension not available');          │
 │                                                                           │
@@ -1360,7 +1360,7 @@ function wirePluginApi(pluginServer: PluginServer, api: ICodeHydraApi, appState:
 ### Type Declarations for Third-Party Extensions
 
 TypeScript declarations for the API are in:
-`src/services/vscode-setup/assets/codehydra-extension/api.d.ts`
+`src/services/vscode-setup/assets/codehydra-sidekick/api.d.ts`
 
 Third-party extension developers should copy this file into their project for type safety.
 
@@ -1477,14 +1477,14 @@ src/services/vscode-setup/assets/
 ├── settings.json              # VS Code settings (theme, telemetry, etc.)
 ├── keybindings.json           # Custom keybindings (Alt+T for panel toggle)
 ├── extensions.json            # Extension manifest (marketplace + bundled)
-└── codehydra-extension/       # Custom extension source
+└── codehydra-sidekick/        # Custom extension source
     ├── package.json
     └── extension.js
 ```
 
 ### Build Process
 
-1. `npm run build:extension` - packages `codehydra-extension/` into `codehydra.vscode-0.0.1.vsix`
+1. `npm run build:extension` - packages `codehydra-sidekick/` into `sidekick-0.0.1.vsix`
 2. `vite-plugin-static-copy` - copies all assets to `out/main/assets/` during build
 3. `npm run build` - runs both steps sequentially
 
@@ -1521,9 +1521,9 @@ out/main/assets/ (ASAR in prod)
 │       └── opencode[.exe]         # Actual opencode binary
 ├── vscode/
 │   ├── .setup-completed           # JSON: { version: N, completedAt: "ISO" }
-│   ├── codehydra.vscode-0.0.1.vsix # Copied from assets for installation
+│   ├── codehydra-sidekick-0.0.1.vsix # Copied from assets for installation
 │   ├── extensions/
-│   │   ├── codehydra.vscode-0.0.1/   # Installed by code-server
+│   │   ├── codehydra.sidekick-0.0.1/   # Installed by code-server
 │   │   └── sst-dev.opencode-X.X.X/   # Installed by code-server
 │   └── user-data/
 │       └── User/

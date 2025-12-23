@@ -22,6 +22,7 @@ import {
   type CommandRequest,
   type PluginResult,
   type SetMetadataRequest,
+  type PluginConfig,
   COMMAND_TIMEOUT_MS,
   normalizeWorkspacePath,
   validateSetMetadataRequest,
@@ -124,12 +125,15 @@ const SILENT_LOGGER: Logger = {
 export interface PluginServerOptions {
   /** Socket.IO transports to use. Default: ["websocket"] */
   readonly transports?: readonly ("polling" | "websocket")[];
+  /** Whether the app is running in development mode. Default: false */
+  readonly isDevelopment?: boolean;
 }
 
 export class PluginServer {
   private readonly portManager: PortManager;
   private readonly logger: Logger;
   private readonly transports: readonly ("polling" | "websocket")[];
+  private readonly isDevelopment: boolean;
   private httpServer: HttpServer | null = null;
   private io: TypedServer | null = null;
   private port: number | null = null;
@@ -161,6 +165,7 @@ export class PluginServer {
     this.portManager = portManager;
     this.logger = logger ?? SILENT_LOGGER;
     this.transports = options?.transports ?? ["websocket"];
+    this.isDevelopment = !!options?.isDevelopment;
   }
 
   /**
@@ -416,6 +421,14 @@ export class PluginServer {
       this.logger.info("Client connected", {
         workspace: workspacePath,
         socketId: socket.id,
+      });
+
+      // Send config event with development mode flag
+      const config: PluginConfig = { isDevelopment: this.isDevelopment };
+      socket.emit("config", config);
+      this.logger.debug("Config sent", {
+        workspace: workspacePath,
+        isDevelopment: this.isDevelopment,
       });
 
       // Invoke connect callbacks
