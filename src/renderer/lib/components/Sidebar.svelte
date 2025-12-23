@@ -108,6 +108,14 @@
       clearTimeout(collapseTimeout);
       collapseTimeout = null;
     }
+
+    // Don't set hover state when in shortcut mode - the sidebar is already
+    // expanded due to shortcut mode, not hover. This prevents the hover state
+    // from "locking in" when the sidebar expands into the mouse cursor.
+    if (shortcutModeActive) {
+      return;
+    }
+
     isHovering = true;
     setSidebarExpanded(true);
   }

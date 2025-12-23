@@ -880,6 +880,44 @@ describe("Sidebar component", () => {
       expect(sidebar).toHaveClass("expanded");
     });
 
+    it("does not set hover state when mouseenter occurs during shortcut mode", async () => {
+      // Scenario: Alt+X is pressed, sidebar expands into mouse position, mouseenter fires.
+      // When Alt is released, sidebar should collapse because hover state was not set.
+      const props = propsWithWorkspaces();
+
+      // Set uiMode to shortcut BEFORE render (like the "stays expanded" test above)
+      mockUiModeStore.uiMode.value = "shortcut";
+
+      const { container } = render(Sidebar, {
+        props: { ...props, shortcutModeActive: true },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      // Sidebar is expanded due to shortcut mode (uiMode !== "workspace" check)
+      expect(sidebar).toHaveClass("expanded");
+
+      // Mouse enters the expanded sidebar area during shortcut mode
+      await fireEvent.mouseEnter(sidebar!);
+
+      // setSidebarExpanded should NOT have been called (hover state not set)
+      expect(mockUiModeStore.setSidebarExpanded).not.toHaveBeenCalled();
+    });
+
+    it("sets hover state when mouseenter occurs outside shortcut mode", async () => {
+      // Verify normal hover behavior works when not in shortcut mode
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      expect(sidebar).not.toHaveClass("expanded");
+
+      // Mouse enters when NOT in shortcut mode
+      await fireEvent.mouseEnter(sidebar!);
+
+      // setSidebarExpanded SHOULD have been called with true
+      expect(mockUiModeStore.setSidebarExpanded).toHaveBeenCalledWith(true);
+      expect(sidebar).toHaveClass("expanded");
+    });
+
     it("stays expanded when uiMode is 'dialog'", async () => {
       mockUiModeStore.uiMode.value = "dialog";
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
