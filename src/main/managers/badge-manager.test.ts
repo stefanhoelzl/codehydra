@@ -39,7 +39,7 @@ describe("BadgeManager", () => {
   });
 
   describe("updateBadge (darwin)", () => {
-    it("calls appApi.dock.setBadge with correct string", () => {
+    it("shows filled circle for all-working state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -51,12 +51,12 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(5);
+      manager.updateBadge("all-working");
 
-      expect(appApi.dockSetBadgeCalls).toEqual(["5"]);
+      expect(appApi.dockSetBadgeCalls).toEqual(["●"]);
     });
 
-    it("clears badge with empty string when count is 0", () => {
+    it("shows half circle for mixed state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -68,31 +68,31 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(0);
+      manager.updateBadge("mixed");
+
+      expect(appApi.dockSetBadgeCalls).toEqual(["◐"]);
+    });
+
+    it("clears badge for none state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      manager.updateBadge("none");
 
       expect(appApi.dockSetBadgeCalls).toEqual([""]);
-    });
-
-    it("shows large counts correctly", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appApi,
-        windowManager as unknown as WindowManager,
-        createSilentLogger()
-      );
-
-      manager.updateBadge(42);
-
-      expect(appApi.dockSetBadgeCalls).toEqual(["42"]);
     });
   });
 
   describe("updateBadge (win32)", () => {
-    it("generates image and calls setOverlayIcon", () => {
+    it("generates red circle image for all-working state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -104,15 +104,15 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(3);
+      manager.updateBadge("all-working");
 
       expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.image).not.toBeNull();
-      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("3 idle workspaces");
+      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("All workspaces working");
     });
 
-    it("uses singular form for count of 1", () => {
+    it("generates split circle image for mixed state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -124,12 +124,15 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(1);
+      manager.updateBadge("mixed");
 
-      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("1 idle workspace");
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
+      expect(windowManager.setOverlayIconCalls).toHaveLength(1);
+      expect(windowManager.setOverlayIconCalls[0]?.image).not.toBeNull();
+      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("Some workspaces ready");
     });
 
-    it("clears overlay when count is 0", () => {
+    it("clears overlay for none state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -141,7 +144,7 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(0);
+      manager.updateBadge("none");
 
       expect(mockNativeImage.createFromBitmap).not.toHaveBeenCalled();
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
@@ -151,7 +154,7 @@ describe("BadgeManager", () => {
   });
 
   describe("updateBadge (linux)", () => {
-    it("calls appApi.setBadgeCount", () => {
+    it("sets badge count to 1 for all-working state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -163,12 +166,12 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(5);
+      manager.updateBadge("all-working");
 
-      expect(appApi.setBadgeCountCalls).toEqual([5]);
+      expect(appApi.setBadgeCountCalls).toEqual([1]);
     });
 
-    it("clears badge with 0", () => {
+    it("sets badge count to 1 for mixed state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -180,33 +183,31 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(0);
+      manager.updateBadge("mixed");
+
+      expect(appApi.setBadgeCountCalls).toEqual([1]);
+    });
+
+    it("clears badge for none state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      manager.updateBadge("none");
 
       expect(appApi.setBadgeCountCalls).toEqual([0]);
     });
   });
 
-  describe("updateBadge (negative count)", () => {
-    it("treats negative as 0 (defensive)", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appApi,
-        windowManager as unknown as WindowManager,
-        createSilentLogger()
-      );
-
-      manager.updateBadge(-5);
-
-      expect(appApi.dockSetBadgeCalls).toEqual([""]);
-    });
-  });
-
   describe("generateBadgeImage", () => {
-    it("creates a 16x16 bitmap image", () => {
+    it("creates a 16x16 bitmap image for all-working", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -218,7 +219,7 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(5);
+      manager.updateBadge("all-working");
 
       expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
       const calls = mockNativeImage.getCalls();
@@ -237,7 +238,7 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(5);
+      manager.updateBadge("all-working");
 
       const calls = mockNativeImage.getCalls();
       const buffer = calls[0]?.[0];
@@ -245,7 +246,7 @@ describe("BadgeManager", () => {
       expect(buffer?.length).toBe(16 * 16 * 4); // BGRA format
     });
 
-    it("handles single digit counts", () => {
+    it("creates different images for different states", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -257,48 +258,16 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(5);
+      manager.updateBadge("all-working");
+      manager.updateBadge("mixed");
 
-      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
-    });
-
-    it("handles double digit counts", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appApi,
-        windowManager as unknown as WindowManager,
-        createSilentLogger()
-      );
-
-      manager.updateBadge(42);
-
-      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
-    });
-
-    it("handles 3+ digit counts by showing overflow indicator", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appApi,
-        windowManager as unknown as WindowManager,
-        createSilentLogger()
-      );
-
-      manager.updateBadge(123);
-
-      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
+      // Should create 2 different images
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(2);
     });
   });
 
   describe("image caching", () => {
-    it("reuses cached images for same count", () => {
+    it("reuses cached images for same state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -310,10 +279,10 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      // Update with same count multiple times
-      manager.updateBadge(5);
-      manager.updateBadge(5);
-      manager.updateBadge(5);
+      // Update with same state multiple times
+      manager.updateBadge("all-working");
+      manager.updateBadge("all-working");
+      manager.updateBadge("all-working");
 
       // Should only create image once
       expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(1);
@@ -325,7 +294,7 @@ describe("BadgeManager", () => {
       expect(windowManager.setOverlayIconCalls[2]?.image).toBe(firstImage);
     });
 
-    it("creates new images for different counts", () => {
+    it("creates new images for different states", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -337,12 +306,148 @@ describe("BadgeManager", () => {
         createSilentLogger()
       );
 
-      manager.updateBadge(1);
-      manager.updateBadge(2);
-      manager.updateBadge(3);
+      manager.updateBadge("all-working");
+      manager.updateBadge("mixed");
 
-      // Should create 3 different images
-      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(3);
+      // Should create 2 different images
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("split circle image", () => {
+    it("has transparent gap at center column", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      manager.updateBadge("mixed");
+
+      const calls = mockNativeImage.getCalls();
+      const buffer = calls[0]?.[0];
+      expect(buffer).toBeInstanceOf(Buffer);
+
+      // Check center column (x=8 in 16px image) for transparency
+      // Center row (y=8) should have alpha=0 at the gap column
+      const gapX = 8;
+      const centerY = 8;
+      const offset = (centerY * 16 + gapX) * 4;
+      const alpha = buffer![offset + 3];
+
+      expect(alpha).toBe(0); // Gap should be fully transparent
+    });
+
+    it("has green pixels on left side", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      manager.updateBadge("mixed");
+
+      const calls = mockNativeImage.getCalls();
+      const buffer = calls[0]?.[0];
+      expect(buffer).toBeInstanceOf(Buffer);
+
+      // Check a pixel on the left side (x=5, y=8) - should be green
+      const leftX = 5;
+      const centerY = 8;
+      const offset = (centerY * 16 + leftX) * 4;
+
+      // Green color: #16A34A (R=22, G=163, B=74) in BGRA format
+      const b = buffer![offset]!;
+      const g = buffer![offset + 1]!;
+      const r = buffer![offset + 2]!;
+      const alpha = buffer![offset + 3]!;
+
+      expect(b).toBe(74); // Blue = 74
+      expect(g).toBe(163); // Green = 163
+      expect(r).toBe(22); // Red = 22
+      expect(alpha).toBeGreaterThan(0); // Should be visible
+    });
+
+    it("has red pixels on right side", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      manager.updateBadge("mixed");
+
+      const calls = mockNativeImage.getCalls();
+      const buffer = calls[0]?.[0];
+      expect(buffer).toBeInstanceOf(Buffer);
+
+      // Check a pixel on the right side (x=11, y=8) - should be red
+      const rightX = 11;
+      const centerY = 8;
+      const offset = (centerY * 16 + rightX) * 4;
+
+      // Red color: #E51400 (R=229, G=20, B=0) in BGRA format
+      const b = buffer![offset]!;
+      const g = buffer![offset + 1]!;
+      const r = buffer![offset + 2]!;
+      const alpha = buffer![offset + 3]!;
+
+      expect(b).toBe(0); // Blue = 0
+      expect(g).toBe(20); // Green = 20
+      expect(r).toBe(229); // Red = 229
+      expect(alpha).toBeGreaterThan(0); // Should be visible
+    });
+  });
+
+  describe("solid red circle image", () => {
+    it("has red pixels throughout the circle", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      manager.updateBadge("all-working");
+
+      const calls = mockNativeImage.getCalls();
+      const buffer = calls[0]?.[0];
+      expect(buffer).toBeInstanceOf(Buffer);
+
+      // Check center pixel (x=8, y=8) - should be red
+      const centerX = 8;
+      const centerY = 8;
+      const offset = (centerY * 16 + centerX) * 4;
+
+      // Red color: #E51400 (R=229, G=20, B=0) in BGRA format
+      const b = buffer![offset]!;
+      const g = buffer![offset + 1]!;
+      const r = buffer![offset + 2]!;
+      const alpha = buffer![offset + 3]!;
+
+      expect(b).toBe(0); // Blue = 0
+      expect(g).toBe(20); // Green = 20
+      expect(r).toBe(229); // Red = 229
+      expect(alpha).toBeGreaterThan(0); // Should be visible
     });
   });
 });

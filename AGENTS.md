@@ -137,7 +137,7 @@ All external system access MUST go through abstraction interfaces. Direct librar
 | Shortcut Mode   | Keyboard-driven navigation activated by Alt+X. All key detection in main process (ShortcutController). Actions: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project. Escape exits (renderer).                      |
 | VS Code Setup   | First-run setup that installs extensions and config; uses preflight checks on every startup to detect missing/outdated components; marker at `<app-data>/.setup-completed`. See [VS Code Assets](#vs-code-assets) for details. |
 | .keepfiles      | Config file in project root listing files to copy to new workspaces. Uses gitignore syntax with **inverted semantics** - listed patterns are COPIED (not ignored). Supports negation with `!` prefix.                          |
-| App Icon Badge  | Shows count of idle workspaces on the app icon. Platform support: macOS dock badge, Windows taskbar overlay, Linux Unity launcher. Badge hidden when count is 0.                                                               |
+| App Icon Badge  | Shows visual status indicator on app icon. Red circle: all workspaces working. Half green/half red: mixed (some ready, some working). No badge: all ready. Platform: macOS dock, Windows taskbar, Linux Unity.                 |
 
 ## VS Code Assets
 

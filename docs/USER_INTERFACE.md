@@ -548,32 +548,41 @@ Error:
 
 ### App Icon Badge
 
-The app icon displays a badge showing the total count of idle workspaces across all projects. This provides an at-a-glance status when CodeHydra is minimized or in the background.
+The app icon displays a visual indicator showing the overall status of all workspaces. This provides an at-a-glance status when CodeHydra is minimized or in the background.
+
+**Badge states:**
+
+| State       | Visual             | Meaning                          |
+| ----------- | ------------------ | -------------------------------- |
+| No badge    | (none)             | All workspaces ready (idle)      |
+| Red circle  | ● (solid red)      | All workspaces working (busy)    |
+| Split badge | ◐ (half green/red) | Mixed (some ready, some working) |
 
 **Badge behavior:**
 
-- Badge shows the sum of all idle agent counts across all workspaces
-- Badge is hidden when the idle count is 0 (no agents waiting)
-- Badge displays the actual count (e.g., 1, 5, 42) with no upper limit
-- Badge updates in real-time as agent status changes
+- Badge updates in real-time as workspace status changes
+- No badge when all workspaces are ready (green/idle)
+- Red circle when all workspaces are working (red/busy)
+- Half green/half red when some workspaces are ready and some are working
 
 **Platform support:**
 
-| Platform | Location               | Technology                         |
-| -------- | ---------------------- | ---------------------------------- |
-| macOS    | Dock icon              | `app.dock.setBadge()`              |
-| Windows  | Taskbar icon (overlay) | 16x16 red circle with number       |
-| Linux    | Launcher icon          | `app.setBadgeCount()` (Unity only) |
+| Platform | Location               | Technology                                   |
+| -------- | ---------------------- | -------------------------------------------- |
+| macOS    | Dock icon              | Unicode symbols: ● (working), ◐ (mixed)      |
+| Windows  | Taskbar icon (overlay) | 16x16 generated bitmap (red or split circle) |
+| Linux    | Launcher icon          | Badge count 1 for active, 0 for none         |
 
-**What counts as "idle":**
+**Status definitions:**
 
-- Agents that have finished processing and are waiting for user input
-- Agents waiting for permission responses (e.g., shell command approval)
+- **Ready (green)**: Workspace where all agents are idle (waiting for user input)
+- **Working (red)**: Workspace where at least one agent is busy processing
+- **Waiting for permission**: Counts as ready (green) since agent is waiting for user action
 
 **Visual appearance:**
 
-- **macOS**: Native dock badge (red circle with white number)
-- **Windows**: Taskbar overlay icon (16x16 generated image, red circle with white number)
+- **macOS**: Native dock badge with Unicode circle character
+- **Windows**: Taskbar overlay icon (16x16 generated image with anti-aliased circles)
 - **Linux**: Launcher badge count (Unity launcher only, silently fails on other desktop environments)
 
 **Sidebar with status:**

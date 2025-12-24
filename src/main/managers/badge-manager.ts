@@ -1,6 +1,9 @@
 /**
- * Badge Manager - manages app icon badge for idle workspace count.
- * Displays a badge on the app icon showing the count of idle workspaces.
+ * Badge Manager - manages app icon badge for workspace status.
+ * Displays a visual indicator on the app icon showing overall workspace state:
+ * - No badge: All workspaces are ready (idle)
+ * - Red circle: All workspaces are working (busy)
+ * - Half red/half green: Mixed state (some ready, some working)
  */
 
 import { nativeImage, type NativeImage } from "electron";
@@ -17,12 +20,20 @@ import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 type Unsubscribe = () => void;
 
 /**
+ * Badge state representing overall workspace status.
+ * - "none": No badge (all ready or no workspaces)
+ * - "all-working": Red circle (all workspaces are busy)
+ * - "mixed": Half red/half green (some ready, some working)
+ */
+export type BadgeState = "none" | "all-working" | "mixed";
+
+/**
  * Manages the app icon badge across platforms.
  *
  * Platform behavior:
- * - macOS: Uses dock.setBadge() for dock icon badge
+ * - macOS: Uses dock.setBadge() with status indicator
  * - Windows: Uses overlay icon on taskbar (16x16 generated image)
- * - Linux: Uses setBadgeCount() for Unity launcher (silently fails elsewhere)
+ * - Linux: Uses setBadgeCount() for Unity launcher (1 for working, 0 otherwise)
  */
 export class BadgeManager {
   private readonly platformInfo: PlatformInfo;
@@ -32,9 +43,9 @@ export class BadgeManager {
 
   /**
    * Cache for generated badge images (Windows only).
-   * Key is the badge count, value is the generated NativeImage.
+   * Key is the badge state, value is the generated NativeImage.
    */
-  private readonly imageCache = new Map<number, NativeImage>();
+  private readonly imageCache = new Map<BadgeState, NativeImage>();
 
   /**
    * Unsubscribe function for status manager subscription.
@@ -54,24 +65,20 @@ export class BadgeManager {
   }
 
   /**
-   * Updates the app icon badge with the idle count.
-   * Count of 0 clears the badge. Negative counts are treated as 0.
+   * Updates the app icon badge with the given state.
    *
-   * @param idleCount - The number of idle workspaces to display
+   * @param state - The badge state to display
    */
-  updateBadge(idleCount: number): void {
-    // Normalize negative counts to 0
-    const count = Math.max(0, idleCount);
-
+  updateBadge(state: BadgeState): void {
     switch (this.platformInfo.platform) {
       case "darwin":
-        this.updateDarwinBadge(count);
+        this.updateDarwinBadge(state);
         break;
       case "win32":
-        this.updateWindowsBadge(count);
+        this.updateWindowsBadge(state);
         break;
       case "linux":
-        this.updateLinuxBadge(count);
+        this.updateLinuxBadge(state);
         break;
       default:
         // Other platforms: no-op
@@ -81,75 +88,138 @@ export class BadgeManager {
 
   /**
    * Updates the macOS dock badge.
+   * Uses Unicode circle characters for visual indication.
    */
-  private updateDarwinBadge(count: number): void {
-    const badge = count > 0 ? String(count) : "";
+  private updateDarwinBadge(state: BadgeState): void {
+    // Use Unicode symbols: ● (filled circle) for working, ◐ (half circle) for mixed
+    let badge: string;
+    switch (state) {
+      case "all-working":
+        badge = "●"; // Filled circle for all working
+        break;
+      case "mixed":
+        badge = "◐"; // Half-filled circle for mixed
+        break;
+      default:
+        badge = ""; // Clear badge
+    }
     this.appApi.dock?.setBadge(badge);
-    this.logger.debug("Updated macOS dock badge", { count, badge });
+    this.logger.debug("Updated macOS dock badge", { state, badge });
   }
 
   /**
    * Updates the Windows taskbar overlay icon.
    */
-  private updateWindowsBadge(count: number): void {
-    if (count === 0) {
+  private updateWindowsBadge(state: BadgeState): void {
+    if (state === "none") {
       // Clear overlay
       this.windowManager.setOverlayIcon(null, "");
       this.logger.debug("Cleared Windows overlay icon");
       return;
     }
 
-    const image = this.getOrCreateBadgeImage(count);
-    const description = `${count} idle workspace${count === 1 ? "" : "s"}`;
+    const image = this.getOrCreateBadgeImage(state);
+    const description =
+      state === "all-working" ? "All workspaces working" : "Some workspaces ready";
     this.windowManager.setOverlayIcon(image, description);
-    this.logger.debug("Updated Windows overlay icon", { count, description });
+    this.logger.debug("Updated Windows overlay icon", { state, description });
   }
 
   /**
    * Updates the Linux badge count (Unity launcher).
+   * Uses 1 for any active state, 0 for none.
    */
-  private updateLinuxBadge(count: number): void {
+  private updateLinuxBadge(state: BadgeState): void {
+    // Linux badge only supports counts, so use 1 for any visible state
+    const count = state === "none" ? 0 : 1;
     const success = this.appApi.setBadgeCount(count);
-    this.logger.debug("Updated Linux badge count", { count, success });
+    this.logger.debug("Updated Linux badge count", { state, count, success });
   }
 
   /**
    * Gets a cached badge image or creates a new one.
    */
-  private getOrCreateBadgeImage(count: number): NativeImage {
-    const cached = this.imageCache.get(count);
+  private getOrCreateBadgeImage(state: BadgeState): NativeImage {
+    const cached = this.imageCache.get(state);
     if (cached) {
       return cached;
     }
 
-    const image = this.generateBadgeImage(count);
-    this.imageCache.set(count, image);
+    const image = this.generateBadgeImage(state);
+    this.imageCache.set(state, image);
     return image;
   }
 
   /**
-   * Generates a 16x16 badge image with the count.
-   * The image is a red circle with white number.
+   * Generates a 16x16 badge image for the given state.
+   * - "all-working": Red circle with light red border
+   * - "mixed": Left half green, right half red, each with light-colored borders
    *
    * Note: SVG data URLs don't work on Windows (createFromDataURL returns empty image).
    * We use createFromBitmap with raw BGRA pixel data instead.
    *
-   * @param count - The number to display (must be > 0)
+   * @param state - The badge state (must not be "none")
    * @returns NativeImage suitable for overlay icon
    */
-  private generateBadgeImage(count: number): NativeImage {
+  private generateBadgeImage(state: BadgeState): NativeImage {
     const size = 16;
     const buffer = Buffer.alloc(size * size * 4);
 
     const centerX = size / 2;
     const centerY = size / 2;
-    const radius = 7;
+    const innerRadius = 4.5; // 2/3 of original 7
+    const outerRadius = 5.5; // 1px border
 
-    // Red color: #E51400 (R=229, G=20, B=0)
-    const red = { r: 229, g: 20, b: 0 };
-    const white = { r: 255, g: 255, b: 255 };
+    // Colors
+    const red = { r: 229, g: 20, b: 0 }; // #E51400 - working/busy
+    const green = { r: 22, g: 163, b: 74 }; // #16A34A - ready/idle
+    const lightRed = { r: 255, g: 160, b: 150 }; // Light red for border
+    const lightGreen = { r: 144, g: 238, b: 144 }; // Light green for border
 
-    // Draw a filled red circle with anti-aliased edges
+    if (state === "all-working") {
+      // Draw red circle with light red border
+      this.drawCircleWithBorder(
+        buffer,
+        size,
+        centerX,
+        centerY,
+        innerRadius,
+        outerRadius,
+        red,
+        lightRed
+      );
+    } else if (state === "mixed") {
+      // Draw half-green (left), half-red (right) with respective light borders
+      this.drawSplitCircleWithBorder(
+        buffer,
+        size,
+        centerX,
+        centerY,
+        innerRadius,
+        outerRadius,
+        green,
+        lightGreen,
+        red,
+        lightRed
+      );
+    }
+
+    return nativeImage.createFromBitmap(buffer, { width: size, height: size });
+  }
+
+  /**
+   * Draws a filled circle with a border ring and anti-aliased edges.
+   */
+  private drawCircleWithBorder(
+    buffer: Buffer,
+    size: number,
+    centerX: number,
+    centerY: number,
+    innerRadius: number,
+    outerRadius: number,
+    fillColor: { r: number; g: number; b: number },
+    borderColor: { r: number; g: number; b: number }
+  ): void {
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const dx = x - centerX + 0.5;
@@ -157,193 +227,87 @@ export class BadgeManager {
         const distance = Math.sqrt(dx * dx + dy * dy);
         const offset = (y * size + x) * 4;
 
-        if (distance <= radius) {
-          // Anti-alias the edge
-          const edgeDistance = radius - distance;
-          const alpha = edgeDistance < 1 ? Math.floor(edgeDistance * 255) : 255;
+        if (distance <= outerRadius) {
+          // Anti-alias the outer edge
+          const outerEdgeDistance = outerRadius - distance;
+          const alpha = outerEdgeDistance < 1 ? Math.floor(outerEdgeDistance * 255) : 255;
+
+          // Choose color: inner fill or border
+          const color = distance <= innerRadius ? fillColor : borderColor;
 
           // createFromBitmap uses BGRA format on Windows
-          buffer[offset] = red.b; // B
-          buffer[offset + 1] = red.g; // G
-          buffer[offset + 2] = red.r; // R
+          buffer[offset] = color.b; // B
+          buffer[offset + 1] = color.g; // G
+          buffer[offset + 2] = color.r; // R
           buffer[offset + 3] = alpha; // A
         }
         // Pixels outside circle remain zero (transparent)
       }
     }
-
-    // Draw the number using simple bitmap font
-    this.drawNumber(buffer, size, count, white);
-
-    return nativeImage.createFromBitmap(buffer, { width: size, height: size });
   }
 
   /**
-   * Draws a number onto the badge bitmap.
-   * Uses simple pixel patterns for digits 0-9.
+   * Draws a split circle with borders: left half in leftColor, right half in rightColor.
+   * Each half has its own border color. A 1-pixel translucent gap separates the two halves.
    */
-  private drawNumber(
+  private drawSplitCircleWithBorder(
     buffer: Buffer,
     size: number,
-    count: number,
-    color: { r: number; g: number; b: number }
+    centerX: number,
+    centerY: number,
+    innerRadius: number,
+    outerRadius: number,
+    leftFillColor: { r: number; g: number; b: number },
+    leftBorderColor: { r: number; g: number; b: number },
+    rightFillColor: { r: number; g: number; b: number },
+    rightBorderColor: { r: number; g: number; b: number }
   ): void {
-    const text = String(count);
+    // Gap is centered at x = centerX (columns 7 and 8 in 0-indexed 16px)
+    const gapX = Math.floor(centerX);
 
-    // Helper to draw a pixel in BGRA format
-    const drawPixel = (x: number, y: number): void => {
-      if (x >= 0 && x < size && y >= 0 && y < size) {
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = x - centerX + 0.5;
+        const dy = y - centerY + 0.5;
+        const distance = Math.sqrt(dx * dx + dy * dy);
         const offset = (y * size + x) * 4;
-        buffer[offset] = color.b;
-        buffer[offset + 1] = color.g;
-        buffer[offset + 2] = color.r;
-        buffer[offset + 3] = 255;
-      }
-    };
 
-    if (text.length === 1) {
-      // Single digit - centered
-      this.drawDigit(text, 5, 4, drawPixel);
-    } else if (text.length === 2) {
-      // Two digits - side by side
-      this.drawDigit(text[0]!, 2, 4, drawPixel);
-      this.drawDigit(text[1]!, 8, 4, drawPixel);
-    } else {
-      // 3+ digits - just show "+" to indicate overflow
-      this.drawDigit("+", 5, 4, drawPixel);
-    }
-  }
+        if (distance <= outerRadius) {
+          // Check if this pixel is in the gap (1px wide at center)
+          if (x === gapX) {
+            // Gap pixel - translucent (alpha = 0, fully transparent)
+            continue;
+          }
 
-  /**
-   * Draws a single digit at the given position.
-   * Each digit is approximately 5x8 pixels.
-   */
-  private drawDigit(
-    digit: string,
-    startX: number,
-    startY: number,
-    drawPixel: (x: number, y: number) => void
-  ): void {
-    // Simple 5x8 pixel patterns for digits
-    const patterns: Record<string, number[][]> = {
-      "0": [
-        [0, 1, 1, 1, 0],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [0, 1, 1, 1, 0],
-      ],
-      "1": [
-        [0, 0, 1, 0, 0],
-        [0, 1, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 1, 1, 1, 0],
-      ],
-      "2": [
-        [0, 1, 1, 1, 0],
-        [1, 0, 0, 0, 1],
-        [0, 0, 0, 0, 1],
-        [0, 0, 1, 1, 0],
-        [0, 1, 0, 0, 0],
-        [1, 0, 0, 0, 0],
-        [1, 1, 1, 1, 1],
-      ],
-      "3": [
-        [0, 1, 1, 1, 0],
-        [1, 0, 0, 0, 1],
-        [0, 0, 0, 0, 1],
-        [0, 0, 1, 1, 0],
-        [0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [0, 1, 1, 1, 0],
-      ],
-      "4": [
-        [0, 0, 0, 1, 0],
-        [0, 0, 1, 1, 0],
-        [0, 1, 0, 1, 0],
-        [1, 0, 0, 1, 0],
-        [1, 1, 1, 1, 1],
-        [0, 0, 0, 1, 0],
-        [0, 0, 0, 1, 0],
-      ],
-      "5": [
-        [1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 0],
-        [1, 1, 1, 1, 0],
-        [0, 0, 0, 0, 1],
-        [0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [0, 1, 1, 1, 0],
-      ],
-      "6": [
-        [0, 1, 1, 1, 0],
-        [1, 0, 0, 0, 0],
-        [1, 1, 1, 1, 0],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [0, 1, 1, 1, 0],
-      ],
-      "7": [
-        [1, 1, 1, 1, 1],
-        [0, 0, 0, 0, 1],
-        [0, 0, 0, 1, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-      ],
-      "8": [
-        [0, 1, 1, 1, 0],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [0, 1, 1, 1, 0],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [0, 1, 1, 1, 0],
-      ],
-      "9": [
-        [0, 1, 1, 1, 0],
-        [1, 0, 0, 0, 1],
-        [1, 0, 0, 0, 1],
-        [0, 1, 1, 1, 1],
-        [0, 0, 0, 0, 1],
-        [0, 0, 0, 0, 1],
-        [0, 1, 1, 1, 0],
-      ],
-      "+": [
-        [0, 0, 0, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [1, 1, 1, 1, 1],
-        [0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0],
-        [0, 0, 0, 0, 0],
-      ],
-    };
+          // Anti-alias the outer edge
+          const outerEdgeDistance = outerRadius - distance;
+          const alpha = outerEdgeDistance < 1 ? Math.floor(outerEdgeDistance * 255) : 255;
 
-    const pattern = patterns[digit];
-    if (!pattern) return;
+          // Choose color based on which side of the gap and whether in border or fill
+          const isLeftSide = x < gapX;
+          const isInnerFill = distance <= innerRadius;
 
-    for (let row = 0; row < pattern.length; row++) {
-      const patternRow = pattern[row];
-      if (!patternRow) continue;
-      for (let col = 0; col < patternRow.length; col++) {
-        if (patternRow[col] === 1) {
-          drawPixel(startX + col, startY + row);
+          let color: { r: number; g: number; b: number };
+          if (isLeftSide) {
+            color = isInnerFill ? leftFillColor : leftBorderColor;
+          } else {
+            color = isInnerFill ? rightFillColor : rightBorderColor;
+          }
+
+          // createFromBitmap uses BGRA format on Windows
+          buffer[offset] = color.b; // B
+          buffer[offset + 1] = color.g; // G
+          buffer[offset + 2] = color.r; // R
+          buffer[offset + 3] = alpha; // A
         }
+        // Pixels outside circle remain zero (transparent)
       }
     }
   }
 
   /**
    * Connects to the AgentStatusManager to receive status updates.
-   * When status changes, the badge is updated with the total idle count.
+   * When status changes, the badge is updated with the aggregated state.
    *
    * @param statusManager - The AgentStatusManager to subscribe to
    */
@@ -354,17 +318,17 @@ export class BadgeManager {
     // Subscribe to status changes
     this.statusManagerUnsubscribe = statusManager.onStatusChanged(() => {
       const statuses = statusManager.getAllStatuses();
-      const idleCount = this.aggregateIdleCounts(statuses);
-      this.updateBadge(idleCount);
+      const state = this.aggregateWorkspaceStates(statuses);
+      this.updateBadge(state);
     });
 
     // Perform initial update with current state
     const statuses = statusManager.getAllStatuses();
-    const idleCount = this.aggregateIdleCounts(statuses);
-    this.updateBadge(idleCount);
+    const state = this.aggregateWorkspaceStates(statuses);
+    this.updateBadge(state);
 
     this.logger.info("Connected to AgentStatusManager", {
-      initialIdleCount: idleCount,
+      initialState: state,
     });
   }
 
@@ -376,22 +340,59 @@ export class BadgeManager {
     if (this.statusManagerUnsubscribe) {
       this.statusManagerUnsubscribe();
       this.statusManagerUnsubscribe = null;
-      this.updateBadge(0);
+      this.updateBadge("none");
       this.logger.debug("Disconnected from AgentStatusManager");
     }
   }
 
   /**
-   * Aggregates idle counts from all workspace statuses.
+   * Aggregates workspace statuses into a single badge state.
+   *
+   * Logic:
+   * - "none": No workspaces with agents, or all workspaces are ready (idle)
+   * - "all-working": All workspaces with agents are busy
+   * - "mixed": Some workspaces ready, some working
+   *
+   * Note: Workspaces with "mixed" status (both idle and busy agents) count as "working"
+   * since they have active work in progress.
    *
    * @param statuses - Map of workspace paths to their aggregated statuses
-   * @returns Total idle count across all workspaces
+   * @returns Badge state to display
    */
-  private aggregateIdleCounts(statuses: Map<WorkspacePath, AggregatedAgentStatus>): number {
-    let total = 0;
+  private aggregateWorkspaceStates(
+    statuses: Map<WorkspacePath, AggregatedAgentStatus>
+  ): BadgeState {
+    let hasReady = false;
+    let hasWorking = false;
+
     for (const status of statuses.values()) {
-      total += status.counts.idle;
+      switch (status.status) {
+        case "idle":
+          // Workspace is fully ready (all agents idle)
+          hasReady = true;
+          break;
+        case "busy":
+        case "mixed":
+          // Workspace has at least one busy agent
+          hasWorking = true;
+          break;
+        // "none" status doesn't affect the badge
+      }
     }
-    return total;
+
+    if (!hasReady && !hasWorking) {
+      // No workspaces with agents
+      return "none";
+    }
+    if (hasReady && !hasWorking) {
+      // All workspaces are ready - no badge
+      return "none";
+    }
+    if (!hasReady && hasWorking) {
+      // All workspaces are working - red circle
+      return "all-working";
+    }
+    // Some ready, some working - mixed badge
+    return "mixed";
   }
 }

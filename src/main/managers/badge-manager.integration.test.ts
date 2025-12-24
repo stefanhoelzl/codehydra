@@ -4,15 +4,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock Electron nativeImage
 const mockNativeImage = vi.hoisted(() => {
-  const createFromDataURL = vi.fn((url: string) => ({
+  const createFromBitmap = vi.fn((buffer: Buffer, options: { width: number; height: number }) => ({
     isEmpty: () => false,
-    toDataURL: () => "data:image/png;base64,mock",
-    _sourceUrl: url,
+    getSize: () => ({ width: options.width, height: options.height }),
+    toPNG: () => Buffer.from("mock-png"),
+    _buffer: buffer,
+    _options: options,
   }));
 
   return {
-    createFromDataURL,
-    getCalls: () => createFromDataURL.mock.calls as Array<[string]>,
+    createFromBitmap,
+    getCalls: () =>
+      createFromBitmap.mock.calls as Array<[Buffer, { width: number; height: number }]>,
   };
 });
 
@@ -67,6 +70,143 @@ describe("BadgeManager Integration", () => {
     vi.clearAllMocks();
   });
 
+  describe("Badge state aggregation", () => {
+    it("shows no badge when all workspaces are idle", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+      const statusManager = createMockAgentStatusManager();
+
+      const badgeManager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      // Set up all idle workspaces
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 2, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "idle", counts: { idle: 1, busy: 0 } }],
+        ])
+      );
+
+      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
+
+      // Badge should be empty (all ready = no badge)
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("");
+    });
+
+    it("shows red badge when all workspaces are busy", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+      const statusManager = createMockAgentStatusManager();
+
+      const badgeManager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      // Set up all busy workspaces
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 2 } }],
+          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+        ])
+      );
+
+      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
+
+      // Badge should show filled circle (all working)
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
+    });
+
+    it("shows mixed badge when some workspaces are idle and some busy", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+      const statusManager = createMockAgentStatusManager();
+
+      const badgeManager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      // Set up mixed workspaces
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 2, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+        ])
+      );
+
+      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
+
+      // Badge should show half circle (mixed)
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("◐");
+    });
+
+    it("treats workspace with mixed status as working", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+      const statusManager = createMockAgentStatusManager();
+
+      const badgeManager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      // Set up: one idle workspace, one with mixed status
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 2, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "mixed", counts: { idle: 1, busy: 1 } }],
+        ])
+      );
+
+      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
+
+      // Badge should show half circle (mixed, because "mixed" workspace counts as working)
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("◐");
+    });
+
+    it("ignores workspaces with none status", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+      const statusManager = createMockAgentStatusManager();
+
+      const badgeManager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      // Set up: only "none" status workspaces
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "none", counts: { idle: 0, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "none", counts: { idle: 0, busy: 0 } }],
+        ])
+      );
+
+      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
+
+      // Badge should be empty (no workspaces with agents)
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("");
+    });
+  });
+
   describe("Badge updates on status change", () => {
     it("updates badge when workspace status changes", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
@@ -83,27 +223,20 @@ describe("BadgeManager Integration", () => {
 
       // Connect to status manager
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-
-      // Initial state should be 0 (no statuses)
-      expect(appApi.dockSetBadgeCalls).toEqual([""]);
       appApi.dockSetBadgeCalls.length = 0;
 
-      // Set up some statuses
+      // Change from empty to all busy
       statusManager.setStatuses(
         new Map<WorkspacePath, AggregatedAgentStatus>([
-          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 2, busy: 0 } }],
-          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+          ["/workspace1" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 2 } }],
         ])
       );
-
-      // Trigger status change
       statusManager.triggerStatusChange();
 
-      // Badge should show 2 (sum of idle counts)
-      expect(appApi.dockSetBadgeCalls).toEqual(["2"]);
+      expect(appApi.dockSetBadgeCalls).toEqual(["●"]);
     });
 
-    it("updates badge when multiple workspaces have idle agents", () => {
+    it("transitions from all-working to mixed when workspace becomes idle", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
@@ -116,22 +249,65 @@ describe("BadgeManager Integration", () => {
         createSilentLogger()
       );
 
-      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      appApi.dockSetBadgeCalls.length = 0;
-
-      // Set up multiple workspaces with idle agents
+      // Start with all busy
       statusManager.setStatuses(
         new Map<WorkspacePath, AggregatedAgentStatus>([
-          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 3, busy: 0 } }],
-          ["/workspace2" as WorkspacePath, { status: "mixed", counts: { idle: 2, busy: 1 } }],
-          ["/workspace3" as WorkspacePath, { status: "idle", counts: { idle: 1, busy: 0 } }],
+          ["/workspace1" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
         ])
       );
 
+      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
+      appApi.dockSetBadgeCalls.length = 0;
+
+      // One workspace becomes idle
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 1, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+        ])
+      );
       statusManager.triggerStatusChange();
 
-      // Badge should show 6 (3 + 2 + 1)
-      expect(appApi.dockSetBadgeCalls).toEqual(["6"]);
+      expect(appApi.dockSetBadgeCalls).toEqual(["◐"]);
+    });
+
+    it("transitions from mixed to none when all workspaces become idle", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      const appApi = createMockElectronAppApi();
+      const windowManager = createMockWindowManager();
+      const statusManager = createMockAgentStatusManager();
+
+      const badgeManager = new BadgeManager(
+        platformInfo,
+        appApi,
+        windowManager as unknown as WindowManager,
+        createSilentLogger()
+      );
+
+      // Start with mixed
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 1, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+        ])
+      );
+
+      badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("◐");
+      appApi.dockSetBadgeCalls.length = 0;
+
+      // All workspaces become idle
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 1, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "idle", counts: { idle: 1, busy: 0 } }],
+        ])
+      );
+      statusManager.triggerStatusChange();
+
+      expect(appApi.dockSetBadgeCalls).toEqual([""]);
     });
   });
 
@@ -149,15 +325,15 @@ describe("BadgeManager Integration", () => {
         createSilentLogger()
       );
 
-      // Start with some idle agents
+      // Start with busy workspaces
       statusManager.setStatuses(
         new Map<WorkspacePath, AggregatedAgentStatus>([
-          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 2, busy: 0 } }],
+          ["/workspace1" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
         ])
       );
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("2");
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
       appApi.dockSetBadgeCalls.length = 0;
 
       // Remove all workspaces
@@ -169,9 +345,9 @@ describe("BadgeManager Integration", () => {
     });
   });
 
-  describe("Badge shows large counts correctly", () => {
-    it("shows counts like 15 and 42 correctly", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+  describe("Windows overlay icon", () => {
+    it("generates split circle for mixed state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
@@ -183,33 +359,23 @@ describe("BadgeManager Integration", () => {
         createSilentLogger()
       );
 
+      // Set up mixed workspaces
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 1, busy: 0 } }],
+          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+        ])
+      );
+
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      appApi.dockSetBadgeCalls.length = 0;
 
-      // Set up workspace with 15 idle agents
-      statusManager.setStatuses(
-        new Map<WorkspacePath, AggregatedAgentStatus>([
-          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 15, busy: 0 } }],
-        ])
-      );
-      statusManager.triggerStatusChange();
-      expect(appApi.dockSetBadgeCalls).toEqual(["15"]);
-      appApi.dockSetBadgeCalls.length = 0;
-
-      // Change to 42 idle agents
-      statusManager.setStatuses(
-        new Map<WorkspacePath, AggregatedAgentStatus>([
-          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 42, busy: 0 } }],
-        ])
-      );
-      statusManager.triggerStatusChange();
-      expect(appApi.dockSetBadgeCalls).toEqual(["42"]);
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
+      expect(windowManager.setOverlayIconCalls).toHaveLength(1);
+      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("Some workspaces ready");
     });
-  });
 
-  describe("Multiple rapid status changes", () => {
-    it("badge reflects final state after rapid changes", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+    it("generates red circle for all-working state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const appApi = createMockElectronAppApi();
       const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
@@ -221,21 +387,19 @@ describe("BadgeManager Integration", () => {
         createSilentLogger()
       );
 
+      // Set up all busy workspaces
+      statusManager.setStatuses(
+        new Map<WorkspacePath, AggregatedAgentStatus>([
+          ["/workspace1" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+          ["/workspace2" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
+        ])
+      );
+
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      appApi.dockSetBadgeCalls.length = 0;
 
-      // Rapid status changes
-      for (let i = 1; i <= 10; i++) {
-        statusManager.setStatuses(
-          new Map<WorkspacePath, AggregatedAgentStatus>([
-            ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: i, busy: 0 } }],
-          ])
-        );
-        statusManager.triggerStatusChange();
-      }
-
-      // Final badge should be 10 (last value)
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("10");
+      expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
+      expect(windowManager.setOverlayIconCalls).toHaveLength(1);
+      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("All workspaces working");
     });
   });
 
@@ -253,15 +417,15 @@ describe("BadgeManager Integration", () => {
         createSilentLogger()
       );
 
-      // Start with some idle agents
+      // Start with busy workspaces
       statusManager.setStatuses(
         new Map<WorkspacePath, AggregatedAgentStatus>([
-          ["/workspace1" as WorkspacePath, { status: "idle", counts: { idle: 5, busy: 0 } }],
+          ["/workspace1" as WorkspacePath, { status: "busy", counts: { idle: 0, busy: 1 } }],
         ])
       );
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("5");
+      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
       appApi.dockSetBadgeCalls.length = 0;
 
       // Disconnect
