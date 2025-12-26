@@ -130,23 +130,25 @@ describe("generateOpencodeNodeScript", () => {
     expect(content).toContain('require("child_process")');
   });
 
-  it("uses CommonJS require for fs", () => {
-    const content = generateOpencodeNodeScript(TEST_VERSION);
-
-    expect(content).toContain('require("fs")');
-  });
-
   it("uses CommonJS require for path", () => {
     const content = generateOpencodeNodeScript(TEST_VERSION);
 
     expect(content).toContain('require("path")');
   });
 
-  it("uses path.join for all path construction", () => {
+  it("does not require fs module (no file I/O)", () => {
     const content = generateOpencodeNodeScript(TEST_VERSION);
 
-    // Should use join(__dirname, ...) for paths
-    expect(content).toContain("join(__dirname");
+    expect(content).not.toContain('require("fs")');
+  });
+
+  it("uses path.join for binary path construction", () => {
+    const content = generateOpencodeNodeScript(TEST_VERSION);
+
+    // Should use join() for paths (from path module)
+    expect(content).toContain("const { join } = require");
+    // Should use join with __dirname as first argument
+    expect(content).toMatch(/join\(\s*__dirname/);
     // Should NOT use string concatenation for paths
     expect(content).not.toMatch(/__dirname\s*\+/);
   });
@@ -157,18 +159,19 @@ describe("generateOpencodeNodeScript", () => {
     expect(content).toContain(`OPENCODE_VERSION = "${TEST_VERSION}"`);
   });
 
-  it("handles git error with try-catch", () => {
+  it("reads CODEHYDRA_OPENCODE_PORT env var", () => {
     const content = generateOpencodeNodeScript(TEST_VERSION);
 
-    // Should have try-catch around git command
-    expect(content).toMatch(/try\s*\{[\s\S]*execSync.*git rev-parse[\s\S]*\}\s*catch/);
+    expect(content).toContain("process.env.CODEHYDRA_OPENCODE_PORT");
   });
 
-  it("handles JSON parse error with try-catch", () => {
+  it("validates port is numeric and in valid range", () => {
     const content = generateOpencodeNodeScript(TEST_VERSION);
 
-    // Should have try-catch around JSON.parse
-    expect(content).toMatch(/try\s*\{[\s\S]*JSON\.parse[\s\S]*\}\s*catch/);
+    expect(content).toContain("parseInt(portStr, 10)");
+    expect(content).toContain("isNaN(port)");
+    expect(content).toContain("port <= 0");
+    expect(content).toContain("port > 65535");
   });
 
   it("uses spawnSync with stdio inherit", () => {
@@ -184,29 +187,17 @@ describe("generateOpencodeNodeScript", () => {
     expect(content).toContain("process.exit(result.status");
   });
 
-  it("uses correct error message for not in git repo", () => {
+  it("uses correct error message when env var not set", () => {
     const content = generateOpencodeNodeScript(TEST_VERSION);
 
-    expect(content).toContain("Error: Not in a git repository");
+    expect(content).toContain("Error: CODEHYDRA_OPENCODE_PORT not set.");
+    expect(content).toContain("Make sure you're in a CodeHydra workspace terminal.");
   });
 
-  it("uses correct error message for missing ports.json", () => {
+  it("uses correct error message when port is invalid", () => {
     const content = generateOpencodeNodeScript(TEST_VERSION);
 
-    expect(content).toContain("Error: No opencode servers are running");
-  });
-
-  it("uses correct error message for invalid ports.json", () => {
-    const content = generateOpencodeNodeScript(TEST_VERSION);
-
-    expect(content).toContain("Error: Failed to read ports.json");
-  });
-
-  it("uses correct error message for workspace not found", () => {
-    const content = generateOpencodeNodeScript(TEST_VERSION);
-
-    expect(content).toContain("Error: No opencode server found for workspace:");
-    expect(content).toContain("Make sure the workspace is open in CodeHydra.");
+    expect(content).toContain("Error: Invalid CODEHYDRA_OPENCODE_PORT:");
   });
 
   it("uses correct error message for spawn failure", () => {
@@ -227,6 +218,19 @@ describe("generateOpencodeNodeScript", () => {
     const content2 = generateOpencodeNodeScript(TEST_VERSION);
 
     expect(content1).toBe(content2);
+  });
+
+  it("does not reference ports.json", () => {
+    const content = generateOpencodeNodeScript(TEST_VERSION);
+
+    expect(content).not.toContain("ports.json");
+  });
+
+  it("does not use git commands", () => {
+    const content = generateOpencodeNodeScript(TEST_VERSION);
+
+    expect(content).not.toContain("git rev-parse");
+    expect(content).not.toContain("gitRoot");
   });
 });
 
@@ -362,18 +366,19 @@ describe("generateOpencodeScript", () => {
       expect(nodeScript.content).toContain(TEST_VERSION);
     });
 
-    it("uses git rev-parse to find workspace root", () => {
+    it("reads CODEHYDRA_OPENCODE_PORT env var", () => {
       const scripts = generateOpencodeScript(false, TEST_VERSION, BUNDLED_NODE_PATH, BIN_DIR);
       const nodeScript = scripts[0]!;
 
-      expect(nodeScript.content).toContain("git rev-parse --show-toplevel");
+      expect(nodeScript.content).toContain("process.env.CODEHYDRA_OPENCODE_PORT");
     });
 
-    it("references ports.json", () => {
+    it("does not reference ports.json or git", () => {
       const scripts = generateOpencodeScript(false, TEST_VERSION, BUNDLED_NODE_PATH, BIN_DIR);
       const nodeScript = scripts[0]!;
 
-      expect(nodeScript.content).toContain("ports.json");
+      expect(nodeScript.content).not.toContain("ports.json");
+      expect(nodeScript.content).not.toContain("git rev-parse");
     });
   });
 });
@@ -490,15 +495,15 @@ describe("generateScripts", () => {
       expect(codeScript?.content).toContain(targetPaths.codeRemoteCli);
     });
 
-    it("opencode.cjs script contains workspace lookup logic", () => {
+    it("opencode.cjs script reads env var and spawns attach", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const scripts = generateScripts(platformInfo, createTargetPaths(), BIN_DIR);
 
       const nodeScript = scripts.find((s) => s.filename === "opencode.cjs");
 
-      expect(nodeScript?.content).toContain("ports.json");
-      expect(nodeScript?.content).toContain("workspaceInfo");
-      expect(nodeScript?.content).toContain("gitRoot");
+      expect(nodeScript?.content).toContain("process.env.CODEHYDRA_OPENCODE_PORT");
+      expect(nodeScript?.content).toContain("spawnSync");
+      expect(nodeScript?.content).toContain("attach");
     });
   });
 });

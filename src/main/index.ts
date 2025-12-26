@@ -310,14 +310,10 @@ async function startServices(): Promise<void> {
   serverManager = new OpenCodeServerManager(
     processRunner,
     networkLayer, // PortManager
-    fileSystemLayer,
     networkLayer, // HttpClient
     pathProvider,
     loggingService.createLogger("opencode")
   );
-
-  // Clean up stale entries before opening any projects
-  await serverManager.cleanupStaleEntries();
 
   // Create AgentStatusManager (receives ports via callbacks from serverManager)
   agentStatusManager = new AgentStatusManager(loggingService.createLogger("opencode"));

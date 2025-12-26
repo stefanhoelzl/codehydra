@@ -2,13 +2,13 @@
  * OpenCode Server Manager - manages one opencode serve instance per workspace.
  *
  * Instead of letting users spawn multiple opencode processes, CodeHydra manages
- * one server per workspace. The wrapper script redirects to `opencode attach`.
+ * one server per workspace. The opencode CLI wrapper reads the port from the
+ * CODEHYDRA_OPENCODE_PORT environment variable (set by the sidekick extension)
+ * and redirects to `opencode attach`.
  */
 
-import * as path from "node:path";
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
 import type { PortManager, HttpClient } from "../platform/network";
-import type { FileSystemLayer } from "../platform/filesystem";
 import type { PathProvider } from "../platform/path-provider";
 import type { Logger } from "../logging";
 import type { IDisposable, Unsubscribe } from "./types";
@@ -18,13 +18,6 @@ import type { IDisposable, Unsubscribe } from "./types";
  */
 export type ServerStartedCallback = (workspacePath: string, port: number) => void;
 export type ServerStoppedCallback = (workspacePath: string) => void;
-
-/**
- * Ports file JSON structure.
- */
-interface PortsFile {
-  workspaces: Record<string, { port: number }>;
-}
 
 /**
  * Server entry in the manager's internal map.
@@ -57,12 +50,11 @@ export interface McpConfig {
 
 /**
  * Manages OpenCode server instances for workspaces.
- * One server per workspace, with health check and ports.json tracking.
+ * One server per workspace, with health check. Port stored in memory only.
  */
 export class OpenCodeServerManager implements IDisposable {
   private readonly processRunner: ProcessRunner;
   private readonly portManager: PortManager;
-  private readonly fs: FileSystemLayer;
   private readonly httpClient: HttpClient;
   private readonly pathProvider: PathProvider;
   private readonly logger: Logger;
@@ -77,7 +69,6 @@ export class OpenCodeServerManager implements IDisposable {
   constructor(
     processRunner: ProcessRunner,
     portManager: PortManager,
-    fs: FileSystemLayer,
     httpClient: HttpClient,
     pathProvider: PathProvider,
     logger: Logger,
@@ -85,7 +76,6 @@ export class OpenCodeServerManager implements IDisposable {
   ) {
     this.processRunner = processRunner;
     this.portManager = portManager;
-    this.fs = fs;
     this.httpClient = httpClient;
     this.pathProvider = pathProvider;
     this.logger = logger;
@@ -187,9 +177,6 @@ export class OpenCodeServerManager implements IDisposable {
     };
     this.servers.set(workspacePath, entry);
 
-    // Write to ports.json
-    await this.writePortsFile();
-
     // Fire callback
     for (const callback of this.startedCallbacks) {
       callback(workspacePath, port);
@@ -205,7 +192,7 @@ export class OpenCodeServerManager implements IDisposable {
    */
   private async waitForHealthCheck(port: number): Promise<void> {
     const startTime = Date.now();
-    const url = `http://127.0.0.1:${port}/app`;
+    const url = `http://127.0.0.1:${port}/path`;
 
     while (Date.now() - startTime < this.config.healthCheckTimeoutMs) {
       try {
@@ -253,9 +240,6 @@ export class OpenCodeServerManager implements IDisposable {
 
     // Remove from map
     this.servers.delete(workspacePath);
-
-    // Update ports.json
-    await this.writePortsFile();
 
     // Fire callback
     for (const callback of this.stoppedCallbacks) {
@@ -323,38 +307,6 @@ export class OpenCodeServerManager implements IDisposable {
   }
 
   /**
-   * Cleanup stale entries from ports.json.
-   * Call this at startup before opening any projects.
-   */
-  async cleanupStaleEntries(): Promise<void> {
-    const portsFile = await this.readPortsFile();
-    const validEntries: Record<string, { port: number }> = {};
-    let hasChanges = false;
-
-    for (const [path, entry] of Object.entries(portsFile.workspaces)) {
-      // Probe the port
-      try {
-        const response = await this.httpClient.fetch(`http://127.0.0.1:${entry.port}/app`, {
-          timeout: 1000,
-        });
-        if (response.ok) {
-          validEntries[path] = entry;
-        } else {
-          hasChanges = true;
-          this.logger.info("Cleaned stale entry", { path, port: entry.port });
-        }
-      } catch {
-        hasChanges = true;
-        this.logger.info("Cleaned stale entry", { path, port: entry.port });
-      }
-    }
-
-    if (hasChanges) {
-      await this.writePortsFileContent({ workspaces: validEntries });
-    }
-  }
-
-  /**
    * Dispose the manager, stopping all servers.
    */
   async dispose(): Promise<void> {
@@ -362,49 +314,5 @@ export class OpenCodeServerManager implements IDisposable {
     await Promise.all(workspaces.map((path) => this.stopServer(path)));
     this.startedCallbacks.clear();
     this.stoppedCallbacks.clear();
-  }
-
-  // ============ Ports File Management ============
-
-  private getPortsFilePath(): string {
-    return `${this.pathProvider.dataRootDir}/opencode/ports.json`;
-  }
-
-  private async readPortsFile(): Promise<PortsFile> {
-    try {
-      const content = await this.fs.readFile(this.getPortsFilePath());
-      const parsed = JSON.parse(content) as PortsFile;
-      if (parsed && typeof parsed.workspaces === "object") {
-        return parsed;
-      }
-      return { workspaces: {} };
-    } catch {
-      return { workspaces: {} };
-    }
-  }
-
-  private async writePortsFile(): Promise<void> {
-    // Collect current ports from running servers
-    const workspaces: Record<string, { port: number }> = {};
-    for (const [path, entry] of this.servers) {
-      if (entry.port > 0) {
-        workspaces[path] = { port: entry.port };
-      }
-    }
-
-    await this.writePortsFileContent({ workspaces });
-  }
-
-  private async writePortsFileContent(content: PortsFile): Promise<void> {
-    const portsFilePath = this.getPortsFilePath();
-    const dir = path.dirname(portsFilePath);
-    const tempFilePath = `${portsFilePath}.tmp`;
-
-    // Ensure directory exists
-    await this.fs.mkdir(dir);
-
-    // Atomic write: write to temp file then rename
-    await this.fs.writeFile(tempFilePath, JSON.stringify(content, null, 2));
-    await this.fs.rename(tempFilePath, portsFilePath);
   }
 }

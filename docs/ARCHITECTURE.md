@@ -1074,7 +1074,7 @@ The OpenCode integration provides real-time agent status monitoring for AI agent
 │                        MAIN PROCESS                              │
 │                                                                  │
 │  OpenCodeServerManager ──► spawns opencode serve per workspace  │
-│         │                      writes to ports.json              │
+│         │                      port stored in memory              │
 │         │ onServerStarted(path, port)                            │
 │         ▼                                                        │
 │  AgentStatusManager ◄── OpenCodeClient (SSE events)             │
@@ -1101,11 +1101,11 @@ The OpenCode integration provides real-time agent status monitoring for AI agent
 
 ### Services (src/services/opencode/)
 
-| Service                 | Responsibility                                                  |
-| ----------------------- | --------------------------------------------------------------- |
-| `OpenCodeServerManager` | Spawns/manages one `opencode serve` per workspace, writes ports |
-| `OpenCodeClient`        | Connects to OpenCode HTTP/SSE API, handles reconnection         |
-| `AgentStatusManager`    | Aggregates status across workspaces, emits status changes       |
+| Service                 | Responsibility                                                 |
+| ----------------------- | -------------------------------------------------------------- |
+| `OpenCodeServerManager` | Spawns/manages one `opencode serve` per workspace, stores port |
+| `OpenCodeClient`        | Connects to OpenCode HTTP/SSE API, handles reconnection        |
+| `AgentStatusManager`    | Aggregates status across workspaces, emits status changes      |
 
 ### Managed Server Flow
 
@@ -1113,23 +1113,12 @@ The OpenCode integration provides real-time agent status monitoring for AI agent
 2. **Port Allocation**: `PortManager.findFreePort()` allocates a port
 3. **Server Spawn**: `opencode serve --port N --dir path` spawns in background
 4. **Health Check**: HTTP probe to `/app` confirms server is ready
-5. **Ports File Update**: Entry written to `<app-data>/opencode/ports.json`
+5. **Port Storage**: Port stored in memory (accessed via `getPort()` or Plugin API)
 6. **Callback**: `onServerStarted(path, port)` wired to `agentStatusManager.initWorkspace()`
 
-### Ports File Format
+### Port Discovery for CLI
 
-The `<app-data>/opencode/ports.json` file maps workspace paths to ports:
-
-```json
-{
-  "workspaces": {
-    "/home/user/project/.worktrees/feature-a": { "port": 14001 },
-    "/home/user/project/.worktrees/feature-b": { "port": 14002 }
-  }
-}
-```
-
-The wrapper script (`<app-data>/bin/opencode`) reads this file to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT` when in a managed workspace.
+The sidekick extension calls `api.workspace.getOpencodePort()` on connect and sets the `CODEHYDRA_OPENCODE_PORT` environment variable for all new terminals. The wrapper script (`<app-data>/bin/opencode`) reads this env var to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT`.
 
 ### MCP Integration
 

@@ -10,14 +10,12 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./opencode-server-manager";
 import { ExecaProcessRunner } from "../platform/process";
 import { DefaultNetworkLayer } from "../platform/network";
-import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { DefaultPathProvider } from "../platform/path-provider";
 import { NodePlatformInfo } from "../../main/platform-info";
 import { createMockBuildInfo } from "../platform/build-info.test-utils";
 import { createSilentLogger } from "../logging";
-import { generateOpencodeScript } from "../vscode-setup/bin-scripts";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile, readFile, chmod } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CI_TIMEOUT_MS } from "../platform/network.test-utils";
@@ -44,7 +42,8 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     vscodeDir: string;
     vscodeExtensionsDir: string;
     vscodeUserDataDir: string;
-    vscodeSetupMarkerPath: string;
+    setupMarkerPath: string;
+    legacySetupMarkerPath: string;
     electronDataDir: string;
     vscodeAssetsDir: string;
     appIconPath: string;
@@ -56,7 +55,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     getProjectWorkspacesDir: (projectPath: string) => string;
   };
   let networkLayer: DefaultNetworkLayer;
-  let fsLayer: DefaultFileSystemLayer;
   let processRunner: ExecaProcessRunner;
   let skipTests = false;
 
@@ -78,7 +76,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     // Use real path provider to get the actual opencode binary path
     const realPathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-    // Create a custom path provider that uses test directory for ports.json
+    // Create a custom path provider that uses test directory for data
     // but real opencode binary path
     pathProvider = {
       dataRootDir: testDir,
@@ -86,7 +84,8 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       vscodeDir: realPathProvider.vscodeDir,
       vscodeExtensionsDir: realPathProvider.vscodeExtensionsDir,
       vscodeUserDataDir: realPathProvider.vscodeUserDataDir,
-      vscodeSetupMarkerPath: realPathProvider.vscodeSetupMarkerPath,
+      setupMarkerPath: realPathProvider.setupMarkerPath,
+      legacySetupMarkerPath: realPathProvider.legacySetupMarkerPath,
       electronDataDir: realPathProvider.electronDataDir,
       vscodeAssetsDir: realPathProvider.vscodeAssetsDir,
       appIconPath: realPathProvider.appIconPath,
@@ -102,7 +101,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
 
     // Create dependencies using silent loggers (no Electron dependency)
     networkLayer = new DefaultNetworkLayer(createSilentLogger());
-    fsLayer = new DefaultFileSystemLayer(createSilentLogger());
     processRunner = new ExecaProcessRunner(createSilentLogger());
 
     // Check if opencode is available
@@ -135,7 +133,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     manager = new OpenCodeServerManager(
       processRunner,
       networkLayer,
-      fsLayer,
       networkLayer,
       pathProvider,
       createSilentLogger(),
@@ -151,11 +148,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     expect(manager.getPort(workspacePath)).toBe(port);
   });
 
-  it.skipIf(skipTests)("health check to /app succeeds after startup", async () => {
+  it.skipIf(skipTests)("health check to /path succeeds after startup", async () => {
     manager = new OpenCodeServerManager(
       processRunner,
       networkLayer,
-      fsLayer,
       networkLayer,
       pathProvider,
       createSilentLogger(),
@@ -166,7 +162,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     const port = await manager.startServer(workspacePath);
 
     // Verify health check endpoint works
-    const response = await networkLayer.fetch(`http://127.0.0.1:${port}/app`, { timeout: 5000 });
+    const response = await networkLayer.fetch(`http://127.0.0.1:${port}/path`, { timeout: 5000 });
     expect(response.ok).toBe(true);
   });
 
@@ -174,7 +170,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     manager = new OpenCodeServerManager(
       processRunner,
       networkLayer,
-      fsLayer,
       networkLayer,
       pathProvider,
       createSilentLogger(),
@@ -185,7 +180,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     const port = await manager.startServer(workspacePath);
 
     // Verify server is running
-    const runningResponse = await networkLayer.fetch(`http://127.0.0.1:${port}/app`, {
+    const runningResponse = await networkLayer.fetch(`http://127.0.0.1:${port}/path`, {
       timeout: 5000,
     });
     expect(runningResponse.ok).toBe(true);
@@ -198,7 +193,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
 
     // Verify server is stopped (connection should fail)
     try {
-      await networkLayer.fetch(`http://127.0.0.1:${port}/app`, { timeout: 1000 });
+      await networkLayer.fetch(`http://127.0.0.1:${port}/path`, { timeout: 1000 });
       // If we get here, the server is still running (unexpected)
       expect.fail("Server should have stopped but is still responding");
     } catch {
@@ -206,11 +201,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     }
   });
 
-  it.skipIf(skipTests)("ports.json persists across test runs", async () => {
+  it.skipIf(skipTests)("port is stored in memory after start", async () => {
     manager = new OpenCodeServerManager(
       processRunner,
       networkLayer,
-      fsLayer,
       networkLayer,
       pathProvider,
       createSilentLogger(),
@@ -220,113 +214,43 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     const workspacePath = join(testDir, "workspace");
     const port = await manager.startServer(workspacePath);
 
-    // Read ports.json
-    const portsFilePath = join(testDir, "opencode", "ports.json");
-    const content = await readFile(portsFilePath, "utf-8");
-    const parsed = JSON.parse(content);
+    // Port should be retrievable via getPort
+    expect(manager.getPort(workspacePath)).toBe(port);
 
-    expect(parsed.workspaces).toBeDefined();
-    expect(parsed.workspaces[workspacePath]).toBeDefined();
-    expect(parsed.workspaces[workspacePath].port).toBe(port);
+    // Stop server
+    await manager.stopServer(workspacePath);
+
+    // Port should no longer be available
+    expect(manager.getPort(workspacePath)).toBeUndefined();
   });
 
-  it.skipIf(skipTests)("cleanup removes entries for dead processes", async () => {
-    // Create a stale ports.json entry
-    const portsFilePath = join(testDir, "opencode", "ports.json");
-    await writeFile(
-      portsFilePath,
-      JSON.stringify({
-        workspaces: {
-          "/fake/stale/workspace": { port: 59999 }, // Port likely not in use
-        },
-      })
-    );
-
+  it.skipIf(skipTests)("no ports.json file is created after server start", async () => {
     manager = new OpenCodeServerManager(
       processRunner,
       networkLayer,
-      fsLayer,
       networkLayer,
       pathProvider,
-      createSilentLogger()
+      createSilentLogger(),
+      { healthCheckTimeoutMs: CI_TIMEOUT_MS }
     );
 
-    // Run cleanup
-    await manager.cleanupStaleEntries();
+    const workspacePath = join(testDir, "workspace");
+    const portsJsonPath = join(testDir, "opencode", "ports.json");
 
-    // Read ports.json
-    const content = await readFile(portsFilePath, "utf-8");
-    const parsed = JSON.parse(content);
+    // Verify no ports.json exists before starting
+    expect(existsSync(portsJsonPath)).toBe(false);
 
-    // Stale entry should be removed
-    expect(parsed.workspaces["/fake/stale/workspace"]).toBeUndefined();
+    // Start the server
+    await manager.startServer(workspacePath);
+
+    // Verify no ports.json file was created
+    // Port is stored in memory only, not written to disk
+    expect(existsSync(portsJsonPath)).toBe(false);
+
+    // Stop the server
+    await manager.stopServer(workspacePath);
+
+    // Still no ports.json after stopping
+    expect(existsSync(portsJsonPath)).toBe(false);
   });
-});
-
-describe("Wrapper Script Boundary Tests", () => {
-  let testDir: string;
-  let processRunner: ExecaProcessRunner;
-
-  beforeAll(async () => {
-    // Create test directory
-    testDir = join(tmpdir(), `wrapper-script-test-${Date.now()}`);
-    await mkdir(testDir, { recursive: true });
-    await mkdir(join(testDir, "bin"), { recursive: true });
-    await mkdir(join(testDir, "opencode"), { recursive: true });
-
-    processRunner = new ExecaProcessRunner(createSilentLogger());
-  });
-
-  afterAll(async () => {
-    // Clean up test directory
-    try {
-      await rm(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
-  });
-
-  // Skip on Windows - different script format
-  it.skipIf(process.platform === "win32")(
-    "wrapper script errors when not in git repository",
-    async () => {
-      // Use a specific version for the test
-      const TEST_VERSION = "1.0.163";
-
-      // Generate the opencode wrapper scripts with new signature
-      // Uses real Node.js (process.execPath) for testing
-      const binDir = join(testDir, "bin");
-      const scripts = generateOpencodeScript(false, TEST_VERSION, process.execPath, binDir);
-
-      // Write all generated scripts
-      for (const script of scripts) {
-        const scriptPath = join(testDir, "bin", script.filename);
-        await writeFile(scriptPath, script.content, "utf-8");
-
-        // Make it executable if needed
-        if (script.needsExecutable) {
-          await chmod(scriptPath, 0o755);
-        }
-      }
-
-      // Find the shell wrapper script (not the .cjs)
-      const wrapperScript = scripts.find((s) => !s.filename.endsWith(".cjs"));
-      if (!wrapperScript) {
-        throw new Error("Shell wrapper script not found in generated scripts");
-      }
-      const wrapperPath = join(testDir, "bin", wrapperScript.filename);
-
-      // Execute the wrapper script from a non-git directory
-      // With new behavior (no standalone mode), this should error
-      const proc = processRunner.run(wrapperPath, [], {
-        cwd: testDir, // Not a git repo, so will trigger error
-      });
-
-      const result = await proc.wait(5000);
-
-      // Script should fail with exit code 1 and error message
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("Error: Not in a git repository");
-    }
-  );
 });

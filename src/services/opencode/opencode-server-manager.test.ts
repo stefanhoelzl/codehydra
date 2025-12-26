@@ -3,7 +3,7 @@
  * Tests for OpenCodeServerManager.
  *
  * Tests the managed OpenCode server lifecycle:
- * - startServer: allocates port, spawns process, health check, ports.json
+ * - startServer: allocates port, spawns process, health check, stores port in memory
  * - stopServer: graceful shutdown, cleanup
  * - stopAllForProject: bulk cleanup
  * - dispose: full cleanup on shutdown
@@ -15,7 +15,6 @@ import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/p
 import { createSilentLogger } from "../logging";
 import type { MockSpawnedProcess, MockProcessRunner } from "../platform/process.test-utils";
 import type { PortManager, HttpClient } from "../platform/network";
-import type { FileSystemLayer } from "../platform/filesystem";
 import type { PathProvider } from "../platform/path-provider";
 
 /**
@@ -46,34 +45,6 @@ function createTestHttpClient(options?: {
 }
 
 /**
- * Create a mock FileSystemLayer with vitest spies.
- */
-function createTestFileSystemLayer(options?: {
-  readFile?: { content?: string; error?: Error };
-}): FileSystemLayer & {
-  readFile: ReturnType<typeof vi.fn>;
-  writeFile: ReturnType<typeof vi.fn>;
-  mkdir: ReturnType<typeof vi.fn>;
-  rename: ReturnType<typeof vi.fn>;
-} {
-  return {
-    readFile: options?.readFile?.error
-      ? vi.fn().mockRejectedValue(options.readFile.error)
-      : vi.fn().mockResolvedValue(options?.readFile?.content ?? "{}"),
-    writeFile: vi.fn().mockResolvedValue(undefined),
-    mkdir: vi.fn().mockResolvedValue(undefined),
-    readdir: vi.fn().mockResolvedValue([]),
-    unlink: vi.fn().mockResolvedValue(undefined),
-    rm: vi.fn().mockResolvedValue(undefined),
-    copyTree: vi.fn().mockResolvedValue(undefined),
-    makeExecutable: vi.fn().mockResolvedValue(undefined),
-    writeFileBuffer: vi.fn().mockResolvedValue(undefined),
-    symlink: vi.fn().mockResolvedValue(undefined),
-    rename: vi.fn().mockResolvedValue(undefined),
-  };
-}
-
-/**
  * Create a mock PathProvider for testing.
  */
 function createTestPathProvider(): PathProvider {
@@ -83,7 +54,8 @@ function createTestPathProvider(): PathProvider {
     vscodeDir: "/test/app-data/vscode",
     vscodeExtensionsDir: "/test/app-data/vscode/extensions",
     vscodeUserDataDir: "/test/app-data/vscode/user-data",
-    vscodeSetupMarkerPath: "/test/app-data/vscode/.setup-completed",
+    setupMarkerPath: "/test/app-data/.setup-completed",
+    legacySetupMarkerPath: "/test/app-data/vscode/.setup-completed",
     electronDataDir: "/test/app-data/electron",
     vscodeAssetsDir: "/mock/assets",
     appIconPath: "/test/resources/icon.png",
@@ -103,7 +75,6 @@ describe("OpenCodeServerManager", () => {
   // Common dependencies
   let mockProcessRunner: MockProcessRunner;
   let mockPortManager: ReturnType<typeof createTestPortManager>;
-  let mockFileSystemLayer: ReturnType<typeof createTestFileSystemLayer>;
   let mockHttpClient: ReturnType<typeof createTestHttpClient>;
   let mockPathProvider: PathProvider;
   let manager: OpenCodeServerManager;
@@ -121,14 +92,12 @@ describe("OpenCodeServerManager", () => {
 
     mockProcessRunner = createMockProcessRunner(mockProcess);
     mockPortManager = createTestPortManager(14001);
-    mockFileSystemLayer = createTestFileSystemLayer();
     mockHttpClient = createTestHttpClient();
     mockPathProvider = createTestPathProvider();
 
     manager = new OpenCodeServerManager(
       mockProcessRunner,
       mockPortManager,
-      mockFileSystemLayer,
       mockHttpClient,
       mockPathProvider,
       createSilentLogger()
@@ -152,13 +121,10 @@ describe("OpenCodeServerManager", () => {
       );
     });
 
-    it("writes to ports.json after health check passes", async () => {
+    it("stores port in memory after health check passes", async () => {
       await manager.startServer("/workspace/feature-a");
 
-      expect(mockFileSystemLayer.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("ports.json"),
-        expect.stringContaining("/workspace/feature-a")
-      );
+      expect(manager.getPort("/workspace/feature-a")).toBe(14001);
     });
 
     it("fires onServerStarted callback with path and port", async () => {
@@ -187,7 +153,6 @@ describe("OpenCodeServerManager", () => {
       manager = new OpenCodeServerManager(
         mockProcessRunner,
         mockPortManager,
-        mockFileSystemLayer,
         mockHttpClient,
         mockPathProvider,
         createSilentLogger()
@@ -205,7 +170,6 @@ describe("OpenCodeServerManager", () => {
       manager = new OpenCodeServerManager(
         mockProcessRunner,
         mockPortManager,
-        mockFileSystemLayer,
         mockHttpClient,
         mockPathProvider,
         createSilentLogger()
@@ -217,8 +181,6 @@ describe("OpenCodeServerManager", () => {
         // Expected to throw
       }
 
-      // Should not have written to ports.json
-      expect(mockFileSystemLayer.writeFile).not.toHaveBeenCalled();
       // getPort should return undefined
       expect(manager.getPort("/workspace/feature-a")).toBeUndefined();
     });
@@ -229,7 +191,6 @@ describe("OpenCodeServerManager", () => {
       manager = new OpenCodeServerManager(
         mockProcessRunner,
         mockPortManager,
-        mockFileSystemLayer,
         mockHttpClient,
         mockPathProvider,
         createSilentLogger(),
@@ -261,17 +222,12 @@ describe("OpenCodeServerManager", () => {
       expect(mockProcess.kill).toHaveBeenCalled();
     });
 
-    it("removes entry from ports.json", async () => {
+    it("removes port from memory", async () => {
       await manager.startServer("/workspace/feature-a");
-      mockFileSystemLayer.writeFile.mockClear();
 
       await manager.stopServer("/workspace/feature-a");
 
-      // Should write ports.json without this workspace
-      expect(mockFileSystemLayer.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("ports.json"),
-        expect.not.stringContaining("/workspace/feature-a")
-      );
+      expect(manager.getPort("/workspace/feature-a")).toBeUndefined();
     });
 
     it("fires onServerStopped callback", async () => {
@@ -320,7 +276,6 @@ describe("OpenCodeServerManager", () => {
       manager = new OpenCodeServerManager(
         mockProcessRunner,
         mockPortManager,
-        mockFileSystemLayer,
         mockHttpClient,
         mockPathProvider,
         createSilentLogger()
@@ -416,91 +371,6 @@ describe("OpenCodeServerManager", () => {
 
       for (const proc of processes) {
         expect(proc.kill).toHaveBeenCalled();
-      }
-    });
-  });
-
-  describe("ports.json file handling", () => {
-    it("handles corrupted ports.json gracefully", async () => {
-      mockFileSystemLayer.readFile.mockResolvedValue("not valid json");
-
-      // Should not throw, should create fresh file
-      await manager.startServer("/workspace/feature-a");
-      expect(mockFileSystemLayer.writeFile).toHaveBeenCalled();
-    });
-
-    it("handles missing ports.json gracefully", async () => {
-      mockFileSystemLayer.readFile.mockRejectedValue(new Error("ENOENT"));
-
-      // Should not throw, should create file
-      await manager.startServer("/workspace/feature-a");
-      expect(mockFileSystemLayer.writeFile).toHaveBeenCalled();
-    });
-
-    it("uses atomic write to prevent corruption", async () => {
-      await manager.startServer("/workspace/feature-a");
-
-      // Should write to temp file first
-      expect(mockFileSystemLayer.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("ports.json.tmp"),
-        expect.any(String)
-      );
-      // Then rename temp file to final location
-      expect(mockFileSystemLayer.rename).toHaveBeenCalledWith(
-        expect.stringContaining("ports.json.tmp"),
-        expect.stringContaining("ports.json")
-      );
-    });
-  });
-
-  describe("cleanupStaleEntries", () => {
-    it("removes entries for dead processes", async () => {
-      // Pre-populate ports.json with stale entry
-      mockFileSystemLayer.readFile.mockResolvedValue(
-        JSON.stringify({
-          workspaces: {
-            "/stale/workspace": { port: 19999 },
-          },
-        })
-      );
-
-      // Health check fails (process is dead)
-      mockHttpClient.fetch.mockRejectedValue(new Error("Connection refused"));
-
-      await manager.cleanupStaleEntries();
-
-      // Should have written ports.json without the stale entry
-      expect(mockFileSystemLayer.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("ports.json"),
-        expect.not.stringContaining("/stale/workspace")
-      );
-    });
-
-    it("preserves entries for running processes", async () => {
-      // Pre-populate ports.json with valid entry
-      mockFileSystemLayer.readFile.mockResolvedValue(
-        JSON.stringify({
-          workspaces: {
-            "/running/workspace": { port: 14001 },
-          },
-        })
-      );
-
-      // Health check succeeds (process is running)
-      mockHttpClient.fetch.mockResolvedValue(
-        new Response(JSON.stringify({ status: "ok" }), { status: 200 })
-      );
-
-      await manager.cleanupStaleEntries();
-
-      // Should not have removed the entry (either no write, or write with entry preserved)
-      const writeCalls = mockFileSystemLayer.writeFile.mock.calls;
-      if (writeCalls.length > 0) {
-        const lastCall = writeCalls[writeCalls.length - 1];
-        if (lastCall) {
-          const content = lastCall[1];
-          expect(content).toContain("/running/workspace");
-        }
       }
     });
   });

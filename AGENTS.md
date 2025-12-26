@@ -138,7 +138,6 @@ All external system access MUST go through abstraction interfaces. Direct librar
 | VS Code Setup   | First-run setup that installs extensions and config; uses preflight checks on every startup to detect missing/outdated components; marker at `<app-data>/.setup-completed`. See [VS Code Assets](#vs-code-assets) for details. |
 | .keepfiles      | Config file in project root listing files to copy to new workspaces. Uses gitignore syntax with **inverted semantics** - listed patterns are COPIED (not ignored). Supports negation with `!` prefix.                          |
 | App Icon Badge  | Shows visual status indicator on app icon. Red circle: all workspaces working. Half green/half red: mixed (some ready, some working). No badge: all ready. Platform: macOS dock, Windows taskbar, Linux Unity.                 |
-| MCP Server      | Model Context Protocol server exposing workspace API to AI agents. Auto-configured via `OPENCODE_CONFIG` env var when spawning OpenCode. Enables agents to read/write workspace metadata and delete workspaces.                |
 
 ## VS Code Assets
 
@@ -152,29 +151,6 @@ VS Code setup assets (settings, keybindings, extensions) are stored as dedicated
 | `src/services/vscode-setup/assets/keybindings.json`    | Custom keybindings (Alt+T for panel toggle)                |
 | `src/services/vscode-setup/assets/extensions.json`     | Extension manifest (marketplace + bundled vsix)            |
 | `src/services/vscode-setup/assets/codehydra-sidekick/` | Custom extension source (packaged to .vsix at build)       |
-
-### extensions.json Format
-
-The extensions.json file uses a structured format for preflight version checking:
-
-```json
-{
-  "marketplace": ["sst-dev.opencode"],
-  "bundled": [
-    {
-      "id": "codehydra.codehydra",
-      "version": "0.0.1",
-      "vsix": "codehydra.vscode-0.0.1.vsix"
-    }
-  ]
-}
-```
-
-**Important**: When updating bundled extensions:
-
-1. Update the `version` field to match the new extension version
-2. Update the `vsix` field to match the new vsix filename
-3. The preflight phase will detect version mismatches and only reinstall outdated extensions
 
 ### Build Process
 
@@ -233,24 +209,28 @@ When these are updated, `npm install` will download new versions. Production ins
 
 During VS Code setup, CLI wrapper scripts are generated in `<app-data>/bin/`:
 
-| Script                      | Purpose                                                                        |
-| --------------------------- | ------------------------------------------------------------------------------ |
-| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli)                                         |
-| `opencode` / `opencode.cmd` | Node.js wrapper that parses ports.json and attaches to managed OpenCode server |
+| Script                      | Purpose                                                             |
+| --------------------------- | ------------------------------------------------------------------- |
+| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli)                              |
+| `opencode` / `opencode.cmd` | Wrapper that reads `CODEHYDRA_OPENCODE_PORT` and attaches to server |
 
 **opencode wrapper architecture:**
 
 ```
 opencode (shell) → opencode.cjs (Node.js) → opencode binary
-                        │
-                        ├─ Detects git root via `git rev-parse`
-                        ├─ Reads ports.json to find workspace port
+                        ├─ Reads $CODEHYDRA_OPENCODE_PORT (set by sidekick extension)
                         └─ Runs `opencode attach http://127.0.0.1:<port>`
 ```
 
 - Uses bundled Node.js from code-server (`<app-data>/code-server/<version>/lib/node`)
-- **No standalone mode**: Only works in managed CodeHydra workspaces (returns error if workspace not found in ports.json)
+- **Only works in managed terminals**: The sidekick extension sets `CODEHYDRA_OPENCODE_PORT` for all new terminals
 - Thin shell wrappers (`opencode` / `opencode.cmd`) delegate all logic to the cross-platform `opencode.cjs` script
+
+**Session Restoration**: The wrapper automatically queries the OpenCode server for existing
+sessions, filters by the current workspace directory, and restores the most recently updated
+session. If no session is found or the request fails, a new session is started.
+
+Debug mode: Set `OPENCODE_DEBUG=1` to see session resolution details.
 
 These scripts are available in the integrated terminal because:
 
@@ -423,7 +403,6 @@ Log entries follow this format:
 | `[window]`          | WindowManager           |
 | `[view]`            | ViewManager             |
 | `[badge]`           | BadgeManager            |
-| `[mcp]`             | MCP server              |
 | `[app]`             | Application lifecycle   |
 | `[ui]`              | Renderer UI components  |
 

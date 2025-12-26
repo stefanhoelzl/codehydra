@@ -99,11 +99,10 @@ exit /b %ERRORLEVEL%
  * This script is cross-platform and will be invoked by thin shell wrappers.
  *
  * The script:
- * 1. Finds git root using execSync
- * 2. Reads and parses ports.json
- * 3. Looks up the port for the current workspace
- * 4. Spawns opencode attach with the server URL
- * 5. Propagates the exit code
+ * 1. Reads CODEHYDRA_OPENCODE_PORT environment variable
+ * 2. Validates the port number
+ * 3. Spawns opencode attach with the server URL
+ * 4. Propagates the exit code
  *
  * Uses CommonJS (.cjs) for explicit format and compatibility.
  *
@@ -113,15 +112,13 @@ exit /b %ERRORLEVEL%
 export function generateOpencodeNodeScript(opencodeVersion: string): string {
   // Note: We escape $ to prevent template literal interpolation in the generated script
   return `// opencode.cjs - Generated CommonJS script
-const { execSync, spawnSync } = require("child_process");
-const { readFileSync, existsSync } = require("fs");
+const { spawnSync } = require("child_process");
 const { join } = require("path");
 
 const OPENCODE_VERSION = "${opencodeVersion}";
 const isWindows = process.platform === "win32";
 
-// Paths relative to bin/ directory using path.join for cross-platform
-const PORTS_FILE = join(__dirname, "..", "opencode", "ports.json");
+// Path to opencode binary relative to bin/ directory
 const OPENCODE_BIN = join(
   __dirname,
   "..",
@@ -130,46 +127,26 @@ const OPENCODE_BIN = join(
   isWindows ? "opencode.exe" : "opencode"
 );
 
-// 1. Find git root
-let gitRoot;
-try {
-  gitRoot = execSync("git rev-parse --show-toplevel", {
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"], // Capture stderr
-  }).trim();
-} catch {
-  console.error("Error: Not in a git repository");
+// 1. Read env var
+const portStr = process.env.CODEHYDRA_OPENCODE_PORT;
+if (!portStr) {
+  console.error("Error: CODEHYDRA_OPENCODE_PORT not set.");
+  console.error("Make sure you're in a CodeHydra workspace terminal.");
   process.exit(1);
 }
 
-// 2. Read ports.json
-if (!existsSync(PORTS_FILE)) {
-  console.error("Error: No opencode servers are running");
+// 2. Validate port number
+const port = parseInt(portStr, 10);
+if (isNaN(port) || port <= 0 || port > 65535) {
+  console.error("Error: Invalid CODEHYDRA_OPENCODE_PORT: " + portStr);
   process.exit(1);
 }
 
-let ports;
-try {
-  const content = readFileSync(PORTS_FILE, "utf8");
-  ports = JSON.parse(content);
-} catch {
-  console.error("Error: Failed to read ports.json");
-  process.exit(1);
-}
-
-// 3. Look up port for workspace
-const workspaceInfo = ports.workspaces?.[gitRoot];
-if (!workspaceInfo?.port) {
-  console.error("Error: No opencode server found for workspace: " + gitRoot);
-  console.error("Make sure the workspace is open in CodeHydra.");
-  process.exit(1);
-}
-
-// 4. Spawn opencode attach
-const url = "http://127.0.0.1:" + workspaceInfo.port;
+// 3. Spawn opencode attach
+const url = "http://127.0.0.1:" + port;
 const result = spawnSync(OPENCODE_BIN, ["attach", url], { stdio: "inherit" });
 
-// 5. Exit with child's exit code
+// 4. Exit with child's exit code
 if (result.error) {
   console.error("Error: Failed to start opencode: " + result.error.message);
   process.exit(1);

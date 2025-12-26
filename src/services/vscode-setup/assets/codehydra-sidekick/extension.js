@@ -404,6 +404,24 @@ function connectToPluginServer(port, workspacePath) {
     for (const { resolve } of pending) {
       resolve();
     }
+
+    // Set opencode port env var for terminals
+    codehydraApi.workspace
+      .getOpencodePort()
+      .then((port) => {
+        if (port !== null && extensionContext) {
+          extensionContext.environmentVariableCollection.replace(
+            "CODEHYDRA_OPENCODE_PORT",
+            String(port)
+          );
+          log("Set CODEHYDRA_OPENCODE_PORT=" + port);
+        }
+      })
+      .catch((err) => {
+        logError(
+          "Failed to get opencode port: " + (err instanceof Error ? err.message : String(err))
+        );
+      });
   });
 
   socket.on("disconnect", (reason) => {
@@ -492,6 +510,11 @@ function deactivate() {
     socket = null;
   }
   isConnected = false;
+
+  // Clear environment variable collection (removes CODEHYDRA_OPENCODE_PORT from terminals)
+  if (extensionContext) {
+    extensionContext.environmentVariableCollection.clear();
+  }
 
   // Dispose output channel
   if (debugOutputChannel) {
