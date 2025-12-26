@@ -482,10 +482,10 @@ codeServerManager = new CodeServerManager(config, processRunner, networkLayer, n
 
 `NetworkLayer` provides unified interfaces for localhost network operations, split by Interface Segregation Principle:
 
-| Interface     | Methods                                 | Used By                              |
-| ------------- | --------------------------------------- | ------------------------------------ |
-| `HttpClient`  | `fetch(url, options)`                   | HttpInstanceProbe, CodeServerManager |
-| `PortManager` | `findFreePort()`, `getListeningPorts()` | CodeServerManager, DiscoveryService  |
+| Interface     | Methods               | Used By                                                    |
+| ------------- | --------------------- | ---------------------------------------------------------- |
+| `HttpClient`  | `fetch(url, options)` | HttpInstanceProbe, CodeServerManager                       |
+| `PortManager` | `findFreePort()`      | CodeServerManager, OpenCodeServerManager, McpServerManager |
 
 ```typescript
 // DefaultNetworkLayer implements both interfaces

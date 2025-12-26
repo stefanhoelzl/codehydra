@@ -13,12 +13,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "http";
-import {
-  type HttpClient,
-  type HttpRequestOptions,
-  type PortManager,
-  type ListeningPort,
-} from "./network";
+import { type HttpClient, type HttpRequestOptions, type PortManager } from "./network";
 
 // ============================================================================
 // Mock Option Types
@@ -42,8 +37,6 @@ export interface MockHttpClientOptions {
 export interface MockPortManagerOptions {
   /** Options for findFreePort */
   readonly findFreePort?: { port?: number; error?: Error };
-  /** Options for getListeningPorts */
-  readonly getListeningPorts?: { ports?: ListeningPort[]; error?: Error };
 }
 
 // ============================================================================
@@ -97,17 +90,12 @@ export function createMockHttpClient(options?: MockHttpClientOptions): HttpClien
 /**
  * Create a mock PortManager for testing.
  *
- * @example Basic usage - returns port 8080 and empty ports list
+ * @example Basic usage - returns port 8080
  * const portManager = createMockPortManager();
  *
  * @example Return custom port
  * const portManager = createMockPortManager({
  *   findFreePort: { port: 3000 }
- * });
- *
- * @example Return listening ports
- * const portManager = createMockPortManager({
- *   getListeningPorts: { ports: [{ port: 8080, pid: 1234 }] }
  * });
  *
  * @example Throw errors
@@ -122,12 +110,6 @@ export function createMockPortManager(options?: MockPortManagerOptions): PortMan
         throw options.findFreePort.error;
       }
       return options?.findFreePort?.port ?? 8080;
-    },
-    getListeningPorts: async (): Promise<readonly ListeningPort[]> => {
-      if (options?.getListeningPorts?.error) {
-        throw options.getListeningPorts.error;
-      }
-      return options?.getListeningPorts?.ports ?? [];
     },
   };
 }

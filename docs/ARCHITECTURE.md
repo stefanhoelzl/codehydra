@@ -394,10 +394,10 @@ NetworkLayer provides unified interfaces for all localhost network operations, d
 
 **Interface Responsibilities:**
 
-| Interface     | Methods                                 | Purpose                         | Used By                                  |
-| ------------- | --------------------------------------- | ------------------------------- | ---------------------------------------- |
-| `HttpClient`  | `fetch(url, options)`                   | HTTP GET with timeout support   | CodeServerManager, OpenCodeServerManager |
-| `PortManager` | `findFreePort()`, `getListeningPorts()` | Port discovery and availability | CodeServerManager, OpenCodeServerManager |
+| Interface     | Methods               | Purpose                       | Used By                                                    |
+| ------------- | --------------------- | ----------------------------- | ---------------------------------------------------------- |
+| `HttpClient`  | `fetch(url, options)` | HTTP GET with timeout support | CodeServerManager, OpenCodeServerManager                   |
+| `PortManager` | `findFreePort()`      | Find available ports          | CodeServerManager, OpenCodeServerManager, McpServerManager |
 
 **Dependency Injection:**
 
@@ -421,10 +421,10 @@ const codeServerManager = new CodeServerManager(config, runner, networkLayer, ne
 
 The module provides factory functions for creating mock implementations:
 
-| Factory                   | Returns       | Purpose                             |
-| ------------------------- | ------------- | ----------------------------------- |
-| `createMockHttpClient()`  | `HttpClient`  | Mock HTTP responses or errors       |
-| `createMockPortManager()` | `PortManager` | Mock port availability and scanning |
+| Factory                   | Returns       | Purpose                       |
+| ------------------------- | ------------- | ----------------------------- |
+| `createMockHttpClient()`  | `HttpClient`  | Mock HTTP responses or errors |
+| `createMockPortManager()` | `PortManager` | Mock port availability        |
 
 ```typescript
 import { createMockHttpClient, createMockPortManager } from "../platform/network.test-utils";
@@ -435,7 +435,6 @@ const mockHttpClient = createMockHttpClient({
 
 const mockPortManager = createMockPortManager({
   findFreePort: { port: 9999 },
-  getListeningPorts: { ports: [{ port: 8080, pid: 1234 }] },
 });
 
 const service = new SomeService(mockHttpClient, mockPortManager);

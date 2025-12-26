@@ -8,8 +8,8 @@
  * @vitest-environment node
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import { createServer, type Server } from "net";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { createServer } from "net";
 import { DefaultNetworkLayer, type HttpClient, type PortManager } from "./network";
 import { createTestServer, type TestServer } from "./network.test-utils";
 import { createSilentLogger } from "../logging";
@@ -180,95 +180,6 @@ describe("DefaultNetworkLayer boundary tests", () => {
         });
       }
     }, 30000); // 30s timeout for stress test
-  });
-
-  describe("PortManager.getListeningPorts()", () => {
-    let networkLayer: PortManager;
-    let testServers: Server[] = [];
-
-    beforeEach(() => {
-      networkLayer = new DefaultNetworkLayer(createSilentLogger());
-    });
-
-    afterEach(async () => {
-      // Close all servers with timeout to prevent hanging
-      await Promise.all(
-        testServers.map(
-          (server) =>
-            new Promise<void>((resolve) => {
-              const timeout = setTimeout(() => resolve(), 1000);
-              server.close(() => {
-                clearTimeout(timeout);
-                resolve();
-              });
-            })
-        )
-      );
-      testServers = [];
-    });
-
-    it("getListeningPorts returns array of ListeningPort", async () => {
-      // Create a server to ensure at least one listening port
-      const server = createServer();
-      testServers.push(server);
-      await new Promise<void>((resolve) => server.listen(0, () => resolve()));
-
-      const ports = await networkLayer.getListeningPorts();
-
-      expect(Array.isArray(ports)).toBe(true);
-
-      // There should be at least one port (our test server)
-      expect(ports.length).toBeGreaterThan(0);
-
-      // Verify structure
-      for (const portInfo of ports) {
-        expect(typeof portInfo.port).toBe("number");
-        expect(typeof portInfo.pid).toBe("number");
-        expect(portInfo.pid).toBeGreaterThan(0);
-      }
-    });
-
-    it("getListeningPorts includes our test server port", async () => {
-      // Create a server on a specific port
-      const server = createServer();
-      testServers.push(server);
-      await new Promise<void>((resolve) => server.listen(0, () => resolve()));
-
-      const serverAddress = server.address();
-      const serverPort =
-        typeof serverAddress === "object" && serverAddress ? serverAddress.port : 0;
-
-      const ports = await networkLayer.getListeningPorts();
-      const foundPort = ports.find((p) => p.port === serverPort);
-
-      expect(foundPort).toBeDefined();
-      expect(foundPort?.pid).toBe(process.pid);
-    });
-
-    it("getListeningPorts detects multiple servers", async () => {
-      const serverPorts: number[] = [];
-
-      // Create 3 servers
-      for (let i = 0; i < 3; i++) {
-        const server = createServer();
-        await new Promise<void>((resolve) => server.listen(0, () => resolve()));
-
-        const addr = server.address();
-        if (addr && typeof addr === "object") {
-          serverPorts.push(addr.port);
-        }
-        testServers.push(server);
-      }
-
-      const ports = await networkLayer.getListeningPorts();
-
-      // All our server ports should be detected
-      for (const serverPort of serverPorts) {
-        const found = ports.find((p) => p.port === serverPort);
-        expect(found).toBeDefined();
-        expect(found?.pid).toBe(process.pid);
-      }
-    });
   });
 
   // ============================================================================

@@ -84,7 +84,6 @@ export type {
   HttpClient,
   HttpRequestOptions,
   PortManager,
-  ListeningPort,
   NetworkLayerConfig,
 } from "./platform/network";
 

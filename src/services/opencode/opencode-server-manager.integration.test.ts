@@ -29,7 +29,6 @@ function createTestPortManager(
   let currentPort = startPort;
   return {
     findFreePort: vi.fn().mockImplementation(async () => currentPort++),
-    getListeningPorts: vi.fn().mockResolvedValue([]),
   };
 }
 

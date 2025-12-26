@@ -19,7 +19,6 @@ import { createMockPathProvider } from "../platform/path-provider.test-utils";
 function createMockPortManager(overrides?: Partial<PortManager>): PortManager {
   return {
     findFreePort: vi.fn().mockResolvedValue(12345),
-    getListeningPorts: vi.fn().mockResolvedValue([]),
     ...overrides,
   };
 }

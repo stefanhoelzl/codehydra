@@ -59,14 +59,6 @@ export interface HttpClient {
 // ============================================================================
 
 /**
- * A port that is listening for connections.
- */
-export interface ListeningPort {
-  readonly port: number;
-  readonly pid: number;
-}
-
-/**
  * Port management operations.
  */
 export interface PortManager {
@@ -80,16 +72,6 @@ export interface PortManager {
    * @returns Available port number (1024-65535)
    */
   findFreePort(): Promise<number>;
-
-  /**
-   * Get all TCP ports currently listening on localhost.
-   *
-   * Note: This operation may block briefly (100-500ms) while querying
-   * system network state via systeminformation library.
-   *
-   * @returns Array of listening ports with associated PIDs
-   */
-  getListeningPorts(): Promise<readonly ListeningPort[]>;
 }
 
 // ============================================================================
@@ -186,38 +168,5 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
       });
       server.on("error", reject);
     });
-  }
-
-  async getListeningPorts(): Promise<readonly ListeningPort[]> {
-    try {
-      const si = await import("systeminformation");
-      const connections = await si.default.networkConnections();
-
-      if (!Array.isArray(connections)) {
-        this.logger.silly("Scanned listening ports", { count: 0 });
-        return [];
-      }
-
-      const ports = connections
-        .filter(
-          (conn): conn is typeof conn & { localPort: string; pid: number } =>
-            conn !== null &&
-            conn.state === "LISTEN" &&
-            typeof conn.localPort === "string" &&
-            typeof conn.pid === "number" &&
-            conn.pid > 0
-        )
-        .map((conn) => ({
-          port: parseInt(conn.localPort, 10),
-          pid: conn.pid,
-        }));
-
-      this.logger.silly("Scanned listening ports", { count: ports.length });
-      return ports;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error("Port scan failed", { error: errorMessage });
-      throw error;
-    }
   }
 }

@@ -25,7 +25,6 @@ function createTestPortManager(
 ): PortManager & { findFreePort: ReturnType<typeof vi.fn> } {
   return {
     findFreePort: vi.fn().mockResolvedValue(port),
-    getListeningPorts: vi.fn().mockResolvedValue([]),
   };
 }
 

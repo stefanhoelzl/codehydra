@@ -159,7 +159,6 @@ describe("CodeServerManager", () => {
       const findFreePortMock = vi.fn().mockResolvedValue(9999);
       mockPortManager = {
         findFreePort: findFreePortMock,
-        getListeningPorts: vi.fn().mockResolvedValue([]),
       };
       manager = new CodeServerManager(
         {
