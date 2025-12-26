@@ -32,7 +32,6 @@ export type LoggerName =
   | "worktree" // GitWorktreeProvider - worktree operations
   | "opencode" // OpenCodeClient - OpenCode SDK
   | "code-server" // CodeServerManager - code-server process
-  | "pidtree" // PidtreeProvider - process tree lookups
   | "keepfiles" // KeepFilesService - .keepfiles copying
   | "opencode-server" // OpenCodeServerManager - opencode server lifecycle
   | "api" // IPC handlers

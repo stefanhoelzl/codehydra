@@ -4,6 +4,8 @@ last_updated: 2025-12-17
 reviewers: [review-typescript, review-arch, review-testing, review-docs]
 ---
 
+> **Superseded by WINDOWS_TASKKILL_FIX.md**: The ProcessTreeProvider approach was removed because taskkill /t handles tree killing natively without needing to enumerate child PIDs. The simpler solution is to always use forceful termination on Windows.
+
 # WINDOWS_PROCESS_TREE
 
 ## Overview

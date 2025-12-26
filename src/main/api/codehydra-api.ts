@@ -309,6 +309,7 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
     // Build mutable operations array for tracking
     const operations: DeletionOperation[] = [
       { id: "kill-terminals", label: "Terminating processes", status: "pending" },
+      { id: "stop-server", label: "Stopping OpenCode server", status: "pending" },
       { id: "cleanup-vscode", label: "Closing VS Code view", status: "pending" },
       { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
     ];
@@ -374,10 +375,43 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
       emitProgress(false, false);
 
       // ======================================================================
-      // Operation 2: Cleanup VS Code (view destruction)
+      // Operation 2: Stop OpenCode server
+      // ======================================================================
+      updateOp("stop-server", "in-progress");
+      emitProgress(false, false);
+
+      try {
+        const serverManager = this.appState.getServerManager();
+        if (serverManager) {
+          const stopResult = await serverManager.stopServer(workspacePath);
+          if (stopResult.success) {
+            updateOp("stop-server", "done");
+          } else {
+            updateOp("stop-server", "error", stopResult.error ?? "Failed to stop server");
+          }
+        } else {
+          // No server manager, skip gracefully
+          updateOp("stop-server", "done");
+        }
+        emitProgress(
+          false,
+          operations.some((op) => op.status === "error")
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Server stop failed";
+        updateOp("stop-server", "error", message);
+        emitProgress(false, true);
+        // Continue to next operation - don't bail out
+      }
+
+      // ======================================================================
+      // Operation 3: Cleanup VS Code (view destruction)
       // ======================================================================
       updateOp("cleanup-vscode", "in-progress");
-      emitProgress(false, false);
+      emitProgress(
+        false,
+        operations.some((op) => op.status === "error")
+      );
 
       try {
         await this.viewManager.destroyWorkspaceView(workspacePath);
@@ -391,7 +425,7 @@ export class CodeHydraApiImpl implements ICodeHydraApi {
       }
 
       // ======================================================================
-      // Operation 3: Cleanup workspace (git worktree removal)
+      // Operation 4: Cleanup workspace (git worktree removal)
       // ======================================================================
       updateOp("cleanup-workspace", "in-progress");
       emitProgress(

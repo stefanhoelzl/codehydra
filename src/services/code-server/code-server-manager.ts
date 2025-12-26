@@ -6,6 +6,10 @@
 import { join, delimiter } from "node:path";
 import type { CodeServerConfig, InstanceState } from "./types";
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
+import {
+  PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+  PROCESS_KILL_FORCE_TIMEOUT_MS,
+} from "../platform/process";
 import type { HttpClient, PortManager } from "../platform/network";
 import { encodePathForUrl } from "../platform/paths";
 import { CodeServerError } from "../errors";
@@ -306,8 +310,15 @@ export class CodeServerManager {
     this.state = "stopping";
 
     try {
-      // Use graceful shutdown: SIGTERM (5s wait) → SIGKILL (5s wait)
-      const result = await proc.kill(5000, 5000);
+      // Use graceful shutdown with 1s timeouts
+      const result = await proc.kill(
+        PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+        PROCESS_KILL_FORCE_TIMEOUT_MS
+      );
+
+      if (!result.success) {
+        this.logger.warn("Failed to kill code-server", { pid: pid ?? 0 });
+      }
 
       this.logger.info("Stopped", {
         pid: pid ?? 0,

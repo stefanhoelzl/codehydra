@@ -65,7 +65,11 @@ export { DefaultPathProvider } from "./platform/path-provider";
 export { createMockPathProvider } from "./platform/path-provider.test-utils";
 
 // Process utilities
-export { ExecaProcessRunner } from "./platform/process";
+export {
+  ExecaProcessRunner,
+  PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+  PROCESS_KILL_FORCE_TIMEOUT_MS,
+} from "./platform/process";
 export type {
   ProcessRunner,
   ProcessResult,
@@ -73,10 +77,6 @@ export type {
   SpawnedProcess,
   KillResult,
 } from "./platform/process";
-
-// Process tree provider
-export { PidtreeProvider } from "./platform/process-tree";
-export type { ProcessTreeProvider } from "./platform/process-tree";
 
 // Network layer
 export { DefaultNetworkLayer } from "./platform/network";

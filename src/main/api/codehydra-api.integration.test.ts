@@ -52,6 +52,9 @@ function createMockAppState(overrides: Partial<AppState> = {}): AppState {
     getDiscoveryService: vi.fn(),
     setAgentStatusManager: vi.fn(),
     getAgentStatusManager: vi.fn(),
+    getServerManager: vi.fn().mockReturnValue({
+      stopServer: vi.fn().mockResolvedValue({ success: true }),
+    }),
     ...overrides,
   } as unknown as AppState;
 }
@@ -378,6 +381,170 @@ describe("CodeHydraApiImpl Integration", () => {
     });
   });
 
+  describe("Workspace deletion with stop-server operation", () => {
+    const projectPath = "/home/user/my-project";
+    const workspacePath = "/home/user/.worktrees/feature";
+
+    /**
+     * Helper to create a CodeHydraApiImpl with custom callbacks for deletion testing.
+     */
+    function createApiWithCallbacksAndServerManager(
+      appStateOverride: AppState,
+      viewManagerOverride: IViewManager,
+      emitDeletionProgress: DeletionProgressCallback,
+      killTerminalsCallback?: KillTerminalsCallback,
+      stopServerCallback?: (workspacePath: string) => Promise<{ success: boolean; error?: string }>
+    ): CodeHydraApiImpl {
+      // If stopServerCallback provided, add it to appState mock
+      if (stopServerCallback) {
+        const serverManager = {
+          stopServer: stopServerCallback,
+          getPort: vi.fn().mockReturnValue(null),
+        };
+        vi.mocked(appStateOverride.getServerManager).mockReturnValue(serverManager as never);
+      }
+
+      return new CodeHydraApiImpl(
+        appStateOverride,
+        viewManagerOverride,
+        createMockElectronDialog(),
+        createMockElectronApp(),
+        createMockVscodeSetup(),
+        undefined, // existingLifecycleApi
+        emitDeletionProgress,
+        killTerminalsCallback
+      );
+    }
+
+    it("deletion includes stop-server operation in progress events", async () => {
+      // Setup workspace in project
+      const workspaceObj: InternalWorkspace = {
+        name: "feature",
+        path: workspacePath,
+        branch: "feature",
+        metadata: { base: "main" },
+      };
+      const internalProject = createInternalProject(projectPath, [workspaceObj]);
+
+      // Track all progress events
+      const progressEvents: DeletionProgress[] = [];
+      const emitDeletionProgress = vi.fn((progress: DeletionProgress) => {
+        progressEvents.push(JSON.parse(JSON.stringify(progress)));
+      });
+
+      // Setup AppState mock
+      const localAppState = createMockAppState({
+        getProject: vi.fn().mockReturnValue(internalProject),
+        getAllProjects: vi.fn().mockResolvedValue([internalProject]),
+        getWorkspaceProvider: vi.fn().mockReturnValue({
+          removeWorkspace: vi.fn().mockResolvedValue({ workspaceRemoved: true }),
+        }),
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+        getServerManager: vi.fn().mockReturnValue({
+          stopServer: vi.fn().mockResolvedValue({ success: true }),
+          getPort: vi.fn().mockReturnValue(null),
+        }),
+      });
+
+      // Setup ViewManager mock
+      const localViewManager = createMockViewManager();
+      vi.mocked(localViewManager.destroyWorkspaceView).mockResolvedValue(undefined);
+
+      // Create API
+      const localApi = createApiWithCallbacksAndServerManager(
+        localAppState,
+        localViewManager,
+        emitDeletionProgress
+      );
+
+      const projectId = generateProjectId(projectPath);
+
+      try {
+        await localApi.workspaces.remove(projectId, "feature" as WorkspaceName, true);
+
+        // Wait for async deletion to complete
+        await vi.waitFor(() => {
+          const lastProgress = progressEvents[progressEvents.length - 1];
+          expect(lastProgress?.completed).toBe(true);
+        });
+
+        // Verify stop-server operation is in the operations list
+        const finalProgress = progressEvents[progressEvents.length - 1]!;
+        const operationIds = finalProgress.operations.map((op) => op.id as string);
+        expect(operationIds).toContain("stop-server");
+      } finally {
+        localApi.dispose();
+      }
+    });
+
+    it("marks stop-server as error when kill fails", async () => {
+      // Setup workspace in project
+      const workspaceObj: InternalWorkspace = {
+        name: "feature",
+        path: workspacePath,
+        branch: "feature",
+        metadata: { base: "main" },
+      };
+      const internalProject = createInternalProject(projectPath, [workspaceObj]);
+
+      // Track all progress events
+      const progressEvents: DeletionProgress[] = [];
+      const emitDeletionProgress = vi.fn((progress: DeletionProgress) => {
+        progressEvents.push(JSON.parse(JSON.stringify(progress)));
+      });
+
+      // Setup AppState mock with failing stopServer
+      const localAppState = createMockAppState({
+        getProject: vi.fn().mockReturnValue(internalProject),
+        getAllProjects: vi.fn().mockResolvedValue([internalProject]),
+        getWorkspaceProvider: vi.fn().mockReturnValue({
+          removeWorkspace: vi.fn().mockResolvedValue({ workspaceRemoved: true }),
+        }),
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+        getServerManager: vi.fn().mockReturnValue({
+          stopServer: vi
+            .fn()
+            .mockResolvedValue({ success: false, error: "Process did not terminate" }),
+          getPort: vi.fn().mockReturnValue(14001),
+        }),
+      });
+
+      // Setup ViewManager mock
+      const localViewManager = createMockViewManager();
+      vi.mocked(localViewManager.destroyWorkspaceView).mockResolvedValue(undefined);
+
+      // Create API
+      const localApi = createApiWithCallbacksAndServerManager(
+        localAppState,
+        localViewManager,
+        emitDeletionProgress
+      );
+
+      const projectId = generateProjectId(projectPath);
+
+      try {
+        await localApi.workspaces.remove(projectId, "feature" as WorkspaceName, true);
+
+        // Wait for async deletion to complete
+        await vi.waitFor(() => {
+          const lastProgress = progressEvents[progressEvents.length - 1];
+          expect(lastProgress?.completed).toBe(true);
+        });
+
+        // Verify stop-server operation is marked as error
+        const finalProgress = progressEvents[progressEvents.length - 1]!;
+        const stopServerOp = finalProgress.operations.find(
+          (op) => (op.id as string) === "stop-server"
+        );
+        expect(stopServerOp?.status).toBe("error");
+        expect(stopServerOp?.error).toBeDefined();
+        expect(finalProgress.hasErrors).toBe(true);
+      } finally {
+        localApi.dispose();
+      }
+    });
+  });
+
   describe("Workspace deletion with kill terminals", () => {
     const projectPath = "/home/user/my-project";
     const workspacePath = "/home/user/.worktrees/feature";
@@ -403,7 +570,7 @@ describe("CodeHydraApiImpl Integration", () => {
       );
     }
 
-    it("deletion-full-flow-with-kill-terminals: should execute 3 operations in sequence with all progress events", async () => {
+    it("deletion-full-flow-with-kill-terminals: should execute 4 operations in sequence with all progress events", async () => {
       // Setup workspace in project
       const workspaceObj: InternalWorkspace = {
         name: "feature",
@@ -470,13 +637,16 @@ describe("CodeHydraApiImpl Integration", () => {
         expect(killTerminalsCallback).toHaveBeenCalledWith(workspacePath);
         expect(killTerminalsCalls).toEqual([workspacePath]);
 
-        // Verify all 3 operations in correct order
-        expect(progressEvents.length).toBeGreaterThanOrEqual(5); // At least: initial, kill-in-progress, kill-done, vscode-in-progress, vscode-done, workspace-in-progress, workspace-done, final
+        // Verify all 4 operations in correct order
+        expect(progressEvents.length).toBeGreaterThanOrEqual(7); // At least: initial, kill-in-progress, kill-done, stop-server-in-progress, stop-server-done, vscode-in-progress, vscode-done, workspace-in-progress, workspace-done, final
 
         // Verify operation sequence through progress events
         // Find the first progress event for each operation in-progress state
         const killInProgress = progressEvents.find(
           (p) => p.operations.find((op) => op.id === "kill-terminals")?.status === "in-progress"
+        );
+        const stopServerInProgress = progressEvents.find(
+          (p) => p.operations.find((op) => op.id === "stop-server")?.status === "in-progress"
         );
         const vscodeInProgress = progressEvents.find(
           (p) => p.operations.find((op) => op.id === "cleanup-vscode")?.status === "in-progress"
@@ -486,18 +656,27 @@ describe("CodeHydraApiImpl Integration", () => {
         );
 
         expect(killInProgress).toBeDefined();
+        expect(stopServerInProgress).toBeDefined();
         expect(vscodeInProgress).toBeDefined();
         expect(workspaceInProgress).toBeDefined();
 
-        // Verify operation order: when cleanup-vscode is in-progress, kill-terminals should be done
+        // Verify operation order: when stop-server is in-progress, kill-terminals should be done
+        const stopServerInProgressOps = stopServerInProgress!.operations;
+        expect(stopServerInProgressOps.find((op) => op.id === "kill-terminals")?.status).toBe(
+          "done"
+        );
+
+        // Verify operation order: when cleanup-vscode is in-progress, kill-terminals and stop-server should be done
         const vscodeInProgressOps = vscodeInProgress!.operations;
         expect(vscodeInProgressOps.find((op) => op.id === "kill-terminals")?.status).toBe("done");
+        expect(vscodeInProgressOps.find((op) => op.id === "stop-server")?.status).toBe("done");
 
-        // Verify operation order: when cleanup-workspace is in-progress, both previous should be done
+        // Verify operation order: when cleanup-workspace is in-progress, all previous should be done
         const workspaceInProgressOps = workspaceInProgress!.operations;
         expect(workspaceInProgressOps.find((op) => op.id === "kill-terminals")?.status).toBe(
           "done"
         );
+        expect(workspaceInProgressOps.find((op) => op.id === "stop-server")?.status).toBe("done");
         expect(workspaceInProgressOps.find((op) => op.id === "cleanup-vscode")?.status).toBe(
           "done"
         );
@@ -506,9 +685,10 @@ describe("CodeHydraApiImpl Integration", () => {
         const finalProgress = progressEvents[progressEvents.length - 1]!;
         expect(finalProgress.completed).toBe(true);
         expect(finalProgress.hasErrors).toBe(false);
-        expect(finalProgress.operations).toHaveLength(3);
+        expect(finalProgress.operations).toHaveLength(4);
         expect(finalProgress.operations.map((op) => op.id)).toEqual([
           "kill-terminals",
+          "stop-server",
           "cleanup-vscode",
           "cleanup-workspace",
         ] as DeletionOperationId[]);

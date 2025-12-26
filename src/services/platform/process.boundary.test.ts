@@ -204,6 +204,55 @@ describe("ExecaProcessRunner", () => {
   });
 
   describe("kill() behavior", () => {
+    // Windows-specific test: kill always uses forceful termination
+    it.skipIf(!isWindows)(
+      "Windows kill() uses forceful termination immediately",
+      async () => {
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        // On Windows, kill should terminate immediately with forceful kill
+        const killResult = await proc.kill(1000, 1000);
+        expect(killResult.success).toBe(true);
+
+        // Verify process is actually dead
+        const died = await waitForProcessDeath(proc.pid!, 500);
+        expect(died).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    it.skipIf(!isWindows)(
+      "Windows kill() with process tree terminates all children",
+      async () => {
+        // Cross-platform test using Node.js to spawn parent with child
+        const proc = spawnWithChild(runner, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        // Wait for child to spawn and PID to be printed
+        await new Promise((r) => setTimeout(r, 200));
+
+        // Kill parent - should kill children too via taskkill /t
+        const killResult = await proc.kill(1000, 1000);
+        expect(killResult.success).toBe(true);
+
+        // Get the result to capture stdout with child PID
+        const result = await proc.wait(1000);
+        const childPid = parseInt(result.stdout.trim(), 10);
+
+        if (childPid && !isNaN(childPid)) {
+          spawnedPids.push(childPid);
+
+          // Verify child is also dead (killed by tree kill via taskkill /t)
+          const died = await waitForProcessDeath(childPid, 1000);
+          expect(died).toBe(true);
+        }
+      },
+      TEST_TIMEOUT
+    );
+
     it.skipIf(isWindows)(
       "kill() terminates process with SIGTERM when it responds",
       async () => {
@@ -260,6 +309,25 @@ describe("ExecaProcessRunner", () => {
         const killResult = await proc.kill(100, 100);
         // Process was already dead, kill returns success (nothing to do)
         expect(killResult.success).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "kill() respects configured timeouts",
+      async () => {
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        const start = Date.now();
+        // Use short timeouts - process should be killed quickly
+        const killResult = await proc.kill(500, 500);
+        const elapsed = Date.now() - start;
+
+        expect(killResult.success).toBe(true);
+        // Should complete within a reasonable time (not hang)
+        expect(elapsed).toBeLessThan(3000);
       },
       TEST_TIMEOUT
     );

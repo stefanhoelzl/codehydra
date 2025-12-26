@@ -446,7 +446,6 @@ Services use constructor DI for testability (NOT singletons):
 class DiscoveryService {
   constructor(
     private readonly portManager: PortManager,
-    private readonly processTree: ProcessTreeProvider,
     private readonly instanceProbe: InstanceProbe
   ) {}
 }
@@ -580,6 +579,28 @@ if (result.running) {
 | `running`  | `boolean?`       | True if still running after wait(timeout)           |
 | `stdout`   | `string`         | Captured stdout                                     |
 | `stderr`   | `string`         | Captured stderr (includes spawn errors like ENOENT) |
+
+**Platform-specific kill behavior:**
+
+- **Windows**: Always uses `taskkill /t /f` (immediate forceful termination) because WM_CLOSE cannot signal console processes and CTRL_C_EVENT cannot be sent to detached processes
+- **Unix**: Uses two-phase SIGTERM → SIGKILL with configurable timeouts
+
+**Kill Timeouts:**
+
+```typescript
+// Default timeouts (1 second each)
+import { PROCESS_KILL_GRACEFUL_TIMEOUT_MS, PROCESS_KILL_FORCE_TIMEOUT_MS } from "./process";
+
+// Use with the new kill() API
+const result = await proc.kill(
+  PROCESS_KILL_GRACEFUL_TIMEOUT_MS, // 1000ms for SIGTERM
+  PROCESS_KILL_FORCE_TIMEOUT_MS // 1000ms for SIGKILL
+);
+
+if (!result.success) {
+  console.error("Process did not terminate");
+}
+```
 
 **Testing with Mocks:**
 

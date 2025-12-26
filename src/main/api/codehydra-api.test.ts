@@ -1005,10 +1005,11 @@ describe("CodeHydraApiImpl - IWorkspaceApi", () => {
 
         // Check that operations include kill-terminals as first
         const firstProgress = progressCallbacks[0]!;
-        expect(firstProgress.operations).toHaveLength(3);
+        expect(firstProgress.operations).toHaveLength(4);
         expect(firstProgress.operations[0]!.id).toBe("kill-terminals");
-        expect(firstProgress.operations[1]!.id).toBe("cleanup-vscode");
-        expect(firstProgress.operations[2]!.id).toBe("cleanup-workspace");
+        expect(firstProgress.operations[1]!.id).toBe("stop-server");
+        expect(firstProgress.operations[2]!.id).toBe("cleanup-vscode");
+        expect(firstProgress.operations[3]!.id).toBe("cleanup-workspace");
       });
 
       it("should mark kill-terminals as done when callback is undefined", async () => {

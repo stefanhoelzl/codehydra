@@ -288,8 +288,92 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("handles stopping non-existent server gracefully", async () => {
-      // Should not throw
-      await expect(manager.stopServer("/workspace/nonexistent")).resolves.not.toThrow();
+      // Should not throw and return success (nothing to stop)
+      const result = (await manager.stopServer("/workspace/nonexistent")) as unknown as {
+        success: boolean;
+      };
+      expect(result).toEqual({ success: true });
+    });
+
+    it("returns success when kill succeeds", async () => {
+      await manager.startServer("/workspace/feature-a");
+
+      const result = (await manager.stopServer("/workspace/feature-a")) as unknown as {
+        success: boolean;
+      };
+
+      expect(result).toEqual({ success: true });
+    });
+
+    it("returns failure with error when kill fails", async () => {
+      // Create a process that fails to kill
+      const failingProcess = createMockSpawnedProcess({
+        pid: 12345,
+        waitResult: { exitCode: 0, stdout: "", stderr: "" },
+        killResult: { success: false },
+      });
+      mockProcessRunner = createMockProcessRunner(failingProcess);
+      manager = new OpenCodeServerManager(
+        mockProcessRunner,
+        mockPortManager,
+        mockFileSystemLayer,
+        mockHttpClient,
+        mockPathProvider,
+        createSilentLogger()
+      );
+
+      await manager.startServer("/workspace/feature-a");
+
+      const result = (await manager.stopServer("/workspace/feature-a")) as unknown as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it("logs warning when kill fails", async () => {
+      // Create a mock logger to verify logging
+      const loggerWithSpy = {
+        ...createSilentLogger(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+        error: vi.fn(),
+        silly: vi.fn(),
+      };
+
+      const failingProcess = createMockSpawnedProcess({
+        pid: 12345,
+        waitResult: { exitCode: 0, stdout: "", stderr: "" },
+        killResult: { success: false },
+      });
+      mockProcessRunner = createMockProcessRunner(failingProcess);
+      manager = new OpenCodeServerManager(
+        mockProcessRunner,
+        mockPortManager,
+        mockFileSystemLayer,
+        mockHttpClient,
+        mockPathProvider,
+        loggerWithSpy
+      );
+
+      await manager.startServer("/workspace/feature-a");
+      await manager.stopServer("/workspace/feature-a");
+
+      expect(loggerWithSpy.warn).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to kill"),
+        expect.any(Object)
+      );
+    });
+
+    it("uses 1000ms timeouts", async () => {
+      await manager.startServer("/workspace/feature-a");
+      await manager.stopServer("/workspace/feature-a");
+
+      // Verify kill was called with 1000ms timeouts
+      expect(mockProcess.kill).toHaveBeenCalledWith(1000, 1000);
     });
   });
 

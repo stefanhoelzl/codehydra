@@ -11,6 +11,17 @@ import type { Logger } from "../logging";
  */
 const isWindows = process.platform === "win32";
 
+/**
+ * Default timeout for graceful termination (SIGTERM on Unix).
+ * On Windows, this is combined with FORCE_TIMEOUT since only forceful kill is used.
+ */
+export const PROCESS_KILL_GRACEFUL_TIMEOUT_MS = 1000;
+
+/**
+ * Default timeout for forced termination (SIGKILL on Unix).
+ */
+export const PROCESS_KILL_FORCE_TIMEOUT_MS = 1000;
+
 export interface ProcessOptions {
   /** Working directory for the process */
   readonly cwd?: string;
@@ -150,7 +161,29 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
       return { success: true, reason: "SIGTERM" };
     }
 
-    // 1. Send SIGTERM (or taskkill without /f on Windows)
+    if (isWindows) {
+      // Windows: Always use forceful kill (taskkill /f) because:
+      // 1. WM_CLOSE (taskkill without /f) is ignored by console apps
+      // 2. We can't send CTRL_C_EVENT to detached processes
+      // So we skip the "graceful" phase entirely and go straight to forceful.
+      await this.killProcess(pid, true);
+      this.logger.warn("Killed", { command: this.command, pid, signal: "TASKKILL" });
+
+      // Wait for termTimeout (combined wait since we only do one kill)
+      const timeout = (termTimeout ?? 0) + (killTimeout ?? 0);
+      if (timeout > 0) {
+        const result = await this.wait(timeout);
+        if (!result.running) {
+          return { success: true, reason: "SIGKILL" }; // Report as SIGKILL for consistency
+        }
+      }
+
+      // Process may still be running
+      return { success: false };
+    }
+
+    // Unix: Two-phase SIGTERM → SIGKILL
+    // 1. Send SIGTERM
     await this.killProcess(pid, false);
     this.logger.warn("Killed", { command: this.command, pid, signal: "SIGTERM" });
 
@@ -162,7 +195,7 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
       }
     }
 
-    // 3. Send SIGKILL (or taskkill /f on Windows)
+    // 3. Send SIGKILL
     await this.killProcess(pid, true);
     this.logger.warn("Killed", { command: this.command, pid, signal: "SIGKILL" });
 
@@ -180,19 +213,20 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
 
   /**
    * Kill a process and its children using platform-appropriate method.
-   * - Windows: taskkill /pid <pid> /t [/f] for native tree killing
+   * - Windows: taskkill /pid <pid> /t /f for native tree killing
+   *   (Always uses /f because WM_CLOSE cannot signal console processes)
    * - Unix: pkill -P to kill children, then process.kill for parent
    *
    * @param pid - Process ID to kill
-   * @param force - If true, use SIGKILL/taskkill /f for forced termination
+   * @param force - If true, use SIGKILL (Unix only). On Windows, always forceful.
    */
   private async killProcess(pid: number, force: boolean): Promise<void> {
     if (isWindows) {
-      // Use taskkill with /t for tree kill (kills all child processes)
-      const args = ["/pid", String(pid), "/t"];
-      if (force) {
-        args.push("/f");
-      }
+      // Windows: Always use /f because WM_CLOSE (sent by taskkill without /f)
+      // is ignored by console applications. We can't send CTRL_C_EVENT to
+      // detached processes, so forceful termination is our only option.
+      // The `force` parameter is ignored on Windows - always forceful.
+      const args = ["/pid", String(pid), "/t", "/f"];
       try {
         await execa("taskkill", args);
       } catch {

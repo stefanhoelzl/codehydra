@@ -350,25 +350,23 @@ All external system access goes through abstraction interfaces defined in `src/s
 
 **CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
 
-| External System  | Interface             | Implementation                | Test Mock Factory             |
-| ---------------- | --------------------- | ----------------------------- | ----------------------------- |
-| Filesystem       | `FileSystemLayer`     | `DefaultFileSystemLayer`      | `createMockFileSystemLayer()` |
-| HTTP requests    | `HttpClient`          | `DefaultNetworkLayer`         | `createMockHttpClient()`      |
-| Port operations  | `PortManager`         | `DefaultNetworkLayer`         | `createMockPortManager()`     |
-| Process spawning | `ProcessRunner`       | `ExecaProcessRunner`          | `createMockProcessRunner()`   |
-| Process tree     | `ProcessTreeProvider` | Platform-specific (see below) | Manual mock in tests          |
-| Build info       | `BuildInfo`           | `ElectronBuildInfo`           | `createMockBuildInfo()`       |
-| Platform info    | `PlatformInfo`        | `NodePlatformInfo`            | `createMockPlatformInfo()`    |
-| Path resolution  | `PathProvider`        | `DefaultPathProvider`         | `createMockPathProvider()`    |
+| External System  | Interface         | Implementation           | Test Mock Factory             |
+| ---------------- | ----------------- | ------------------------ | ----------------------------- |
+| Filesystem       | `FileSystemLayer` | `DefaultFileSystemLayer` | `createMockFileSystemLayer()` |
+| HTTP requests    | `HttpClient`      | `DefaultNetworkLayer`    | `createMockHttpClient()`      |
+| Port operations  | `PortManager`     | `DefaultNetworkLayer`    | `createMockPortManager()`     |
+| Process spawning | `ProcessRunner`   | `ExecaProcessRunner`     | `createMockProcessRunner()`   |
+| Build info       | `BuildInfo`       | `ElectronBuildInfo`      | `createMockBuildInfo()`       |
+| Platform info    | `PlatformInfo`    | `NodePlatformInfo`       | `createMockPlatformInfo()`    |
+| Path resolution  | `PathProvider`    | `DefaultPathProvider`    | `createMockPathProvider()`    |
 
 **Boundary test files:**
 
-| Abstraction                  | Boundary Test                   |
-| ---------------------------- | ------------------------------- |
-| `FileSystemLayer`            | `filesystem.boundary.test.ts`   |
-| `HttpClient` + `PortManager` | `network.boundary.test.ts`      |
-| `ProcessRunner`              | `process.boundary.test.ts`      |
-| `ProcessTreeProvider`        | `process-tree.boundary.test.ts` |
+| Abstraction                  | Boundary Test                 |
+| ---------------------------- | ----------------------------- |
+| `FileSystemLayer`            | `filesystem.boundary.test.ts` |
+| `HttpClient` + `PortManager` | `network.boundary.test.ts`    |
+| `ProcessRunner`              | `process.boundary.test.ts`    |
 
 ### NetworkLayer Pattern
 
@@ -441,55 +439,6 @@ const mockPortManager = createMockPortManager({
 });
 
 const service = new SomeService(mockHttpClient, mockPortManager);
-```
-
-### ProcessTreeProvider Pattern
-
-`ProcessTreeProvider` is an interface for getting descendant PIDs of a process. It can be used to identify child processes spawned by a parent process.
-
-**Platform-specific implementations:**
-
-| Platform     | Implementation               | Library                        | Notes                                      |
-| ------------ | ---------------------------- | ------------------------------ | ------------------------------------------ |
-| Linux/macOS  | `PidtreeProvider`            | `pidtree`                      | Uses `/proc` filesystem or `pgrep`         |
-| Windows      | `WindowsProcessTreeProvider` | `@vscode/windows-process-tree` | Native module, requires VS Build Tools     |
-| Windows (fb) | `PidtreeProvider`            | `pidtree`                      | Fallback if native module fails; uses wmic |
-
-**Factory function:**
-
-```typescript
-import { createProcessTreeProvider } from "./process-tree";
-
-// Automatically selects the appropriate implementation
-const provider = createProcessTreeProvider(logger);
-
-// Or use async version for verified native module loading on Windows
-const provider = await createProcessTreeProviderAsync(logger);
-```
-
-The factory function handles platform detection and fallback:
-
-1. On Windows: Tries `WindowsProcessTreeProvider` first
-2. If native module fails to load: Falls back to `PidtreeProvider`
-3. On Linux/macOS: Uses `PidtreeProvider` directly
-
-**Windows native module notes:**
-
-- `@vscode/windows-process-tree` is an optional dependency (not required on non-Windows)
-- Windows development requires Visual Studio Build Tools with "Desktop development with C++" workload
-- The native module uses Windows APIs directly (~20ms per query, same as pidtree)
-- Microsoft removed `wmic.exe` from Windows 11 24H2+, making the native module necessary
-
-**Testing:**
-
-```typescript
-// Unit tests use manual mocks
-const mockProcessTree: ProcessTreeProvider = {
-  getDescendantPids: vi.fn().mockResolvedValue(new Set([1234, 5678])),
-};
-
-// Pass to any service that needs process tree information
-const service = new SomeService(mockProcessTree);
 ```
 
 ### OpenCode SDK Integration

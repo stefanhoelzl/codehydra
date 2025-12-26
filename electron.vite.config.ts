@@ -11,7 +11,7 @@ export default defineConfig({
           index: resolve(__dirname, "src/main/index.ts"),
         },
         // bufferutil and utf-8-validate are optional native deps for ws (used by socket.io)
-        external: ["@vscode/windows-process-tree", "bufferutil", "utf-8-validate"],
+        external: ["bufferutil", "utf-8-validate"],
       },
     },
     plugins: [

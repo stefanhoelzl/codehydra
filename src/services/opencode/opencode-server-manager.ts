@@ -8,6 +8,10 @@
  */
 
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
+import {
+  PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+  PROCESS_KILL_FORCE_TIMEOUT_MS,
+} from "../platform/process";
 import type { PortManager, HttpClient } from "../platform/network";
 import type { PathProvider } from "../platform/path-provider";
 import type { Logger } from "../logging";
@@ -46,6 +50,14 @@ export interface McpConfig {
   readonly configPath: string;
   /** MCP server port */
   readonly port: number;
+}
+
+/**
+ * Result of stopping an OpenCode server.
+ */
+export interface StopServerResult {
+  success: boolean;
+  error?: string;
 }
 
 /**
@@ -165,7 +177,7 @@ export class OpenCodeServerManager implements IDisposable {
       await this.waitForHealthCheck(port);
     } catch (error) {
       // Kill the process on health check failure
-      await proc.kill(5000, 5000);
+      await proc.kill(PROCESS_KILL_GRACEFUL_TIMEOUT_MS, PROCESS_KILL_FORCE_TIMEOUT_MS);
       throw error;
     }
 
@@ -215,11 +227,12 @@ export class OpenCodeServerManager implements IDisposable {
    * Stop an OpenCode server for a workspace.
    *
    * @param workspacePath - Absolute path to the workspace
+   * @returns StopResult indicating success or failure
    */
-  async stopServer(workspacePath: string): Promise<void> {
+  async stopServer(workspacePath: string): Promise<StopServerResult> {
     const entry = this.servers.get(workspacePath);
     if (!entry) {
-      return;
+      return { success: true };
     }
 
     // Wait for pending start
@@ -233,9 +246,22 @@ export class OpenCodeServerManager implements IDisposable {
 
     // Get the current entry (may have been updated after startPromise resolved)
     const currentEntry = this.servers.get(workspacePath);
+    let stopResult: StopServerResult = { success: true };
+
     if (currentEntry && currentEntry.process) {
-      // Kill the process gracefully
-      await currentEntry.process.kill(5000, 5000);
+      // Kill the process with 1s timeouts
+      const killResult = await currentEntry.process.kill(
+        PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+        PROCESS_KILL_FORCE_TIMEOUT_MS
+      );
+
+      if (!killResult.success) {
+        this.logger.warn("Failed to kill OpenCode server", {
+          workspacePath,
+          pid: currentEntry.process.pid ?? 0,
+        });
+        stopResult = { success: false, error: "Process did not terminate" };
+      }
     }
 
     // Remove from map
@@ -247,6 +273,8 @@ export class OpenCodeServerManager implements IDisposable {
     }
 
     this.logger.info("Server stopped", { workspacePath });
+
+    return stopResult;
   }
 
   /**

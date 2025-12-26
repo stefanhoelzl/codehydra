@@ -262,7 +262,11 @@ export type ApiError =
 /**
  * Identifiers for deletion operations.
  */
-export type DeletionOperationId = "kill-terminals" | "cleanup-vscode" | "cleanup-workspace";
+export type DeletionOperationId =
+  | "kill-terminals"
+  | "stop-server"
+  | "cleanup-vscode"
+  | "cleanup-workspace";
 
 /**
  * Status of a deletion operation.

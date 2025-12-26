@@ -488,8 +488,8 @@ describe("CodeServerManager (with full DI)", () => {
       await manager.ensureRunning();
       await manager.stop();
 
-      // Should call kill with graceful shutdown timeouts (5s SIGTERM, 5s SIGKILL)
-      expect(mockProc.kill).toHaveBeenCalledWith(5000, 5000);
+      // Should call kill with graceful shutdown timeouts (1s SIGTERM, 1s SIGKILL)
+      expect(mockProc.kill).toHaveBeenCalledWith(1000, 1000);
       // kill() handles the SIGTERM→SIGKILL escalation internally
       expect(mockProc.kill).toHaveBeenCalledTimes(1);
     });
@@ -525,9 +525,9 @@ describe("CodeServerManager (with full DI)", () => {
       await manager.ensureRunning();
       await manager.stop();
 
-      // Should call kill with graceful shutdown timeouts (5s SIGTERM, 5s SIGKILL)
+      // Should call kill with graceful shutdown timeouts (1s SIGTERM, 1s SIGKILL)
       // The new kill() API handles SIGTERM→SIGKILL escalation internally
-      expect(mockProc.kill).toHaveBeenCalledWith(5000, 5000);
+      expect(mockProc.kill).toHaveBeenCalledWith(1000, 1000);
       expect(mockProc.kill).toHaveBeenCalledTimes(1);
     });
   });
