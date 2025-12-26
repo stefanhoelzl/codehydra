@@ -191,7 +191,7 @@ describe("WrapperScriptGenerationService", () => {
       );
     });
 
-    it("writes exactly 2 scripts on Unix (code and opencode)", async () => {
+    it("writes exactly 3 scripts plus OpenCode config on Unix", async () => {
       mockPlatformInfo = createMockPlatformInfo({ platform: "linux" });
       const service = new WrapperScriptGenerationService(
         mockPathProvider,
@@ -201,11 +201,11 @@ describe("WrapperScriptGenerationService", () => {
 
       await service.regenerate();
 
-      // writeFile should be called 3 times (code, opencode.cjs, opencode)
-      expect(mockFs.writeFile).toHaveBeenCalledTimes(3);
+      // writeFile should be called 4 times (code, opencode.cjs, opencode, and OpenCode config)
+      expect(mockFs.writeFile).toHaveBeenCalledTimes(4);
     });
 
-    it("writes exactly 3 scripts on Windows (code.cmd, opencode.cjs, opencode.cmd)", async () => {
+    it("writes exactly 3 scripts plus OpenCode config on Windows", async () => {
       mockPlatformInfo = createMockPlatformInfo({ platform: "win32" });
       const service = new WrapperScriptGenerationService(
         mockPathProvider,
@@ -215,8 +215,8 @@ describe("WrapperScriptGenerationService", () => {
 
       await service.regenerate();
 
-      // writeFile should be called 3 times (code.cmd, opencode.cjs, opencode.cmd)
-      expect(mockFs.writeFile).toHaveBeenCalledTimes(3);
+      // writeFile should be called 4 times (code.cmd, opencode.cjs, opencode.cmd, and OpenCode config)
+      expect(mockFs.writeFile).toHaveBeenCalledTimes(4);
     });
 
     it("logs script generation with logger", async () => {
@@ -239,7 +239,40 @@ describe("WrapperScriptGenerationService", () => {
       expect(mockLogger.debug).toHaveBeenCalledWith("Regenerating wrapper scripts", {
         binDir: mockPathProvider.binDir,
       });
-      expect(mockLogger.info).toHaveBeenCalledWith("Wrapper scripts regenerated", { count: 3 });
+      expect(mockLogger.info).toHaveBeenCalledWith("Startup files regenerated", {
+        scripts: 3,
+        config: 1,
+      });
+    });
+
+    it("regenerates OpenCode config with default_agent set to plan", async () => {
+      const service = new WrapperScriptGenerationService(
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo
+      );
+
+      await service.regenerate();
+
+      // Should write OpenCode config
+      expect(mockFs.writeFile).toHaveBeenCalledWith(
+        mockPathProvider.mcpConfigPath,
+        expect.stringContaining('"default_agent": "plan"')
+      );
+    });
+
+    it("creates OpenCode config directory before writing config", async () => {
+      const service = new WrapperScriptGenerationService(
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo
+      );
+
+      await service.regenerate();
+
+      // Should create directory for OpenCode config (dirname of mcpConfigPath)
+      // mcpConfigPath is /test/app-data/opencode/codehydra-mcp.json
+      expect(mockFs.mkdir).toHaveBeenCalledWith("/test/app-data/opencode");
     });
   });
 });

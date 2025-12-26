@@ -9,12 +9,12 @@
  * the scripts themselves, making it safe to run unconditionally.
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
 import type { Logger } from "../logging/index";
-import { generateScripts } from "./bin-scripts";
+import { generateOpencodeConfigContent, generateScripts } from "./bin-scripts";
 import type { BinTargetPaths } from "./types";
 
 /**
@@ -66,7 +66,30 @@ export class WrapperScriptGenerationService {
       this.logger?.debug("Wrote wrapper script", { filename: script.filename });
     }
 
-    this.logger?.info("Wrapper scripts regenerated", { count: scripts.length });
+    // Regenerate OpenCode config (ensures default_agent is always set)
+    await this.regenerateOpencodeConfig();
+
+    this.logger?.info("Startup files regenerated", { scripts: scripts.length, config: 1 });
+  }
+
+  /**
+   * Regenerate the OpenCode configuration file.
+   *
+   * This ensures the config is always up-to-date with current settings,
+   * including the default_agent setting for plan mode.
+   */
+  private async regenerateOpencodeConfig(): Promise<void> {
+    const configPath = this.pathProvider.mcpConfigPath;
+    const configDir = dirname(configPath);
+
+    // Ensure directory exists
+    await this.fs.mkdir(configDir);
+
+    // Generate and write config content
+    const configContent = generateOpencodeConfigContent();
+    await this.fs.writeFile(configPath, configContent);
+
+    this.logger?.debug("Regenerated OpenCode config", { path: configPath });
   }
 
   /**

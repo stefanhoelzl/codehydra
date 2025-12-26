@@ -20,7 +20,7 @@ import {
   type BinaryType,
   validateExtensionsConfig,
 } from "./types";
-import { generateScripts, generateMcpConfigContent } from "./bin-scripts";
+import { generateScripts, generateOpencodeConfigContent } from "./bin-scripts";
 import { listInstalledExtensions } from "./extension-utils";
 import type { BinaryDownloadService } from "../binary-download/binary-download-service";
 
@@ -409,7 +409,7 @@ export class VscodeSetupService implements IVscodeSetup {
     await this.fs.mkdir(configDir);
 
     // Generate and write config content
-    const configContent = generateMcpConfigContent();
+    const configContent = generateOpencodeConfigContent();
     await this.fs.writeFile(configPath, configContent);
   }
 
