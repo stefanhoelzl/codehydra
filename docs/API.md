@@ -44,12 +44,13 @@ Both methods provide the same API contract - only the transport differs.
 
 All methods operate on the **connected workspace**.
 
-| Method            | Signature                                               | Description                                     |
-| ----------------- | ------------------------------------------------------- | ----------------------------------------------- |
-| `getStatus`       | `() => Promise<WorkspaceStatus>`                        | Get workspace status (dirty flag, agent status) |
-| `getOpencodePort` | `() => Promise<number \| null>`                         | Get OpenCode server port (null if not running)  |
-| `getMetadata`     | `() => Promise<Record<string, string>>`                 | Get all metadata (always includes `base` key)   |
-| `setMetadata`     | `(key: string, value: string \| null) => Promise<void>` | Set or delete a metadata key                    |
+| Method            | Signature                                                            | Description                                       |
+| ----------------- | -------------------------------------------------------------------- | ------------------------------------------------- |
+| `getStatus`       | `() => Promise<WorkspaceStatus>`                                     | Get workspace status (dirty flag, agent status)   |
+| `getOpencodePort` | `() => Promise<number \| null>`                                      | Get OpenCode server port (null if not running)    |
+| `getMetadata`     | `() => Promise<Record<string, string>>`                              | Get all metadata (always includes `base` key)     |
+| `setMetadata`     | `(key: string, value: string \| null) => Promise<void>`              | Set or delete a metadata key                      |
+| `delete`          | `(options?: { keepBranch?: boolean }) => Promise<{ started: true }>` | Delete the workspace (terminates OpenCode, async) |
 
 ### Usage Examples
 
@@ -108,6 +109,19 @@ console.log("Note:", metadata.note);
 // Delete metadata
 await api.workspace.setMetadata("note", null);
 ```
+
+#### Delete Current Workspace
+
+```typescript
+// Delete workspace (removes worktree and branch)
+const result = await api.workspace.delete();
+console.log("Deletion started:", result.started);
+
+// Delete workspace but keep the git branch
+const result = await api.workspace.delete({ keepBranch: true });
+```
+
+**Note:** Deletion is async - the Promise resolves immediately with `{ started: true }`. The actual cleanup happens in the background.
 
 ### Metadata Key Format
 
@@ -229,6 +243,7 @@ interface WorkspaceApi {
   getOpencodePort(): Promise<number | null>;
   getMetadata(): Promise<Readonly<Record<string, string>>>;
   setMetadata(key: string, value: string | null): Promise<void>;
+  delete(options?: { keepBranch?: boolean }): Promise<{ started: boolean }>;
 }
 
 interface CodehydraApi {
@@ -300,12 +315,13 @@ socket.on("connect_error", (error) => {
 
 All events use acknowledgment callbacks for request/response pattern.
 
-| Event                           | Request Payload      | Response                               |
-| ------------------------------- | -------------------- | -------------------------------------- |
-| `api:workspace:getStatus`       | None                 | `PluginResult<WorkspaceStatus>`        |
-| `api:workspace:getOpencodePort` | None                 | `PluginResult<number \| null>`         |
-| `api:workspace:getMetadata`     | None                 | `PluginResult<Record<string, string>>` |
-| `api:workspace:setMetadata`     | `SetMetadataRequest` | `PluginResult<void>`                   |
+| Event                           | Request Payload          | Response                                |
+| ------------------------------- | ------------------------ | --------------------------------------- |
+| `api:workspace:getStatus`       | None                     | `PluginResult<WorkspaceStatus>`         |
+| `api:workspace:getOpencodePort` | None                     | `PluginResult<number \| null>`          |
+| `api:workspace:getMetadata`     | None                     | `PluginResult<Record<string, string>>`  |
+| `api:workspace:setMetadata`     | `SetMetadataRequest`     | `PluginResult<void>`                    |
+| `api:workspace:delete`          | `DeleteWorkspaceRequest` | `PluginResult<DeleteWorkspaceResponse>` |
 
 ### Response Format
 
@@ -319,6 +335,14 @@ type PluginResult<T> = { success: true; data: T } | { success: false; error: str
 interface SetMetadataRequest {
   key: string; // Must match /^[A-Za-z][A-Za-z0-9-]*$/ and not end with hyphen
   value: string | null; // null to delete
+}
+
+interface DeleteWorkspaceRequest {
+  keepBranch?: boolean; // If true, keep the git branch after deletion. Default: false
+}
+
+interface DeleteWorkspaceResponse {
+  started: boolean; // True if deletion was started (deletion is async)
 }
 ```
 

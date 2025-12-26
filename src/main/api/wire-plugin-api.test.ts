@@ -167,4 +167,73 @@ describe("wirePluginApi", () => {
       );
     });
   });
+
+  describe("delete handler", () => {
+    it("should resolve workspace path to projectId and workspaceName", async () => {
+      vi.mocked(api.workspaces.remove).mockResolvedValue({ started: true });
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      await handlers.delete("/home/user/.codehydra/workspaces/my-feature", {});
+
+      expect(workspaceResolver.findProjectForWorkspace).toHaveBeenCalledWith(
+        "/home/user/.codehydra/workspaces/my-feature"
+      );
+    });
+
+    it("should return success result with started confirmation", async () => {
+      vi.mocked(api.workspaces.remove).mockResolvedValue({ started: true });
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      const result = await handlers.delete("/home/user/.codehydra/workspaces/my-feature", {});
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ started: true });
+      }
+    });
+
+    it("should pass keepBranch option to API", async () => {
+      vi.mocked(api.workspaces.remove).mockResolvedValue({ started: true });
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      await handlers.delete("/home/user/.codehydra/workspaces/my-feature", { keepBranch: true });
+
+      expect(api.workspaces.remove).toHaveBeenCalledWith(
+        expect.any(String), // projectId
+        "my-feature" as WorkspaceName,
+        true // keepBranch
+      );
+    });
+
+    it("should return error result when workspace not found", async () => {
+      workspaceResolver = createMockWorkspaceResolver(undefined); // Not found
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      const result = await handlers.delete("/unknown/workspace", {});
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Workspace not found");
+      }
+      // API should not be called when workspace not found
+      expect(api.workspaces.remove).not.toHaveBeenCalled();
+    });
+
+    it("should return error result when API throws", async () => {
+      vi.mocked(api.workspaces.remove).mockRejectedValue(new Error("Deletion failed"));
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      const result = await handlers.delete("/home/user/.codehydra/workspaces/my-feature", {});
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Deletion failed");
+      }
+    });
+  });
 });

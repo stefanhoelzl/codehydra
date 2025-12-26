@@ -193,6 +193,7 @@ Services are pure Node.js for testability without Electron:
 | KeepFiles Service        | Copy gitignored files from project root to new workspaces       | Implemented |
 | NetworkLayer             | HTTP, SSE, port operations (HttpClient, SseClient, PortManager) | Implemented |
 | PluginServer             | Socket.IO server for VS Code extension communication            | Implemented |
+| McpServerManager         | MCP server for AI agent workspace API access                    | Implemented |
 
 ### Workspace Cleanup
 
@@ -1129,6 +1130,36 @@ The `<app-data>/opencode/ports.json` file maps workspace paths to ports:
 ```
 
 The wrapper script (`<app-data>/bin/opencode`) reads this file to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT` when in a managed workspace.
+
+### MCP Integration
+
+OpenCode servers are configured to connect to CodeHydra's MCP server for workspace API access. When spawning `opencode serve`, the following environment variables are set:
+
+| Variable                   | Purpose                                                            |
+| -------------------------- | ------------------------------------------------------------------ |
+| `OPENCODE_CONFIG`          | Path to MCP config file (`<app-data>/opencode/codehydra-mcp.json`) |
+| `CODEHYDRA_WORKSPACE_PATH` | Absolute path to the workspace (for X-Workspace-Path header)       |
+| `CODEHYDRA_MCP_PORT`       | Port of CodeHydra's MCP server                                     |
+
+The MCP config file (`codehydra-mcp.json`) is generated on startup and uses environment variable substitution:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "codehydra": {
+      "type": "remote",
+      "url": "http://127.0.0.1:{env:CODEHYDRA_MCP_PORT}",
+      "headers": {
+        "X-Workspace-Path": "{env:CODEHYDRA_WORKSPACE_PATH}"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+This enables AI agents running in OpenCode to call workspace API methods (getStatus, getMetadata, setMetadata, delete) through MCP tools.
 
 ### Status Update Flow
 

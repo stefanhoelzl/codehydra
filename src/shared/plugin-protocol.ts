@@ -135,6 +135,22 @@ export interface SetMetadataRequest {
 }
 
 /**
+ * Request payload for deleting a workspace.
+ */
+export interface DeleteWorkspaceRequest {
+  /** If true, keep the git branch after deleting the worktree. Default: false */
+  readonly keepBranch?: boolean | undefined;
+}
+
+/**
+ * Response for workspace deletion.
+ */
+export interface DeleteWorkspaceResponse {
+  /** True if deletion was started (deletion is async) */
+  readonly started: boolean;
+}
+
+/**
  * Runtime validation for SetMetadataRequest.
  * Validates structure and key format against METADATA_KEY_REGEX.
  *
@@ -180,6 +196,39 @@ export function validateSetMetadataRequest(
   return { valid: true };
 }
 
+/**
+ * Runtime validation for DeleteWorkspaceRequest.
+ * Validates structure and keepBranch is boolean if present.
+ *
+ * @param payload - The payload to validate
+ * @returns Object with valid boolean and optional error message
+ */
+export function validateDeleteWorkspaceRequest(
+  payload: unknown
+): { valid: true; request: DeleteWorkspaceRequest } | { valid: false; error: string } {
+  // Allow empty object or undefined (optional request)
+  if (payload === undefined || payload === null) {
+    return { valid: true, request: {} };
+  }
+
+  if (typeof payload !== "object") {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if ("keepBranch" in request && typeof request.keepBranch !== "boolean") {
+    return { valid: false, error: "Field 'keepBranch' must be a boolean" };
+  }
+
+  return {
+    valid: true,
+    request: {
+      keepBranch: request.keepBranch as boolean | undefined,
+    },
+  };
+}
+
 // ============================================================================
 // Socket.IO Event Types
 // ============================================================================
@@ -221,6 +270,18 @@ export interface ClientToServerEvents {
   "api:workspace:setMetadata": (
     request: SetMetadataRequest,
     ack: (result: PluginResult<void>) => void
+  ) => void;
+
+  /**
+   * Delete the connected workspace.
+   * This will terminate the OpenCode session and remove the worktree.
+   *
+   * @param request - Optional request with keepBranch option
+   * @param ack - Acknowledgment callback with deletion started confirmation
+   */
+  "api:workspace:delete": (
+    request: DeleteWorkspaceRequest | undefined,
+    ack: (result: PluginResult<DeleteWorkspaceResponse>) => void
   ) => void;
 }
 

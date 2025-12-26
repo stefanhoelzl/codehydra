@@ -1,5 +1,5 @@
 /**
- * Utility module for generating platform-specific CLI wrapper scripts.
+ * Utility module for generating platform-specific CLI wrapper scripts and MCP config.
  *
  * This module contains pure functions that generate script content based on:
  * - Target binary paths
@@ -15,6 +15,9 @@
  * The Node.js script checks if CodeHydra is managing a server for the current
  * workspace and attaches to it. Unlike the previous implementation, there is
  * no standalone fallback - the opencode command only works in managed workspaces.
+ *
+ * The MCP config file is also generated here since it's a static file that uses
+ * environment variable substitution (like the wrapper scripts).
  */
 
 import type { PlatformInfo } from "../platform/platform-info";
@@ -308,4 +311,51 @@ export function generateScripts(
   }
 
   return scripts;
+}
+
+/**
+ * OpenCode MCP configuration structure.
+ */
+interface McpConfig {
+  $schema: string;
+  mcp: {
+    codehydra: {
+      type: "remote";
+      url: string;
+      headers: {
+        "X-Workspace-Path": string;
+      };
+      enabled: boolean;
+    };
+  };
+}
+
+/**
+ * Generate MCP configuration content for OpenCode.
+ *
+ * The config uses environment variable substitution:
+ * - `{env:CODEHYDRA_MCP_PORT}` - Resolved to the actual port at runtime
+ * - `{env:CODEHYDRA_WORKSPACE_PATH}` - Resolved to the workspace path at runtime
+ *
+ * This is a static config file written during setup. OpenCode reads these
+ * env var references and substitutes them when connecting to the MCP server.
+ *
+ * @returns JSON string for the config file
+ */
+export function generateMcpConfigContent(): string {
+  const config: McpConfig = {
+    $schema: "https://opencode.ai/config.json",
+    mcp: {
+      codehydra: {
+        type: "remote",
+        url: "http://127.0.0.1:{env:CODEHYDRA_MCP_PORT}/mcp",
+        headers: {
+          "X-Workspace-Path": "{env:CODEHYDRA_WORKSPACE_PATH}",
+        },
+        enabled: true,
+      },
+    },
+  };
+
+  return JSON.stringify(config, null, 2);
 }

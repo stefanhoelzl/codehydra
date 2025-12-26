@@ -28,6 +28,7 @@ import {
 } from "../services/binary-download";
 import { AgentStatusManager, OpenCodeServerManager } from "../services/opencode";
 import { PluginServer, sendStartupCommands, sendShutdownCommand } from "../services/plugin-server";
+import { McpServerManager } from "../services/mcp-server";
 import { wirePluginApi } from "./api/wire-plugin-api";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
@@ -171,6 +172,7 @@ let codeServerManager: CodeServerManager | null = null;
 let agentStatusManager: AgentStatusManager | null = null;
 let badgeManager: BadgeManager | null = null;
 let serverManager: OpenCodeServerManager | null = null;
+let mcpServerManager: McpServerManager | null = null;
 let codeHydraApi: ICodeHydraApi | null = null;
 let apiEventCleanup: Unsubscribe | null = null;
 let agentStatusCleanup: Unsubscribe | null = null;
@@ -439,6 +441,36 @@ async function startServices(): Promise<void> {
     });
   });
 
+  // Initialize MCP server (must start before loading projects so port is available)
+  // MCP server provides AI agent access to workspace API
+  try {
+    mcpServerManager = new McpServerManager(
+      networkLayer, // PortManager
+      pathProvider,
+      codeHydraApi, // ICoreApi
+      appState, // WorkspaceLookup
+      loggingService.createLogger("mcp")
+    );
+    const mcpPort = await mcpServerManager.start();
+    loggingService.createLogger("app").info("MCP server started", {
+      port: mcpPort,
+      configPath: mcpServerManager.getConfigPath(),
+    });
+
+    // Configure OpenCode servers to connect to MCP
+    if (serverManager) {
+      serverManager.setMcpConfig({
+        configPath: mcpServerManager.getConfigPath(),
+        port: mcpServerManager.getPort()!,
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    loggingService.createLogger("app").warn("MCP server start failed", { error: message });
+    // Continue without MCP server - it's optional functionality
+    mcpServerManager = null;
+  }
+
   // Load persisted projects
   await appState.loadPersistedProjects();
 
@@ -639,6 +671,12 @@ async function cleanup(): Promise<void> {
     serverManager = null;
   }
 
+  // Dispose MCP server manager AFTER OpenCode (servers may still be using it)
+  if (mcpServerManager) {
+    await mcpServerManager.dispose();
+    mcpServerManager = null;
+  }
+
   // Dispose badge manager
   if (badgeManager) {
     badgeManager.disconnect();
@@ -729,6 +767,10 @@ app.on("before-quit", () => {
   if (serverManager) {
     void serverManager.dispose();
     serverManager = null;
+  }
+  if (mcpServerManager) {
+    void mcpServerManager.dispose();
+    mcpServerManager = null;
   }
   if (agentStatusManager) {
     agentStatusManager.dispose();

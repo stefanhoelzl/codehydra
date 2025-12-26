@@ -3,7 +3,7 @@
  * Installs extensions and writes configuration files.
  */
 
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
@@ -20,7 +20,7 @@ import {
   type BinaryType,
   validateExtensionsConfig,
 } from "./types";
-import { generateScripts } from "./bin-scripts";
+import { generateScripts, generateMcpConfigContent } from "./bin-scripts";
 import { listInstalledExtensions } from "./extension-utils";
 import type { BinaryDownloadService } from "../binary-download/binary-download-service";
 
@@ -248,7 +248,10 @@ export class VscodeSetupService implements IVscodeSetup {
     // Step 3: Create CLI wrapper scripts
     await this.setupBinDirectory(onProgress);
 
-    // Step 4: Write completion marker
+    // Step 4: Write MCP config file
+    await this.writeMcpConfig(onProgress);
+
+    // Step 5: Write completion marker
     await this.writeCompletionMarker(onProgress);
 
     return { success: true };
@@ -388,6 +391,26 @@ export class VscodeSetupService implements IVscodeSetup {
     };
 
     await this.fs.writeFile(this.pathProvider.setupMarkerPath, JSON.stringify(marker, null, 2));
+  }
+
+  /**
+   * Write the MCP config file for OpenCode integration.
+   * The config uses environment variable substitution for port and workspace path.
+   *
+   * @param onProgress Optional callback for progress updates
+   */
+  async writeMcpConfig(onProgress?: ProgressCallback): Promise<void> {
+    onProgress?.({ step: "config", message: "Writing MCP config..." });
+
+    const configPath = this.pathProvider.mcpConfigPath;
+    const configDir = dirname(configPath);
+
+    // Ensure directory exists
+    await this.fs.mkdir(configDir);
+
+    // Generate and write config content
+    const configContent = generateMcpConfigContent();
+    await this.fs.writeFile(configPath, configContent);
   }
 
   /**

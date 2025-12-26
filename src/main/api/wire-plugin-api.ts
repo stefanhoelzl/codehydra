@@ -9,7 +9,11 @@
 import nodePath from "node:path";
 import { generateProjectId } from "./id-utils";
 import type { PluginServer, ApiCallHandlers } from "../../services/plugin-server";
-import type { SetMetadataRequest, PluginResult } from "../../shared/plugin-protocol";
+import type {
+  SetMetadataRequest,
+  DeleteWorkspaceRequest,
+  PluginResult,
+} from "../../shared/plugin-protocol";
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { Logger } from "../../services/logging";
@@ -156,6 +160,30 @@ export function wirePluginApi(
           key: request.key,
           error: message,
         });
+        return { success: false, error: message };
+      }
+    },
+
+    async delete(workspacePath: string, request: DeleteWorkspaceRequest) {
+      const resolved = resolveWorkspace(workspacePath);
+      if ("success" in resolved && resolved.success === false) {
+        return resolved;
+      }
+      const { projectId, workspaceName } = resolved as {
+        projectId: ProjectId;
+        workspaceName: WorkspaceName;
+      };
+
+      try {
+        const result = await api.workspaces.remove(projectId, workspaceName, request.keepBranch);
+        logger.debug("delete success", {
+          workspace: workspacePath,
+          keepBranch: !!request.keepBranch,
+        });
+        return { success: true, data: result };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("delete error", { workspace: workspacePath, error: message });
         return { success: false, error: message };
       }
     },

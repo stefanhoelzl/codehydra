@@ -211,6 +211,7 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
         forceRemove: vi.fn(),
         get: vi.fn(),
         getStatus: vi.fn(),
+        getOpencodePort: vi.fn(),
         setMetadata: vi.fn(),
         getMetadata: vi.fn(),
       },
@@ -327,6 +328,44 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
     });
   });
 
+  describe("delete", () => {
+    it("deletes workspace through full round-trip", async () => {
+      vi.mocked(mockApi.workspaces.remove).mockResolvedValue({ started: true });
+
+      const client = createClient("/projects/myproject/workspaces/feature-x");
+      await waitForConnect(client);
+
+      const result = await new Promise<{
+        success: boolean;
+        data?: { started: boolean };
+        error?: string;
+      }>((resolve) => {
+        client.emit("api:workspace:delete", {}, (res) => resolve(res));
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ started: true });
+      expect(mockApi.workspaces.remove).toHaveBeenCalled();
+    });
+
+    it("passes keepBranch option to API", async () => {
+      vi.mocked(mockApi.workspaces.remove).mockResolvedValue({ started: true });
+
+      const client = createClient("/projects/myproject/workspaces/feature-x");
+      await waitForConnect(client);
+
+      await new Promise<{ success: boolean }>((resolve) => {
+        client.emit("api:workspace:delete", { keepBranch: true }, (res) => resolve(res));
+      });
+
+      expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
+        expect.any(String), // projectId
+        expect.any(String), // workspaceName
+        true // keepBranch
+      );
+    });
+  });
+
   describe("error handling", () => {
     it("returns error when workspace not found", async () => {
       // Connect with unknown workspace path (not under /projects/myproject/)
@@ -370,6 +409,20 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
       expect(result.error).toContain("cannot be empty");
       // API should not be called for invalid requests
       expect(mockApi.workspaces.setMetadata).not.toHaveBeenCalled();
+    });
+
+    it("returns error when delete fails", async () => {
+      vi.mocked(mockApi.workspaces.remove).mockRejectedValue(new Error("Deletion failed"));
+
+      const client = createClient("/projects/myproject/workspaces/feature-x");
+      await waitForConnect(client);
+
+      const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+        client.emit("api:workspace:delete", {}, (res) => resolve(res));
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Deletion failed");
     });
   });
 });

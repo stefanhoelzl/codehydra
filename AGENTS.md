@@ -138,6 +138,7 @@ All external system access MUST go through abstraction interfaces. Direct librar
 | VS Code Setup   | First-run setup that installs extensions and config; uses preflight checks on every startup to detect missing/outdated components; marker at `<app-data>/.setup-completed`. See [VS Code Assets](#vs-code-assets) for details. |
 | .keepfiles      | Config file in project root listing files to copy to new workspaces. Uses gitignore syntax with **inverted semantics** - listed patterns are COPIED (not ignored). Supports negation with `!` prefix.                          |
 | App Icon Badge  | Shows visual status indicator on app icon. Red circle: all workspaces working. Half green/half red: mixed (some ready, some working). No badge: all ready. Platform: macOS dock, Windows taskbar, Linux Unity.                 |
+| MCP Server      | Model Context Protocol server exposing workspace API to AI agents. Auto-configured via `OPENCODE_CONFIG` env var when spawning OpenCode. Enables agents to read/write workspace metadata and delete workspaces.                |
 
 ## VS Code Assets
 
@@ -422,6 +423,7 @@ Log entries follow this format:
 | `[window]`          | WindowManager           |
 | `[view]`            | ViewManager             |
 | `[badge]`           | BadgeManager            |
+| `[mcp]`             | MCP server              |
 | `[app]`             | Application lifecycle   |
 | `[ui]`              | Renderer UI components  |
 

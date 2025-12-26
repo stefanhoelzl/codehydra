@@ -22,10 +22,13 @@ import {
   type CommandRequest,
   type PluginResult,
   type SetMetadataRequest,
+  type DeleteWorkspaceRequest,
+  type DeleteWorkspaceResponse,
   type PluginConfig,
   COMMAND_TIMEOUT_MS,
   normalizeWorkspacePath,
   validateSetMetadataRequest,
+  validateDeleteWorkspaceRequest,
 } from "../../shared/plugin-protocol";
 import type { WorkspaceStatus } from "../../shared/api/types";
 
@@ -80,6 +83,17 @@ export interface ApiCallHandlers {
    * @returns Void result or error
    */
   setMetadata(workspacePath: string, request: SetMetadataRequest): Promise<PluginResult<void>>;
+
+  /**
+   * Handle delete request.
+   * @param workspacePath - Normalized workspace path
+   * @param request - The validated delete request (optional keepBranch)
+   * @returns Deletion started confirmation or error
+   */
+  delete(
+    workspacePath: string,
+    request: DeleteWorkspaceRequest
+  ): Promise<PluginResult<DeleteWorkspaceResponse>>;
 }
 
 // ============================================================================
@@ -602,6 +616,51 @@ export class PluginServer {
           const message = error instanceof Error ? error.message : String(error);
           this.logger.error("API handler error", {
             event: "api:workspace:setMetadata",
+            workspace: workspacePath,
+            error: message,
+          });
+          ack({ success: false, error: message });
+        });
+    });
+
+    // Handle api:workspace:delete
+    socket.on("api:workspace:delete", (request, ack) => {
+      if (!this.apiHandlers) {
+        this.logger.warn("API call without handlers registered", {
+          event: "api:workspace:delete",
+          workspace: workspacePath,
+        });
+        ack({ success: false, error: "API handlers not registered" });
+        return;
+      }
+
+      // Validate request before invoking handler
+      const validation = validateDeleteWorkspaceRequest(request);
+      if (!validation.valid) {
+        this.logger.warn("API call validation failed", {
+          event: "api:workspace:delete",
+          workspace: workspacePath,
+          error: validation.error,
+        });
+        ack({ success: false, error: validation.error });
+        return;
+      }
+
+      this.logger.debug("API call", {
+        event: "api:workspace:delete",
+        workspace: workspacePath,
+        keepBranch: !!validation.request.keepBranch,
+      });
+
+      this.apiHandlers
+        .delete(workspacePath, validation.request)
+        .then((result) => {
+          ack(result);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error("API handler error", {
+            event: "api:workspace:delete",
             workspace: workspacePath,
             error: message,
           });

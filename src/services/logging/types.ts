@@ -44,7 +44,8 @@ export type LoggerName =
   | "vscode-setup" // VscodeSetupService - VS Code setup
   | "lifecycle" // LifecycleApi - app lifecycle
   | "plugin" // PluginServer - VS Code extension communication
-  | "badge"; // BadgeManager - app icon badge
+  | "badge" // BadgeManager - app icon badge
+  | "mcp"; // McpServerManager - MCP server
 
 /**
  * Context data for log entries.

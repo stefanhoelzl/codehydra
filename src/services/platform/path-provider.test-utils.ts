@@ -60,6 +60,8 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
       overrides?.codeServerBinaryPath ?? join(codeServerDir, "bin", "code-server"),
     opencodeBinaryPath: overrides?.opencodeBinaryPath ?? join(opencodeDir, "opencode"),
     bundledNodePath: overrides?.bundledNodePath ?? join(codeServerDir, "lib", "node"),
+    mcpConfigPath:
+      overrides?.mcpConfigPath ?? join("/test", "app-data", "opencode", "codehydra-mcp.json"),
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

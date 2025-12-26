@@ -46,6 +46,16 @@ export interface OpenCodeServerManagerConfig {
 }
 
 /**
+ * MCP server configuration for OpenCode integration.
+ */
+export interface McpConfig {
+  /** Path to the MCP config file */
+  readonly configPath: string;
+  /** MCP server port */
+  readonly port: number;
+}
+
+/**
  * Manages OpenCode server instances for workspaces.
  * One server per workspace, with health check and ports.json tracking.
  */
@@ -61,6 +71,8 @@ export class OpenCodeServerManager implements IDisposable {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly startedCallbacks = new Set<ServerStartedCallback>();
   private readonly stoppedCallbacks = new Set<ServerStoppedCallback>();
+
+  private mcpConfig: McpConfig | null = null;
 
   constructor(
     processRunner: ProcessRunner,
@@ -129,10 +141,27 @@ export class OpenCodeServerManager implements IDisposable {
     // Allocate a free port
     const port = await this.portManager.findFreePort();
 
+    // Build environment variables with MCP config if available
+    let env: NodeJS.ProcessEnv | undefined;
+    if (this.mcpConfig) {
+      env = {
+        ...process.env,
+        OPENCODE_CONFIG: this.mcpConfig.configPath,
+        CODEHYDRA_WORKSPACE_PATH: workspacePath,
+        CODEHYDRA_MCP_PORT: String(this.mcpConfig.port),
+      };
+      this.logger.debug("Starting with MCP env", {
+        workspacePath,
+        mcpPort: this.mcpConfig.port,
+        configPath: this.mcpConfig.configPath,
+      });
+    }
+
     // Spawn opencode serve
     const opencodeCmd = this.pathProvider.opencodeBinaryPath;
     const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {
       cwd: workspacePath,
+      ...(env && { env }),
     });
 
     // Check if spawn failed
@@ -273,6 +302,24 @@ export class OpenCodeServerManager implements IDisposable {
   onServerStopped(callback: ServerStoppedCallback): Unsubscribe {
     this.stoppedCallbacks.add(callback);
     return () => this.stoppedCallbacks.delete(callback);
+  }
+
+  /**
+   * Set the MCP server configuration.
+   * This must be called before starting servers if MCP integration is desired.
+   *
+   * @param config - MCP configuration with config path and port
+   */
+  setMcpConfig(config: McpConfig): void {
+    this.mcpConfig = config;
+    this.logger.debug("MCP config set", { configPath: config.configPath, port: config.port });
+  }
+
+  /**
+   * Get the current MCP configuration.
+   */
+  getMcpConfig(): McpConfig | null {
+    return this.mcpConfig;
   }
 
   /**

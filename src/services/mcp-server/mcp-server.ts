@@ -1,0 +1,483 @@
+/**
+ * MCP Server implementation.
+ *
+ * Provides MCP (Model Context Protocol) server functionality for AI agent integration.
+ * Uses the @modelcontextprotocol/sdk for protocol handling.
+ */
+
+import {
+  createServer,
+  type Server as HttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import {
+  McpServer as McpServerSdk,
+  type RegisteredTool,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
+import type { IMcpServer, ResolvedWorkspace, McpError } from "./types";
+import type { ICoreApi } from "../../shared/api/interfaces";
+import type { Logger } from "../logging";
+import { resolveWorkspace, type WorkspaceLookup } from "./workspace-resolver";
+
+/**
+ * X-Workspace-Path header name.
+ */
+const WORKSPACE_PATH_HEADER = "x-workspace-path";
+
+/**
+ * Silent logger for when no logger is provided.
+ */
+const SILENT_LOGGER: Logger = {
+  silly: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+/**
+ * Tool handler context providing workspace resolution.
+ */
+interface ToolContext {
+  readonly workspacePath: string;
+  readonly resolved: ResolvedWorkspace | null;
+}
+
+/**
+ * Factory function type for creating MCP SDK instances.
+ * Used for dependency injection and testability.
+ */
+export type McpServerFactory = () => McpServerSdk;
+
+/**
+ * Default factory that creates an MCP SDK server instance.
+ */
+export function createDefaultMcpServer(): McpServerSdk {
+  return new McpServerSdk({ name: "codehydra", version: "1.0.0" }, { capabilities: { tools: {} } });
+}
+
+/**
+ * MCP Server implementation.
+ *
+ * Provides HTTP-based MCP server that exposes workspace tools to AI agents.
+ */
+export class McpServer implements IMcpServer {
+  private readonly api: ICoreApi;
+  private readonly appState: WorkspaceLookup;
+  private readonly serverFactory: McpServerFactory;
+  private readonly logger: Logger;
+
+  private mcpServer: McpServerSdk | null = null;
+  private httpServer: HttpServer | null = null;
+  private transport: StreamableHTTPServerTransport | null = null;
+  private running = false;
+
+  // Store registered tools for cleanup
+  private registeredTools: RegisteredTool[] = [];
+
+  constructor(
+    api: ICoreApi,
+    appState: WorkspaceLookup,
+    serverFactory: McpServerFactory = createDefaultMcpServer,
+    logger?: Logger
+  ) {
+    this.api = api;
+    this.appState = appState;
+    this.serverFactory = serverFactory;
+    this.logger = logger ?? SILENT_LOGGER;
+  }
+
+  /**
+   * Start the MCP server on the specified port.
+   */
+  async start(port: number): Promise<void> {
+    if (this.running) {
+      this.logger.warn("Server already running");
+      return;
+    }
+
+    // Create MCP server instance
+    this.mcpServer = this.serverFactory();
+
+    // Register tools
+    this.registerTools();
+
+    // Create transport (stateless mode for per-request handling)
+    // Empty options = stateless mode (no session ID generation)
+    this.transport = new StreamableHTTPServerTransport({});
+
+    // Connect MCP server to transport
+    // Cast needed due to exactOptionalPropertyTypes mismatch between SDK types
+    await this.mcpServer.connect(this.transport as Parameters<typeof this.mcpServer.connect>[0]);
+
+    // Create HTTP server to handle incoming requests
+    this.httpServer = createServer((req, res) => {
+      this.handleRequest(req, res);
+    });
+
+    // Start listening
+    await new Promise<void>((resolve, reject) => {
+      this.httpServer!.listen(port, "127.0.0.1", () => {
+        this.running = true;
+        this.logger.info("Started", { port });
+        resolve();
+      });
+      this.httpServer!.on("error", reject);
+    });
+  }
+
+  /**
+   * Stop the MCP server.
+   */
+  async stop(): Promise<void> {
+    if (!this.running) {
+      return;
+    }
+
+    this.logger.info("Stopping");
+
+    // Close MCP server
+    if (this.mcpServer) {
+      await this.mcpServer.close();
+      this.mcpServer = null;
+    }
+
+    // Close transport
+    if (this.transport) {
+      await this.transport.close();
+      this.transport = null;
+    }
+
+    // Close HTTP server
+    if (this.httpServer) {
+      await new Promise<void>((resolve) => {
+        this.httpServer!.close(() => {
+          resolve();
+        });
+      });
+      this.httpServer = null;
+    }
+
+    this.registeredTools = [];
+    this.running = false;
+    this.logger.info("Stopped");
+  }
+
+  /**
+   * Check if the server is running.
+   */
+  isRunning(): boolean {
+    return this.running;
+  }
+
+  /**
+   * Dispose the server (alias for stop).
+   */
+  async dispose(): Promise<void> {
+    await this.stop();
+  }
+
+  /**
+   * Handle incoming HTTP requests.
+   */
+  private handleRequest(req: IncomingMessage, res: ServerResponse): void {
+    // Only handle POST requests to /mcp
+    if (req.method !== "POST" || req.url !== "/mcp") {
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
+
+    // Extract workspace path from header for context
+    const workspacePath = this.getWorkspacePath(req);
+    if (!workspacePath) {
+      this.logger.warn("Request missing X-Workspace-Path header");
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing X-Workspace-Path header" }));
+      return;
+    }
+
+    this.logger.debug("Handling request", { workspacePath });
+
+    // Attach auth info with workspace path to the request
+    // The MCP SDK's StreamableHTTPServerTransport.handleRequest() accepts req.auth of type AuthInfo
+    // which has an extra field for custom data that gets passed to tool handlers
+    const reqWithAuth = req as IncomingMessage & {
+      auth?: { token: string; clientId: string; scopes: string[]; extra?: Record<string, unknown> };
+    };
+    reqWithAuth.auth = {
+      token: "codehydra",
+      clientId: "codehydra",
+      scopes: [],
+      extra: { workspacePath },
+    };
+
+    // Delegate to transport
+    this.transport!.handleRequest(reqWithAuth, res);
+  }
+
+  /**
+   * Get workspace path from request header.
+   */
+  private getWorkspacePath(req: IncomingMessage): string | null {
+    const header = req.headers[WORKSPACE_PATH_HEADER];
+    if (typeof header === "string" && header.length > 0) {
+      return header;
+    }
+    return null;
+  }
+
+  /**
+   * Register all MCP tools.
+   */
+  private registerTools(): void {
+    if (!this.mcpServer) {
+      return;
+    }
+
+    // workspace_get_status
+    this.registeredTools.push(
+      this.mcpServer.registerTool(
+        "workspace_get_status",
+        {
+          description: "Get the current workspace status including dirty flag and agent status",
+          inputSchema: z.object({}),
+        },
+        async (_args, extra) => {
+          const context = await this.getToolContext(extra);
+          if (!context.resolved) {
+            return this.errorResult(
+              "workspace-not-found",
+              `Workspace not found: ${context.workspacePath}`
+            );
+          }
+
+          try {
+            const status = await this.api.workspaces.getStatus(
+              context.resolved.projectId,
+              context.resolved.workspaceName
+            );
+            return this.successResult(status);
+          } catch (error) {
+            return this.handleError(error);
+          }
+        }
+      )
+    );
+
+    // workspace_get_metadata
+    this.registeredTools.push(
+      this.mcpServer.registerTool(
+        "workspace_get_metadata",
+        {
+          description: "Get all metadata for the current workspace",
+          inputSchema: z.object({}),
+        },
+        async (_args, extra) => {
+          const context = await this.getToolContext(extra);
+          if (!context.resolved) {
+            return this.errorResult(
+              "workspace-not-found",
+              `Workspace not found: ${context.workspacePath}`
+            );
+          }
+
+          try {
+            const metadata = await this.api.workspaces.getMetadata(
+              context.resolved.projectId,
+              context.resolved.workspaceName
+            );
+            return this.successResult(metadata);
+          } catch (error) {
+            return this.handleError(error);
+          }
+        }
+      )
+    );
+
+    // workspace_set_metadata
+    this.registeredTools.push(
+      this.mcpServer.registerTool(
+        "workspace_set_metadata",
+        {
+          description: "Set or delete a metadata key for the current workspace",
+          inputSchema: z.object({
+            key: z
+              .string()
+              .describe(
+                "Metadata key (must start with letter, contain only letters/digits/hyphens)"
+              ),
+            value: z
+              .union([z.string(), z.null()])
+              .describe("Value to set, or null to delete the key"),
+          }),
+        },
+        async (args, extra) => {
+          const context = await this.getToolContext(extra);
+          if (!context.resolved) {
+            return this.errorResult(
+              "workspace-not-found",
+              `Workspace not found: ${context.workspacePath}`
+            );
+          }
+
+          try {
+            await this.api.workspaces.setMetadata(
+              context.resolved.projectId,
+              context.resolved.workspaceName,
+              args.key,
+              args.value
+            );
+            return this.successResult(null);
+          } catch (error) {
+            return this.handleError(error);
+          }
+        }
+      )
+    );
+
+    // workspace_get_opencode_port
+    this.registeredTools.push(
+      this.mcpServer.registerTool(
+        "workspace_get_opencode_port",
+        {
+          description: "Get the OpenCode server port for the current workspace",
+          inputSchema: z.object({}),
+        },
+        async (_args, extra) => {
+          const context = await this.getToolContext(extra);
+          if (!context.resolved) {
+            return this.errorResult(
+              "workspace-not-found",
+              `Workspace not found: ${context.workspacePath}`
+            );
+          }
+
+          try {
+            const port = await this.api.workspaces.getOpencodePort(
+              context.resolved.projectId,
+              context.resolved.workspaceName
+            );
+            return this.successResult(port);
+          } catch (error) {
+            return this.handleError(error);
+          }
+        }
+      )
+    );
+
+    // workspace_delete
+    this.registeredTools.push(
+      this.mcpServer.registerTool(
+        "workspace_delete",
+        {
+          description: "Delete the current workspace. This will terminate the OpenCode session.",
+          inputSchema: z.object({
+            keepBranch: z
+              .boolean()
+              .optional()
+              .default(false)
+              .describe("If true, keep the git branch after deleting the worktree"),
+          }),
+        },
+        async (args, extra) => {
+          const context = await this.getToolContext(extra);
+          if (!context.resolved) {
+            return this.errorResult(
+              "workspace-not-found",
+              `Workspace not found: ${context.workspacePath}`
+            );
+          }
+
+          try {
+            const result = await this.api.workspaces.remove(
+              context.resolved.projectId,
+              context.resolved.workspaceName,
+              args.keepBranch
+            );
+            return this.successResult(result);
+          } catch (error) {
+            return this.handleError(error);
+          }
+        }
+      )
+    );
+
+    this.logger.debug("Registered tools", { count: this.registeredTools.length });
+  }
+
+  /**
+   * Get tool context from extra info.
+   * The workspace path is passed via req.auth.extra.workspacePath which becomes
+   * extra.authInfo.extra.workspacePath in tool handlers.
+   */
+  private async getToolContext(extra: unknown): Promise<ToolContext> {
+    let workspacePath = "";
+
+    // Extract from extra.authInfo.extra.workspacePath
+    if (extra && typeof extra === "object" && "authInfo" in extra) {
+      const authInfo = (extra as { authInfo?: unknown }).authInfo;
+      if (authInfo && typeof authInfo === "object" && "extra" in authInfo) {
+        const authExtra = (authInfo as { extra?: unknown }).extra;
+        if (authExtra && typeof authExtra === "object" && "workspacePath" in authExtra) {
+          workspacePath = String((authExtra as { workspacePath: unknown }).workspacePath);
+        }
+      }
+    }
+
+    // Resolve workspace
+    const resolved = workspacePath ? resolveWorkspace(workspacePath, this.appState) : null;
+
+    return {
+      workspacePath,
+      resolved,
+    };
+  }
+
+  /**
+   * Create a success result for MCP tools.
+   */
+  private successResult<T>(data: T): { content: Array<{ type: "text"; text: string }> } {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(data),
+        },
+      ],
+    };
+  }
+
+  /**
+   * Create an error result for MCP tools.
+   */
+  private errorResult(
+    code: McpError["code"],
+    message: string
+  ): { content: Array<{ type: "text"; text: string }>; isError: true } {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ error: { code, message } }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  /**
+   * Handle errors from API calls.
+   */
+  private handleError(error: unknown): {
+    content: Array<{ type: "text"; text: string }>;
+    isError: true;
+  } {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.error("Tool error", { error: message });
+    return this.errorResult("internal-error", message);
+  }
+}

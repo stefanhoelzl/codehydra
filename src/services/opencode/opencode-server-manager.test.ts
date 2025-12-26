@@ -92,6 +92,8 @@ function createTestPathProvider(): PathProvider {
     opencodeDir: "/test/app-data/opencode/1.0.0",
     codeServerBinaryPath: "/test/app-data/code-server/1.0.0/bin/code-server",
     opencodeBinaryPath: "/test/app-data/opencode/1.0.0/opencode",
+    bundledNodePath: "/test/app-data/code-server/1.0.0/lib/node",
+    mcpConfigPath: "/test/app-data/opencode/codehydra-mcp.json",
     getProjectWorkspacesDir: (projectPath: string) =>
       `/test/app-data/projects/${projectPath}/workspaces`,
   };
@@ -536,6 +538,68 @@ describe("OpenCodeServerManager", () => {
       expect(events).toContain("killed");
       expect(events).toContain("callback");
       expect(events.indexOf("killed")).toBeLessThan(events.indexOf("callback"));
+    });
+  });
+
+  describe("MCP configuration", () => {
+    it("setMcpConfig stores configuration", () => {
+      manager.setMcpConfig({
+        configPath: "/test/mcp-config.json",
+        port: 12345,
+      });
+
+      const config = manager.getMcpConfig();
+      expect(config).toEqual({
+        configPath: "/test/mcp-config.json",
+        port: 12345,
+      });
+    });
+
+    it("getMcpConfig returns null before setMcpConfig", () => {
+      expect(manager.getMcpConfig()).toBeNull();
+    });
+
+    it("passes MCP env vars when config is set", async () => {
+      manager.setMcpConfig({
+        configPath: "/test/mcp-config.json",
+        port: 12345,
+      });
+
+      await manager.startServer("/workspace/feature-a");
+
+      expect(mockProcessRunner.run).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({
+          cwd: "/workspace/feature-a",
+          env: expect.objectContaining({
+            OPENCODE_CONFIG: "/test/mcp-config.json",
+            CODEHYDRA_WORKSPACE_PATH: "/workspace/feature-a",
+            CODEHYDRA_MCP_PORT: "12345",
+          }),
+        })
+      );
+    });
+
+    it("does not pass env when MCP config not set", async () => {
+      await manager.startServer("/workspace/feature-a");
+
+      expect(mockProcessRunner.run).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({
+          cwd: "/workspace/feature-a",
+        })
+      );
+
+      // Verify no env property (or env without MCP vars)
+      const call = mockProcessRunner.run.mock.calls[0];
+      const options = call?.[2] as { env?: NodeJS.ProcessEnv };
+      if (options?.env) {
+        expect(options.env.OPENCODE_CONFIG).toBeUndefined();
+        expect(options.env.CODEHYDRA_WORKSPACE_PATH).toBeUndefined();
+        expect(options.env.CODEHYDRA_MCP_PORT).toBeUndefined();
+      }
     });
   });
 });

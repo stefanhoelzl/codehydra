@@ -147,6 +147,7 @@ describe("VscodeSetupService Integration", () => {
       setupMarkerPath: mockPaths.markerPath,
       vscodeAssetsDir: mockPaths.assetsDir,
       binDir: mockPaths.binDir,
+      mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
     });
   });
 
@@ -369,6 +370,7 @@ describe("VscodeSetupService Integration", () => {
         setupMarkerPath: mockPaths.markerPath,
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
+        mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
       });
 
       const processRunner = createMockProcessRunner();
@@ -400,6 +402,7 @@ describe("VscodeSetupService Integration", () => {
         setupMarkerPath: mockPaths.markerPath,
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
+        mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
       });
 
       const processRunner = createMockProcessRunner();
