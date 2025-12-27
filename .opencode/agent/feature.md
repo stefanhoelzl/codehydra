@@ -409,17 +409,31 @@ reviewers: []
 
 ## Testing Strategy
 
-### Unit Tests (vitest)
-
-| Test Case | Description   | File |
-| --------- | ------------- | ---- |
-| test name | what it tests | path |
-
 ### Integration Tests
 
-| Test Case | Description   | File |
-| --------- | ------------- | ---- |
-| test name | what it tests | path |
+Test behavior through high-level entry points with behavioral mocks.
+
+| # | Test Case | Entry Point | Boundary Mocks | Behavior Verified |
+|---|-----------|-------------|----------------|-------------------|
+| 1 | test name | `CodeHydraApi.method()` | GitClient, FileSystem | `expect(result).toContain(...)` |
+
+### UI Integration Tests (if applicable)
+
+| # | Test Case | Category | Component | Behavior Verified |
+|---|-----------|----------|-----------|-------------------|
+| 1 | test name | API-call / UI-state / Pure-UI | ComponentName | what it verifies |
+
+### Boundary Tests (only for new external interfaces)
+
+| # | Test Case | Interface | External System | Behavior Verified |
+|---|-----------|-----------|-----------------|-------------------|
+| 1 | test name | InterfaceName | Git/HTTP/FS/etc | real system behavior |
+
+### Focused Tests (only for pure utility functions)
+
+| # | Test Case | Function | Input/Output |
+|---|-----------|----------|--------------|
+| 1 | test name | functionName | input → expected output |
 
 ### Manual Testing Checklist
 

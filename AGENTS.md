@@ -671,12 +671,14 @@ See `docs/TESTING.md` for the complete testing strategy.
 
 ### Quick Reference
 
-| Code Change                                   | Required Tests           |
-| --------------------------------------------- | ------------------------ |
-| New module/function                           | Unit tests               |
-| Module interactions                           | Integration tests        |
-| External interface (Git, HTTP, fs, processes) | Boundary tests           |
-| Bug fix                                       | Test that covers the fix |
+| Code Change                                   | Required Tests                       |
+| --------------------------------------------- | ------------------------------------ |
+| New feature/module                            | Integration tests (behavioral mocks) |
+| Pure utility function (no deps)               | Focused tests (input/output)         |
+| External interface (Git, HTTP, fs, processes) | Boundary tests                       |
+| Bug fix                                       | Test that covers the fix             |
+
+**Note**: Unit tests are **deprecated**. New code uses integration tests with behavioral mocks. Existing unit tests remain until migrated per-module.
 
 ### Efficient Coverage Workflow
 
@@ -694,12 +696,15 @@ For bug fixes during cleanup:
 
 ### Test Commands
 
-| Command                 | Use Case                              |
-| ----------------------- | ------------------------------------- |
-| `npm test`              | Run all tests                         |
-| `npm run test:unit`     | Quick feedback during development     |
-| `npm run test:boundary` | When developing external interfaces   |
-| `npm run validate`      | Pre-commit check (unit + integration) |
+| Command                    | Use Case                                     |
+| -------------------------- | -------------------------------------------- |
+| `npm test`                 | Run all tests                                |
+| `npm run test:integration` | Primary development feedback (fast)          |
+| `npm run test:boundary`    | When developing external interfaces          |
+| `npm run test:legacy`      | Deprecated unit tests (until migrated)       |
+| `npm run validate`         | Pre-commit check (integration tests + build) |
+
+**Important**: Integration tests MUST be fast (<50ms per test). They replace unit tests as the primary feedback mechanism. If tests are slow, fix the behavioral mock.
 
 ## Validation Commands
 

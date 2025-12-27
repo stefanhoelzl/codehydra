@@ -61,6 +61,9 @@ You verify that implementation matches the approved plan. You are invoked by the
 - Files modified that could break unrelated features
 - Platform-specific code without abstractions (hardcoded '/' paths, Unix commands)
 - Missing platform handling for file operations or process spawning
+- New code uses call-tracking mocks instead of behavioral mocks
+- Tests verify implementation calls instead of behavior outcomes
+- Tests are slow (artificial delays, excessive setup)
 
 ### Important Issues (should be addressed)
 
@@ -70,6 +73,8 @@ You verify that implementation matches the approved plan. You are invoked by the
 - Unexpected files modified (but not breaking)
 - Tests using Unix-specific patterns without proper platform skipping
 - Missing .cmd/.exe extensions for Windows binary references
+- Behavioral mock behavior doesn't match boundary test assertions
+- Wrong entry point used for integration tests
 
 ### Suggestions (nice to have)
 
@@ -116,13 +121,17 @@ You MUST use this EXACT format:
 
 - [x] All implementation steps match plan specification
 - [x] Tests exist for all test cases specified in plan
-- [x] Test files follow naming conventions
+- [x] Test files follow naming conventions (*.integration.test.ts, *.boundary.test.ts)
 - [x] Only planned files were modified
 - [x] Only approved dependencies were added
 - [x] No undocumented deviations from plan
 - [x] Platform-specific code uses PlatformInfo abstraction
 - [x] File paths use path.join()/path.normalize()
 - [x] Tests avoid Unix-specific commands or properly skip on Windows
+- [x] New code uses behavioral mocks (not call-tracking)
+- [x] Tests verify behavior outcomes (not implementation calls)
+- [x] Correct entry points used for integration tests
+- [x] Tests run fast (no artificial delays, efficient mocks)
 
 (Use [x] for pass, [ ] for fail, note failures in issues above)
 ```
