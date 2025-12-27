@@ -202,10 +202,12 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 **Workspace Deletion Sequence**: When a workspace is deleted, the following operations run in the "kill-terminals" step, followed by cleanup operations:
 
 1. **Kill terminals and extension host** (best-effort, in "kill-terminals" step):
-   - First, sends `workbench.action.terminal.killAll` via PluginServer to terminate running terminal processes
-   - Then, sends `shutdown` event to terminate the extension host process (releases file watchers and handles on Windows)
-   - Both operations happen while the VS Code extension is still connected
-   - If the workspace is not connected or operations time out (5s), the step is marked as done and deletion continues
+   - Sends `shutdown` event to the VS Code extension, which handles:
+     1. Gets all terminals and disposes each one
+     2. Waits for `onDidCloseTerminal` events (or 5s timeout)
+     3. Removes workspace folders (releases file watchers)
+     4. Terminates the extension host process
+   - If the workspace is not connected or operations time out, the step is marked as done and deletion continues
 
 2. **Close VS Code view**: Navigates to `about:blank`, clears session storage, and destroys the WebContentsView.
 

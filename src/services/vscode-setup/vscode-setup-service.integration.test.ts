@@ -72,14 +72,14 @@ describe("VscodeSetupService Integration", () => {
           {
             id: "codehydra.sidekick",
             version: "0.0.2",
-            vsix: "codehydra-sidekick-0.0.2.vsix",
+            vsix: "codehydra-sidekick-0.0.3.vsix",
           },
         ],
       })
     );
 
     // Create a mock vsix file (just needs to exist for the test)
-    await writeFile(join(assetsDir, "codehydra-sidekick-0.0.2.vsix"), "mock-vsix-content");
+    await writeFile(join(assetsDir, "codehydra-sidekick-0.0.3.vsix"), "mock-vsix-content");
   }
 
   /**
@@ -168,7 +168,7 @@ describe("VscodeSetupService Integration", () => {
       expect(result.success).toBe(true);
 
       // Verify vsix was copied to vscodeDir
-      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.2.vsix");
+      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.3.vsix");
       const vsixContent = await readFile(vsixPath, "utf-8");
       expect(vsixContent).toBe("mock-vsix-content");
 
@@ -242,7 +242,7 @@ describe("VscodeSetupService Integration", () => {
       await service.setup(preflight);
 
       // Vsix file should be copied (happens before install command)
-      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.2.vsix");
+      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.3.vsix");
       const vsixContent = await readFile(vsixPath, "utf-8");
       expect(vsixContent).toBe("mock-vsix-content");
     });

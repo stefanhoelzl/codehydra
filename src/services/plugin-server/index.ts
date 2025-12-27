@@ -4,9 +4,4 @@
 
 export { PluginServer, type ApiCallHandlers } from "./plugin-server";
 export { STARTUP_COMMANDS, sendStartupCommands, type StartupCommand } from "./startup-commands";
-export {
-  SHUTDOWN_COMMAND,
-  SHUTDOWN_COMMAND_TIMEOUT_MS,
-  sendShutdownCommand,
-} from "./shutdown-commands";
 export { SHUTDOWN_DISCONNECT_TIMEOUT_MS } from "../../shared/plugin-protocol";

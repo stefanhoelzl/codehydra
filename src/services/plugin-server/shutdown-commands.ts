@@ -1,8 +1,20 @@
 /**
  * Shutdown commands for VS Code workspace cleanup.
  *
- * These commands are sent to workspaces before they are destroyed
- * to ensure proper cleanup of running processes (e.g., terminals).
+ * @deprecated This module is deprecated. Terminal killing is now handled
+ * inside the extension's shutdown event handler (see extension.js).
+ * Use `PluginServer.sendExtensionHostShutdown()` directly instead of
+ * calling `sendShutdownCommand()` followed by `sendExtensionHostShutdown()`.
+ *
+ * The extension now:
+ * 1. Gets all terminals
+ * 2. Sets up onDidCloseTerminal listener
+ * 3. Disposes each terminal
+ * 4. Waits for all closed OR 5-second timeout
+ * 5. Removes workspace folders
+ * 6. Sends ack and exits
+ *
+ * @internal
  */
 
 import type { PluginServer } from "./plugin-server";
@@ -14,12 +26,14 @@ import type { Logger } from "../logging";
 
 /**
  * VS Code command to kill all terminal processes in a workspace.
+ * @deprecated No longer used. Terminal killing is handled inside the extension's shutdown handler.
  */
 export const SHUTDOWN_COMMAND = "workbench.action.terminal.killAll" as const;
 
 /**
  * Timeout for shutdown command (5 seconds).
  * If the command doesn't complete in time, we proceed with deletion anyway.
+ * @deprecated No longer used. Terminal killing timeout is handled inside the extension's shutdown handler.
  */
 export const SHUTDOWN_COMMAND_TIMEOUT_MS = 5000;
 
@@ -29,6 +43,9 @@ export const SHUTDOWN_COMMAND_TIMEOUT_MS = 5000;
 
 /**
  * Send the shutdown command to terminate all terminal processes in a workspace.
+ *
+ * @deprecated No longer used. Terminal killing is now handled inside the extension's
+ * shutdown event handler. Use `PluginServer.sendExtensionHostShutdown()` directly.
  *
  * This is a best-effort operation:
  * - If the workspace is not connected, logs debug and returns (no error)

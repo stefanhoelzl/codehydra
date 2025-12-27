@@ -27,7 +27,7 @@ import {
   type BinaryDownloadService,
 } from "../services/binary-download";
 import { AgentStatusManager, OpenCodeServerManager } from "../services/opencode";
-import { PluginServer, sendStartupCommands, sendShutdownCommand } from "../services/plugin-server";
+import { PluginServer, sendStartupCommands } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { wirePluginApi } from "./api/wire-plugin-api";
 import { WindowManager } from "./managers/window-manager";
@@ -592,7 +592,6 @@ async function bootstrap(): Promise<void> {
       if (!appState || !viewManager) {
         throw new Error("Core deps not ready - appState/viewManager not initialized");
       }
-      const pluginLogger = loggingService.createLogger("plugin");
       const baseDeps = {
         appState,
         viewManager,
@@ -608,17 +607,16 @@ async function bootstrap(): Promise<void> {
         logger: loggingService.createLogger("api"),
       };
       // Add killTerminalsCallback only if PluginServer is available
-      // This callback:
-      // 1. Sends terminal.killAll command to kill workspace terminal processes
-      // 2. Sends shutdown event to terminate extension host (releases file handles)
+      // This callback sends shutdown event to the extension, which:
+      // 1. Kills all terminals and waits for them to close (or timeout)
+      // 2. Removes workspace folders (releases file watchers)
+      // 3. Terminates the extension host process
       if (pluginServer) {
         return {
           ...baseDeps,
           pluginServer,
           killTerminalsCallback: async (workspacePath: string) => {
-            // Step 1: Kill terminal processes
-            await sendShutdownCommand(pluginServer!, workspacePath, pluginLogger);
-            // Step 2: Shutdown extension host (releases file watchers, terminates process)
+            // Shutdown extension host (kills terminals, releases file watchers, terminates process)
             await pluginServer!.sendExtensionHostShutdown(workspacePath);
           },
         };

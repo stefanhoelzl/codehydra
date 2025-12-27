@@ -965,11 +965,15 @@ The `shutdown` event is sent during workspace deletion to terminate the extensio
 **Shutdown Flow:**
 
 1. CodeHydra emits `shutdown` event
-2. Extension removes workspace folders (releases file watchers)
-3. Extension sends ack
-4. Extension calls `process.exit(0)` via `setImmediate`
-5. CodeHydra waits for socket disconnect (not just ack) as confirmation
-6. If no disconnect within 5s, proceeds with deletion anyway (best-effort)
+2. Extension kills all terminals:
+   - Gets all terminals and disposes each one
+   - Waits for `onDidCloseTerminal` events for each terminal
+   - If any terminals don't close within 5s, proceeds anyway
+3. Extension removes workspace folders (releases file watchers)
+4. Extension sends ack
+5. Extension calls `process.exit(0)` via `setImmediate`
+6. CodeHydra waits for socket disconnect (not just ack) as confirmation
+7. If no disconnect within 5s, proceeds with deletion anyway (best-effort)
 
 ### Logging
 

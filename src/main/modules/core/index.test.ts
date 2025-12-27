@@ -332,13 +332,17 @@ describe("core.workspaces.remove.server.stop.error", () => {
     expect(result).toEqual({ started: true });
 
     // Wait for async deletion to complete
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => {
+      const calls = emitDeletionProgress.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toBeDefined();
+      const progress = lastCall![0];
+      expect(progress.completed).toBe(true);
+    });
 
     // Verify deletion progress was emitted with server stop error
-    expect(emitDeletionProgress).toHaveBeenCalled();
     const calls = emitDeletionProgress.mock.calls;
     const lastCall = calls[calls.length - 1];
-    expect(lastCall).toBeDefined();
     const progress = lastCall![0];
 
     // The stop-server operation should have an error status
@@ -407,13 +411,17 @@ describe("core.workspaces.remove.view.destroy.error", () => {
     expect(result).toEqual({ started: true });
 
     // Wait for async deletion to complete
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => {
+      const calls = emitDeletionProgress.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toBeDefined();
+      const progress = lastCall![0];
+      expect(progress.completed).toBe(true);
+    });
 
     // Verify deletion progress was emitted with view destroy error
-    expect(emitDeletionProgress).toHaveBeenCalled();
     const calls = emitDeletionProgress.mock.calls;
     const lastCall = calls[calls.length - 1];
-    expect(lastCall).toBeDefined();
     const progress = lastCall![0];
 
     // The cleanup-vscode operation should have an error status

@@ -570,11 +570,11 @@ VS Code extension communication via Socket.IO:
 
 **Server → Client Events:**
 
-| Event      | Purpose                                         | Timeout |
-| ---------- | ----------------------------------------------- | ------- |
-| `config`   | Send configuration after connection             | N/A     |
-| `command`  | Execute VS Code command                         | 10s     |
-| `shutdown` | Terminate extension host for workspace deletion | 5s      |
+| Event      | Purpose                                                            | Timeout |
+| ---------- | ------------------------------------------------------------------ | ------- |
+| `config`   | Send configuration after connection                                | N/A     |
+| `command`  | Execute VS Code command                                            | 10s     |
+| `shutdown` | Kill terminals, remove workspace folders, terminate extension host | 5s      |
 
 **Full details**: See [Plugin Interface](docs/PATTERNS.md#plugin-interface) for protocol and commands.
 

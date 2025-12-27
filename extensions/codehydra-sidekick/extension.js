@@ -53,6 +53,9 @@ let pendingReady = [];
 /** Timeout for API calls in milliseconds (matches COMMAND_TIMEOUT_MS) */
 const API_TIMEOUT_MS = 10000;
 
+/** Timeout for terminal kill operations in milliseconds */
+const TERMINAL_KILL_TIMEOUT_MS = 5000;
+
 // ============================================================================
 // Development Mode State Variables
 // ============================================================================
@@ -356,6 +359,66 @@ function registerDebugCommands(context) {
 }
 
 // ============================================================================
+// Terminal Cleanup
+// ============================================================================
+
+/**
+ * Kill all terminals and wait for them to close.
+ * Returns after all terminals are closed OR after timeout.
+ * @returns {Promise<void>}
+ */
+async function killAllTerminalsAndWait() {
+  const terminals = [...vscode.window.terminals];
+
+  if (terminals.length === 0) {
+    log("No terminals to kill");
+    return;
+  }
+
+  log("Killing " + terminals.length + " terminal(s)");
+  const pendingTerminals = new Set(terminals);
+
+  await new Promise((resolve) => {
+    let resolved = false;
+
+    const done = () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeout);
+      disposable.dispose(); // Clean up listener
+      resolve();
+    };
+
+    // Set up timeout - proceed anyway after 5 seconds
+    const timeout = setTimeout(() => {
+      log("Terminal kill timeout - " + pendingTerminals.size + " remaining, proceeding anyway");
+      done();
+    }, TERMINAL_KILL_TIMEOUT_MS);
+
+    // IMPORTANT: Set up listener BEFORE disposing terminals to avoid race condition
+    const disposable = vscode.window.onDidCloseTerminal((closedTerminal) => {
+      pendingTerminals.delete(closedTerminal);
+      log("Terminal closed, " + pendingTerminals.size + " remaining");
+      if (pendingTerminals.size === 0) {
+        log("All terminals closed");
+        done();
+      }
+    });
+
+    // Dispose all terminals AFTER listener is set up
+    for (const terminal of terminals) {
+      terminal.dispose();
+    }
+
+    // Check in case all terminals closed synchronously (unlikely but safe)
+    if (pendingTerminals.size === 0) {
+      log("All terminals closed (sync)");
+      done();
+    }
+  });
+}
+
+// ============================================================================
 // PluginServer Connection
 // ============================================================================
 
@@ -470,10 +533,13 @@ function connectToPluginServer(port, workspacePath) {
 
   // Handle shutdown request for workspace deletion
   // This terminates the extension host to release file handles
-  socket.on("shutdown", (ack) => {
+  socket.on("shutdown", async (ack) => {
     log("Shutdown command received, workspace: " + currentWorkspacePath);
 
-    // Graceful: try to remove workspace folders (releases file watchers)
+    // Step 1: Kill all terminals and wait for them to close
+    await killAllTerminalsAndWait();
+
+    // Step 2: Graceful cleanup - remove workspace folders (releases file watchers)
     try {
       const folders = vscode.workspace.workspaceFolders;
       if (folders && folders.length > 0) {
