@@ -33,21 +33,23 @@ export interface BinaryCheckResult {
  *
  * Uses the injected ProcessRunner for testability.
  *
+ * @param binaryPath - Path to the opencode binary
  * @param runner - Process runner to use (defaults to ExecaProcessRunner)
  * @returns Result indicating if binary is available
  *
  * @example
  * ```ts
- * const result = await checkOpencodeAvailable();
+ * const result = await checkOpencodeAvailable('/path/to/opencode');
  * if (!result.available) {
- *   console.log('Skipping boundary tests:', result.error);
+ *   throw new Error(`OpenCode binary not available: ${result.error}`);
  * }
  * ```
  */
 export async function checkOpencodeAvailable(
+  binaryPath: string,
   runner: ProcessRunner = createDefaultRunner()
 ): Promise<BinaryCheckResult> {
-  const proc = runner.run("opencode", ["--version"], {});
+  const proc = runner.run(binaryPath, ["--version"], {});
 
   const result = await proc.wait(5000);
 
@@ -97,6 +99,8 @@ export async function checkOpencodeAvailable(
  * Configuration for starting an opencode serve process.
  */
 export interface OpencodeTestConfig {
+  /** Path to the opencode binary */
+  readonly binaryPath: string;
   /** Port to listen on */
   readonly port: number;
   /** Working directory (must be a git repo) */
@@ -173,10 +177,14 @@ export async function startOpencode(
   };
 
   // Start the opencode serve process
-  const proc: SpawnedProcess = runner.run("opencode", ["serve", "--port", String(config.port)], {
-    cwd: config.cwd,
-    env,
-  });
+  const proc: SpawnedProcess = runner.run(
+    config.binaryPath,
+    ["serve", "--port", String(config.port)],
+    {
+      cwd: config.cwd,
+      env,
+    }
+  );
 
   // Check if process spawned successfully
   if (proc.pid === undefined) {

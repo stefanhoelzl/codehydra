@@ -316,7 +316,6 @@ describe("OpenCodeServerManager", () => {
       manager = new OpenCodeServerManager(
         mockProcessRunner,
         mockPortManager,
-        mockFileSystemLayer,
         mockHttpClient,
         mockPathProvider,
         createSilentLogger()
@@ -353,7 +352,6 @@ describe("OpenCodeServerManager", () => {
       manager = new OpenCodeServerManager(
         mockProcessRunner,
         mockPortManager,
-        mockFileSystemLayer,
         mockHttpClient,
         mockPathProvider,
         loggerWithSpy

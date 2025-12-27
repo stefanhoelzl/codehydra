@@ -7,6 +7,8 @@ import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/p
 import { checkOpencodeAvailable, startOpencode } from "./boundary-test-utils";
 import { createTestGitRepo } from "../test-utils";
 
+const TEST_BINARY_PATH = "/path/to/opencode";
+
 describe("checkOpencodeAvailable", () => {
   it("returns available:true when opencode binary is found", async () => {
     const mockProc = createMockSpawnedProcess({
@@ -15,7 +17,7 @@ describe("checkOpencodeAvailable", () => {
     });
     const runner = createMockProcessRunner(mockProc);
 
-    const result = await checkOpencodeAvailable(runner);
+    const result = await checkOpencodeAvailable(TEST_BINARY_PATH, runner);
 
     expect(result.available).toBe(true);
     expect(result.version).toBe("1.2.3");
@@ -29,7 +31,7 @@ describe("checkOpencodeAvailable", () => {
     });
     const runner = createMockProcessRunner(mockProc);
 
-    const result = await checkOpencodeAvailable(runner);
+    const result = await checkOpencodeAvailable(TEST_BINARY_PATH, runner);
 
     expect(result.available).toBe(false);
     expect(result.error).toBe("opencode binary not found in PATH");
@@ -43,7 +45,7 @@ describe("checkOpencodeAvailable", () => {
     });
     const runner = createMockProcessRunner(mockProc);
 
-    const result = await checkOpencodeAvailable(runner);
+    const result = await checkOpencodeAvailable(TEST_BINARY_PATH, runner);
 
     expect(result.available).toBe(false);
     expect(result.error).toContain("exit code 1");
@@ -57,7 +59,7 @@ describe("checkOpencodeAvailable", () => {
     });
     const runner = createMockProcessRunner(mockProc);
 
-    const result = await checkOpencodeAvailable(runner);
+    const result = await checkOpencodeAvailable(TEST_BINARY_PATH, runner);
 
     expect(result.available).toBe(false);
     expect(result.error).toBe("opencode --version timed out");
@@ -72,7 +74,7 @@ describe("checkOpencodeAvailable", () => {
     });
     const runner = createMockProcessRunner(mockProc);
 
-    const result = await checkOpencodeAvailable(runner);
+    const result = await checkOpencodeAvailable(TEST_BINARY_PATH, runner);
 
     expect(result.available).toBe(true);
     expect(result.version).toBe("2.0.0");
@@ -90,6 +92,7 @@ describe("startOpencode", () => {
 
     try {
       const config = {
+        binaryPath: TEST_BINARY_PATH,
         port: 14096,
         cwd,
         config: {
@@ -103,7 +106,7 @@ describe("startOpencode", () => {
 
       expect(proc.pid).toBe(12345);
       expect(runner.run).toHaveBeenCalledWith(
-        "opencode",
+        TEST_BINARY_PATH,
         ["serve", "--port", "14096"],
         expect.objectContaining({
           cwd,
@@ -139,6 +142,7 @@ describe("startOpencode", () => {
 
     try {
       const config = {
+        binaryPath: TEST_BINARY_PATH,
         port: 14096,
         cwd,
         config: {
@@ -167,6 +171,7 @@ describe("startOpencode", () => {
 
     try {
       const config = {
+        binaryPath: TEST_BINARY_PATH,
         port: 14096,
         cwd,
         config: {

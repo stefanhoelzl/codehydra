@@ -10,16 +10,19 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { createOpencodeClient, type OpencodeClient as SdkClient } from "@opencode-ai/sdk";
+import { existsSync } from "node:fs";
 import { OpenCodeClient } from "./opencode-client";
 import { createMockLlmServer, type MockLlmServer } from "../../test/fixtures/mock-llm-server";
-import { checkOpencodeAvailable, startOpencode, type OpencodeProcess } from "./boundary-test-utils";
+import { startOpencode, type OpencodeProcess } from "./boundary-test-utils";
 import { waitForPort, CI_TIMEOUT_MS } from "../platform/network.test-utils";
 import { createTestGitRepo } from "../test-utils";
 import { createSilentLogger } from "../logging";
+import { DefaultPathProvider } from "../platform/path-provider";
+import { NodePlatformInfo } from "../../main/platform-info";
+import { createMockBuildInfo } from "../platform/build-info.test-utils";
 import type { ClientStatus } from "./types";
 
 // Longer timeouts for boundary tests
-const TEST_TIMEOUT_MS = 10000;
 const EVENT_TIMEOUT_MS = 5000;
 
 describe("OpenCodeClient boundary tests", () => {
@@ -30,16 +33,27 @@ describe("OpenCodeClient boundary tests", () => {
   let tempDir: string;
   let cleanupTempDir: () => Promise<void>;
   let opencodePort: number;
+  let opencodeBinaryPath: string;
 
   // Track spawned PIDs for fallback cleanup
   const spawnedPids: number[] = [];
 
-  // Check if opencode is available before running tests
+  // Setup opencode before running tests - fails if binary not found
   beforeAll(async () => {
-    const binaryCheck = await checkOpencodeAvailable();
-    if (!binaryCheck.available) {
-      console.log(`Skipping OpenCode boundary tests: ${binaryCheck.error}`);
-      return;
+    // Get the opencode binary path from PathProvider
+    const buildInfo = createMockBuildInfo({
+      isDevelopment: true,
+      appPath: process.cwd(),
+    });
+    const platformInfo = new NodePlatformInfo();
+    const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+    opencodeBinaryPath = pathProvider.opencodeBinaryPath;
+
+    // Fail fast if binary doesn't exist - npm install should have downloaded it
+    if (!existsSync(opencodeBinaryPath)) {
+      throw new Error(
+        `OpenCode binary not found at ${opencodeBinaryPath}. Run 'npm install' to download binaries.`
+      );
     }
 
     // Create temp directory for opencode
@@ -59,6 +73,7 @@ describe("OpenCodeClient boundary tests", () => {
 
     // Start opencode with mock LLM config
     const config = {
+      binaryPath: opencodeBinaryPath,
       port: opencodePort,
       cwd: tempDir,
       config: {
@@ -152,24 +167,8 @@ describe("OpenCodeClient boundary tests", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
   });
 
-  // Helper to skip tests if opencode is not available
-  const itIfOpencode = (name: string, fn: () => Promise<void>, timeout = TEST_TIMEOUT_MS) => {
-    it(
-      name,
-      async () => {
-        const binaryCheck = await checkOpencodeAvailable();
-        if (!binaryCheck.available) {
-          console.log(`Skipping: ${name} - opencode not available`);
-          return;
-        }
-        await fn();
-      },
-      timeout
-    );
-  };
-
   describe("Phase 1.3: Mock LLM Integration", () => {
-    itIfOpencode("mock LLM receives request from opencode", async () => {
+    it("mock LLM receives request from opencode", async () => {
       mockLlm.setMode("instant");
 
       // Send a prompt via SDK
@@ -195,7 +194,7 @@ describe("OpenCodeClient boundary tests", () => {
   });
 
   describe("Phase 2: HTTP API Tests", () => {
-    itIfOpencode("fetchRootSessions returns sessions from real server", async () => {
+    it("fetchRootSessions returns sessions from real server", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
 
       // Create a session first via SDK
@@ -212,7 +211,7 @@ describe("OpenCodeClient boundary tests", () => {
       }
     });
 
-    itIfOpencode("getStatus returns idle when no active sessions", async () => {
+    it("getStatus returns idle when no active sessions", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
 
       const result = await client.getStatus();
@@ -223,7 +222,7 @@ describe("OpenCodeClient boundary tests", () => {
       }
     });
 
-    itIfOpencode("getStatus returns busy during active prompt", async () => {
+    it("getStatus returns busy during active prompt", async () => {
       // Set to slow-stream mode for extended busy state
       mockLlm.setMode("slow-stream");
 
@@ -255,7 +254,7 @@ describe("OpenCodeClient boundary tests", () => {
       }
     });
 
-    itIfOpencode("handles empty session list", async () => {
+    it("handles empty session list", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
 
       // Make sure no sessions exist (cleanup should have handled this)
@@ -270,7 +269,7 @@ describe("OpenCodeClient boundary tests", () => {
   });
 
   describe("Phase 3: SSE Connection Tests", () => {
-    itIfOpencode("connect establishes SSE connection", async () => {
+    it("connect establishes SSE connection", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
 
       // Should not throw
@@ -284,7 +283,7 @@ describe("OpenCodeClient boundary tests", () => {
       client.disconnect();
     });
 
-    itIfOpencode("disconnect cleanly terminates connection", async () => {
+    it("disconnect cleanly terminates connection", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
       await client.connect();
 
@@ -295,7 +294,7 @@ describe("OpenCodeClient boundary tests", () => {
       await expect(client.connect()).resolves.toBeUndefined();
     });
 
-    itIfOpencode("connect times out when server is unresponsive", async () => {
+    it("connect times out when server is unresponsive", async () => {
       // Create client pointing to non-existent port
       const badClient = new OpenCodeClient(59998, createSilentLogger());
 
@@ -316,7 +315,7 @@ describe("OpenCodeClient boundary tests", () => {
   });
 
   describe("Phase 4: Session Status Event Tests", () => {
-    itIfOpencode("receives status events during prompt processing", async () => {
+    it("receives status events during prompt processing", async () => {
       mockLlm.setMode("instant");
 
       client = new OpenCodeClient(opencodePort, createSilentLogger());
@@ -351,45 +350,49 @@ describe("OpenCodeClient boundary tests", () => {
       );
     });
 
-    itIfOpencode("maps retry status to busy", async () => {
-      mockLlm.setMode("rate-limit");
+    it(
+      "maps retry status to busy",
+      async () => {
+        mockLlm.setMode("rate-limit");
 
-      client = new OpenCodeClient(opencodePort, createSilentLogger());
-      await client.fetchRootSessions();
-      await client.connect();
+        client = new OpenCodeClient(opencodePort, createSilentLogger());
+        await client.fetchRootSessions();
+        await client.connect();
 
-      const statuses: ClientStatus[] = [];
-      client.onStatusChanged((status) => {
-        statuses.push(status);
-      });
-
-      // Create session
-      const session = await sdk!.session.create({ body: {} });
-      const sessionId = session.data!.id;
-      await client.fetchRootSessions();
-
-      // Send prompt - will trigger rate limit
-      try {
-        await sdk!.session.prompt({
-          path: { id: sessionId },
-          body: { parts: [{ type: "text", text: "Trigger rate limit" }] },
+        const statuses: ClientStatus[] = [];
+        client.onStatusChanged((status) => {
+          statuses.push(status);
         });
-      } catch {
-        // Rate limit may cause errors
-      }
 
-      // Give time for events
-      await new Promise((resolve) => setTimeout(resolve, 500));
+        // Create session
+        const session = await sdk!.session.create({ body: {} });
+        const sessionId = session.data!.id;
+        await client.fetchRootSessions();
 
-      // Statuses should contain only idle or busy (retry mapped to busy)
-      for (const status of statuses) {
-        expect(["idle", "busy"]).toContain(status);
-      }
-    });
+        // Send prompt - will trigger rate limit
+        try {
+          await sdk!.session.prompt({
+            path: { id: sessionId },
+            body: { parts: [{ type: "text", text: "Trigger rate limit" }] },
+          });
+        } catch {
+          // Rate limit may cause errors
+        }
+
+        // Give time for events
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Statuses should contain only idle or busy (retry mapped to busy)
+        for (const status of statuses) {
+          expect(["idle", "busy"]).toContain(status);
+        }
+      },
+      CI_TIMEOUT_MS
+    );
   });
 
   describe("Phase 5: Root vs Child Session Filtering", () => {
-    itIfOpencode("root sessions are tracked correctly", async () => {
+    it("root sessions are tracked correctly", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
 
       // Create a root session
@@ -405,7 +408,7 @@ describe("OpenCodeClient boundary tests", () => {
       }
     });
 
-    itIfOpencode("non-existent sessions return false for isRootSession", async () => {
+    it("non-existent sessions return false for isRootSession", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
 
       // Fetch sessions first to initialize
@@ -415,7 +418,7 @@ describe("OpenCodeClient boundary tests", () => {
       expect(client.isRootSession("nonexistent-session-id")).toBe(false);
     });
 
-    itIfOpencode("child sessions created by sub-agent are filtered from root set", async () => {
+    it("child sessions created by sub-agent are filtered from root set", async () => {
       // This test verifies that child sessions (sessions with parentID) are correctly
       // filtered from the root session set. We create a child session directly via SDK
       // since the task tool mechanism varies by OpenCode version.
@@ -472,7 +475,7 @@ describe("OpenCodeClient boundary tests", () => {
       expect(statuses.length).toBeGreaterThanOrEqual(0);
     });
 
-    itIfOpencode("session.created event for root session triggers tracking", async () => {
+    it("session.created event for root session triggers tracking", async () => {
       client = new OpenCodeClient(opencodePort, createSilentLogger());
 
       // Connect first to receive SSE events
@@ -503,70 +506,67 @@ describe("OpenCodeClient boundary tests", () => {
       }
     });
 
-    itIfOpencode(
-      "session.created event for child session does not trigger root tracking",
-      async () => {
-        // This test verifies that when a child session is created, the session.created
-        // SSE event does not add it to the root session set. We create a child session
-        // directly via SDK since the task tool mechanism varies by OpenCode version.
+    it("session.created event for child session does not trigger root tracking", async () => {
+      // This test verifies that when a child session is created, the session.created
+      // SSE event does not add it to the root session set. We create a child session
+      // directly via SDK since the task tool mechanism varies by OpenCode version.
 
-        client = new OpenCodeClient(opencodePort, createSilentLogger());
+      client = new OpenCodeClient(opencodePort, createSilentLogger());
 
-        await client.fetchRootSessions();
-        await client.connect();
+      await client.fetchRootSessions();
+      await client.connect();
 
-        // Create root session
-        const session = await sdk!.session.create({ body: {} });
-        const rootSessionId = session.data!.id;
+      // Create root session
+      const session = await sdk!.session.create({ body: {} });
+      const rootSessionId = session.data!.id;
 
-        await client.fetchRootSessions();
+      await client.fetchRootSessions();
 
-        // Get initial root session count
-        const beforeResult = await client.fetchRootSessions();
-        expect(beforeResult.ok).toBe(true);
+      // Get initial root session count
+      const beforeResult = await client.fetchRootSessions();
+      expect(beforeResult.ok).toBe(true);
 
-        // Create a child session directly via SDK (simulates what task tool would do)
-        // This should trigger a session.created SSE event
-        const childSession = await sdk!.session.create({
-          body: { parentID: rootSessionId },
-        });
-        expect(childSession.data).toBeDefined();
-        const childSessionId = childSession.data!.id;
+      // Create a child session directly via SDK (simulates what task tool would do)
+      // This should trigger a session.created SSE event
+      const childSession = await sdk!.session.create({
+        body: { parentID: rootSessionId },
+      });
+      expect(childSession.data).toBeDefined();
+      const childSessionId = childSession.data!.id;
 
-        // Give time for SSE event to be processed
-        await new Promise((resolve) => setTimeout(resolve, 200));
+      // Give time for SSE event to be processed
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
-        // Refetch root sessions
-        const afterResult = await client.fetchRootSessions();
+      // Refetch root sessions
+      const afterResult = await client.fetchRootSessions();
 
-        if (afterResult.ok) {
-          // Root session count should not include child sessions
-          // (child sessions have parentID set)
-          for (const s of afterResult.value) {
-            // All sessions from fetchRootSessions should be root sessions
-            expect(client.isRootSession(s.id)).toBe(true);
-          }
-        }
-
-        // Verify root session is still tracked
-        expect(client.isRootSession(rootSessionId)).toBe(true);
-
-        // Check that child sessions exist but are NOT in root set
-        const allSessions = await sdk!.session.list();
-        const childSessions = (allSessions.data ?? []).filter(
-          (s) => s.parentID !== undefined && s.parentID !== null
-        );
-
-        expect(childSessions.length).toBeGreaterThan(0);
-        const createdChild = childSessions.find((s) => s.id === childSessionId);
-        expect(createdChild).toBeDefined();
-
-        for (const child of childSessions) {
-          // Child sessions should NOT be tracked as root
-          expect(client.isRootSession(child.id)).toBe(false);
+      if (afterResult.ok) {
+        // Root session count should not include child sessions
+        // (child sessions have parentID set)
+        for (const s of afterResult.value) {
+          // All sessions from fetchRootSessions should be root sessions
+          expect(client.isRootSession(s.id)).toBe(true);
         }
       }
-    );
+
+      // Verify root session is still tracked
+      expect(client.isRootSession(rootSessionId)).toBe(true);
+
+      // Check that child sessions exist but are NOT in root set
+      const allSessions = await sdk!.session.list();
+      const childSessions = (allSessions.data ?? []).filter(
+        (s) => s.parentID !== undefined && s.parentID !== null
+      );
+
+      expect(childSessions.length).toBeGreaterThan(0);
+      const createdChild = childSessions.find((s) => s.id === childSessionId);
+      expect(createdChild).toBeDefined();
+
+      for (const child of childSessions) {
+        // Child sessions should NOT be tracked as root
+        expect(client.isRootSession(child.id)).toBe(false);
+      }
+    });
   });
 
   describe("Phase 6: Permission Event Tests", () => {
@@ -574,7 +574,7 @@ describe("OpenCodeClient boundary tests", () => {
     // These tests use the permission flow describe block below
     // This describe block tests with bash="allow" config
 
-    itIfOpencode("detects tool calls complete without permission with bash=allow", async () => {
+    it("detects tool calls complete without permission with bash=allow", async () => {
       mockLlm.setMode("tool-call");
 
       client = new OpenCodeClient(opencodePort, createSilentLogger());
@@ -628,16 +628,27 @@ describe("OpenCodeClient permission flow boundary tests", () => {
   let tempDir: string;
   let cleanupTempDir: () => Promise<void>;
   let opencodePort: number;
+  let opencodeBinaryPath: string;
 
   // Track spawned PIDs for fallback cleanup
   const spawnedPids: number[] = [];
 
-  // Check if opencode is available before running tests
+  // Setup opencode before running tests - fails if binary not found
   beforeAll(async () => {
-    const binaryCheck = await checkOpencodeAvailable();
-    if (!binaryCheck.available) {
-      console.log(`Skipping OpenCode permission boundary tests: ${binaryCheck.error}`);
-      return;
+    // Get the opencode binary path from PathProvider
+    const buildInfo = createMockBuildInfo({
+      isDevelopment: true,
+      appPath: process.cwd(),
+    });
+    const platformInfo = new NodePlatformInfo();
+    const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+    opencodeBinaryPath = pathProvider.opencodeBinaryPath;
+
+    // Fail fast if binary doesn't exist - npm install should have downloaded it
+    if (!existsSync(opencodeBinaryPath)) {
+      throw new Error(
+        `OpenCode binary not found at ${opencodeBinaryPath}. Run 'npm install' to download binaries.`
+      );
     }
 
     // Create temp directory for opencode
@@ -657,6 +668,7 @@ describe("OpenCodeClient permission flow boundary tests", () => {
 
     // Start opencode with bash="ask" config for permission tests
     const config = {
+      binaryPath: opencodeBinaryPath,
       port: opencodePort,
       cwd: tempDir,
       config: {
@@ -750,24 +762,8 @@ describe("OpenCodeClient permission flow boundary tests", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
   });
 
-  // Helper to skip tests if opencode is not available
-  const itIfOpencode = (name: string, fn: () => Promise<void>) => {
-    it(
-      name,
-      async () => {
-        const binaryCheck = await checkOpencodeAvailable();
-        if (!binaryCheck.available) {
-          console.log(`Skipping: ${name} - opencode not available`);
-          return;
-        }
-        await fn();
-      },
-      TEST_TIMEOUT_MS
-    );
-  };
-
   describe("Step 6.2: Permission Approval Flow", () => {
-    itIfOpencode("permission approval allows tool execution", async () => {
+    it("permission approval allows tool execution", async () => {
       mockLlm.setMode("tool-call");
 
       permissionClient = new OpenCodeClient(opencodePort, createSilentLogger());
@@ -870,7 +866,7 @@ describe("OpenCodeClient permission flow boundary tests", () => {
   });
 
   describe("Step 6.3: Permission Rejection Flow", () => {
-    itIfOpencode("permission rejection prevents tool execution", async () => {
+    it("permission rejection prevents tool execution", async () => {
       mockLlm.setMode("tool-call");
 
       permissionClient = new OpenCodeClient(opencodePort, createSilentLogger());
