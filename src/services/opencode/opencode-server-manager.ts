@@ -146,17 +146,16 @@ export class OpenCodeServerManager implements IDisposable {
     // Build environment variables with MCP config if available
     let env: NodeJS.ProcessEnv | undefined;
     if (this.mcpConfig) {
+      // Convert Windows backslashes to forward slashes for the workspace path.
+      // OpenCode substitutes {env:CODEHYDRA_WORKSPACE_PATH} directly into JSON,
+      // so backslashes would become invalid escape sequences and cause JSON parsing errors.
+      const normalizedWorkspacePath = workspacePath.replace(/\\/g, "/");
       env = {
         ...process.env,
         OPENCODE_CONFIG: this.mcpConfig.configPath,
-        CODEHYDRA_WORKSPACE_PATH: workspacePath,
+        CODEHYDRA_WORKSPACE_PATH: normalizedWorkspacePath,
         CODEHYDRA_MCP_PORT: String(this.mcpConfig.port),
       };
-      this.logger.debug("Starting with MCP env", {
-        workspacePath,
-        mcpPort: this.mcpConfig.port,
-        configPath: this.mcpConfig.configPath,
-      });
     }
 
     // Spawn opencode serve

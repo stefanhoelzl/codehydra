@@ -341,8 +341,22 @@ export class AppState {
    * @returns The Project containing the workspace, or undefined
    */
   findProjectForWorkspace(workspacePath: string): Project | undefined {
+    // Normalize the input path for comparison:
+    // - Use path.normalize to handle forward/backslashes
+    // - On Windows, use case-insensitive comparison (filesystem is case-insensitive)
+    // - On Linux/macOS, use case-sensitive comparison (filesystem is case-sensitive)
+    const isWindows = process.platform === "win32";
+    const normalizePath = (p: string) => {
+      const normalized = path.normalize(p);
+      return isWindows ? normalized.toLowerCase() : normalized;
+    };
+
+    const normalizedInput = normalizePath(workspacePath);
+
     for (const openProject of this.openProjects.values()) {
-      const found = openProject.project.workspaces.find((w) => w.path === workspacePath);
+      const found = openProject.project.workspaces.find(
+        (w) => normalizePath(w.path) === normalizedInput
+      );
       if (found) {
         return openProject.project;
       }
