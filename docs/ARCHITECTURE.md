@@ -1466,7 +1466,7 @@ src/services/vscode-setup/assets/
 
 ### Build Process
 
-1. `npm run build:extension` - packages `codehydra-sidekick/` into `sidekick-0.0.1.vsix`
+1. `npm run build:extension` - packages `codehydra-sidekick/` into `sidekick-0.0.2.vsix`
 2. `vite-plugin-static-copy` - copies all assets to `out/main/assets/` during build
 3. `npm run build` - runs both steps sequentially
 
@@ -1503,7 +1503,7 @@ out/main/assets/ (ASAR in prod)
 │   └── <version>/                 # e.g., 0.1.47/
 │       └── opencode[.exe]         # Actual opencode binary
 ├── vscode/
-│   ├── codehydra-sidekick-0.0.1.vsix # Copied from assets for installation
+│   ├── codehydra-sidekick-0.0.2.vsix # Copied from assets for installation
 │   ├── extensions/
 │   │   ├── codehydra.sidekick-0.0.1/  # Installed by code-server
 │   │   └── sst-dev.opencode-X.X.X/    # Installed by code-server

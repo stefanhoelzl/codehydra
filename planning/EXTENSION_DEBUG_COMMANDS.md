@@ -275,7 +275,7 @@ reviewers: [review-typescript, review-arch, review-testing, review-docs]
 
 #### Build Tests
 
-- [ ] Run `npm run build:extension` - should produce `codehydra-sidekick-0.0.1.vsix`
+- [ ] Run `npm run build:extension` - should produce `codehydra-sidekick-0.0.2.vsix`
 - [ ] Verify vsix contains correct extension ID in package.json
 
 ## Dependencies

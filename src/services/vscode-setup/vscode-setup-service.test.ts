@@ -54,7 +54,7 @@ function createExtensionsConfig(): string {
       {
         id: "codehydra.sidekick",
         version: "0.0.1",
-        vsix: "codehydra-sidekick-0.0.1.vsix",
+        vsix: "codehydra-sidekick-0.0.2.vsix",
       },
     ],
   });
@@ -272,8 +272,8 @@ describe("VscodeSetupService", () => {
 
       // Verify vsix was copied from assets to vscode dir
       expect(copiedFiles).toContainEqual({
-        src: join("/mock/assets", "codehydra-sidekick-0.0.1.vsix"),
-        dest: join("/mock/vscode", "codehydra-sidekick-0.0.1.vsix"),
+        src: join("/mock/assets", "codehydra-sidekick-0.0.2.vsix"),
+        dest: join("/mock/vscode", "codehydra-sidekick-0.0.2.vsix"),
       });
     });
 
@@ -297,7 +297,7 @@ describe("VscodeSetupService", () => {
       // First call is for bundled vsix - uses codeServerBinaryPath from pathProvider
       expect(mockProcessRunner.run).toHaveBeenCalledWith(mockPathProvider.codeServerBinaryPath, [
         "--install-extension",
-        join("/mock/vscode", "codehydra-sidekick-0.0.1.vsix"),
+        join("/mock/vscode", "codehydra-sidekick-0.0.2.vsix"),
         "--extensions-dir",
         "/mock/vscode/extensions",
       ]);
@@ -350,7 +350,7 @@ describe("VscodeSetupService", () => {
       // Verify order: bundled vsix first, then marketplace
       expect(mockProcessRunner.run).toHaveBeenCalledTimes(2);
       const calls = vi.mocked(mockProcessRunner.run).mock.calls;
-      expect(calls[0]?.[1]?.[1]).toBe(join("/mock/vscode", "codehydra-sidekick-0.0.1.vsix"));
+      expect(calls[0]?.[1]?.[1]).toBe(join("/mock/vscode", "codehydra-sidekick-0.0.2.vsix"));
       expect(calls[1]?.[1]?.[1]).toBe("sst-dev.opencode");
 
       // Verify progress messages
