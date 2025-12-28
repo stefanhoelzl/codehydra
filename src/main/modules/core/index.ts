@@ -181,7 +181,7 @@ export class CoreModule implements IApiModule {
 
   private async projectOpen(payload: ProjectOpenPayload): Promise<Project> {
     const internalProject = await this.deps.appState.openProject(payload.path);
-    const apiProject = this.toApiProject(internalProject);
+    const apiProject = this.toApiProject(internalProject, internalProject.defaultBaseBranch);
 
     this.api.emit("project:opened", { project: apiProject });
 

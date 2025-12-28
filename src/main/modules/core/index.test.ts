@@ -129,6 +129,34 @@ describe("core.projects", () => {
         payload: { project: expect.any(Object) },
       });
     });
+
+    it("includes defaultBaseBranch in project:opened event when present", async () => {
+      const appState = createMockAppState({
+        openProject: vi.fn().mockResolvedValue({
+          path: "/test/project",
+          name: "test-project",
+          workspaces: [],
+          defaultBaseBranch: "main",
+        }),
+      });
+      deps = createMockDeps({ appState });
+      new CoreModule(registry, deps);
+
+      const handler = registry.getHandler("projects.open");
+      const result = await handler!({ path: "/test/project" });
+
+      expect(result.defaultBaseBranch).toBe("main");
+
+      const emittedEvents = registry.getEmittedEvents();
+      expect(emittedEvents).toContainEqual({
+        event: "project:opened",
+        payload: {
+          project: expect.objectContaining({
+            defaultBaseBranch: "main",
+          }),
+        },
+      });
+    });
   });
 
   describe("projects.list", () => {
