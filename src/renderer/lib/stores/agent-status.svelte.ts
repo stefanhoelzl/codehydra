@@ -6,8 +6,6 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import type { AggregatedAgentStatus } from "@shared/ipc";
-import type { ProjectId, WorkspaceName, WorkspaceRef } from "@shared/api/types";
-import { workspaceRefKey } from "$lib/utils/id-utils";
 
 // ============ State ============
 
@@ -57,49 +55,4 @@ export function getStatus(workspacePath: string): AggregatedAgentStatus {
  */
 export function reset(): void {
   _statuses.clear();
-  _statusesByRef.clear();
-}
-
-// =============================================================================
-// v2 API (WorkspaceRef-based)
-// Uses composite key "projectId/workspaceName" for storage
-// =============================================================================
-
-const _statusesByRef = new SvelteMap<string, AggregatedAgentStatus>();
-
-/**
- * Update status for a workspace using WorkspaceRef.
- * Stores using composite key "projectId/workspaceName".
- * @param ref - The workspace reference
- * @param status - The new status
- */
-export function updateStatusByRef(ref: WorkspaceRef, status: AggregatedAgentStatus): void {
-  const key = workspaceRefKey(ref);
-  _statusesByRef.set(key, status);
-}
-
-/**
- * Get status for a workspace using WorkspaceRef.
- * @param ref - The workspace reference (projectId + workspaceName)
- * @returns Aggregated status, or 'none' status if not found
- */
-export function getStatusByRef(ref: {
-  projectId: ProjectId;
-  workspaceName: WorkspaceName;
-}): AggregatedAgentStatus {
-  const key = `${ref.projectId}/${ref.workspaceName}`;
-  return _statusesByRef.get(key) ?? DEFAULT_STATUS;
-}
-
-/**
- * Set all statuses using composite keys.
- * Clears existing statuses before setting new ones.
- * @param statuses - Map of composite keys to statuses
- * @internal Exported for testing only
- */
-export function setAllStatusesByRef(statuses: Map<string, AggregatedAgentStatus>): void {
-  _statusesByRef.clear();
-  for (const [key, status] of statuses) {
-    _statusesByRef.set(key, status);
-  }
 }

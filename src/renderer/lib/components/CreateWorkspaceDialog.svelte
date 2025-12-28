@@ -147,12 +147,12 @@
 
 <Dialog {open} onClose={handleCancel} busy={isSubmitting} {titleId} {descriptionId}>
   {#snippet title()}
-    <h2 id={titleId}>Create Workspace</h2>
+    <h2 id={titleId} class="ch-dialog-title">Create Workspace</h2>
   {/snippet}
 
   {#snippet content()}
-    <div class="form-field">
-      <label for="project-select">Project</label>
+    <div class="ch-form-field">
+      <label for="project-select" class="ch-form-label">Project</label>
       <ProjectDropdown
         value={selectedProjectId}
         onSelect={handleProjectSelect}
@@ -160,8 +160,8 @@
       />
     </div>
 
-    <div class="form-field">
-      <label for="workspace-name">Name</label>
+    <div class="ch-form-field">
+      <label for="workspace-name" class="ch-form-label">Name</label>
       <vscode-textfield
         data-autofocus
         id="workspace-name"
@@ -182,8 +182,8 @@
       {/if}
     </div>
 
-    <div class="form-field">
-      <label for="branch-select">Base Branch</label>
+    <div class="ch-form-field">
+      <label for="branch-select" class="ch-form-label">Base Branch</label>
       <BranchDropdown
         projectId={selectedProjectId}
         value={selectedBranch}
@@ -193,11 +193,11 @@
     </div>
 
     {#if isSubmitting}
-      <div class="status-message" aria-live="polite">Creating workspace...</div>
+      <div class="ch-status-message" aria-live="polite">Creating workspace...</div>
     {/if}
 
     {#if submitError}
-      <div class="submit-error" role="alert">
+      <div class="ch-alert-box" role="alert">
         {submitError}
       </div>
     {/if}
@@ -220,24 +220,7 @@
 </Dialog>
 
 <style>
-  h2 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--ch-foreground);
-  }
-
-  .form-field {
-    margin-bottom: 16px;
-  }
-
-  label {
-    display: block;
-    margin-bottom: 4px;
-    font-size: 13px;
-    color: var(--ch-foreground);
-  }
-
+  /* Component-specific styles only - shared styles in variables.css */
   vscode-textfield {
     width: 100%;
     --vscode-font-size: 13px;
@@ -245,21 +228,5 @@
 
   .error-text {
     color: var(--ch-error-fg);
-  }
-
-  .status-message {
-    margin-bottom: 16px;
-    font-size: 13px;
-    color: var(--ch-foreground);
-    opacity: 0.8;
-  }
-
-  .submit-error {
-    margin-bottom: 16px;
-    padding: 8px;
-    background: var(--ch-error-bg);
-    color: var(--ch-error-fg);
-    border-radius: 2px;
-    font-size: 13px;
   }
 </style>

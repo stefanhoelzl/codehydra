@@ -61,13 +61,9 @@ export interface Workspace {
 
 /**
  * Base (branch) information for workspace creation.
+ * Re-exported from shared types for single source of truth.
  */
-export interface BaseInfo {
-  /** Branch name */
-  readonly name: string;
-  /** Whether this is a remote branch */
-  readonly isRemote: boolean;
-}
+export type { BaseInfo } from "../../shared/api/types";
 
 /**
  * Result of workspace removal operation.

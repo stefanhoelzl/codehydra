@@ -110,7 +110,7 @@
   initialFocusSelector="vscode-button"
 >
   {#snippet title()}
-    <h2 id={titleId}>Close Project</h2>
+    <h2 id={titleId} class="ch-dialog-title">Close Project</h2>
   {/snippet}
 
   {#snippet content()}
@@ -128,8 +128,8 @@
     </div>
 
     {#if submitError}
-      <div class="submit-error" role="alert">
-        <span class="error-icon" aria-hidden="true">
+      <div class="ch-alert-box" role="alert">
+        <span class="ch-alert-box-icon" aria-hidden="true">
           <Icon name="warning" />
         </span>
         <span class="error-text">{submitError}</span>
@@ -150,13 +150,7 @@
 </Dialog>
 
 <style>
-  h2 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--ch-foreground);
-  }
-
+  /* Component-specific styles only - shared styles in variables.css */
   p {
     margin: 0 0 16px 0;
     font-size: 13px;
@@ -165,22 +159,6 @@
 
   .checkbox-row {
     margin-bottom: 16px;
-  }
-
-  .submit-error {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin-bottom: 16px;
-    padding: 8px;
-    background: var(--ch-error-bg);
-    color: var(--ch-error-fg);
-    border-radius: 2px;
-    font-size: 13px;
-  }
-
-  .error-icon {
-    flex-shrink: 0;
   }
 
   .error-text {

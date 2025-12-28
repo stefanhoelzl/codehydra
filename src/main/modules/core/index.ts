@@ -40,24 +40,14 @@ import type { Logger } from "../../../services/logging/index";
 import { ApiIpcChannels } from "../../../shared/ipc";
 import { createSilentLogger } from "../../../services/logging";
 import { getErrorMessage } from "../../../services/errors";
-import { generateProjectId, extractWorkspaceName, resolveProjectPath } from "../../api/id-utils";
-import type {
-  Project as InternalProject,
-  Workspace as InternalWorkspace,
-} from "../../../shared/ipc";
-
-// =============================================================================
-// Internal Types for Workspace Resolution
-// =============================================================================
-
-/**
- * Resolved workspace information for internal use.
- */
-interface ResolvedWorkspace {
-  readonly projectPath: string;
-  readonly project: InternalProject;
-  readonly workspace: InternalWorkspace;
-}
+import {
+  generateProjectId,
+  extractWorkspaceName,
+  resolveProjectPath,
+  resolveWorkspace as resolveWorkspaceShared,
+  tryResolveWorkspace as tryResolveWorkspaceShared,
+  type ResolvedWorkspace,
+} from "../../api/id-utils";
 
 // =============================================================================
 // Types
@@ -478,48 +468,20 @@ export class CoreModule implements IApiModule {
 
   /**
    * Resolve a workspace from payload, throwing on not found.
-   * Used by methods that require the workspace to exist.
+   * Uses shared utility from id-utils.
    */
-  private async resolveWorkspace(payload: WorkspaceRefPayload): Promise<ResolvedWorkspace> {
-    const projectPath = await resolveProjectPath(payload.projectId, this.deps.appState);
-    if (!projectPath) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    const project = this.deps.appState.getProject(projectPath);
-    if (!project) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    const workspace = project.workspaces.find(
-      (w) => extractWorkspaceName(w.path) === payload.workspaceName
-    );
-    if (!workspace) {
-      throw new Error(`Workspace not found: ${payload.workspaceName}`);
-    }
-
-    return { projectPath, project, workspace };
+  private resolveWorkspace(payload: WorkspaceRefPayload): Promise<ResolvedWorkspace> {
+    return resolveWorkspaceShared(payload, this.deps.appState);
   }
 
   /**
    * Try to resolve a workspace from payload, returning undefined on not found.
-   * Used by methods that return undefined for not found instead of throwing.
+   * Uses shared utility from id-utils.
    */
-  private async tryResolveWorkspace(
+  private tryResolveWorkspace(
     payload: WorkspaceRefPayload
   ): Promise<ResolvedWorkspace | undefined> {
-    const projectPath = await resolveProjectPath(payload.projectId, this.deps.appState);
-    if (!projectPath) return undefined;
-
-    const project = this.deps.appState.getProject(projectPath);
-    if (!project) return undefined;
-
-    const workspace = project.workspaces.find(
-      (w) => extractWorkspaceName(w.path) === payload.workspaceName
-    );
-    if (!workspace) return undefined;
-
-    return { projectPath, project, workspace };
+    return tryResolveWorkspaceShared(payload, this.deps.appState);
   }
 
   private async switchToNextWorkspaceIfAvailable(

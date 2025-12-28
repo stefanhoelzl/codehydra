@@ -24,11 +24,11 @@
   initialFocusSelector="vscode-button"
 >
   {#snippet title()}
-    <h2 id={titleId}>Could Not Open Project</h2>
+    <h2 id={titleId} class="ch-dialog-title">Could Not Open Project</h2>
   {/snippet}
 
   {#snippet content()}
-    <div id={descriptionId} class="error-box" role="alert">
+    <div id={descriptionId} class="ch-alert-box" role="alert">
       {errorMessage}
     </div>
   {/snippet}
@@ -42,18 +42,5 @@
 </Dialog>
 
 <style>
-  h2 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--ch-foreground);
-  }
-
-  .error-box {
-    padding: 10px 12px;
-    background: var(--ch-error-bg);
-    border-radius: 2px;
-    font-size: 13px;
-    color: var(--ch-error-fg);
-  }
+  /* All styles moved to shared variables.css (.ch-dialog-title, .ch-alert-box) */
 </style>

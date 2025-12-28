@@ -22,7 +22,7 @@ import type { AppState } from "../../app-state";
 import type { IViewManager } from "../../managers/view-manager.interface";
 import type { Unsubscribe } from "../../../shared/api/interfaces";
 import { ApiIpcChannels } from "../../../shared/ipc";
-import { generateProjectId, extractWorkspaceName, resolveProjectPath } from "../../api/id-utils";
+import { generateProjectId, extractWorkspaceName, resolveWorkspace } from "../../api/id-utils";
 
 // =============================================================================
 // Types
@@ -147,22 +147,7 @@ export class UiModule implements IApiModule {
   }
 
   private async switchWorkspace(payload: UiSwitchWorkspacePayload): Promise<void> {
-    const projectPath = await resolveProjectPath(payload.projectId, this.deps.appState);
-    if (!projectPath) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    const internalProject = this.deps.appState.getProject(projectPath);
-    if (!internalProject) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    const workspace = internalProject.workspaces.find(
-      (w) => extractWorkspaceName(w.path) === payload.workspaceName
-    );
-    if (!workspace) {
-      throw new Error(`Workspace not found: ${payload.workspaceName}`);
-    }
+    const { workspace } = await resolveWorkspace(payload, this.deps.appState);
 
     const focus = payload.focus ?? true;
     this.deps.viewManager.setActiveWorkspace(workspace.path, focus);

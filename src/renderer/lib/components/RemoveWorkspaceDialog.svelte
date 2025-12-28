@@ -78,7 +78,7 @@
   initialFocusSelector="vscode-button"
 >
   {#snippet title()}
-    <h2 id={titleId}>Remove Workspace</h2>
+    <h2 id={titleId} class="ch-dialog-title">Remove Workspace</h2>
   {/snippet}
 
   {#snippet content()}
@@ -87,10 +87,10 @@
     </p>
 
     {#if isCheckingDirty}
-      <div class="status-message" role="status">Checking for uncommitted changes...</div>
+      <div class="ch-status-message" role="status">Checking for uncommitted changes...</div>
     {:else if isDirty}
-      <div class="warning-box" role="alert">
-        <span class="warning-icon">
+      <div class="ch-alert-box" role="alert">
+        <span class="ch-alert-box-icon">
           <Icon name="warning" />
         </span>
         This workspace has uncommitted changes that will be lost.
@@ -112,40 +112,11 @@
 </Dialog>
 
 <style>
-  h2 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--ch-foreground);
-  }
-
+  /* Component-specific styles only - shared styles in variables.css */
   p {
     margin: 0 0 16px 0;
     font-size: 13px;
     color: var(--ch-foreground);
-  }
-
-  .status-message {
-    margin-bottom: 16px;
-    font-size: 13px;
-    color: var(--ch-foreground);
-    opacity: 0.8;
-  }
-
-  .warning-box {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin-bottom: 16px;
-    padding: 10px 12px;
-    background: var(--ch-error-bg);
-    border-radius: 2px;
-    font-size: 13px;
-    color: var(--ch-error-fg);
-  }
-
-  .warning-icon {
-    flex-shrink: 0;
   }
 
   .checkbox-row {
