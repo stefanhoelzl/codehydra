@@ -125,3 +125,88 @@ export function createSilentLogger(): Logger {
     error: () => {},
   };
 }
+
+// ============================================================================
+// Behavioral Logger Mock
+// ============================================================================
+
+/**
+ * Logged message type for behavioral testing.
+ */
+export interface LoggedMessage {
+  readonly level: "silly" | "debug" | "info" | "warn" | "error";
+  readonly message: string;
+  readonly context?: LogContext | undefined;
+}
+
+/**
+ * Behavioral logger that stores messages for verification.
+ * Use this to verify logged output in integration tests.
+ */
+export interface BehavioralLogger extends Logger {
+  /**
+   * Get all logged messages.
+   */
+  getMessages(): readonly LoggedMessage[];
+
+  /**
+   * Get messages filtered by level.
+   */
+  getMessagesByLevel(level: LoggedMessage["level"]): readonly LoggedMessage[];
+
+  /**
+   * Clear all logged messages.
+   */
+  clear(): void;
+}
+
+/**
+ * Create a behavioral logger that stores messages for verification.
+ *
+ * Unlike mock loggers that track calls, this logger stores actual messages
+ * for behavioral testing - verifying what was logged rather than how many
+ * times a method was called.
+ *
+ * @returns Behavioral logger with message storage
+ *
+ * @example
+ * ```typescript
+ * const logger = createBehavioralLogger();
+ * const service = new MyService(logger);
+ *
+ * await service.doWork();
+ *
+ * const messages = logger.getMessages();
+ * expect(messages).toContainEqual({
+ *   level: 'info',
+ *   message: 'Work complete',
+ *   context: { result: 'success' },
+ * });
+ * ```
+ */
+export function createBehavioralLogger(): BehavioralLogger {
+  const messages: LoggedMessage[] = [];
+
+  return {
+    silly: (message: string, context?: LogContext) => {
+      messages.push({ level: "silly", message, context });
+    },
+    debug: (message: string, context?: LogContext) => {
+      messages.push({ level: "debug", message, context });
+    },
+    info: (message: string, context?: LogContext) => {
+      messages.push({ level: "info", message, context });
+    },
+    warn: (message: string, context?: LogContext) => {
+      messages.push({ level: "warn", message, context });
+    },
+    error: (message: string, context?: LogContext) => {
+      messages.push({ level: "error", message, context });
+    },
+    getMessages: () => [...messages],
+    getMessagesByLevel: (level) => messages.filter((m) => m.level === level),
+    clear: () => {
+      messages.length = 0;
+    },
+  };
+}

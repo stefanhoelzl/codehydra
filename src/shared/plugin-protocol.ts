@@ -353,6 +353,16 @@ export interface ClientToServerEvents {
     request: DeleteWorkspaceRequest | undefined,
     ack: (result: PluginResult<DeleteWorkspaceResponse>) => void
   ) => void;
+
+  /**
+   * Send a structured log message to the main process.
+   * This is a fire-and-forget event (no acknowledgment callback).
+   *
+   * The workspace context is automatically appended by the server.
+   *
+   * @param request - Log request with level, message, and optional context
+   */
+  "api:log": (request: LogRequest) => void;
 }
 
 /**
@@ -380,3 +390,98 @@ export const COMMAND_TIMEOUT_MS = 10_000;
  * This is a best-effort timeout - extension host may be unresponsive.
  */
 export const SHUTDOWN_DISCONNECT_TIMEOUT_MS = 5_000;
+
+// ============================================================================
+// Log Types
+// ============================================================================
+
+/**
+ * Context data for log entries.
+ * Constrained to primitive types for serialization safety.
+ */
+export type LogContext = Record<string, string | number | boolean | null>;
+
+/**
+ * Log request payload sent from extension to main process.
+ */
+export interface LogRequest {
+  /** Log level (silly, debug, info, warn, error) */
+  readonly level: string;
+  /** Log message */
+  readonly message: string;
+  /** Optional structured context data */
+  readonly context?: LogContext;
+}
+
+/**
+ * Valid log levels array for validation.
+ * Note: Duplicated from services/logging/types.ts because shared/ cannot import from services/.
+ */
+const VALID_LOG_LEVELS = ["silly", "debug", "info", "warn", "error"];
+
+/**
+ * Runtime validation for LogRequest.
+ * Validates structure, level, message, and context value types.
+ *
+ * @param payload - The payload to validate
+ * @returns Object with valid boolean and optional error message
+ */
+export function validateLogRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  // Validate level
+  if (!("level" in request)) {
+    return { valid: false, error: "Missing required field: level" };
+  }
+
+  if (typeof request.level !== "string") {
+    return { valid: false, error: "Field 'level' must be a string" };
+  }
+
+  if (!VALID_LOG_LEVELS.includes(request.level)) {
+    return { valid: false, error: `Invalid log level: ${request.level}` };
+  }
+
+  // Validate message
+  if (!("message" in request)) {
+    return { valid: false, error: "Missing required field: message" };
+  }
+
+  if (typeof request.message !== "string") {
+    return { valid: false, error: "Field 'message' must be a string" };
+  }
+
+  if (request.message.length === 0) {
+    return { valid: false, error: "Field 'message' cannot be empty" };
+  }
+
+  // Validate context (optional)
+  if ("context" in request && request.context !== undefined) {
+    if (typeof request.context !== "object" || request.context === null) {
+      return { valid: false, error: "Field 'context' must be an object" };
+    }
+
+    // Validate each context value is a primitive
+    const contextObj = request.context as Record<string, unknown>;
+    for (const [key, value] of Object.entries(contextObj)) {
+      if (value === null) {
+        continue; // null is valid
+      }
+      const valueType = typeof value;
+      if (valueType !== "string" && valueType !== "number" && valueType !== "boolean") {
+        return {
+          valid: false,
+          error: `Invalid context value type for key '${key}': expected primitive, got ${valueType === "object" ? (Array.isArray(value) ? "array" : "object") : valueType}`,
+        };
+      }
+    }
+  }
+
+  return { valid: true };
+}

@@ -19,7 +19,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import type { IMcpServer, ResolvedWorkspace, McpError } from "./types";
 import type { ICoreApi } from "../../shared/api/interfaces";
-import type { Logger } from "../logging";
+import type { Logger, LogContext } from "../logging";
+import type { LogLevel } from "../logging/types";
 import { resolveWorkspace, type WorkspaceLookup } from "./workspace-resolver";
 
 /**
@@ -442,6 +443,58 @@ export class McpServer implements IMcpServer {
           } catch (error) {
             return this.handleError(error);
           }
+        }
+      )
+    );
+
+    // log
+    this.registeredTools.push(
+      this.mcpServer.registerTool(
+        "log",
+        {
+          description:
+            "Send a structured log message to CodeHydra's logging system. Logs appear with [mcp] scope.",
+          inputSchema: z.object({
+            level: z
+              .enum(["silly", "debug", "info", "warn", "error"])
+              .describe("Log level (silly=most verbose, error=least verbose)"),
+            message: z.string().min(1).describe("Log message"),
+            context: z
+              .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+              .optional()
+              .describe("Optional structured context data (primitives only)"),
+          }),
+        },
+        async (args, extra) => {
+          const context = await this.getToolContext(extra);
+          const level = args.level as LogLevel;
+
+          // Auto-append workspace context for traceability
+          const logContext: LogContext = {
+            ...(args.context ?? {}),
+            workspace: context.workspacePath,
+          };
+
+          // Call appropriate logger method based on level
+          switch (level) {
+            case "silly":
+              this.logger.silly(args.message, logContext);
+              break;
+            case "debug":
+              this.logger.debug(args.message, logContext);
+              break;
+            case "info":
+              this.logger.info(args.message, logContext);
+              break;
+            case "warn":
+              this.logger.warn(args.message, logContext);
+              break;
+            case "error":
+              this.logger.error(args.message, logContext);
+              break;
+          }
+
+          return this.successResult(null);
         }
       )
     );

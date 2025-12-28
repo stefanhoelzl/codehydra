@@ -9,6 +9,9 @@ import { describe, it, expect, vi } from "vitest";
 import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
 import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
 import type { ResolvedWorkspace, McpError } from "./types";
+import type { Logger, LogContext } from "../logging";
+import type { LogLevel } from "../logging/types";
+import { createBehavioralLogger } from "../logging/logging.test-utils";
 
 /**
  * Tool result type from MCP SDK.
@@ -202,6 +205,51 @@ function createToolHandlers(api: ICoreApi) {
       } catch (error) {
         return handleError(error);
       }
+    },
+  };
+}
+
+/**
+ * Create log tool handler for testing.
+ * This mimics the log tool registration logic from McpServer.
+ */
+function createLogToolHandler(logger: Logger) {
+  const successResult = <T>(data: T): ToolResult => ({
+    content: [{ type: "text", text: data === undefined ? "null" : JSON.stringify(data) }],
+  });
+
+  return {
+    log: async (
+      context: SimulatedToolContext,
+      args: { level: LogLevel; message: string; context?: Record<string, unknown> }
+    ): Promise<ToolResult> => {
+      // Auto-append workspace context for traceability
+      const logContext: LogContext = {
+        ...((args.context as LogContext) ?? {}),
+        workspace: context.workspacePath,
+      };
+
+      // Call appropriate logger method based on level
+      const level = args.level;
+      switch (level) {
+        case "silly":
+          logger.silly(args.message, logContext);
+          break;
+        case "debug":
+          logger.debug(args.message, logContext);
+          break;
+        case "info":
+          logger.info(args.message, logContext);
+          break;
+        case "warn":
+          logger.warn(args.message, logContext);
+          break;
+        case "error":
+          logger.error(args.message, logContext);
+          break;
+      }
+
+      return successResult(null);
     },
   };
 }
@@ -759,6 +807,88 @@ describe("MCP Tools", () => {
       if (!parsed.success) {
         expect(parsed.error.code).toBe("internal-error");
         expect(parsed.error.message).toBe("Command timed out");
+      }
+    });
+  });
+
+  describe("log", () => {
+    it("logs info level message with workspace context", async () => {
+      const logger = createBehavioralLogger();
+      const handler = createLogToolHandler(logger);
+      const context = createResolvedContext();
+
+      const result = await handler.log(context, {
+        level: "info",
+        message: "Test message",
+      });
+      const parsed = parseToolResult<null>(result);
+
+      expect(parsed.success).toBe(true);
+
+      const messages = logger.getMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        level: "info",
+        message: "Test message",
+      });
+      expect(messages[0]?.context?.workspace).toBe(context.workspacePath);
+    });
+
+    it("logs all levels correctly", async () => {
+      const logger = createBehavioralLogger();
+      const handler = createLogToolHandler(logger);
+      const context = createResolvedContext();
+
+      const levels: LogLevel[] = ["silly", "debug", "info", "warn", "error"];
+
+      for (const level of levels) {
+        await handler.log(context, { level, message: `${level} message` });
+      }
+
+      for (const level of levels) {
+        const messages = logger.getMessagesByLevel(level);
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toMatchObject({
+          level,
+          message: `${level} message`,
+        });
+      }
+    });
+
+    it("preserves context and adds workspace", async () => {
+      const logger = createBehavioralLogger();
+      const handler = createLogToolHandler(logger);
+      const context = createResolvedContext();
+
+      await handler.log(context, {
+        level: "debug",
+        message: "Test",
+        context: { key: "value", count: 42 },
+      });
+
+      const messages = logger.getMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.context).toEqual({
+        key: "value",
+        count: 42,
+        workspace: context.workspacePath,
+      });
+    });
+
+    it("returns success result immediately", async () => {
+      const logger = createBehavioralLogger();
+      const handler = createLogToolHandler(logger);
+      const context = createResolvedContext();
+
+      const result = await handler.log(context, {
+        level: "info",
+        message: "Test",
+      });
+      const parsed = parseToolResult<null>(result);
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data).toBeNull();
       }
     });
   });

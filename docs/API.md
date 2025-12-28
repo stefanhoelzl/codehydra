@@ -53,6 +53,26 @@ All methods operate on the **connected workspace**.
 | `executeCommand`  | `(command: string, args?: unknown[]) => Promise<unknown>`            | Execute a VS Code command (10-second timeout)     |
 | `delete`          | `(options?: { keepBranch?: boolean }) => Promise<{ started: true }>` | Delete the workspace (terminates OpenCode, async) |
 
+#### `log` Namespace
+
+Structured logging to CodeHydra's centralized logging system. All methods are fire-and-forget.
+
+| Method  | Signature                                         | Description                                      |
+| ------- | ------------------------------------------------- | ------------------------------------------------ |
+| `silly` | `(message: string, context?: LogContext) => void` | Most verbose - per-iteration details             |
+| `debug` | `(message: string, context?: LogContext) => void` | Development tracing information                  |
+| `info`  | `(message: string, context?: LogContext) => void` | Significant operations (start/stop, completions) |
+| `warn`  | `(message: string, context?: LogContext) => void` | Recoverable issues or deprecated behavior        |
+| `error` | `(message: string, context?: LogContext) => void` | Failures that require attention                  |
+
+**LogContext Type:**
+
+```typescript
+type LogContext = Record<string, string | number | boolean | null>;
+```
+
+**Note:** Logs appear in CodeHydra's log files with the `[extension]` scope. The workspace path is automatically appended to the context.
+
 ### Usage Examples
 
 #### Check if Workspace Has Uncommitted Changes

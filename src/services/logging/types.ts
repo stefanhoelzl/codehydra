@@ -44,7 +44,8 @@ export type LoggerName =
   | "lifecycle" // LifecycleApi - app lifecycle
   | "plugin" // PluginServer - VS Code extension communication
   | "badge" // BadgeManager - app icon badge
-  | "mcp"; // McpServerManager - MCP server
+  | "mcp" // McpServerManager - MCP server
+  | "extension"; // PluginServer - extension-side logs forwarded to main
 
 /**
  * Context data for log entries.

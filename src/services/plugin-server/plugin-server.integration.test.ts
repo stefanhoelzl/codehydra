@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { PluginServer } from "./plugin-server";
 import { STARTUP_COMMANDS, sendStartupCommands } from "./startup-commands";
 import { DefaultNetworkLayer } from "../platform/network";
-import { createSilentLogger } from "../logging/logging.test-utils";
+import { createSilentLogger, createBehavioralLogger } from "../logging/logging.test-utils";
 import {
   createTestClient,
   waitForConnect,
@@ -214,6 +214,7 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
         getOpencodePort: vi.fn(),
         setMetadata: vi.fn(),
         getMetadata: vi.fn(),
+        executeCommand: vi.fn(),
       },
       ui: {} as ICodeHydraApi["ui"],
       lifecycle: {} as ICodeHydraApi["lifecycle"],
@@ -423,6 +424,177 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Deletion failed");
+    });
+  });
+});
+
+/**
+ * Integration tests for log event handling.
+ *
+ * Tests the full flow: Client → PluginServer → extensionLogger → message storage
+ */
+describe("PluginServer log events (integration)", { timeout: TEST_TIMEOUT }, () => {
+  let server: PluginServer;
+  let networkLayer: DefaultNetworkLayer;
+  let port: number;
+  let clients: TestClientSocket[] = [];
+  let extensionLogger: ReturnType<typeof createBehavioralLogger>;
+
+  beforeEach(async () => {
+    networkLayer = new DefaultNetworkLayer(createSilentLogger());
+    extensionLogger = createBehavioralLogger();
+    server = new PluginServer(networkLayer, createSilentLogger(), {
+      transports: ["polling"],
+      extensionLogger,
+    });
+    port = await server.start();
+  });
+
+  afterEach(async () => {
+    // Disconnect all clients
+    for (const client of clients) {
+      if (client.connected) {
+        client.disconnect();
+      }
+    }
+    clients = [];
+
+    // Close server
+    if (server) {
+      await server.close();
+    }
+  });
+
+  // Helper to create and track clients
+  function createClient(workspacePath: string): TestClientSocket {
+    const client = createTestClient(port, { workspacePath });
+    clients.push(client);
+    return client;
+  }
+
+  describe("valid log events", () => {
+    it("logs info level message", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.emit("api:log", { level: "info", message: "Test message" });
+
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const messages = extensionLogger.getMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        level: "info",
+        message: "Test message",
+      });
+    });
+
+    it("logs all levels correctly", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      const levels = ["silly", "debug", "info", "warn", "error"] as const;
+      for (const level of levels) {
+        client.emit("api:log", { level, message: `${level} message` });
+      }
+
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      for (const level of levels) {
+        const messages = extensionLogger.getMessagesByLevel(level);
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toMatchObject({
+          level,
+          message: `${level} message`,
+        });
+      }
+    });
+
+    it("auto-appends workspace context", async () => {
+      const workspacePath = "/projects/myproject/workspace";
+      const client = createClient(workspacePath);
+      await waitForConnect(client);
+
+      client.emit("api:log", { level: "info", message: "Test" });
+
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const messages = extensionLogger.getMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.context?.workspace).toBe(workspacePath);
+    });
+
+    it("preserves existing context and adds workspace", async () => {
+      const workspacePath = "/test/workspace";
+      const client = createClient(workspacePath);
+      await waitForConnect(client);
+
+      client.emit("api:log", {
+        level: "debug",
+        message: "Test",
+        context: { key: "value", count: 42 },
+      });
+
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const messages = extensionLogger.getMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.context).toEqual({
+        key: "value",
+        count: 42,
+        workspace: workspacePath,
+      });
+    });
+  });
+
+  describe("invalid log events", () => {
+    it("silently ignores invalid level", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      // Testing invalid input: "invalid" is not a valid log level
+      client.emit("api:log", {
+        level: "invalid" as "info",
+        message: "Test",
+      });
+
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(extensionLogger.getMessages()).toHaveLength(0);
+    });
+
+    it("silently ignores empty message", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.emit("api:log", { level: "info", message: "" });
+
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(extensionLogger.getMessages()).toHaveLength(0);
+    });
+
+    it("silently ignores invalid context", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      // Testing invalid input: context with nested object should be rejected
+      client.emit("api:log", {
+        level: "info",
+        message: "Test",
+        context: { nested: { deep: 1 } } as unknown as Record<string, string | number | boolean>,
+      });
+
+      // Wait for async processing
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(extensionLogger.getMessages()).toHaveLength(0);
     });
   });
 });

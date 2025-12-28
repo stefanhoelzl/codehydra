@@ -238,8 +238,10 @@ async function startServices(): Promise<void> {
   // Graceful degradation: if PluginServer fails, log warning and continue (plugin is optional)
   try {
     const pluginLogger = loggingService.createLogger("plugin");
+    const extensionLogger = loggingService.createLogger("extension");
     pluginServer = new PluginServer(networkLayer, pluginLogger, {
       isDevelopment: buildInfo.isDevelopment,
+      extensionLogger,
     });
     const pluginPort = await pluginServer.start();
     loggingService.createLogger("app").info("PluginServer started", { port: pluginPort });

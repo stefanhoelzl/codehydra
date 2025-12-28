@@ -26,13 +26,16 @@ import {
   type DeleteWorkspaceResponse,
   type ExecuteCommandRequest,
   type PluginConfig,
+  type LogContext,
   COMMAND_TIMEOUT_MS,
   SHUTDOWN_DISCONNECT_TIMEOUT_MS,
   normalizeWorkspacePath,
   validateSetMetadataRequest,
   validateDeleteWorkspaceRequest,
   validateExecuteCommandRequest,
+  validateLogRequest,
 } from "../../shared/plugin-protocol";
+import { LogLevel } from "../logging/types";
 import type { WorkspaceStatus } from "../../shared/api/types";
 
 // ============================================================================
@@ -155,11 +158,14 @@ export interface PluginServerOptions {
   readonly transports?: readonly ("polling" | "websocket")[];
   /** Whether the app is running in development mode. Default: false */
   readonly isDevelopment?: boolean;
+  /** Logger for extension-side logs. Default: SILENT_LOGGER */
+  readonly extensionLogger?: Logger;
 }
 
 export class PluginServer {
   private readonly portManager: PortManager;
   private readonly logger: Logger;
+  private readonly extensionLogger: Logger;
   private readonly transports: readonly ("polling" | "websocket")[];
   private readonly isDevelopment: boolean;
   private httpServer: HttpServer | null = null;
@@ -192,6 +198,7 @@ export class PluginServer {
   constructor(portManager: PortManager, logger?: Logger, options?: PluginServerOptions) {
     this.portManager = portManager;
     this.logger = logger ?? SILENT_LOGGER;
+    this.extensionLogger = options?.extensionLogger ?? SILENT_LOGGER;
     this.transports = options?.transports ?? ["websocket"];
     this.isDevelopment = !!options?.isDevelopment;
   }
@@ -789,6 +796,41 @@ export class PluginServer {
           });
           ack({ success: false, error: message });
         });
+    });
+
+    // Handle api:log (fire-and-forget)
+    socket.on("api:log", (request) => {
+      // Validate request - silently ignore invalid requests
+      const validation = validateLogRequest(request);
+      if (!validation.valid) {
+        return;
+      }
+
+      // Auto-append workspace context for traceability
+      const context: LogContext = {
+        ...(request.context ?? {}),
+        workspace: workspacePath,
+      };
+
+      // Call appropriate logger method based on level
+      const level = request.level as LogLevel;
+      switch (level) {
+        case "silly":
+          this.extensionLogger.silly(request.message, context);
+          break;
+        case "debug":
+          this.extensionLogger.debug(request.message, context);
+          break;
+        case "info":
+          this.extensionLogger.info(request.message, context);
+          break;
+        case "warn":
+          this.extensionLogger.warn(request.message, context);
+          break;
+        case "error":
+          this.extensionLogger.error(request.message, context);
+          break;
+      }
     });
   }
 

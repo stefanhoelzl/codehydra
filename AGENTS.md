@@ -630,6 +630,42 @@ try {
 
 **Timeout:** All API calls have a 10-second timeout.
 
+### Extension Logging
+
+Third-party extensions can send structured logs to CodeHydra's centralized logging system. Logs appear in CodeHydra's log files with the `[extension]` scope and include the workspace path for traceability.
+
+**Usage:**
+
+```javascript
+// Log at different levels
+api.log.info("Extension initialized", { version: "1.0.0" });
+api.log.debug("Processing file", { filename: "test.ts", size: 1024 });
+api.log.warn("Deprecated feature used", { feature: "oldMethod" });
+api.log.error("Failed to parse config", { error: "Invalid JSON" });
+api.log.silly("Iteration details", { step: 42, data: "verbose" });
+```
+
+**Log Methods:**
+
+| Method                     | Description                                      |
+| -------------------------- | ------------------------------------------------ |
+| `log.silly(message, ctx?)` | Most verbose - per-iteration details             |
+| `log.debug(message, ctx?)` | Development tracing information                  |
+| `log.info(message, ctx?)`  | Significant operations (start/stop, completions) |
+| `log.warn(message, ctx?)`  | Recoverable issues or deprecated behavior        |
+| `log.error(message, ctx?)` | Failures that require attention                  |
+
+**Context Constraints:**
+
+The optional context parameter must contain only primitive values:
+
+- `string`, `number`, `boolean`, `null`
+- No nested objects, arrays, or functions
+
+**Fire-and-Forget:**
+
+Log methods are fire-and-forget - they don't return a Promise and gracefully handle disconnected state (logs are silently dropped if not connected).
+
 ## MCP Server
 
 CodeHydra runs an MCP (Model Context Protocol) server that exposes workspace API methods to AI agents. OpenCode servers are automatically configured to connect to this MCP server.

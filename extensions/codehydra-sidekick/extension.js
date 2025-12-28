@@ -76,28 +76,6 @@ let currentPluginPort = null;
 let extensionContext = null;
 
 // ============================================================================
-// Logging Utilities
-// ============================================================================
-
-/**
- * Log messages with prefix for easy identification in console.
- * @param {string} message
- * @param {...unknown} args
- */
-function log(message, ...args) {
-  console.log(`[codehydra] ${message}`, ...args);
-}
-
-/**
- * Log errors with prefix.
- * @param {string} message
- * @param {...unknown} args
- */
-function logError(message, ...args) {
-  console.error(`[codehydra] ${message}`, ...args);
-}
-
-// ============================================================================
 // API Utilities
 // ============================================================================
 
@@ -116,6 +94,7 @@ function emitApiCall(event, request) {
     }
 
     const timeout = setTimeout(() => {
+      codehydraApi.log.warn("API call timeout", { event });
       reject(new Error(`API call timed out: ${event}`));
     }, API_TIMEOUT_MS);
 
@@ -173,6 +152,63 @@ const codehydraApi = {
     return new Promise((resolve, reject) => {
       pendingReady.push({ resolve, reject });
     });
+  },
+
+  /**
+   * Log API namespace.
+   * Provides structured logging to CodeHydra's logging system.
+   * Methods are fire-and-forget and gracefully handle disconnected state.
+   */
+  log: {
+    /**
+     * Log a silly message (most verbose).
+     * @param {string} message - Log message
+     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
+     */
+    silly(message, context) {
+      if (!socket?.connected) return;
+      socket.emit("api:log", { level: "silly", message, context });
+    },
+
+    /**
+     * Log a debug message.
+     * @param {string} message - Log message
+     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
+     */
+    debug(message, context) {
+      if (!socket?.connected) return;
+      socket.emit("api:log", { level: "debug", message, context });
+    },
+
+    /**
+     * Log an info message.
+     * @param {string} message - Log message
+     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
+     */
+    info(message, context) {
+      if (!socket?.connected) return;
+      socket.emit("api:log", { level: "info", message, context });
+    },
+
+    /**
+     * Log a warning message.
+     * @param {string} message - Log message
+     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
+     */
+    warn(message, context) {
+      if (!socket?.connected) return;
+      socket.emit("api:log", { level: "warn", message, context });
+    },
+
+    /**
+     * Log an error message.
+     * @param {string} message - Log message
+     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
+     */
+    error(message, context) {
+      if (!socket?.connected) return;
+      socket.emit("api:log", { level: "error", message, context });
+    },
   },
 
   /**
@@ -318,8 +354,6 @@ async function runDebugCommand(name, fn) {
  * @param {vscode.ExtensionContext} context
  */
 function registerDebugCommands(context) {
-  log("Registering debug commands (development mode)");
-
   // Debug: Get Workspace Status
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.debug.getStatus", async () => {
@@ -355,7 +389,7 @@ function registerDebugCommands(context) {
     })
   );
 
-  log("Debug commands registered: getStatus, getMetadata, getOpencodePort, connectionInfo");
+  codehydraApi.log.debug("Debug commands registered");
 }
 
 // ============================================================================
@@ -371,11 +405,11 @@ async function killAllTerminalsAndWait() {
   const terminals = [...vscode.window.terminals];
 
   if (terminals.length === 0) {
-    log("No terminals to kill");
+    codehydraApi.log.debug("No terminals to kill");
     return;
   }
 
-  log("Killing " + terminals.length + " terminal(s)");
+  codehydraApi.log.debug("Killing terminals", { count: terminals.length });
   const pendingTerminals = new Set(terminals);
 
   await new Promise((resolve) => {
@@ -391,16 +425,16 @@ async function killAllTerminalsAndWait() {
 
     // Set up timeout - proceed anyway after 5 seconds
     const timeout = setTimeout(() => {
-      log("Terminal kill timeout - " + pendingTerminals.size + " remaining, proceeding anyway");
+      codehydraApi.log.warn("Terminal kill timeout", { remaining: pendingTerminals.size });
       done();
     }, TERMINAL_KILL_TIMEOUT_MS);
 
     // IMPORTANT: Set up listener BEFORE disposing terminals to avoid race condition
     const disposable = vscode.window.onDidCloseTerminal((closedTerminal) => {
       pendingTerminals.delete(closedTerminal);
-      log("Terminal closed, " + pendingTerminals.size + " remaining");
+      codehydraApi.log.debug("Terminal closed", { remaining: pendingTerminals.size });
       if (pendingTerminals.size === 0) {
-        log("All terminals closed");
+        codehydraApi.log.debug("All terminals closed");
         done();
       }
     });
@@ -412,7 +446,7 @@ async function killAllTerminalsAndWait() {
 
     // Check in case all terminals closed synchronously (unlikely but safe)
     if (pendingTerminals.size === 0) {
-      log("All terminals closed (sync)");
+      codehydraApi.log.debug("All terminals closed (sync)");
       done();
     }
   });
@@ -428,14 +462,11 @@ async function killAllTerminalsAndWait() {
  * @param {string} workspacePath - Normalized workspace path
  */
 function connectToPluginServer(port, workspacePath) {
-  const url = `http://localhost:${port}`;
-
-  log(`Connecting to PluginServer at ${url}`);
-
   // Store for debug commands
   currentWorkspacePath = workspacePath;
   currentPluginPort = port;
 
+  const url = `http://localhost:${port}`;
   socket = io(url, {
     transports: ["websocket"],
     auth: {
@@ -453,18 +484,16 @@ function connectToPluginServer(port, workspacePath) {
   // Handle config event - must be registered before socket.connect() is called.
   // The server emits "config" immediately after connection validation.
   socket.on("config", (config) => {
-    // Runtime validation
+    // Runtime validation - silently ignore invalid config
     if (typeof config !== "object" || config === null) {
-      log("Received invalid config (not an object)");
       return;
     }
     if (typeof config.isDevelopment !== "boolean") {
-      log("Received invalid config (isDevelopment not boolean)");
       return;
     }
 
     isDevelopment = config.isDevelopment;
-    log(`Config received: isDevelopment=${isDevelopment}`);
+    codehydraApi.log.debug("Config received", { isDevelopment });
 
     // Set context for command enablement (enables commands in Command Palette)
     vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
@@ -475,8 +504,8 @@ function connectToPluginServer(port, workspacePath) {
   });
 
   socket.on("connect", () => {
-    log("Connected to PluginServer");
     isConnected = true;
+    codehydraApi.log.info("Connected to PluginServer");
 
     // Resolve all pending whenReady() promises
     const pending = pendingReady;
@@ -494,39 +523,38 @@ function connectToPluginServer(port, workspacePath) {
             "CODEHYDRA_OPENCODE_PORT",
             String(port)
           );
-          log("Set CODEHYDRA_OPENCODE_PORT=" + port);
+          codehydraApi.log.debug("Set CODEHYDRA_OPENCODE_PORT", { port });
         }
       })
       .catch((err) => {
-        logError(
-          "Failed to get opencode port: " + (err instanceof Error ? err.message : String(err))
-        );
+        const error = err instanceof Error ? err.message : String(err);
+        codehydraApi.log.warn("Failed to get opencode port", { error });
       });
   });
 
   socket.on("disconnect", (reason) => {
-    log(`Disconnected from PluginServer: ${reason}`);
+    codehydraApi.log.info("Disconnected from PluginServer", { reason });
     isConnected = false;
   });
 
   socket.on("connect_error", (err) => {
-    logError(`Connection error: ${err.message}`);
+    codehydraApi.log.error("Connection error", { error: err.message });
     // Note: We don't reject pending promises here because Socket.IO will retry
     // Only if the connection is permanently failed should we reject
   });
 
   // Handle command requests from CodeHydra
   socket.on("command", async (request, ack) => {
-    log(`Received command: ${request.command}`);
+    codehydraApi.log.debug("Command received", { command: request.command });
 
     try {
       const args = request.args ?? [];
       const result = await vscode.commands.executeCommand(request.command, ...args);
-      log(`Command executed: ${request.command}`);
+      codehydraApi.log.debug("Command executed", { command: request.command });
       ack({ success: true, data: result });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      logError(`Command failed: ${request.command} - ${errorMessage}`);
+      codehydraApi.log.error("Command failed", { command: request.command, error: errorMessage });
       ack({ success: false, error: errorMessage });
     }
   });
@@ -534,7 +562,7 @@ function connectToPluginServer(port, workspacePath) {
   // Handle shutdown request for workspace deletion
   // This terminates the extension host to release file handles
   socket.on("shutdown", async (ack) => {
-    log("Shutdown command received, workspace: " + currentWorkspacePath);
+    codehydraApi.log.info("Shutdown received");
 
     // Step 1: Kill all terminals and wait for them to close
     await killAllTerminalsAndWait();
@@ -544,10 +572,11 @@ function connectToPluginServer(port, workspacePath) {
       const folders = vscode.workspace.workspaceFolders;
       if (folders && folders.length > 0) {
         vscode.workspace.updateWorkspaceFolders(0, folders.length);
-        log("Removed " + folders.length + " workspace folder(s)");
+        codehydraApi.log.debug("Removed workspace folders", { count: folders.length });
       }
     } catch (err) {
-      logError("Graceful shutdown failed: " + (err instanceof Error ? err.message : String(err)));
+      const error = err instanceof Error ? err.message : String(err);
+      codehydraApi.log.error("Graceful shutdown failed", { error });
       // Continue anyway - we're exiting
     }
 
@@ -555,7 +584,7 @@ function connectToPluginServer(port, workspacePath) {
     ack({ success: true, data: undefined });
 
     // Use setImmediate to allow ack to flush before exit
-    log("Exiting extension host");
+    codehydraApi.log.info("Exiting extension host");
     setImmediate(() => process.exit(0));
   });
 
@@ -583,26 +612,24 @@ function activate(context) {
   // Get plugin port from environment
   const pluginPortStr = process.env.CODEHYDRA_PLUGIN_PORT;
   if (!pluginPortStr) {
-    log("CODEHYDRA_PLUGIN_PORT not set - plugin communication disabled");
-    // Return API anyway (methods will reject with "Not connected" error)
+    // Plugin communication disabled - return API anyway (methods will reject with "Not connected" error)
     return { codehydra: codehydraApi };
   }
 
   const pluginPort = parseInt(pluginPortStr, 10);
   if (isNaN(pluginPort) || pluginPort <= 0 || pluginPort > 65535) {
-    logError(`Invalid CODEHYDRA_PLUGIN_PORT: ${pluginPortStr}`);
+    // Invalid port - return API anyway
     return { codehydra: codehydraApi };
   }
 
   // Get workspace path
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
-    logError("No workspace folder open - cannot connect to PluginServer");
+    // No workspace folder open - return API anyway
     return { codehydra: codehydraApi };
   }
 
   const workspacePath = path.normalize(workspaceFolders[0].uri.fsPath);
-  log(`Workspace path: ${workspacePath}`);
 
   // Connect to PluginServer
   connectToPluginServer(pluginPort, workspacePath);
@@ -613,7 +640,7 @@ function activate(context) {
 
 function deactivate() {
   if (socket) {
-    log("Disconnecting from PluginServer");
+    codehydraApi.log.info("Deactivating");
     socket.disconnect();
     socket = null;
   }

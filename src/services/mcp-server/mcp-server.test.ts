@@ -155,7 +155,8 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_get_opencode_port");
       expect(toolNames).toContain("workspace_delete");
       expect(toolNames).toContain("workspace_execute_command");
-      expect(tools.length).toBe(6);
+      expect(toolNames).toContain("log");
+      expect(tools.length).toBe(7);
     });
   });
 

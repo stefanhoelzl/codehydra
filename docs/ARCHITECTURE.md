@@ -933,22 +933,23 @@ The logging system provides comprehensive logging across both main and renderer 
 
 ### Logger Names/Scopes
 
-| Logger          | Module                 | Description                      |
-| --------------- | ---------------------- | -------------------------------- |
-| `[badge]`       | BadgeManager           | App icon badge updates           |
-| `[process]`     | LoggingProcessRunner   | Spawned processes, stdout/stderr |
-| `[network]`     | DefaultNetworkLayer    | HTTP fetch, port operations      |
-| `[fs]`          | DefaultFileSystemLayer | File read/write operations       |
-| `[git]`         | SimpleGitClient        | Git commands                     |
-| `[opencode]`    | OpenCodeClient         | OpenCode SSE connections         |
-| `[code-server]` | CodeServerManager      | code-server lifecycle            |
-| `[pidtree]`     | PidtreeProvider        | Process tree lookups             |
-| `[keepfiles]`   | KeepFilesService       | .keepfiles copy operations       |
-| `[api]`         | IPC Handlers           | API request/response timing      |
-| `[window]`      | WindowManager          | Window create/resize/close       |
-| `[view]`        | ViewManager            | View lifecycle, mode changes     |
-| `[app]`         | Application Lifecycle  | Bootstrap, startup, shutdown     |
-| `[ui]`          | Renderer Components    | Dialog events, user actions      |
+| Logger          | Module                 | Description                           |
+| --------------- | ---------------------- | ------------------------------------- |
+| `[badge]`       | BadgeManager           | App icon badge updates                |
+| `[process]`     | LoggingProcessRunner   | Spawned processes, stdout/stderr      |
+| `[network]`     | DefaultNetworkLayer    | HTTP fetch, port operations           |
+| `[fs]`          | DefaultFileSystemLayer | File read/write operations            |
+| `[git]`         | SimpleGitClient        | Git commands                          |
+| `[opencode]`    | OpenCodeClient         | OpenCode SSE connections              |
+| `[code-server]` | CodeServerManager      | code-server lifecycle                 |
+| `[pidtree]`     | PidtreeProvider        | Process tree lookups                  |
+| `[keepfiles]`   | KeepFilesService       | .keepfiles copy operations            |
+| `[api]`         | IPC Handlers           | API request/response timing           |
+| `[window]`      | WindowManager          | Window create/resize/close            |
+| `[view]`        | ViewManager            | View lifecycle, mode changes          |
+| `[app]`         | Application Lifecycle  | Bootstrap, startup, shutdown          |
+| `[ui]`          | Renderer Components    | Dialog events, user actions           |
+| `[extension]`   | PluginServer           | Extension-side logs forwarded to main |
 
 ### Log File Location
 
@@ -1184,6 +1185,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  │  ◄─── "api:workspace:getStatus" → PluginResult<WorkspaceStatus>     │  │
 │  │  ◄─── "api:workspace:getMetadata" → PluginResult<Record<...>>       │  │
 │  │  ◄─── "api:workspace:setMetadata" → PluginResult<void>              │  │
+│  │  ◄─── "api:log" → (fire-and-forget, no response)                    │  │
 │  │                                                                     │  │
 │  │  API handlers registered via onApiCall() callback pattern           │  │
 │  │  (PluginServer remains agnostic to API layer)                       │  │
@@ -1224,6 +1226,9 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  ┌─────────────────────────────────────────────────────────────────────┐  │
 │  │  exports.codehydra = {                                              │  │
 │  │    whenReady(): Promise<void>             // resolves when connected│  │
+│  │    log: {                                                           │  │
+│  │      silly/debug/info/warn/error(msg, ctx?) → fire-and-forget      │  │
+│  │    }                                                                │  │
 │  │    workspace: {                                                     │  │
 │  │      getStatus(): Promise<WorkspaceStatus>                          │  │
 │  │      getMetadata(): Promise<Record<string, string>>                 │  │

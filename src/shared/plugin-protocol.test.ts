@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   validateSetMetadataRequest,
   validateExecuteCommandRequest,
+  validateLogRequest,
   normalizeWorkspacePath,
   isValidCommandRequest,
   COMMAND_TIMEOUT_MS,
@@ -361,6 +362,158 @@ describe("shutdown event signature", () => {
 
     expect(successResult.success).toBe(true);
     expect(errorResult.success).toBe(false);
+  });
+});
+
+describe("validateLogRequest", () => {
+  describe("valid requests", () => {
+    it("accepts valid log request with message only", () => {
+      const result = validateLogRequest({ level: "info", message: "test message" });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts log request with context", () => {
+      const result = validateLogRequest({
+        level: "debug",
+        message: "test message",
+        context: { key: "value" },
+      });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts log request with multi-key context", () => {
+      const result = validateLogRequest({
+        level: "info",
+        message: "test",
+        context: { k1: "v1", k2: 123, k3: true, k4: null },
+      });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts log request with empty context", () => {
+      const result = validateLogRequest({
+        level: "info",
+        message: "test",
+        context: {},
+      });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts context with null value (valid)", () => {
+      const result = validateLogRequest({
+        level: "info",
+        message: "test",
+        context: { key: null },
+      });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it.each(["silly", "debug", "info", "warn", "error"])("accepts valid log level: %s", (level) => {
+      const result = validateLogRequest({ level, message: "test" });
+      expect(result).toEqual({ valid: true });
+    });
+  });
+
+  describe("invalid requests - level", () => {
+    it("rejects invalid level", () => {
+      const result = validateLogRequest({ level: "invalid", message: "test" });
+      expect(result.valid).toBe(false);
+      expect((result as { error: string }).error).toContain("Invalid log level");
+    });
+
+    it("rejects missing level", () => {
+      const result = validateLogRequest({ message: "test" });
+      expect(result).toEqual({ valid: false, error: "Missing required field: level" });
+    });
+
+    it("rejects non-string level", () => {
+      const result = validateLogRequest({ level: 123, message: "test" });
+      expect(result).toEqual({ valid: false, error: "Field 'level' must be a string" });
+    });
+  });
+
+  describe("invalid requests - message", () => {
+    it("rejects missing message", () => {
+      const result = validateLogRequest({ level: "info" });
+      expect(result).toEqual({ valid: false, error: "Missing required field: message" });
+    });
+
+    it("rejects empty message string", () => {
+      const result = validateLogRequest({ level: "info", message: "" });
+      expect(result).toEqual({ valid: false, error: "Field 'message' cannot be empty" });
+    });
+
+    it("rejects non-string message", () => {
+      const result = validateLogRequest({ level: "info", message: 123 });
+      expect(result).toEqual({ valid: false, error: "Field 'message' must be a string" });
+    });
+  });
+
+  describe("invalid requests - context", () => {
+    it("rejects invalid context type (string)", () => {
+      const result = validateLogRequest({
+        level: "info",
+        message: "test",
+        context: "not-object",
+      });
+      expect(result).toEqual({ valid: false, error: "Field 'context' must be an object" });
+    });
+
+    it("rejects invalid context value (function)", () => {
+      const result = validateLogRequest({
+        level: "info",
+        message: "test",
+        context: { fn: () => {} },
+      });
+      expect(result.valid).toBe(false);
+      expect((result as { error: string }).error).toContain("Invalid context value type");
+      expect((result as { error: string }).error).toContain("function");
+    });
+
+    it("rejects invalid context value (nested object)", () => {
+      const result = validateLogRequest({
+        level: "info",
+        message: "test",
+        context: { nested: { deep: 1 } },
+      });
+      expect(result.valid).toBe(false);
+      expect((result as { error: string }).error).toContain("Invalid context value type");
+      expect((result as { error: string }).error).toContain("object");
+    });
+
+    it("rejects invalid context value (array)", () => {
+      const result = validateLogRequest({
+        level: "info",
+        message: "test",
+        context: { arr: [1, 2] },
+      });
+      expect(result.valid).toBe(false);
+      expect((result as { error: string }).error).toContain("Invalid context value type");
+      expect((result as { error: string }).error).toContain("array");
+    });
+  });
+
+  describe("invalid requests - structure", () => {
+    it("rejects null payload", () => {
+      const result = validateLogRequest(null);
+      expect(result).toEqual({ valid: false, error: "Request must be an object" });
+    });
+
+    it("rejects undefined payload", () => {
+      const result = validateLogRequest(undefined);
+      expect(result).toEqual({ valid: false, error: "Request must be an object" });
+    });
+
+    it("rejects primitive values", () => {
+      expect(validateLogRequest("string")).toEqual({
+        valid: false,
+        error: "Request must be an object",
+      });
+      expect(validateLogRequest(123)).toEqual({
+        valid: false,
+        error: "Request must be an object",
+      });
+    });
   });
 });
 

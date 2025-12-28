@@ -10,7 +10,7 @@
  *
  * @example
  * ```typescript
- * import type { CodehydraApi, WorkspaceStatus, AgentStatus } from './api';
+ * import type { CodehydraApi, WorkspaceStatus, AgentStatus, LogApi } from './api';
  *
  * async function useCodehydraApi() {
  *   const ext = vscode.extensions.getExtension('codehydra.sidekick');
@@ -24,9 +24,86 @@
  *   const status = await api.workspace.getStatus();
  *   console.log('Workspace dirty:', status.isDirty);
  *   console.log('Agent status:', status.agent.type);
+ *
+ *   // Log to CodeHydra's centralized logging
+ *   api.log.info('My extension started', { version: '1.0.0' });
  * }
  * ```
  */
+
+/**
+ * Context data for log entries.
+ * Constrained to primitive types for serialization safety.
+ * Note: This type is duplicated from src/services/logging/types.ts for extension compatibility.
+ */
+export type LogContext = Record<string, string | number | boolean | null>;
+
+/**
+ * Log API namespace.
+ * Provides structured logging to CodeHydra's logging system.
+ * All methods are fire-and-forget and gracefully handle disconnected state.
+ *
+ * Logs appear in CodeHydra's log files with the [extension] scope.
+ * The workspace path is automatically appended to the context.
+ *
+ * @example
+ * ```typescript
+ * // Simple log
+ * api.log.info('Processing started');
+ *
+ * // Log with context
+ * api.log.debug('File saved', { filename: 'test.ts', size: 1024 });
+ *
+ * // Log warning
+ * api.log.warn('Deprecated feature used', { feature: 'oldMethod' });
+ * ```
+ */
+export interface LogApi {
+  /**
+   * Log a silly message (most verbose).
+   * Use for per-iteration details that would overwhelm normal debug output.
+   *
+   * @param message - Log message
+   * @param context - Optional context data (primitives only)
+   */
+  silly(message: string, context?: LogContext): void;
+
+  /**
+   * Log a debug message.
+   * Use for detailed tracing information useful during development.
+   *
+   * @param message - Log message
+   * @param context - Optional context data (primitives only)
+   */
+  debug(message: string, context?: LogContext): void;
+
+  /**
+   * Log an info message.
+   * Use for significant operations (start/stop, connections, completions).
+   *
+   * @param message - Log message
+   * @param context - Optional context data (primitives only)
+   */
+  info(message: string, context?: LogContext): void;
+
+  /**
+   * Log a warning message.
+   * Use for recoverable issues or deprecated behavior.
+   *
+   * @param message - Log message
+   * @param context - Optional context data (primitives only)
+   */
+  warn(message: string, context?: LogContext): void;
+
+  /**
+   * Log an error message.
+   * Use for failures that require attention.
+   *
+   * @param message - Log message
+   * @param context - Optional context data (primitives only)
+   */
+  error(message: string, context?: LogContext): void;
+}
 
 /**
  * Agent status counts for workspaces with active AI agents.
@@ -183,6 +260,13 @@ export interface CodehydraApi {
    * ```
    */
   whenReady(): Promise<void>;
+
+  /**
+   * Log API namespace.
+   * Provides structured logging to CodeHydra's centralized logging system.
+   * Methods are fire-and-forget and work even before whenReady() resolves.
+   */
+  readonly log: LogApi;
 
   /**
    * Workspace API namespace.
