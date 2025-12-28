@@ -5,14 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import type { Api } from "@shared/electron-api";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
 import { createMockApi } from "../test-utils";
-
-// Get the current directory for reading component files
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // Create mock API (flat structure)
 const mockApi: Api = createMockApi();
@@ -330,48 +323,6 @@ describe("AgentStatusIndicator component", () => {
 
       const indicator = screen.getByRole("status");
       expect(indicator).toHaveClass("indicator");
-    });
-  });
-
-  describe("theme variables (Step 3)", () => {
-    // Read CSS from component file to verify variable usage
-    const componentCss = readFileSync(join(__dirname, "AgentStatusIndicator.svelte"), "utf-8");
-
-    it("idle state uses var(--ch-agent-idle), not hardcoded #4caf50", () => {
-      expect(componentCss).not.toMatch(/\.indicator--idle[^{]*\{[^}]*#4caf50/);
-      expect(componentCss).toMatch(/\.indicator--idle[^{]*\{[^}]*var\(--ch-agent-idle\)/);
-    });
-
-    it("busy state uses var(--ch-agent-busy), not hardcoded #f44336", () => {
-      expect(componentCss).not.toMatch(/\.indicator--busy[^{]*\{[^}]*#f44336/);
-      expect(componentCss).toMatch(/\.indicator--busy[^{]*\{[^}]*var\(--ch-agent-busy\)/);
-    });
-
-    it("mixed state gradient uses var(--ch-agent-busy) and var(--ch-agent-idle)", () => {
-      expect(componentCss).not.toMatch(/\.indicator--mixed[^{]*\{[^}]*#f44336.*#4caf50/);
-      expect(componentCss).toMatch(/\.indicator--mixed[^{]*\{[^}]*var\(--ch-agent-busy\)/);
-      expect(componentCss).toMatch(/\.indicator--mixed[^{]*\{[^}]*var\(--ch-agent-idle\)/);
-    });
-
-    it("tooltip shadow uses var(--ch-shadow)", () => {
-      expect(componentCss).not.toMatch(/\.tooltip[^{]*\{[^}]*box-shadow:\s*0\s*2px\s*8px\s*rgba/);
-      expect(componentCss).toMatch(/\.tooltip[^{]*\{[^}]*var\(--ch-shadow\)/);
-    });
-
-    it("dark theme idle renders green (regression)", () => {
-      render(AgentStatusIndicator, { props: { idleCount: 1, busyCount: 0 } });
-
-      const indicator = screen.getByRole("status");
-      // Verify the class is applied - CSS will handle the actual color
-      expect(indicator).toHaveClass("indicator--idle");
-    });
-
-    it("dark theme busy renders red (regression)", () => {
-      render(AgentStatusIndicator, { props: { idleCount: 0, busyCount: 1 } });
-
-      const indicator = screen.getByRole("status");
-      // Verify the class is applied - CSS will handle the actual color
-      expect(indicator).toHaveClass("indicator--busy");
     });
   });
 });

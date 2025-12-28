@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { delay } from "../services/test-utils";
+import { delay } from "@shared/test-fixtures";
 import type { IViewManager } from "./managers/view-manager.interface";
 import {
   createMockPathProvider,

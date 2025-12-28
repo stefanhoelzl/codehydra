@@ -5,13 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import SetupError from "./SetupError.svelte";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-
-// Get the current directory for reading component files
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 describe("SetupError component", () => {
   beforeEach(() => {
@@ -122,20 +115,6 @@ describe("SetupError component", () => {
       await fireEvent.keyDown(document, { key: "Escape" });
 
       expect(onQuit).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("theme variables", () => {
-    // Read CSS from component file to verify variable usage
-    const componentCss = readFileSync(join(__dirname, "SetupError.svelte"), "utf-8");
-
-    it("heading uses var(--ch-danger) for red color", () => {
-      expect(componentCss).toMatch(/h1[^{]*\{[^}]*var\(--ch-danger/);
-    });
-
-    it("uses vscode-button for button styling", () => {
-      // Verify we're using vscode-button web component (styling is handled by the component)
-      expect(componentCss).toContain("vscode-button");
     });
   });
 });

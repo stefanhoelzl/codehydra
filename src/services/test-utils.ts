@@ -293,21 +293,6 @@ export function suppressConsole(
   };
 }
 
-/**
- * Promise-based delay utility.
- * Prefer waitFor patterns when checking conditions; use delay() only for fixed waits.
- *
- * @param ms - Milliseconds to wait
- * @returns Promise that resolves after the delay
- *
- * @example
- * ```typescript
- * await delay(100); // Wait 100ms
- * ```
- */
-export const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
 // =============================================================================
 // API Mock Factories
 // =============================================================================

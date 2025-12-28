@@ -16,7 +16,7 @@ import {
 } from "../platform/filesystem.state-mock";
 import { FileSystemError } from "../errors";
 import { createMockLogger } from "../logging/logging.test-utils";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 import { Path } from "../platform/path";
 import { createMockGitClient } from "./git-client.state-mock";
 

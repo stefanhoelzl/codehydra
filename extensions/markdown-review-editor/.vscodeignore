@@ -1,0 +1,17 @@
+.git/**
+.gitignore
+.vscode/**
+node_modules/**
+src/**
+tests/**
+.env*
+.prettierignore
+.prettierrc
+eslint.config.js
+package-lock.json
+playwright.config.ts
+svelte.config.js
+tsconfig.json
+vite.config.ts
+*.md
+!dist/**

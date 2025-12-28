@@ -18,7 +18,7 @@ import { existsSync } from "node:fs";
 import { OpenCodeClient } from "./opencode-client";
 import { withOpencode } from "./boundary-test-utils";
 import { CI_TIMEOUT_MS } from "../platform/network.test-utils";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 import { SILENT_LOGGER } from "../logging";
 import { DefaultPathProvider } from "../platform/path-provider";
 import { NodePlatformInfo } from "../../main/platform-info";

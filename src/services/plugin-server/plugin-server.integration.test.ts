@@ -11,7 +11,7 @@ import { PluginServer } from "./plugin-server";
 import { STARTUP_COMMANDS, sendStartupCommands } from "./startup-commands";
 import { DefaultNetworkLayer } from "../platform/network";
 import { SILENT_LOGGER, createBehavioralLogger } from "../logging/logging.test-utils";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 import {
   createTestClient,
   waitForConnect,

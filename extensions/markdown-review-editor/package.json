@@ -1,0 +1,73 @@
+{
+	"name": "markdown-review-editor",
+	"displayName": "Markdown Review Editor",
+	"description": "AI-assisted collaborative markdown document editor",
+	"version": "0.1.0-dev.6686f318",
+	"type": "module",
+	"publisher": "codehydra",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [],
+	"main": "./dist/extension.cjs",
+	"contributes": {
+		"commands": [
+			{
+				"command": "markdownReviewEditor.open",
+				"title": "Open Markdown Review Editor",
+				"category": "Markdown Review"
+			}
+		],
+		"customEditors": [
+			{
+				"viewType": "markdownReviewEditor.editor",
+				"displayName": "Markdown Review Editor",
+				"selector": [
+					{
+						"filenamePattern": "*.md"
+					}
+				],
+				"priority": "default"
+			}
+		]
+	},
+	"scripts": {
+		"build": "vite build",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:e2e": "playwright test",
+		"format": "prettier --write .",
+		"lint": "eslint . && prettier --check .",
+		"lint:fix": "eslint . --fix && prettier --write ."
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.49.0",
+		"@sveltejs/vite-plugin-svelte": "^5.0.0",
+		"@types/diff-match-patch": "^1.0.36",
+		"@types/marked": "^5.0.2",
+		"@types/node": "^22.10.0",
+		"@types/turndown": "^5.0.6",
+		"@types/vscode": "^1.85.0",
+		"eslint": "^9.16.0",
+		"eslint-plugin-svelte": "^2.46.0",
+		"globals": "^15.13.0",
+		"jsdom": "^27.2.0",
+		"prettier": "^3.4.2",
+		"prettier-plugin-svelte": "^3.3.2",
+		"svelte": "^5.12.0",
+		"svelte-check": "^4.1.0",
+		"typescript": "^5.7.2",
+		"typescript-eslint": "^8.17.0",
+		"vite": "^6.0.0",
+		"vitest": "^2.1.0"
+	},
+	"dependencies": {
+		"@opencode-ai/sdk": "^1.0.129",
+		"diff-match-patch": "^1.0.5",
+		"marked": "^17.0.1",
+		"turndown": "^7.2.2"
+	}
+}

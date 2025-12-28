@@ -20,7 +20,8 @@ import { join } from "node:path";
 import { CodeServerManager } from "./code-server-manager";
 import { ExecaProcessRunner } from "../platform/process";
 import { DefaultNetworkLayer } from "../platform/network";
-import { createTempDir, delay } from "../test-utils";
+import { createTempDir } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 import { CODE_SERVER_VERSION } from "../binary-download/versions";
 import type { CodeServerConfig } from "./types";
 

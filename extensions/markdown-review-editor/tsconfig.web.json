@@ -1,0 +1,17 @@
+{
+	"extends": "../tsconfig.ext.json",
+	"compilerOptions": {
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ES2020", "DOM", "DOM.Iterable"],
+		"baseUrl": ".",
+		"paths": {
+			"$lib/*": ["src/lib/*"]
+		},
+		"noUncheckedIndexedAccess": false,
+		"noUnusedLocals": false,
+		"noUnusedParameters": false
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "dist"]
+}

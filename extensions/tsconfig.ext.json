@@ -11,6 +11,6 @@
     "exactOptionalPropertyTypes": false,
     "types": ["node", "vscode"]
   },
-  "include": ["*/src/**/*"],
+  "include": ["dictation/src/**/*", "sidekick/src/**/*"],
   "exclude": ["*/node_modules", "*/dist"]
 }

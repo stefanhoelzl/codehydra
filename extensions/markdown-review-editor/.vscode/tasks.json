@@ -1,0 +1,58 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "clean-log",
+			"type": "shell",
+			"command": "rm -f server.log",
+			"windows": {
+				"command": "if (Test-Path server.log) { Remove-Item server.log }"
+			},
+			"linux": {
+				"command": "rm -f server.log"
+			},
+			"osx": {
+				"command": "rm -f server.log"
+			},
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "build",
+			"type": "npm",
+			"script": "build",
+			"problemMatcher": ["$tsc"],
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "build-and-clean-log",
+			"dependsOn": ["clean-log", "build"],
+			"dependsOrder": "sequence"
+		},
+		{
+			"label": "watch",
+			"type": "npm",
+			"script": "dev",
+			"isBackground": true,
+			"problemMatcher": {
+				"pattern": {
+					"regexp": "^$"
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": ".",
+					"endsPattern": "built in"
+				}
+			},
+			"presentation": {
+				"reveal": "silent",
+				"panel": "dedicated"
+			}
+		}
+	]
+}

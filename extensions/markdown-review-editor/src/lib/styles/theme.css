@@ -1,0 +1,310 @@
+/* VS Code Design Language Theme
+ * CSS Custom Properties for dark and light mode theming
+ */
+
+:root {
+	/* Color palette - Dark theme (default) */
+	--color-bg-primary: #1e1e1e;
+	--color-bg-secondary: #252526;
+	--color-bg-tertiary: #2d2d30;
+	--color-bg-hover: #3c3c3c;
+
+	--color-text-primary: #cccccc;
+	--color-text-secondary: #9d9d9d;
+	--color-text-muted: #6d6d6d;
+
+	--color-border: #3c3c3c;
+	--color-border-active: #007acc;
+
+	/* Selection colors */
+	--color-selection-bg: rgba(38, 79, 120, 0.6);
+	--color-selection-text: inherit;
+	--color-editor-selection-bg: rgba(30, 60, 100, 1);
+
+	/* Annotation colors */
+	--color-annotation-underline: rgba(100, 149, 237, 0.6);
+	--color-annotation-bg: rgba(100, 149, 237, 0.25);
+	--color-annotation-bg-hover: rgba(100, 149, 237, 0.35);
+	--color-annotation-bg-active: rgba(100, 149, 237, 0.5);
+
+	/* Diff colors */
+	--color-diff-add-bg: rgba(46, 160, 67, 0.3);
+	--color-diff-add-fg: #89d185;
+	--color-diff-del-bg: rgba(248, 81, 73, 0.3);
+	--color-diff-del-fg: #f85149;
+	--color-diff-change-bg: rgba(56, 139, 253, 0.3);
+	--color-diff-change-fg: #79c0ff;
+
+	/* Annotation layout */
+	--annotation-underline-offset: 2px;
+
+	/* Accent colors */
+	--color-accent-primary: #007acc;
+	--color-accent-secondary: #3794ff;
+
+	/* Semantic colors */
+	--color-success: #4ec9b0;
+	--color-warning: #dcdcaa;
+	--color-error: #f14c4c;
+	--color-info: #3794ff;
+
+	/* Typography */
+	--font-family-sans:
+		-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	--font-family-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+
+	--font-size-xs: 0.75rem;
+	--font-size-sm: 0.875rem;
+	--font-size-base: 1rem;
+	--font-size-lg: 1.125rem;
+	--font-size-xl: 1.25rem;
+	--font-size-2xl: 1.5rem;
+	--font-size-3xl: 1.875rem;
+
+	--line-height-tight: 1.25;
+	--line-height-normal: 1.5;
+	--line-height-relaxed: 1.75;
+
+	/* Spacing */
+	--spacing-xs: 0.25rem;
+	--spacing-sm: 0.5rem;
+	--spacing-md: 1rem;
+	--spacing-lg: 1.5rem;
+	--spacing-xl: 2rem;
+	--spacing-2xl: 3rem;
+
+	/* Borders */
+	--border-radius-sm: 2px;
+	--border-radius-md: 4px;
+	--border-radius-lg: 8px;
+
+	/* Shadows */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4);
+	--shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5);
+
+	/* Scrollbar */
+	--scrollbar-width: 10px;
+	--scrollbar-track: var(--color-bg-secondary);
+	--scrollbar-thumb: var(--color-bg-tertiary);
+	--scrollbar-thumb-hover: var(--color-bg-hover);
+}
+
+/* Dark theme (explicit) */
+[data-theme='dark'] {
+	--color-bg-primary: #1e1e1e;
+	--color-bg-secondary: #252526;
+	--color-bg-tertiary: #2d2d30;
+	--color-bg-hover: #3c3c3c;
+
+	--color-text-primary: #cccccc;
+	--color-text-secondary: #9d9d9d;
+	--color-text-muted: #6d6d6d;
+
+	--color-border: #3c3c3c;
+
+	--color-selection-bg: rgba(38, 79, 120, 0.6);
+	--color-editor-selection-bg: rgba(30, 60, 100, 1);
+
+	--color-annotation-underline: rgba(100, 149, 237, 0.6);
+	--color-annotation-bg: rgba(100, 149, 237, 0.25);
+	--color-annotation-bg-hover: rgba(100, 149, 237, 0.35);
+	--color-annotation-bg-active: rgba(100, 149, 237, 0.5);
+
+	--color-diff-add-bg: rgba(46, 160, 67, 0.3);
+	--color-diff-add-fg: #89d185;
+	--color-diff-del-bg: rgba(248, 81, 73, 0.3);
+	--color-diff-del-fg: #f85149;
+	--color-diff-change-bg: rgba(56, 139, 253, 0.3);
+	--color-diff-change-fg: #79c0ff;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4);
+	--shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* Light theme */
+[data-theme='light'] {
+	--color-bg-primary: #ffffff;
+	--color-bg-secondary: #f3f3f3;
+	--color-bg-tertiary: #e5e5e5;
+	--color-bg-hover: #d4d4d4;
+
+	--color-text-primary: #333333;
+	--color-text-secondary: #616161;
+	--color-text-muted: #9e9e9e;
+
+	--color-border: #d4d4d4;
+
+	--color-selection-bg: rgba(0, 122, 204, 0.3);
+	--color-editor-selection-bg: rgba(0, 60, 140, 0.7);
+
+	--color-annotation-underline: rgba(100, 149, 237, 0.8);
+	--color-annotation-bg: rgba(100, 149, 237, 0.2);
+	--color-annotation-bg-hover: rgba(100, 149, 237, 0.3);
+	--color-annotation-bg-active: rgba(100, 149, 237, 0.45);
+
+	--color-diff-add-bg: rgba(46, 160, 67, 0.25);
+	--color-diff-add-fg: #1a7f37;
+	--color-diff-del-bg: rgba(248, 81, 73, 0.25);
+	--color-diff-del-fg: #cf222e;
+	--color-diff-change-bg: rgba(56, 139, 253, 0.25);
+	--color-diff-change-fg: #0969da;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+	--shadow-md: 0 2px 4px rgba(0, 0, 0, 0.15);
+	--shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* System preference detection */
+@media (prefers-color-scheme: light) {
+	[data-theme='system'] {
+		--color-bg-primary: #ffffff;
+		--color-bg-secondary: #f3f3f3;
+		--color-bg-tertiary: #e5e5e5;
+		--color-bg-hover: #d4d4d4;
+
+		--color-text-primary: #333333;
+		--color-text-secondary: #616161;
+		--color-text-muted: #9e9e9e;
+
+		--color-border: #d4d4d4;
+
+		--color-selection-bg: rgba(0, 122, 204, 0.3);
+		--color-editor-selection-bg: rgba(0, 60, 140, 0.7);
+
+		--color-annotation-underline: rgba(100, 149, 237, 0.8);
+		--color-annotation-bg: rgba(100, 149, 237, 0.2);
+		--color-annotation-bg-hover: rgba(100, 149, 237, 0.3);
+		--color-annotation-bg-active: rgba(100, 149, 237, 0.45);
+
+		--color-diff-add-bg: rgba(46, 160, 67, 0.25);
+		--color-diff-add-fg: #1a7f37;
+		--color-diff-del-bg: rgba(248, 81, 73, 0.25);
+		--color-diff-del-fg: #cf222e;
+		--color-diff-change-bg: rgba(56, 139, 253, 0.25);
+		--color-diff-change-fg: #0969da;
+
+		--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+		--shadow-md: 0 2px 4px rgba(0, 0, 0, 0.15);
+		--shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.2);
+	}
+}
+
+@media (prefers-color-scheme: dark) {
+	[data-theme='system'] {
+		--color-bg-primary: #1e1e1e;
+		--color-bg-secondary: #252526;
+		--color-bg-tertiary: #2d2d30;
+		--color-bg-hover: #3c3c3c;
+
+		--color-text-primary: #cccccc;
+		--color-text-secondary: #9d9d9d;
+		--color-text-muted: #6d6d6d;
+
+		--color-border: #3c3c3c;
+
+		--color-selection-bg: rgba(38, 79, 120, 0.6);
+		--color-editor-selection-bg: rgba(30, 60, 100, 1);
+
+		--color-annotation-underline: rgba(100, 149, 237, 0.6);
+		--color-annotation-bg: rgba(100, 149, 237, 0.25);
+		--color-annotation-bg-hover: rgba(100, 149, 237, 0.35);
+		--color-annotation-bg-active: rgba(100, 149, 237, 0.5);
+
+		--color-diff-add-bg: rgba(46, 160, 67, 0.3);
+		--color-diff-add-fg: #89d185;
+		--color-diff-del-bg: rgba(248, 81, 73, 0.3);
+		--color-diff-del-fg: #f85149;
+		--color-diff-change-bg: rgba(56, 139, 253, 0.3);
+		--color-diff-change-fg: #79c0ff;
+
+		--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+		--shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4);
+		--shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5);
+	}
+}
+
+/* Global reset and base styles */
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	font-family: var(--font-family-sans);
+	font-size: var(--font-size-base);
+	line-height: var(--line-height-normal);
+	color: var(--color-text-primary);
+	background-color: var(--color-bg-primary);
+}
+
+body {
+	margin: 0;
+	padding: 0;
+	min-height: 100vh;
+}
+
+/* Global selection styling */
+::selection {
+	background-color: var(--color-selection-bg);
+	color: var(--color-selection-text);
+}
+
+/* Scrollbar styling (webkit) */
+::-webkit-scrollbar {
+	width: var(--scrollbar-width);
+	height: var(--scrollbar-width);
+}
+
+::-webkit-scrollbar-track {
+	background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--scrollbar-thumb);
+	border-radius: var(--border-radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--scrollbar-thumb-hover);
+}
+
+/* Diff visualization - x-modified elements */
+x-modified {
+	display: inline;
+}
+
+x-modified[type='add'] {
+	color: var(--color-diff-add-fg);
+}
+
+x-modified[type='change'] {
+	color: var(--color-diff-change-fg);
+	position: relative;
+	cursor: help;
+}
+
+x-modified[type='change']:hover::after {
+	content: 'was: ' attr(previous);
+	position: absolute;
+	left: 0;
+	top: 100%;
+	background-color: var(--color-bg-tertiary);
+	color: var(--color-text-primary);
+	padding: var(--spacing-xs) var(--spacing-sm);
+	border-radius: var(--border-radius-sm);
+	box-shadow: var(--shadow-md);
+	white-space: nowrap;
+	z-index: 1000;
+	font-size: var(--font-size-sm);
+	margin-top: 2px;
+}
+
+x-modified[type='del'] {
+	display: inline;
+	color: var(--color-diff-del-fg);
+	text-decoration: line-through;
+	cursor: not-allowed;
+}

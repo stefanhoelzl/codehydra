@@ -5,8 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/svelte";
-import { delay } from "@services/test-utils";
-import { asProjectId, asProjectPath, asWorkspaceRef } from "@shared/test-fixtures";
+import { asProjectId, asProjectPath, asWorkspaceRef, delay } from "@shared/test-fixtures";
 
 // API event callbacks - must be hoisted with mockApi so it's available when mock runs
 type EventCallback = (...args: unknown[]) => void;

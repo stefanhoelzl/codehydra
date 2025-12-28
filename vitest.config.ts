@@ -33,16 +33,13 @@ export default defineConfig({
     projects: [
       {
         // Renderer tests: happy-dom environment with vscode-elements setup
+        // Note: setup-matchers.ts excluded - it imports Node.js-only code (filesystem.state-mock)
         extends: true,
         test: {
           name: "renderer",
           environment: "happy-dom",
           include: ["src/renderer/**/*.{test,spec}.{js,ts}"],
-          setupFiles: [
-            "./src/test/setup.ts",
-            "./src/test/setup-matchers.ts",
-            "./src/test/setup-renderer.ts",
-          ],
+          setupFiles: ["./src/test/setup.ts", "./src/test/setup-renderer.ts"],
         },
       },
       {
@@ -85,8 +82,18 @@ export default defineConfig({
           name: "extensions",
           environment: "node",
           include: ["extensions/**/*.{test,spec}.{js,ts}"],
+          exclude: [
+            "extensions/**/e2e/**",
+            "extensions/**/*.e2e.{test,spec}.{js,ts}",
+            "extensions/**/example.spec.ts",
+          ],
           setupFiles: ["./src/test/setup.ts", "./src/test/setup-matchers.ts"],
           pool: "forks",
+        },
+        resolve: {
+          alias: {
+            $lib: resolve("./extensions/markdown-review-editor/src/lib"),
+          },
         },
       },
     ],
