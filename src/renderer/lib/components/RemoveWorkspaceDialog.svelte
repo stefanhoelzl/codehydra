@@ -82,7 +82,7 @@
   {/snippet}
 
   {#snippet content()}
-    <p id={descriptionId}>
+    <p id={descriptionId} class="ch-dialog-text">
       Remove workspace "{workspaceName}"?
     </p>
 
@@ -97,7 +97,7 @@
       </div>
     {/if}
 
-    <div class="checkbox-row">
+    <div class="ch-checkbox-row">
       <vscode-checkbox checked={keepBranch} onchange={handleCheckboxChange} label="Keep branch"
       ></vscode-checkbox>
     </div>
@@ -112,14 +112,5 @@
 </Dialog>
 
 <style>
-  /* Component-specific styles only - shared styles in variables.css */
-  p {
-    margin: 0 0 16px 0;
-    font-size: 13px;
-    color: var(--ch-foreground);
-  }
-
-  .checkbox-row {
-    margin-bottom: 16px;
-  }
+  /* All shared styles now in variables.css */
 </style>

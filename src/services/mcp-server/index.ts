@@ -3,7 +3,13 @@
  */
 
 // Types
-export type { ResolvedWorkspace, McpErrorCode, McpError, IDisposable, IMcpServer } from "./types";
+export type {
+  McpResolvedWorkspace,
+  McpErrorCode,
+  McpError,
+  IDisposable,
+  IMcpServer,
+} from "./types";
 
 // Workspace resolver
 export { resolveWorkspace } from "./workspace-resolver";

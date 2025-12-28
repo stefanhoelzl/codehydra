@@ -5,7 +5,7 @@
  * Plays a chime sound when any workspace's idle agent count increases.
  */
 
-import type { AgentStatusCounts } from "@shared/ipc";
+import type { InternalAgentCounts } from "@shared/ipc";
 
 /**
  * Function type for playing chime sound.
@@ -17,7 +17,7 @@ export type ChimePlayer = () => void;
  * Extracted from store to separate concerns and improve testability.
  */
 export class AgentNotificationService {
-  private previousCounts = new Map<string, AgentStatusCounts>();
+  private previousCounts = new Map<string, InternalAgentCounts>();
   private enabled = true;
   private readonly playChime: ChimePlayer;
 
@@ -34,7 +34,7 @@ export class AgentNotificationService {
    * Triggers chime when idle count increases (agent finished work) or
    * when first status report has idle agents (opencode just connected).
    */
-  handleStatusChange(workspacePath: string, counts: AgentStatusCounts): void {
+  handleStatusChange(workspacePath: string, counts: InternalAgentCounts): void {
     const prev = this.previousCounts.get(workspacePath);
 
     // Play chime when:
@@ -88,7 +88,7 @@ export class AgentNotificationService {
    *
    * @param statuses - Record of workspace paths to their counts
    */
-  seedInitialCounts(statuses: Record<string, AgentStatusCounts>): void {
+  seedInitialCounts(statuses: Record<string, InternalAgentCounts>): void {
     for (const [workspacePath, counts] of Object.entries(statuses)) {
       this.previousCounts.set(workspacePath, { ...counts });
     }

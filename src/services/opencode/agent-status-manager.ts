@@ -5,7 +5,7 @@
  * Ports are provided by OpenCodeServerManager via callbacks routed through AppState.
  */
 
-import type { WorkspacePath, AgentStatusCounts, AggregatedAgentStatus } from "../../shared/ipc";
+import type { WorkspacePath, InternalAgentCounts, AggregatedAgentStatus } from "../../shared/ipc";
 import type { IDisposable, Unsubscribe, ClientStatus } from "./types";
 import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./opencode-client";
 import type { Logger } from "../logging";
@@ -324,7 +324,7 @@ export class AgentStatusManager implements IDisposable {
     }
   }
 
-  private aggregateStatus(counts: AgentStatusCounts): AggregatedAgentStatus {
+  private aggregateStatus(counts: InternalAgentCounts): AggregatedAgentStatus {
     const { idle, busy } = counts;
 
     if (idle === 0 && busy === 0) {

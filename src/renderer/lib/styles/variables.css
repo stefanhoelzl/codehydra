@@ -157,6 +157,18 @@
   opacity: 0.8;
 }
 
+/* Dialog paragraph - standard text in dialogs */
+.ch-dialog-text {
+  margin: 0 0 16px 0;
+  font-size: 13px;
+  color: var(--ch-foreground);
+}
+
+/* Checkbox row - container for checkbox with spacing */
+.ch-checkbox-row {
+  margin-bottom: 16px;
+}
+
 /**
  * Light theme overrides.
  * Only fallback values change - VS Code variable references stay the same.

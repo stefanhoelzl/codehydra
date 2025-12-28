@@ -13,7 +13,7 @@ import type { IDisposable } from "../types";
  * A workspace resolved from an MCP workspace path.
  * Contains all identifiers needed to call ICoreApi methods.
  */
-export interface ResolvedWorkspace {
+export interface McpResolvedWorkspace {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
   readonly workspacePath: string;
@@ -83,5 +83,5 @@ export interface IMcpServer extends IDisposable {
  */
 export interface McpContext {
   readonly workspacePath: string;
-  readonly resolved: ResolvedWorkspace | null;
+  readonly resolved: McpResolvedWorkspace | null;
 }

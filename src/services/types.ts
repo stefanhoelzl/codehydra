@@ -1,16 +1,7 @@
 /**
- * Shared type definitions for the services layer.
+ * Type definitions for the services layer.
+ * Re-exports shared types for backward compatibility.
  */
 
-/**
- * Interface for resources that need cleanup.
- * Used by services, managers, and other long-lived objects.
- */
-export interface IDisposable {
-  dispose(): void | Promise<void>;
-}
-
-/**
- * Function to unsubscribe from an event or callback.
- */
-export type Unsubscribe = () => void;
+// Re-export from shared types (single source of truth)
+export type { IDisposable, Unsubscribe } from "../shared/types";

@@ -6,44 +6,10 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { McpServer, createDefaultMcpServer } from "./mcp-server";
-import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
+import type { ICoreApi } from "../../shared/api/interfaces";
 import type { WorkspaceLookup } from "./workspace-resolver";
-import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
 import { createMockLogger } from "../logging";
-import { vi } from "vitest";
-import { delay } from "../test-utils";
-
-/**
- * Create a mock ICoreApi for testing.
- */
-function createMockCoreApi(overrides?: { workspaces?: Partial<IWorkspaceApi> }): ICoreApi {
-  const defaultWorkspaces: IWorkspaceApi = {
-    create: vi.fn().mockResolvedValue({
-      name: "test" as WorkspaceName,
-      path: "/path",
-      branch: "main",
-      metadata: { base: "main" },
-      projectId: "test-12345678" as ProjectId,
-    }),
-    remove: vi.fn().mockResolvedValue({ started: true }),
-    forceRemove: vi.fn().mockResolvedValue(undefined),
-    get: vi.fn().mockResolvedValue(undefined),
-    getStatus: vi.fn().mockResolvedValue({
-      isDirty: false,
-      agent: { type: "none" },
-    } as WorkspaceStatus),
-    getOpencodePort: vi.fn().mockResolvedValue(14001),
-    setMetadata: vi.fn().mockResolvedValue(undefined),
-    getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
-  };
-
-  return {
-    workspaces: { ...defaultWorkspaces, ...overrides?.workspaces },
-    projects: {} as IProjectApi,
-    on: vi.fn().mockReturnValue(() => {}),
-    dispose: vi.fn().mockResolvedValue(undefined),
-  };
-}
+import { delay, createMockCoreApi } from "../test-utils";
 
 /**
  * Create a mock WorkspaceLookup that resolves specific workspaces.

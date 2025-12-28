@@ -3,7 +3,7 @@
  */
 
 import { vi, type Mock } from "vitest";
-import type { McpContext, ResolvedWorkspace, McpToolResult, McpError } from "./types";
+import type { McpContext, McpResolvedWorkspace, McpToolResult, McpError } from "./types";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 // =============================================================================
@@ -45,7 +45,7 @@ export function createMockMcpServer(overrides?: Partial<MockMcpServer>): MockMcp
  */
 export function createMockMcpContext(
   workspacePath: string,
-  resolved?: ResolvedWorkspace | null
+  resolved?: McpResolvedWorkspace | null
 ): McpContext {
   return {
     workspacePath,
@@ -61,7 +61,7 @@ export function createMockResolvedWorkspace(options: {
   projectId?: string;
   workspaceName?: string;
   workspacePath?: string;
-}): ResolvedWorkspace {
+}): McpResolvedWorkspace {
   return {
     projectId: (options.projectId ?? "test-project-12345678") as ProjectId,
     workspaceName: (options.workspaceName ?? "test-workspace") as WorkspaceName,

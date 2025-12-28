@@ -188,7 +188,13 @@ describe("createMockProject", () => {
 
     expect(project.id).toBe("test-project-12345678");
     expect(project.name).toBe("test-project");
-    expect(project.path).toBe("/test/path");
+    expect(project.path).toBe("/test/project");
+    expect(project.workspaces).toHaveLength(1); // Includes default workspace
+  });
+
+  it("creates project without workspaces when option set", () => {
+    const project = createMockProject({}, { includeDefaultWorkspace: false });
+
     expect(project.workspaces).toEqual([]);
   });
 
@@ -209,10 +215,10 @@ describe("createMockWorkspace", () => {
     const workspace = createMockWorkspace();
 
     expect(workspace.projectId).toBe("test-project-12345678");
-    expect(workspace.name).toBe("test-workspace");
-    expect(workspace.branch).toBe("main");
-    expect(workspace.metadata).toEqual({ base: "main" });
-    expect(workspace.path).toBe("/test/path/test-workspace");
+    expect(workspace.name).toBe("feature-1");
+    expect(workspace.branch).toBe("feature-1"); // Branch matches name by default
+    expect(workspace.metadata).toEqual({ base: "feature-1" });
+    expect(workspace.path).toBe("/test/project/.worktrees/feature-1");
   });
 
   it("allows overriding values", () => {
@@ -221,7 +227,7 @@ describe("createMockWorkspace", () => {
     });
 
     expect(workspace.branch).toBe("feature-branch");
-    expect(workspace.name).toBe("test-workspace"); // Default preserved
+    expect(workspace.name).toBe("feature-1"); // Default preserved
   });
 });
 

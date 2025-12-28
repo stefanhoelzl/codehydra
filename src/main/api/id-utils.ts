@@ -137,8 +137,9 @@ export interface WorkspaceAccessor extends ProjectListAccessor {
 
 /**
  * Resolved workspace result with project context.
+ * Used internally for workspace resolution in the main process.
  */
-export interface ResolvedWorkspace {
+export interface InternalResolvedWorkspace {
   readonly projectPath: string;
   readonly project: InternalProject;
   readonly workspace: InternalWorkspace;
@@ -164,7 +165,7 @@ export interface WorkspaceRefPayload {
 export async function resolveWorkspace(
   payload: WorkspaceRefPayload,
   accessor: WorkspaceAccessor
-): Promise<ResolvedWorkspace> {
+): Promise<InternalResolvedWorkspace> {
   const projectPath = await resolveProjectPath(payload.projectId, accessor);
   if (!projectPath) {
     throw new Error(`Project not found: ${payload.projectId}`);
@@ -196,7 +197,7 @@ export async function resolveWorkspace(
 export async function tryResolveWorkspace(
   payload: WorkspaceRefPayload,
   accessor: WorkspaceAccessor
-): Promise<ResolvedWorkspace | undefined> {
+): Promise<InternalResolvedWorkspace | undefined> {
   const projectPath = await resolveProjectPath(payload.projectId, accessor);
   if (!projectPath) return undefined;
 

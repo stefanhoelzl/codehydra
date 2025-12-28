@@ -114,11 +114,11 @@
   {/snippet}
 
   {#snippet content()}
-    <p id={descriptionId}>
+    <p id={descriptionId} class="ch-dialog-text">
       This project has {workspaceText} that will remain on disk after closing.
     </p>
 
-    <div class="checkbox-row">
+    <div class="ch-checkbox-row">
       <vscode-checkbox
         checked={removeAll}
         onchange={handleCheckboxChange}
@@ -151,16 +151,6 @@
 
 <style>
   /* Component-specific styles only - shared styles in variables.css */
-  p {
-    margin: 0 0 16px 0;
-    font-size: 13px;
-    color: var(--ch-foreground);
-  }
-
-  .checkbox-row {
-    margin-bottom: 16px;
-  }
-
   .error-text {
     white-space: pre-line;
   }

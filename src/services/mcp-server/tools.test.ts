@@ -6,12 +6,13 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
+import type { ICoreApi, IProjectApi } from "../../shared/api/interfaces";
 import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
-import type { ResolvedWorkspace, McpError } from "./types";
+import type { McpResolvedWorkspace, McpError } from "./types";
 import type { Logger, LogContext } from "../logging";
 import type { LogLevel } from "../logging/types";
 import { createBehavioralLogger } from "../logging/logging.test-utils";
+import { createMockWorkspaceApi } from "../test-utils";
 
 /**
  * Tool result type from MCP SDK.
@@ -49,36 +50,10 @@ function parseToolResult<T>(
 }
 
 /**
- * Create a mock IWorkspaceApi.
- */
-function createMockWorkspaceApi(overrides?: Partial<IWorkspaceApi>): IWorkspaceApi {
-  return {
-    create: vi.fn().mockResolvedValue({
-      name: "test" as WorkspaceName,
-      path: "/path",
-      branch: "main",
-      metadata: { base: "main" },
-      projectId: "test-12345678" as ProjectId,
-    }),
-    remove: vi.fn().mockResolvedValue({ started: true }),
-    forceRemove: vi.fn().mockResolvedValue(undefined),
-    get: vi.fn().mockResolvedValue(undefined),
-    getStatus: vi
-      .fn()
-      .mockResolvedValue({ isDirty: false, agent: { type: "none" } } as WorkspaceStatus),
-    getOpencodePort: vi.fn().mockResolvedValue(14001),
-    setMetadata: vi.fn().mockResolvedValue(undefined),
-    getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
-    executeCommand: vi.fn().mockResolvedValue(undefined),
-    ...overrides,
-  };
-}
-
-/**
  * Simulated tool handler context.
  */
 interface SimulatedToolContext {
-  resolved: ResolvedWorkspace | null;
+  resolved: McpResolvedWorkspace | null;
   workspacePath: string;
 }
 

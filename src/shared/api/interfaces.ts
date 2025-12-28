@@ -16,14 +16,10 @@ import type {
   AppState,
 } from "./types";
 import type { UIMode, UIModeChangedEvent } from "../ipc";
+import type { IDisposable, Unsubscribe } from "../types";
 
-/**
- * Interface for objects that can be disposed.
- * Duplicated here to avoid importing from services.
- */
-export interface IDisposable {
-  dispose(): void | Promise<void>;
-}
+// Re-export for consumers that import from this module
+export type { IDisposable, Unsubscribe } from "../types";
 
 // =============================================================================
 // Domain API Interfaces - Stubs
@@ -177,8 +173,6 @@ export interface ApiEvents {
 // =============================================================================
 // Main API Interface
 // =============================================================================
-
-export type Unsubscribe = () => void;
 
 export interface ICodeHydraApi extends IDisposable {
   readonly projects: IProjectApi;

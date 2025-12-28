@@ -1,94 +1,32 @@
 /**
  * Test fixtures for renderer tests.
- * Provides factory functions for creating mock domain objects.
+ * Re-exports from shared test-fixtures for consistency.
  *
- * Uses v2 API types (Project with id, Workspace with projectId).
+ * Renderer tests can import directly from @shared/test-fixtures or from here.
  */
 
-import type { Project, Workspace, BaseInfo, ProjectId, WorkspaceName } from "@shared/api/types";
+// Re-export all shared test fixtures
+export {
+  DEFAULT_PROJECT_ID,
+  asProjectId,
+  asWorkspaceName,
+  asProjectPath,
+  asWorkspaceRef,
+  createMockWorkspace,
+  createMockProject,
+  createMockBaseInfo,
+  type WorkspaceOverrides,
+  type ProjectOverrides,
+  type MockProjectOptions,
+} from "@shared/test-fixtures";
+
+// Re-export types that renderer tests commonly need
+export type { Project, Workspace, BaseInfo, ProjectId, WorkspaceName } from "@shared/api/types";
 
 /**
- * Default project ID used in test fixtures.
+ * Convenience function to create a project with one default workspace.
+ * Equivalent to: createMockProject(overrides, { includeDefaultWorkspace: true })
+ *
+ * @deprecated Use createMockProject(overrides, { includeDefaultWorkspace: true }) instead.
  */
-const DEFAULT_PROJECT_ID = "test-project-12345678" as ProjectId;
-
-/**
- * Partial workspace override that accepts plain strings for convenience in tests.
- * branch can be explicitly set to null (detached HEAD state).
- */
-type WorkspaceOverrides = Partial<Omit<Workspace, "name" | "projectId" | "branch" | "metadata">> & {
-  name?: string;
-  projectId?: ProjectId;
-  branch?: string | null;
-  metadata?: Record<string, string>;
-};
-
-/**
- * Creates a mock Workspace with sensible defaults.
- * Uses v2 API types (includes projectId).
- * @param overrides - Optional properties to override defaults (accepts plain strings for name)
- */
-export function createMockWorkspace(overrides: WorkspaceOverrides = {}): Workspace {
-  const branch = "branch" in overrides ? overrides.branch : "feature-1";
-  return {
-    projectId: overrides.projectId ?? DEFAULT_PROJECT_ID,
-    path: overrides.path ?? "/test/project/.worktrees/feature-1",
-    name: (overrides.name ?? "feature-1") as WorkspaceName,
-    // Use "in" check to allow explicit null for branch (detached HEAD)
-    branch,
-    metadata: { base: branch ?? "main", ...overrides.metadata },
-  };
-}
-
-/**
- * Partial project override that accepts looser types for convenience in tests.
- */
-type ProjectOverrides = Partial<Omit<Project, "workspaces">> & {
-  workspaces?: WorkspaceOverrides[] | readonly Workspace[];
-};
-
-/**
- * Creates a mock Project with sensible defaults (v2 API format with ID).
- * Includes one default workspace unless overridden.
- * @param overrides - Optional properties to override defaults
- */
-export function createMockProject(overrides: ProjectOverrides = {}): Project {
-  const projectId = overrides.id ?? DEFAULT_PROJECT_ID;
-
-  // Convert workspace overrides to Workspace objects
-  let workspaces: readonly Workspace[];
-  if (overrides.workspaces) {
-    workspaces = overrides.workspaces.map((w) => {
-      // Check if it's already a Workspace (has projectId as branded type)
-      if ("projectId" in w && typeof w.projectId === "string" && w.projectId.includes("-")) {
-        return w as Workspace;
-      }
-      // Otherwise treat as WorkspaceOverrides
-      return createMockWorkspace({ ...w, projectId });
-    });
-  } else {
-    workspaces = [createMockWorkspace({ projectId })];
-  }
-
-  return {
-    id: projectId,
-    path: overrides.path ?? "/test/project",
-    name: overrides.name ?? "test-project",
-    workspaces,
-    ...(overrides.defaultBaseBranch !== undefined
-      ? { defaultBaseBranch: overrides.defaultBaseBranch }
-      : {}),
-  };
-}
-
-/**
- * Creates a mock BaseInfo with sensible defaults.
- * @param overrides - Optional properties to override defaults
- */
-export function createMockBaseInfo(overrides: Partial<BaseInfo> = {}): BaseInfo {
-  return {
-    name: "main",
-    isRemote: false,
-    ...overrides,
-  };
-}
+export { createMockProject as createMockProjectWithId } from "@shared/test-fixtures";

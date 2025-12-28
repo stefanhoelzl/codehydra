@@ -27,10 +27,10 @@ export function err<E>(error: E): Result<never, E> {
   return { ok: false, error };
 }
 
-// ============ IDisposable ============
+// ============ Re-exports from shared types ============
 
-// Re-export IDisposable from shared types for backward compatibility
-export type { IDisposable } from "../types";
+// Re-export from shared types (single source of truth)
+export type { IDisposable, Unsubscribe } from "../types";
 
 /**
  * Client status - simplified to just idle or busy.
@@ -86,10 +86,3 @@ export interface PermissionRepliedEvent {
   readonly permissionID: string;
   readonly response: "once" | "always" | "reject";
 }
-
-// ============ Unsubscribe ============
-
-/**
- * Function to unsubscribe from an event.
- */
-export type Unsubscribe = () => void;

@@ -9,6 +9,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { simpleGit } from "simple-git";
 import { vi } from "vitest";
+import type { IWorkspaceApi, IProjectApi, ICoreApi } from "../shared/api/interfaces";
+import { MOCK_WORKSPACE_API_DEFAULTS } from "../shared/test-fixtures";
 
 /**
  * Create a temporary directory with automatic cleanup.
@@ -305,3 +307,57 @@ export function suppressConsole(
  */
 export const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+// =============================================================================
+// API Mock Factories
+// =============================================================================
+
+/**
+ * Creates a mock IWorkspaceApi with sensible defaults.
+ * All methods return mock functions that can be configured in tests.
+ *
+ * @param overrides - Optional method overrides
+ * @returns Mock IWorkspaceApi with all methods mocked
+ *
+ * @example
+ * ```typescript
+ * const mockApi = createMockWorkspaceApi();
+ * mockApi.getStatus.mockResolvedValue({ isDirty: true, agent: { type: "busy" } });
+ * ```
+ */
+export function createMockWorkspaceApi(overrides?: Partial<IWorkspaceApi>): IWorkspaceApi {
+  return {
+    create: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
+    remove: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.removeResult),
+    forceRemove: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn().mockResolvedValue(undefined),
+    getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
+    getOpencodePort: vi.fn().mockResolvedValue(null),
+    setMetadata: vi.fn().mockResolvedValue(undefined),
+    getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
+    executeCommand: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
+/**
+ * Creates a mock ICoreApi with sensible defaults.
+ * All methods return mock functions that can be configured in tests.
+ *
+ * @param overrides - Optional overrides for workspaces or projects APIs
+ * @returns Mock ICoreApi with all methods mocked
+ *
+ * @example
+ * ```typescript
+ * const mockApi = createMockCoreApi();
+ * mockApi.workspaces.getStatus.mockResolvedValue({ isDirty: true, agent: { type: "busy" } });
+ * ```
+ */
+export function createMockCoreApi(overrides?: { workspaces?: Partial<IWorkspaceApi> }): ICoreApi {
+  return {
+    workspaces: createMockWorkspaceApi(overrides?.workspaces),
+    projects: {} as IProjectApi,
+    on: vi.fn().mockReturnValue(() => {}),
+    dispose: vi.fn().mockResolvedValue(undefined),
+  };
+}

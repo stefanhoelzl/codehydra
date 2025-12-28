@@ -17,7 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import type { IMcpServer, ResolvedWorkspace, McpError } from "./types";
+import type { IMcpServer, McpResolvedWorkspace, McpError } from "./types";
 import type { ICoreApi } from "../../shared/api/interfaces";
 import type { Logger, LogContext } from "../logging";
 import { SILENT_LOGGER, logAtLevel } from "../logging";
@@ -35,7 +35,7 @@ const WORKSPACE_PATH_HEADER = "x-workspace-path";
  */
 interface ToolContext {
   readonly workspacePath: string;
-  readonly resolved: ResolvedWorkspace | null;
+  readonly resolved: McpResolvedWorkspace | null;
 }
 
 /**
@@ -226,7 +226,7 @@ export class McpServer implements IMcpServer {
    * Create a workspace tool handler that resolves workspace and handles errors.
    */
   private createWorkspaceHandler<TArgs, TResult>(
-    fn: (resolved: ResolvedWorkspace, args: TArgs) => Promise<TResult>
+    fn: (resolved: McpResolvedWorkspace, args: TArgs) => Promise<TResult>
   ): (
     args: TArgs,
     extra: unknown

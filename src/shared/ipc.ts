@@ -29,21 +29,24 @@ export type WorkspacePath = string & { readonly [WorkspacePathBrand]: true };
 // ============ Agent Status Types ============
 
 /**
- * Counts of agents in each status for a workspace.
+ * Internal counts of agents in each status for aggregation.
+ * This is used internally for status computation - external consumers
+ * should use AgentStatusCounts from api/types.ts which includes `total`.
  */
-export interface AgentStatusCounts {
+export interface InternalAgentCounts {
   readonly idle: number;
   readonly busy: number;
 }
 
 /**
  * Aggregated agent status for a workspace (discriminated union).
+ * Used internally for status aggregation.
  */
 export type AggregatedAgentStatus =
-  | { readonly status: "none"; readonly counts: AgentStatusCounts }
-  | { readonly status: "idle"; readonly counts: AgentStatusCounts }
-  | { readonly status: "busy"; readonly counts: AgentStatusCounts }
-  | { readonly status: "mixed"; readonly counts: AgentStatusCounts };
+  | { readonly status: "none"; readonly counts: InternalAgentCounts }
+  | { readonly status: "idle"; readonly counts: InternalAgentCounts }
+  | { readonly status: "busy"; readonly counts: InternalAgentCounts }
+  | { readonly status: "mixed"; readonly counts: InternalAgentCounts };
 
 // ============ UI Mode Types ============
 
