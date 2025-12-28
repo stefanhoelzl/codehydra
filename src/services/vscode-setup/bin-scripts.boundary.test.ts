@@ -86,9 +86,12 @@ process.exit(isNaN(exitCode) ? 0 : exitCode);
   const fakeOpencodePath = join(opencodeVersionDir, isWindows ? "opencode.cmd" : "opencode");
 
   if (isWindows) {
-    // Windows: batch wrapper calling node
+    // Windows: batch wrapper calling node with absolute path
+    // Use the same node.exe that's running this test to ensure it's available
+    // (relying on PATH doesn't work reliably in CI environments)
+    const nodePath = process.execPath;
     const batchContent = `@echo off
-node "%~dp0opencode-fake.cjs" %*
+"${nodePath}" "%~dp0opencode-fake.cjs" %*
 exit /b %ERRORLEVEL%
 `;
     await writeFile(fakeOpencodePath, batchContent);
