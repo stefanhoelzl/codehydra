@@ -1,0 +1,27 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Run Extension",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": ["--extensionDevelopmentPath=${workspaceFolder}", "--log=debug"],
+			"outFiles": ["${workspaceFolder}/dist/**/*.cjs"],
+			"preLaunchTask": "build-and-clean-log",
+			"env": {
+				"VSCODE_DEBUG_MODE": "true"
+			}
+		},
+		{
+			"name": "Run Extension (Watch Mode)",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": ["--extensionDevelopmentPath=${workspaceFolder}", "--log=debug"],
+			"outFiles": ["${workspaceFolder}/dist/**/*.cjs"],
+			"preLaunchTask": "clean-log",
+			"env": {
+				"VSCODE_DEBUG_MODE": "true"
+			}
+		}
+	]
+}

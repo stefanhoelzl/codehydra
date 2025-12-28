@@ -10,7 +10,7 @@ import { PluginServer } from "./plugin-server";
 import type { ApiCallHandlers } from "./plugin-server";
 import { DefaultNetworkLayer } from "../platform/network";
 import { SILENT_LOGGER } from "../logging/logging.test-utils";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 import {
   createTestClient,
   waitForConnect,

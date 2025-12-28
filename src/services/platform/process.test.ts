@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vite
 import { ExecaSpawnedProcess } from "./process";
 import { SILENT_LOGGER } from "../logging";
 import type { Logger } from "../logging";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 
 // Mock execa to capture taskkill calls
 vi.mock("execa", () => ({

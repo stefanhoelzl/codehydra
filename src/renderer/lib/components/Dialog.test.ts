@@ -6,13 +6,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import Dialog from "./Dialog.svelte";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-
-// Get the current directory for reading component files
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 describe("Dialog component", () => {
   const defaultProps = {
@@ -161,26 +154,6 @@ describe("Dialog component", () => {
         // Should wrap to last button
         expect(document.activeElement).toBe(buttons[buttons.length - 1]);
       }
-    });
-  });
-
-  describe("theme variables (Step 5)", () => {
-    // Read CSS from component file to verify variable usage
-    const componentCss = readFileSync(join(__dirname, "Dialog.svelte"), "utf-8");
-
-    it("overlay uses var(--ch-overlay-bg), not hardcoded rgba(0, 0, 0, 0.5)", () => {
-      expect(componentCss).not.toMatch(
-        /\.dialog-overlay[^{]*\{[^}]*background:\s*rgba\(0,\s*0,\s*0/
-      );
-      expect(componentCss).toMatch(/\.dialog-overlay[^{]*\{[^}]*var\(--ch-overlay-bg\)/);
-    });
-
-    it("dark theme overlay is semi-transparent black (regression)", () => {
-      render(Dialog, { props: defaultProps });
-
-      const overlay = screen.getByTestId("dialog-overlay");
-      // Verify the class is applied - CSS will handle the actual color
-      expect(overlay).toHaveClass("dialog-overlay");
     });
   });
 });

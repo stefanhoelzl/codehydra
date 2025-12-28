@@ -12,7 +12,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { ProcessRunner, SpawnedProcess } from "./process";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 
 /**
  * Platform detection constant.

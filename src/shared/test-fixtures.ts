@@ -189,6 +189,23 @@ export function createMockBaseInfo(overrides: Partial<BaseInfo> = {}): BaseInfo 
 }
 
 // =============================================================================
+// Test Utilities (browser-compatible)
+// =============================================================================
+
+/**
+ * Promise-based delay utility.
+ * Prefer waitFor patterns when checking conditions; use delay() only for fixed waits.
+ *
+ * This is in shared/test-fixtures (not services/test-utils) to be browser-compatible
+ * for renderer tests that run in happy-dom environment.
+ *
+ * @param ms - Milliseconds to wait
+ * @returns Promise that resolves after the delay
+ */
+export const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+// =============================================================================
 // API Mock Factory Defaults
 // Note: These are used by test-utils files that create mock APIs.
 // =============================================================================

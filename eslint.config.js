@@ -49,7 +49,7 @@ export default tseslint.config(
   },
   // VS Code extensions - allow underscore-prefixed unused vars (interface implementations)
   {
-    files: ["extensions/**/*.ts"],
+    files: ["extensions/**/*.ts", "extensions/**/*.svelte"],
     rules: {
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -80,6 +80,16 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_|^T$" },
       ],
+    },
+  },
+  // markdown-review-editor CommentEditor.svelte - specific overrides
+  {
+    files: ["extensions/markdown-review-editor/src/lib/components/CommentEditor.svelte"],
+    rules: {
+      // @html is used intentionally for rendering trusted markdown content from user's own files
+      "svelte/no-at-html-tags": "off",
+      // $state + $effect pattern is valid for controlled inputs (requires Svelte 5.25+ for writable derived)
+      "svelte/prefer-writable-derived": "off",
     },
   }
 );

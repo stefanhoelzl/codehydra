@@ -1,0 +1,31 @@
+node_modules
+
+# Build outputs
+build/
+.svelte-kit/
+dist/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# Logs
+*.log
+npm-debug.log*

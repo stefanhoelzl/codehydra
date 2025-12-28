@@ -15,7 +15,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "http";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 
 // ============================================================================
 // Mock Port Manager

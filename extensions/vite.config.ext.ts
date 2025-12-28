@@ -17,7 +17,7 @@ const baseConfig: UserConfig = {
     lib: {
       entry: "", // Must be overridden by each extension
       formats: ["cjs"],
-      fileName: () => "extension.js",
+      fileName: () => "extension.cjs",
     },
     rollupOptions: {
       // Externalize:

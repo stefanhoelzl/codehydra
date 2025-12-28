@@ -22,6 +22,15 @@ extensions/
 │   ├── package.json          # Extension manifest
 │   ├── api.d.ts              # TypeScript declarations for third-party use
 │   └── vite.config.ts        # Vite build configuration
+├── markdown-review-editor/   # AI-assisted markdown review editor
+│   ├── package.json          # Extension manifest
+│   ├── src/                  # TypeScript source
+│   │   ├── extension/        # VS Code extension host code
+│   │   ├── webview/          # Svelte webview entry
+│   │   └── lib/              # Shared components and utilities
+│   ├── tests/                # Vitest unit tests
+│   ├── vite.config.ts        # Webview build configuration
+│   └── tsconfig.json         # TypeScript configuration
 └── README.md                 # This file
 ```
 

@@ -9,7 +9,8 @@ import { McpServer, createDefaultMcpServer } from "./mcp-server";
 import type { ICoreApi } from "../../shared/api/interfaces";
 import type { WorkspaceLookup } from "./workspace-resolver";
 import { createMockLogger } from "../logging";
-import { delay, createMockCoreApi } from "../test-utils";
+import { createMockCoreApi } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 
 /**
  * Create a mock WorkspaceLookup that resolves specific workspaces.

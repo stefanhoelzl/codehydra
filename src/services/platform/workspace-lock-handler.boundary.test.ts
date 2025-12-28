@@ -23,7 +23,7 @@ import { ExecaProcessRunner, type ProcessRunner, type SpawnedProcess } from "./p
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../logging";
 import { Path } from "./path";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 
 const isWindows = process.platform === "win32";
 const TEST_TIMEOUT = 15000;

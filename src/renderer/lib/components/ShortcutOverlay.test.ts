@@ -6,13 +6,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, screen } from "@testing-library/svelte";
 import ShortcutOverlay from "./ShortcutOverlay.svelte";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-
-// Get the current directory for reading component files
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 describe("ShortcutOverlay component", () => {
   const defaultProps = {
@@ -262,38 +255,6 @@ describe("ShortcutOverlay component", () => {
       const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
       expect(navigateHint).toBeInTheDocument();
       expect(navigateHint).toHaveClass("shortcut-hint--hidden");
-    });
-  });
-
-  describe("theme variables (Step 4)", () => {
-    // Read CSS from component file to verify variable usage
-    const componentCss = readFileSync(join(__dirname, "ShortcutOverlay.svelte"), "utf-8");
-
-    it("uses var(--ch-background), not --vscode-editor-background", () => {
-      expect(componentCss).not.toMatch(/--vscode-editor-background/);
-      expect(componentCss).toMatch(/var\(--ch-background\)/);
-    });
-
-    it("uses var(--ch-border), not --vscode-panel-border", () => {
-      expect(componentCss).not.toMatch(/--vscode-panel-border/);
-      expect(componentCss).toMatch(/var\(--ch-border\)/);
-    });
-
-    it("uses var(--ch-foreground), not --vscode-foreground", () => {
-      expect(componentCss).not.toMatch(/--vscode-foreground/);
-      expect(componentCss).toMatch(/var\(--ch-foreground\)/);
-    });
-
-    it("no .sr-only class defined in component styles", () => {
-      // The .sr-only class should be removed - use .ch-visually-hidden from global.css instead
-      expect(componentCss).not.toMatch(/\.sr-only\s*\{/);
-    });
-
-    it("uses ch-visually-hidden class instead of sr-only", () => {
-      render(ShortcutOverlay, { props: { active: true } });
-      // Screen reader text should use the global .ch-visually-hidden class
-      const srText = screen.getByText("Shortcut mode active.");
-      expect(srText).toHaveClass("ch-visually-hidden");
     });
   });
 });

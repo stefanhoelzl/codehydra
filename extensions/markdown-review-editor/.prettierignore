@@ -1,0 +1,12 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Build outputs
+build/
+.svelte-kit/
+dist/
+
+# Dependencies
+node_modules/

@@ -12,7 +12,7 @@ import {
   spawnWithExitCode,
   spawnWithChild,
 } from "./process.boundary-test-utils";
-import { delay } from "../test-utils";
+import { delay } from "@shared/test-fixtures";
 
 // Default timeout for boundary tests
 const TEST_TIMEOUT = 5000;
