@@ -22,8 +22,10 @@ const PROJECT_KEYS = ["o", "O"] as const;
 export type NavigationKey = (typeof NAVIGATION_KEYS)[number];
 export type JumpKey = (typeof JUMP_KEYS)[number];
 export type DialogKey = (typeof DIALOG_KEYS)[number];
-export type ProjectKey = (typeof PROJECT_KEYS)[number];
-export type ActionKey = NavigationKey | JumpKey | DialogKey | ProjectKey;
+
+// Internal types (not exported - only used by type guards)
+type ProjectKey = (typeof PROJECT_KEYS)[number];
+type ActionKey = NavigationKey | JumpKey | DialogKey | ProjectKey;
 
 // ============ Type Guards (internal, exported for testing only) ============
 

@@ -6,9 +6,6 @@
 // Shared types
 export type { IDisposable, Unsubscribe } from "./types";
 
-// Event emitter utility
-export { EventEmitter } from "./event-emitter";
-
 // Error types
 export {
   ServiceError,

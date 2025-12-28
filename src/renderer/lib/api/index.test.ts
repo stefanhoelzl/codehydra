@@ -11,7 +11,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Api, Unsubscribe } from "@shared/electron-api";
 import { createMockApi } from "../test-utils";
-import type { WorkspaceRef, ProjectId, WorkspaceName } from "@shared/api/types";
 
 describe("renderer API layer", () => {
   // Store original window.api
@@ -214,34 +213,6 @@ describe("renderer API layer", () => {
       const unsubscribe: Unsubscribe = api.on("setup:progress", () => {});
 
       expect(typeof unsubscribe).toBe("function");
-    });
-  });
-
-  // =============================================================================
-  // Utility Functions
-  // =============================================================================
-
-  describe("utility functions", () => {
-    let mockApi: Api;
-
-    beforeEach(() => {
-      mockApi = createMockApi();
-      window.api = mockApi;
-    });
-
-    describe("workspaceRefKey", () => {
-      it("creates composite key from WorkspaceRef", async () => {
-        const api = await import("$lib/api");
-
-        const ref = {
-          projectId: "my-app-12345678" as ProjectId,
-          workspaceName: "feature" as WorkspaceName,
-          path: "/ws",
-        } as WorkspaceRef;
-        const key = api.workspaceRefKey(ref);
-
-        expect(key).toBe("my-app-12345678/feature");
-      });
     });
   });
 });

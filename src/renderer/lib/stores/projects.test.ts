@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Api } from "@shared/electron-api";
 import type { ProjectPath } from "@shared/ipc";
-import type { ProjectId, WorkspaceName, Workspace } from "@shared/api/types";
+import type { ProjectId, Workspace } from "@shared/api/types";
 import { createMockProject, createMockWorkspace } from "$lib/test-fixtures";
 import { createMockApi } from "../test-utils";
 
@@ -490,131 +490,6 @@ describe("projects store", () => {
 
       const found = store.getProjectById("unknown-12345678" as ProjectId);
       expect(found).toBeUndefined();
-    });
-  });
-
-  describe("getWorkspaceByRef", () => {
-    it("returns workspace by WorkspaceRef", async () => {
-      const store = (await import("./projects.svelte.js")) as unknown as {
-        reset: () => void;
-        addProject: (p: ReturnType<typeof createMockProject>) => void;
-        projects: { value: Array<{ id: ProjectId; path: string }> };
-        getWorkspaceByRef: (ref: {
-          projectId: ProjectId;
-          workspaceName: WorkspaceName;
-        }) => Workspace | undefined;
-      };
-      store.reset();
-
-      const ws = createMockWorkspace({ path: "/test/project/.worktrees/feature", name: "feature" });
-      const project = createMockProject({
-        path: "/test/project" as ProjectPath,
-        workspaces: [ws],
-      });
-      store.addProject(project);
-
-      // Get the project to find its ID
-      const projects = store.projects.value;
-      const projectId = projects[0]!.id;
-
-      const ref = {
-        projectId,
-        workspaceName: "feature" as WorkspaceName,
-      };
-
-      const found = store.getWorkspaceByRef(ref);
-      expect(found).toBeDefined();
-      expect(found?.name).toBe("feature");
-      expect(found?.path).toBe("/test/project/.worktrees/feature");
-    });
-
-    it("returns undefined for unknown workspace", async () => {
-      const store = (await import("./projects.svelte.js")) as unknown as {
-        reset: () => void;
-        addProject: (p: ReturnType<typeof createMockProject>) => void;
-        projects: { value: Array<{ id: ProjectId; path: string }> };
-        getWorkspaceByRef: (ref: {
-          projectId: ProjectId;
-          workspaceName: WorkspaceName;
-        }) => Workspace | undefined;
-      };
-      store.reset();
-
-      const project = createMockProject({
-        path: "/test/project" as ProjectPath,
-        workspaces: [createMockWorkspace({ path: "/test/project/.worktrees/ws1", name: "ws1" })],
-      });
-      store.addProject(project);
-
-      const projects = store.projects.value;
-      const projectId = projects[0]!.id;
-
-      const ref = {
-        projectId,
-        workspaceName: "nonexistent" as WorkspaceName,
-      };
-
-      const found = store.getWorkspaceByRef(ref);
-      expect(found).toBeUndefined();
-    });
-  });
-
-  describe("setActiveWorkspaceByRef", () => {
-    it("sets active workspace from WorkspaceRef", async () => {
-      const store = (await import("./projects.svelte.js")) as unknown as {
-        reset: () => void;
-        addProject: (p: ReturnType<typeof createMockProject>) => void;
-        projects: { value: Array<{ id: ProjectId; path: string }> };
-        setActiveWorkspaceByRef: (
-          ref: { projectId: ProjectId; workspaceName: WorkspaceName; path: string } | null
-        ) => void;
-        activeWorkspace: { value: { workspaceName: string } | null };
-      };
-      store.reset();
-
-      const ws = createMockWorkspace({ path: "/test/project/.worktrees/feature", name: "feature" });
-      const project = createMockProject({
-        path: "/test/project" as ProjectPath,
-        workspaces: [ws],
-      });
-      store.addProject(project);
-
-      const projects = store.projects.value;
-      const projectId = projects[0]!.id;
-
-      const ref = {
-        projectId,
-        workspaceName: "feature" as WorkspaceName,
-        path: "/test/project/.worktrees/feature",
-      };
-
-      store.setActiveWorkspaceByRef(ref);
-
-      expect(store.activeWorkspace.value).not.toBeNull();
-      expect(store.activeWorkspace.value?.workspaceName).toBe("feature");
-    });
-
-    it("sets active workspace to null when passed null", async () => {
-      const store = (await import("./projects.svelte.js")) as unknown as {
-        reset: () => void;
-        addProject: (p: ReturnType<typeof createMockProject>) => void;
-        setActiveWorkspace: (path: string) => void;
-        setActiveWorkspaceByRef: (ref: null) => void;
-        activeWorkspace: { value: null };
-      };
-      store.reset();
-
-      const ws = createMockWorkspace({ path: "/test/project/.worktrees/ws1", name: "ws1" });
-      const project = createMockProject({
-        path: "/test/project" as ProjectPath,
-        workspaces: [ws],
-      });
-      store.addProject(project);
-      store.setActiveWorkspace("/test/project/.worktrees/ws1");
-
-      store.setActiveWorkspaceByRef(null);
-
-      expect(store.activeWorkspace.value).toBeNull();
     });
   });
 });

@@ -15,7 +15,6 @@ import {
   type NavigationKey,
   type JumpKey,
   type DialogKey,
-  type ProjectKey,
   type ShortcutKey,
 } from "./shortcuts";
 
@@ -158,8 +157,8 @@ describe("shortcuts type guards", () => {
 
       const projectKey = "o";
       if (isProjectKey(projectKey)) {
-        const p: ProjectKey = projectKey;
-        expect(p).toBe("o");
+        // Type narrowed to "o" | "O" by the type guard
+        expect(projectKey).toBe("o");
       }
     });
   });

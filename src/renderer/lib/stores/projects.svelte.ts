@@ -241,25 +241,3 @@ export type ProjectWithId = Project;
 export function getProjectById(id: ProjectId): ProjectWithId | undefined {
   return _projectsWithIds.find((p) => p.id === id);
 }
-
-/**
- * Get a workspace by WorkspaceRef.
- * @param ref - The workspace reference (projectId + workspaceName)
- * @returns The workspace if found, undefined otherwise
- */
-export function getWorkspaceByRef(ref: {
-  projectId: ProjectId;
-  workspaceName: WorkspaceName;
-}): Workspace | undefined {
-  const project = _projectsWithIds.find((p) => p.id === ref.projectId);
-  if (!project) return undefined;
-  return project.workspaces.find((w) => w.name === ref.workspaceName);
-}
-
-/**
- * Set the active workspace using a WorkspaceRef.
- * @param ref - The workspace reference (projectId + workspaceName + path), or null to clear
- */
-export function setActiveWorkspaceByRef(ref: WorkspaceRef | null): void {
-  _activeWorkspacePath = ref?.path ?? null;
-}
