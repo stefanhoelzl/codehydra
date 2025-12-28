@@ -233,6 +233,33 @@ export class McpServer implements IMcpServer {
   }
 
   /**
+   * Create a workspace tool handler that resolves workspace and handles errors.
+   */
+  private createWorkspaceHandler<TArgs, TResult>(
+    fn: (resolved: ResolvedWorkspace, args: TArgs) => Promise<TResult>
+  ): (
+    args: TArgs,
+    extra: unknown
+  ) => Promise<{ content: Array<{ type: "text"; text: string }>; isError?: true }> {
+    return async (args: TArgs, extra: unknown) => {
+      const context = await this.getToolContext(extra);
+      if (!context.resolved) {
+        return this.errorResult(
+          "workspace-not-found",
+          `Workspace not found: ${context.workspacePath}`
+        );
+      }
+
+      try {
+        const result = await fn(context.resolved, args);
+        return this.successResult(result);
+      } catch (error) {
+        return this.handleError(error);
+      }
+    };
+  }
+
+  /**
    * Register all MCP tools.
    */
   private registerTools(): void {
@@ -248,25 +275,9 @@ export class McpServer implements IMcpServer {
           description: "Get the current workspace status including dirty flag and agent status",
           inputSchema: z.object({}),
         },
-        async (_args, extra) => {
-          const context = await this.getToolContext(extra);
-          if (!context.resolved) {
-            return this.errorResult(
-              "workspace-not-found",
-              `Workspace not found: ${context.workspacePath}`
-            );
-          }
-
-          try {
-            const status = await this.api.workspaces.getStatus(
-              context.resolved.projectId,
-              context.resolved.workspaceName
-            );
-            return this.successResult(status);
-          } catch (error) {
-            return this.handleError(error);
-          }
-        }
+        this.createWorkspaceHandler(async (resolved) =>
+          this.api.workspaces.getStatus(resolved.projectId, resolved.workspaceName)
+        )
       )
     );
 
@@ -278,25 +289,9 @@ export class McpServer implements IMcpServer {
           description: "Get all metadata for the current workspace",
           inputSchema: z.object({}),
         },
-        async (_args, extra) => {
-          const context = await this.getToolContext(extra);
-          if (!context.resolved) {
-            return this.errorResult(
-              "workspace-not-found",
-              `Workspace not found: ${context.workspacePath}`
-            );
-          }
-
-          try {
-            const metadata = await this.api.workspaces.getMetadata(
-              context.resolved.projectId,
-              context.resolved.workspaceName
-            );
-            return this.successResult(metadata);
-          } catch (error) {
-            return this.handleError(error);
-          }
-        }
+        this.createWorkspaceHandler(async (resolved) =>
+          this.api.workspaces.getMetadata(resolved.projectId, resolved.workspaceName)
+        )
       )
     );
 
@@ -317,27 +312,17 @@ export class McpServer implements IMcpServer {
               .describe("Value to set, or null to delete the key"),
           }),
         },
-        async (args, extra) => {
-          const context = await this.getToolContext(extra);
-          if (!context.resolved) {
-            return this.errorResult(
-              "workspace-not-found",
-              `Workspace not found: ${context.workspacePath}`
-            );
-          }
-
-          try {
+        this.createWorkspaceHandler(
+          async (resolved, args: { key: string; value: string | null }) => {
             await this.api.workspaces.setMetadata(
-              context.resolved.projectId,
-              context.resolved.workspaceName,
+              resolved.projectId,
+              resolved.workspaceName,
               args.key,
               args.value
             );
-            return this.successResult(null);
-          } catch (error) {
-            return this.handleError(error);
+            return null;
           }
-        }
+        )
       )
     );
 
@@ -349,25 +334,9 @@ export class McpServer implements IMcpServer {
           description: "Get the OpenCode server port for the current workspace",
           inputSchema: z.object({}),
         },
-        async (_args, extra) => {
-          const context = await this.getToolContext(extra);
-          if (!context.resolved) {
-            return this.errorResult(
-              "workspace-not-found",
-              `Workspace not found: ${context.workspacePath}`
-            );
-          }
-
-          try {
-            const port = await this.api.workspaces.getOpencodePort(
-              context.resolved.projectId,
-              context.resolved.workspaceName
-            );
-            return this.successResult(port);
-          } catch (error) {
-            return this.handleError(error);
-          }
-        }
+        this.createWorkspaceHandler(async (resolved) =>
+          this.api.workspaces.getOpencodePort(resolved.projectId, resolved.workspaceName)
+        )
       )
     );
 
@@ -385,26 +354,9 @@ export class McpServer implements IMcpServer {
               .describe("If true, keep the git branch after deleting the worktree"),
           }),
         },
-        async (args, extra) => {
-          const context = await this.getToolContext(extra);
-          if (!context.resolved) {
-            return this.errorResult(
-              "workspace-not-found",
-              `Workspace not found: ${context.workspacePath}`
-            );
-          }
-
-          try {
-            const result = await this.api.workspaces.remove(
-              context.resolved.projectId,
-              context.resolved.workspaceName,
-              args.keepBranch
-            );
-            return this.successResult(result);
-          } catch (error) {
-            return this.handleError(error);
-          }
-        }
+        this.createWorkspaceHandler(async (resolved, args: { keepBranch: boolean }) =>
+          this.api.workspaces.remove(resolved.projectId, resolved.workspaceName, args.keepBranch)
+        )
       )
     );
 
@@ -424,31 +376,19 @@ export class McpServer implements IMcpServer {
             args: z.array(z.unknown()).optional().describe("Optional command arguments"),
           }),
         },
-        async (args, extra) => {
-          const context = await this.getToolContext(extra);
-          if (!context.resolved) {
-            return this.errorResult(
-              "workspace-not-found",
-              `Workspace not found: ${context.workspacePath}`
-            );
-          }
-
-          try {
-            const result = await this.api.workspaces.executeCommand(
-              context.resolved.projectId,
-              context.resolved.workspaceName,
+        this.createWorkspaceHandler(
+          async (resolved, args: { command: string; args?: unknown[] | undefined }) =>
+            this.api.workspaces.executeCommand(
+              resolved.projectId,
+              resolved.workspaceName,
               args.command,
               args.args
-            );
-            return this.successResult(result);
-          } catch (error) {
-            return this.handleError(error);
-          }
-        }
+            )
+        )
       )
     );
 
-    // log
+    // log - different pattern, doesn't require workspace resolution
     this.registeredTools.push(
       this.mcpServer.registerTool(
         "log",
@@ -469,14 +409,11 @@ export class McpServer implements IMcpServer {
         async (args, extra) => {
           const context = await this.getToolContext(extra);
           const level = args.level as LogLevel;
-
-          // Auto-append workspace context for traceability
           const logContext: LogContext = {
             ...(args.context ?? {}),
             workspace: context.workspacePath,
           };
 
-          // Call appropriate logger method based on level
           switch (level) {
             case "silly":
               this.logger.silly(args.message, logContext);

@@ -67,160 +67,90 @@ export function wirePluginApi(
     return { projectId, workspaceName };
   }
 
+  /**
+   * Wrap an API call with workspace resolution and error handling.
+   */
+  async function handleApiCall<T>(
+    workspacePath: string,
+    operation: string,
+    fn: (projectId: ProjectId, workspaceName: WorkspaceName) => Promise<T>,
+    logContext?: Record<string, unknown>
+  ): Promise<PluginResult<T>> {
+    const resolved = resolveWorkspace(workspacePath);
+    if ("success" in resolved && resolved.success === false) {
+      return resolved;
+    }
+    const { projectId, workspaceName } = resolved as {
+      projectId: ProjectId;
+      workspaceName: WorkspaceName;
+    };
+
+    try {
+      const result = await fn(projectId, workspaceName);
+      logger.debug(`${operation} success`, { workspace: workspacePath, ...logContext });
+      return { success: true, data: result };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.error(`${operation} error`, {
+        workspace: workspacePath,
+        error: message,
+        ...logContext,
+      });
+      return { success: false, error: message };
+    }
+  }
+
   const handlers: ApiCallHandlers = {
     async getStatus(workspacePath: string) {
-      const resolved = resolveWorkspace(workspacePath);
-      if ("success" in resolved && resolved.success === false) {
-        return resolved;
-      }
-      const { projectId, workspaceName } = resolved as {
-        projectId: ProjectId;
-        workspaceName: WorkspaceName;
-      };
-
-      try {
+      return handleApiCall(workspacePath, "getStatus", async (projectId, workspaceName) => {
         const status = await api.workspaces.getStatus(projectId, workspaceName);
-        logger.debug("getStatus result", {
-          workspace: workspacePath,
-          isDirty: status.isDirty,
-          agentType: status.agent.type,
-        });
-        return { success: true, data: status };
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.error("getStatus error", { workspace: workspacePath, error: message });
-        return { success: false, error: message };
-      }
+        return status;
+      });
     },
 
     async getOpencodePort(workspacePath: string) {
-      const resolved = resolveWorkspace(workspacePath);
-      if ("success" in resolved && resolved.success === false) {
-        return resolved;
-      }
-      const { projectId, workspaceName } = resolved as {
-        projectId: ProjectId;
-        workspaceName: WorkspaceName;
-      };
-
-      try {
-        const port = await api.workspaces.getOpencodePort(projectId, workspaceName);
-        logger.debug("getOpencodePort result", {
-          workspace: workspacePath,
-          port,
-        });
-        return { success: true, data: port };
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.error("getOpencodePort error", { workspace: workspacePath, error: message });
-        return { success: false, error: message };
-      }
+      return handleApiCall(workspacePath, "getOpencodePort", (projectId, workspaceName) =>
+        api.workspaces.getOpencodePort(projectId, workspaceName)
+      );
     },
 
     async getMetadata(workspacePath: string) {
-      const resolved = resolveWorkspace(workspacePath);
-      if ("success" in resolved && resolved.success === false) {
-        return resolved;
-      }
-      const { projectId, workspaceName } = resolved as {
-        projectId: ProjectId;
-        workspaceName: WorkspaceName;
-      };
-
-      try {
+      return handleApiCall(workspacePath, "getMetadata", async (projectId, workspaceName) => {
         const metadata = await api.workspaces.getMetadata(projectId, workspaceName);
-        logger.debug("getMetadata result", {
-          workspace: workspacePath,
-          keyCount: Object.keys(metadata).length,
-        });
-        return { success: true, data: metadata as Record<string, string> };
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.error("getMetadata error", { workspace: workspacePath, error: message });
-        return { success: false, error: message };
-      }
+        return metadata as Record<string, string>;
+      });
     },
 
     async setMetadata(workspacePath: string, request: SetMetadataRequest) {
-      const resolved = resolveWorkspace(workspacePath);
-      if ("success" in resolved && resolved.success === false) {
-        return resolved;
-      }
-      const { projectId, workspaceName } = resolved as {
-        projectId: ProjectId;
-        workspaceName: WorkspaceName;
-      };
-
-      try {
-        await api.workspaces.setMetadata(projectId, workspaceName, request.key, request.value);
-        logger.debug("setMetadata success", { workspace: workspacePath, key: request.key });
-        return { success: true, data: undefined };
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.error("setMetadata error", {
-          workspace: workspacePath,
-          key: request.key,
-          error: message,
-        });
-        return { success: false, error: message };
-      }
+      return handleApiCall(
+        workspacePath,
+        "setMetadata",
+        async (projectId, workspaceName) => {
+          await api.workspaces.setMetadata(projectId, workspaceName, request.key, request.value);
+          return undefined;
+        },
+        { key: request.key }
+      );
     },
 
     async delete(workspacePath: string, request: DeleteWorkspaceRequest) {
-      const resolved = resolveWorkspace(workspacePath);
-      if ("success" in resolved && resolved.success === false) {
-        return resolved;
-      }
-      const { projectId, workspaceName } = resolved as {
-        projectId: ProjectId;
-        workspaceName: WorkspaceName;
-      };
-
-      try {
-        const result = await api.workspaces.remove(projectId, workspaceName, request.keepBranch);
-        logger.debug("delete success", {
-          workspace: workspacePath,
-          keepBranch: !!request.keepBranch,
-        });
-        return { success: true, data: result };
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.error("delete error", { workspace: workspacePath, error: message });
-        return { success: false, error: message };
-      }
+      return handleApiCall(
+        workspacePath,
+        "delete",
+        (projectId, workspaceName) =>
+          api.workspaces.remove(projectId, workspaceName, request.keepBranch),
+        { keepBranch: !!request.keepBranch }
+      );
     },
 
     async executeCommand(workspacePath: string, request: ExecuteCommandRequest) {
-      const resolved = resolveWorkspace(workspacePath);
-      if ("success" in resolved && resolved.success === false) {
-        return resolved;
-      }
-      const { projectId, workspaceName } = resolved as {
-        projectId: ProjectId;
-        workspaceName: WorkspaceName;
-      };
-
-      try {
-        const result = await api.workspaces.executeCommand(
-          projectId,
-          workspaceName,
-          request.command,
-          request.args
-        );
-        logger.debug("executeCommand success", {
-          workspace: workspacePath,
-          command: request.command,
-        });
-        return { success: true, data: result };
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.error("executeCommand error", {
-          workspace: workspacePath,
-          command: request.command,
-          error: message,
-        });
-        return { success: false, error: message };
-      }
+      return handleApiCall(
+        workspacePath,
+        "executeCommand",
+        (projectId, workspaceName) =>
+          api.workspaces.executeCommand(projectId, workspaceName, request.command, request.args),
+        { command: request.command }
+      );
     },
   };
 
