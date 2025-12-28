@@ -6,8 +6,7 @@
 
 import * as path from "node:path";
 import type { McpResolvedWorkspace } from "./types";
-import type { WorkspaceName } from "../../shared/api/types";
-import { generateProjectId } from "../../shared/api/id-utils";
+import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 
 /**
  * Interface for AppState workspace lookup.
@@ -78,7 +77,7 @@ export function resolveWorkspace(
   const projectId = generateProjectId(project.path);
 
   // Extract workspace name from path basename
-  const workspaceName = path.basename(normalizedPath) as WorkspaceName;
+  const workspaceName = extractWorkspaceName(normalizedPath);
 
   return {
     projectId,

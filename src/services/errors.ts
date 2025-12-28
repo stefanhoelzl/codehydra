@@ -69,53 +69,6 @@ export abstract class ServiceError extends Error {
     }
     return result;
   }
-
-  /**
-   * Deserialize an error from IPC transport.
-   * Recreates the appropriate ServiceError subclass based on the type field.
-   *
-   * @param json Serialized error object from IPC
-   * @returns A ServiceError subclass instance matching the original error type
-   *
-   * @example
-   * ```typescript
-   * // In renderer process, receiving error from main process
-   * const serialized = await ipcRenderer.invoke('some-operation');
-   * if (serialized.type) {
-   *   const error = ServiceError.fromJSON(serialized);
-   *   if (error instanceof GitError) {
-   *     // Handle git-specific error
-   *   }
-   * }
-   * ```
-   */
-  static fromJSON(json: SerializedError): ServiceError {
-    switch (json.type) {
-      case "git":
-        return new GitError(json.message, json.code);
-      case "workspace":
-        return new WorkspaceError(json.message, json.code);
-      case "code-server":
-        return new CodeServerError(json.message, json.code);
-      case "project-store":
-        return new ProjectStoreError(json.message, json.code);
-      case "opencode":
-        return new OpenCodeError(json.message, json.code);
-      case "vscode-setup":
-        return new VscodeSetupError(json.message, json.code);
-      case "filesystem":
-        return new FileSystemError(
-          (json.code as FileSystemErrorCode) ?? "UNKNOWN",
-          json.path ?? "",
-          json.message
-        );
-
-      case "binary-download":
-        return new BinaryDownloadError(json.message, json.code as BinaryDownloadErrorCode);
-      case "archive":
-        return new ArchiveError(json.message, json.code as ArchiveErrorCode);
-    }
-  }
 }
 
 /**

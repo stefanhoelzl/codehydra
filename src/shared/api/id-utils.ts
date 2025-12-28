@@ -6,7 +6,7 @@
  */
 import * as crypto from "node:crypto";
 import * as path from "node:path";
-import type { ProjectId } from "./types";
+import type { ProjectId, WorkspaceName } from "./types";
 
 /**
  * Generate a deterministic ProjectId from an absolute path.
@@ -50,4 +50,20 @@ export function generateProjectId(absolutePath: string): ProjectId {
   const hash = crypto.createHash("sha256").update(normalizedPath).digest("hex").slice(0, 8);
 
   return `${safeName}-${hash}` as ProjectId;
+}
+
+/**
+ * Extract the workspace name from a workspace path.
+ * The workspace name is the basename of the path.
+ *
+ * @param workspacePath Absolute path to the workspace directory
+ * @returns The workspace name (basename of the path)
+ *
+ * @example
+ * ```typescript
+ * extractWorkspaceName("/home/user/projects/.worktrees/feature-1") // "feature-1"
+ * ```
+ */
+export function extractWorkspaceName(workspacePath: string): WorkspaceName {
+  return path.basename(workspacePath) as WorkspaceName;
 }

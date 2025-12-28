@@ -951,14 +951,14 @@ describe("App component", () => {
       render(App);
 
       await waitFor(() => {
-        // Verify statuses were converted and stored
+        // Verify statuses were stored directly as v2 AgentStatus (no conversion)
         expect(agentStatusStore.getStatus("/test/.worktrees/ws1")).toEqual({
-          status: "idle",
-          counts: { idle: 2, busy: 0 },
+          type: "idle",
+          counts: { idle: 2, busy: 0, total: 2 },
         });
         expect(agentStatusStore.getStatus("/test/.worktrees/ws2")).toEqual({
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
+          type: "busy",
+          counts: { idle: 0, busy: 1, total: 1 },
         });
       });
     });
@@ -989,10 +989,10 @@ describe("App component", () => {
         },
       });
 
-      // Verify status was converted and stored (v2 AgentStatus → AggregatedAgentStatus)
+      // Verify status was stored directly as v2 AgentStatus (no conversion)
       expect(agentStatusStore.getStatus("/test/.worktrees/feature")).toEqual({
-        status: "busy",
-        counts: { idle: 0, busy: 3 },
+        type: "busy",
+        counts: { idle: 0, busy: 3, total: 3 },
       });
     });
 

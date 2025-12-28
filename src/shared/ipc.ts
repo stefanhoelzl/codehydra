@@ -68,12 +68,13 @@ export interface UIModeChangedEvent {
 }
 
 // ============ API Layer IPC Channels ============
-// These channels use the api: prefix and work with the new ICodeHydraApi interface.
-// During migration, both old and new channels coexist.
+// All IPC channels use the api: prefix and work with ICodeHydraApi.
+// Internal events (e.g., "project:opened") are mapped to IPC channels (e.g., "api:project:opened")
+// by the preload script's on() function and wireApiEvents() in api-handlers.ts.
 
 /**
- * New API-based IPC channel names.
- * Uses branded types (ProjectId, WorkspaceName) instead of paths.
+ * IPC channel names for main↔renderer communication.
+ * All channels use the api: prefix convention.
  */
 export const ApiIpcChannels = {
   // Project commands

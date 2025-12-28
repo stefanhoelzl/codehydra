@@ -62,7 +62,6 @@
     getDeletionStatus,
   } from "$lib/stores/deletion.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
-  import type { AggregatedAgentStatus } from "@shared/ipc";
   import type { Project, WorkspaceStatus, AgentStatus, DeletionProgress } from "@shared/api/types";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -75,25 +74,13 @@
   let openProjectError = $state<string | null>(null);
 
   /**
-   * Convert v2 AgentStatus to old AggregatedAgentStatus format.
-   * The old format uses 'status' field, v2 uses 'type' field.
-   */
-  function toAggregatedStatus(agent: AgentStatus): AggregatedAgentStatus {
-    if (agent.type === "none") {
-      return { status: "none", counts: { idle: 0, busy: 0 } };
-    }
-    // Strip 'total' from counts as old format doesn't have it
-    return { status: agent.type, counts: { idle: agent.counts.idle, busy: agent.counts.busy } };
-  }
-
-  /**
-   * Fetch all workspace statuses using v2 API and convert to old format.
+   * Fetch all workspace agent statuses using v2 API.
    * Iterates all workspaces across all projects.
    */
   async function fetchAllAgentStatuses(
     projectList: readonly Project[]
-  ): Promise<Record<string, AggregatedAgentStatus>> {
-    const result: Record<string, AggregatedAgentStatus> = {};
+  ): Promise<Record<string, AgentStatus>> {
+    const result: Record<string, AgentStatus> = {};
 
     // Fetch status for each workspace in parallel
     const statusPromises: Promise<void>[] = [];
@@ -102,7 +89,7 @@
         const promise = api.workspaces
           .getStatus(project.id, workspace.name)
           .then((status: WorkspaceStatus) => {
-            result[workspace.path] = toAggregatedStatus(status.agent);
+            result[workspace.path] = status.agent;
           })
           .catch(() => {
             // Ignore errors for individual workspaces
@@ -178,8 +165,14 @@
           const statuses = await fetchAllAgentStatuses(projectList);
           setAllStatuses(statuses);
           // Seed notification service with initial counts so chimes work on first status change
+          // Extract counts from each status (strip total), defaulting to zeros for "none" status
           const initialCounts = Object.fromEntries(
-            Object.entries(statuses).map(([path, status]) => [path, status.counts])
+            Object.entries(statuses).map(([path, status]) => [
+              path,
+              status.type === "none"
+                ? { idle: 0, busy: 0 }
+                : { idle: status.counts.idle, busy: status.counts.busy },
+            ])
           );
           notificationService.seedInitialCounts(initialCounts);
         } catch {
@@ -238,8 +231,8 @@
           logger.debug("Store updated", { store: "projects" });
         },
         updateAgentStatus: (ref, status) => {
-          // Convert WorkspaceStatus to AggregatedAgentStatus
-          updateStatus(ref.path, toAggregatedStatus(status.agent));
+          // Store v2 AgentStatus directly (no conversion needed)
+          updateStatus(ref.path, status.agent);
           logger.debug("Store updated", { store: "agent-status" });
         },
       },

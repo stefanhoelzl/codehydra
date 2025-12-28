@@ -39,20 +39,6 @@ describe("BinaryDownloadError", () => {
     });
   });
 
-  it("deserializes correctly", () => {
-    const serialized = {
-      type: "binary-download" as const,
-      message: "Download failed",
-      code: "NETWORK_ERROR",
-    };
-
-    const error = ServiceError.fromJSON(serialized);
-
-    expect(error).toBeInstanceOf(BinaryDownloadError);
-    expect(error.message).toBe("Download failed");
-    expect((error as BinaryDownloadError).errorCode).toBe("NETWORK_ERROR");
-  });
-
   it("supports all error codes", () => {
     const codes = [
       "NETWORK_ERROR",
@@ -99,20 +85,6 @@ describe("ArchiveError", () => {
       message: "Extraction failed",
       code: "EXTRACTION_FAILED",
     });
-  });
-
-  it("deserializes correctly", () => {
-    const serialized = {
-      type: "archive" as const,
-      message: "Extraction failed",
-      code: "EXTRACTION_FAILED",
-    };
-
-    const error = ServiceError.fromJSON(serialized);
-
-    expect(error).toBeInstanceOf(ArchiveError);
-    expect(error.message).toBe("Extraction failed");
-    expect((error as ArchiveError).errorCode).toBe("EXTRACTION_FAILED");
   });
 
   it("supports all error codes", () => {

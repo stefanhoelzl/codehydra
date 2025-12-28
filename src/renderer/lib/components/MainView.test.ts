@@ -387,10 +387,13 @@ describe("MainView component", () => {
         },
       });
 
-      // Status is converted to AggregatedAgentStatus format by MainView
+      // Status is stored directly as AgentStatus (v2 format)
       const storedStatus = agentStatusStore.getStatus("/test/.worktrees/feature");
-      expect(storedStatus.status).toBe("busy");
-      expect(storedStatus.counts).toEqual({ idle: 0, busy: 3 });
+      expect(storedStatus.type).toBe("busy");
+      // Use type narrowing to access counts
+      if (storedStatus.type !== "none") {
+        expect(storedStatus.counts).toEqual({ idle: 0, busy: 3, total: 3 });
+      }
     });
 
     it("seeds notification service with initial counts from workspaces.getStatus", async () => {

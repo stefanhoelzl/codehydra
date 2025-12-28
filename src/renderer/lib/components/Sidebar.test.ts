@@ -475,8 +475,8 @@ describe("Sidebar component", () => {
 
       // Set agent status to idle
       agentStatusStore.updateStatus("/test/.worktrees/ws1", {
-        status: "idle",
-        counts: { idle: 2, busy: 0 },
+        type: "idle",
+        counts: { idle: 2, busy: 0, total: 2 },
       });
 
       render(Sidebar, {
@@ -496,8 +496,8 @@ describe("Sidebar component", () => {
 
       // Set agent status to busy
       agentStatusStore.updateStatus("/test/.worktrees/ws1", {
-        status: "busy",
-        counts: { idle: 0, busy: 1 },
+        type: "busy",
+        counts: { idle: 0, busy: 1, total: 1 },
       });
 
       render(Sidebar, {
@@ -517,8 +517,8 @@ describe("Sidebar component", () => {
 
       // Set agent status to mixed
       agentStatusStore.updateStatus("/test/.worktrees/ws1", {
-        status: "mixed",
-        counts: { idle: 1, busy: 2 },
+        type: "mixed",
+        counts: { idle: 1, busy: 2, total: 3 },
       });
 
       render(Sidebar, {
@@ -539,12 +539,12 @@ describe("Sidebar component", () => {
 
       // Set different statuses
       agentStatusStore.updateStatus("/test/.worktrees/ws1", {
-        status: "idle",
-        counts: { idle: 1, busy: 0 },
+        type: "idle",
+        counts: { idle: 1, busy: 0, total: 1 },
       });
       agentStatusStore.updateStatus("/test/.worktrees/ws2", {
-        status: "busy",
-        counts: { idle: 0, busy: 2 },
+        type: "busy",
+        counts: { idle: 0, busy: 2, total: 2 },
       });
 
       render(Sidebar, {
@@ -615,8 +615,8 @@ describe("Sidebar component", () => {
 
       // Set agent status to busy
       agentStatusStore.updateStatus("/test/.worktrees/ws1", {
-        status: "busy",
-        counts: { idle: 0, busy: 2 },
+        type: "busy",
+        counts: { idle: 0, busy: 2, total: 2 },
       });
 
       render(Sidebar, {

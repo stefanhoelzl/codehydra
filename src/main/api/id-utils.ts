@@ -4,28 +4,11 @@
  * Provides deterministic ID generation for projects, workspace name extraction,
  * and project resolution utilities.
  */
-import * as path from "node:path";
 import { type ProjectId, type WorkspaceName } from "../../shared/api/types";
-import { generateProjectId } from "../../shared/api/id-utils";
+import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 
-// Re-export generateProjectId from shared layer
-export { generateProjectId };
-
-/**
- * Extract the workspace name from a workspace path.
- * The workspace name is the basename of the path.
- *
- * @param workspacePath Absolute path to the workspace directory
- * @returns The workspace name (basename of the path)
- *
- * @example
- * ```typescript
- * extractWorkspaceName("/home/user/projects/.worktrees/feature-1") // "feature-1"
- * ```
- */
-export function extractWorkspaceName(workspacePath: string): WorkspaceName {
-  return path.basename(workspacePath) as WorkspaceName;
-}
+// Re-export from shared layer
+export { generateProjectId, extractWorkspaceName };
 
 /**
  * Interface for project list accessor.

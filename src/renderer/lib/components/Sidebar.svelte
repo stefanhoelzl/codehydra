@@ -4,7 +4,7 @@
   import EmptyState from "./EmptyState.svelte";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import Icon from "./Icon.svelte";
-  import { getStatus } from "$lib/stores/agent-status.svelte.js";
+  import { getCounts } from "$lib/stores/agent-status.svelte.js";
   import { getDeletionStatus } from "$lib/stores/deletion.svelte.js";
   import { uiMode, setSidebarExpanded } from "$lib/stores/ui-mode.svelte.js";
   import {
@@ -178,11 +178,8 @@
                 )}
                 {@const displayIndex = formatIndexDisplay(globalIndex)}
                 {@const shortcutHint = getShortcutHint(globalIndex)}
-                {@const agentStatus = getStatus(workspace.path)}
-                {@const statusText = getStatusText(
-                  agentStatus.counts.idle,
-                  agentStatus.counts.busy
-                )}
+                {@const agentCounts = getCounts(workspace.path)}
+                {@const statusText = getStatusText(agentCounts.idle, agentCounts.busy)}
                 {@const isActive = workspace.path === activeWorkspacePath}
                 {@const deletionStatus = getDeletionStatus(workspace.path)}
                 {@const workspaceRef = {
@@ -233,8 +230,8 @@
                       </span>
                     {:else}
                       <AgentStatusIndicator
-                        idleCount={agentStatus.counts.idle}
-                        busyCount={agentStatus.counts.busy}
+                        idleCount={agentCounts.idle}
+                        busyCount={agentCounts.busy}
                       />
                     {/if}
                   </li>
@@ -261,8 +258,8 @@
                         </span>
                       {:else}
                         <AgentStatusIndicator
-                          idleCount={agentStatus.counts.idle}
-                          busyCount={agentStatus.counts.busy}
+                          idleCount={agentCounts.idle}
+                          busyCount={agentCounts.busy}
                         />
                       {/if}
                       <span class="ch-visually-hidden">{workspace.name}</span>
