@@ -19,6 +19,9 @@ import {
 // Longer timeout for CI environments
 const TEST_TIMEOUT = 15000;
 
+// Tolerance for timing assertions (timers can fire slightly early due to system scheduling)
+const TIMING_TOLERANCE_MS = 10;
+
 describe("sendShutdownCommand (boundary)", { timeout: TEST_TIMEOUT }, () => {
   let server: PluginServer;
   let networkLayer: DefaultNetworkLayer;
@@ -147,8 +150,8 @@ describe("sendShutdownCommand (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const elapsed = Date.now() - start;
 
       // Should have taken at least the timeout period (5000ms)
-      // But we don't want test to take too long, so we use a shorter threshold
-      expect(elapsed).toBeGreaterThanOrEqual(4500);
+      // Allow tolerance for timer precision and some test margin
+      expect(elapsed).toBeGreaterThanOrEqual(5000 - TIMING_TOLERANCE_MS - 500);
 
       // Should log warning about timeout
       expect(logger.warn).toHaveBeenCalledWith("Shutdown command failed", {

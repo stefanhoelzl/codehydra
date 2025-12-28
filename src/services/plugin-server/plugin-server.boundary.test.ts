@@ -24,6 +24,9 @@ import type { WorkspaceStatus } from "../../shared/api/types";
 // Longer timeout for CI environments
 const TEST_TIMEOUT = 15000;
 
+// Tolerance for timing assertions (timers can fire slightly early due to system scheduling)
+const TIMING_TOLERANCE_MS = 10;
+
 describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
   let server: PluginServer;
   let networkLayer: DefaultNetworkLayer;
@@ -187,7 +190,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       expect(result.success).toBe(false);
       expect(result).toHaveProperty("error", "Command timed out");
-      expect(elapsed).toBeGreaterThanOrEqual(500);
+      expect(elapsed).toBeGreaterThanOrEqual(500 - TIMING_TOLERANCE_MS);
       expect(elapsed).toBeLessThan(2000);
     });
   });
@@ -741,7 +744,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // Should timeout (either client-side or server never responds)
       // The test verifies that the system handles non-responsive handlers gracefully
-      expect(elapsed).toBeGreaterThanOrEqual(2000);
+      expect(elapsed).toBeGreaterThanOrEqual(2000 - TIMING_TOLERANCE_MS);
       expect(elapsed).toBeLessThan(5000); // Sanity check - shouldn't take too long
 
       // Result indicates timeout (either from our Promise.race or no response)
@@ -893,8 +896,8 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 500 });
       const elapsed = Date.now() - startTime;
 
-      // Should timeout after ~500ms
-      expect(elapsed).toBeGreaterThanOrEqual(500);
+      // Should timeout after ~500ms (allow tolerance for timer precision)
+      expect(elapsed).toBeGreaterThanOrEqual(500 - TIMING_TOLERANCE_MS);
       expect(elapsed).toBeLessThan(1500);
     });
 
