@@ -1158,7 +1158,8 @@ describe("MainView component", () => {
         expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
           "test-project-12345678",
           "feature",
-          false // keepBranch from the stored progress
+          false, // keepBranch from the stored progress
+          true // skipSwitch - on retry, skip switching away
         );
       });
     });
