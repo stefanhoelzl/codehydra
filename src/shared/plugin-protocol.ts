@@ -64,23 +64,6 @@ export interface CommandRequest {
   readonly args?: readonly unknown[];
 }
 
-/**
- * Runtime validation for incoming CommandRequest.
- * Used to validate payloads before processing.
- *
- * @param payload - The payload to validate
- * @returns True if the payload is a valid CommandRequest
- */
-export function isValidCommandRequest(payload: unknown): payload is CommandRequest {
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    "command" in payload &&
-    typeof (payload as CommandRequest).command === "string" &&
-    (!("args" in payload) || Array.isArray((payload as CommandRequest).args))
-  );
-}
-
 // ============================================================================
 // Configuration Types
 // ============================================================================

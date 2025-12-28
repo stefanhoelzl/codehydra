@@ -33,12 +33,7 @@ export const {
 // Re-export Utility Functions from id-utils
 // =============================================================================
 
-export {
-  createWorkspaceRef,
-  workspaceRefEquals,
-  workspaceRefKey,
-  type WorkspaceKey,
-} from "$lib/utils/id-utils";
+export { workspaceRefKey } from "$lib/utils/id-utils";
 
 // Re-export branded path types from IPC (still used for type safety)
 export type { ProjectPath, WorkspacePath } from "@shared/ipc";

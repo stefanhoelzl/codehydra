@@ -9,7 +9,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PluginServer, type ApiCallHandlers } from "./plugin-server";
 import {
-  isValidCommandRequest,
   normalizeWorkspacePath,
   COMMAND_TIMEOUT_MS,
   SHUTDOWN_DISCONNECT_TIMEOUT_MS,
@@ -18,53 +17,6 @@ import { createMockPortManager } from "../platform/network.test-utils";
 import { createSilentLogger } from "../logging/logging.test-utils";
 
 describe("PluginServer", () => {
-  describe("isValidCommandRequest", () => {
-    it("returns true for valid object with command only", () => {
-      expect(isValidCommandRequest({ command: "test.command" })).toBe(true);
-    });
-
-    it("returns true for valid object with command and args array", () => {
-      expect(isValidCommandRequest({ command: "test.command", args: [1, "two", true] })).toBe(true);
-    });
-
-    it("returns true for valid object with empty args array", () => {
-      expect(isValidCommandRequest({ command: "test.command", args: [] })).toBe(true);
-    });
-
-    it("returns false for object with non-string command", () => {
-      expect(isValidCommandRequest({ command: 123 })).toBe(false);
-      expect(isValidCommandRequest({ command: null })).toBe(false);
-      expect(isValidCommandRequest({ command: undefined })).toBe(false);
-      expect(isValidCommandRequest({ command: {} })).toBe(false);
-    });
-
-    it("returns false for object with non-array args", () => {
-      expect(isValidCommandRequest({ command: "test.command", args: "not-array" })).toBe(false);
-      expect(isValidCommandRequest({ command: "test.command", args: 123 })).toBe(false);
-      expect(isValidCommandRequest({ command: "test.command", args: {} })).toBe(false);
-    });
-
-    it("returns false for null", () => {
-      expect(isValidCommandRequest(null)).toBe(false);
-    });
-
-    it("returns false for undefined", () => {
-      expect(isValidCommandRequest(undefined)).toBe(false);
-    });
-
-    it("returns false for non-object values", () => {
-      expect(isValidCommandRequest("string")).toBe(false);
-      expect(isValidCommandRequest(123)).toBe(false);
-      expect(isValidCommandRequest(true)).toBe(false);
-    });
-
-    it("returns false for object missing command property", () => {
-      expect(isValidCommandRequest({})).toBe(false);
-      expect(isValidCommandRequest({ args: [] })).toBe(false);
-      expect(isValidCommandRequest({ other: "value" })).toBe(false);
-    });
-  });
-
   describe("COMMAND_TIMEOUT_MS constant", () => {
     it("exports default timeout of 10 seconds", () => {
       expect(COMMAND_TIMEOUT_MS).toBe(10_000);

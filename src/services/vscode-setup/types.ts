@@ -44,30 +44,16 @@ export interface SetupMarker {
 }
 
 /**
- * Legacy marker file content (version field instead of schemaVersion).
- * Triggers re-setup when detected.
- */
-export interface LegacySetupMarker {
-  readonly version: number;
-  readonly completedAt: string;
-}
-
-/**
- * Error types for setup failures.
- */
-export type SetupErrorType =
-  | "network"
-  | "binary-not-found"
-  | "permission"
-  | "disk-full"
-  | "missing-assets"
-  | "unknown";
-
-/**
  * Error information for failed setup.
  */
 export interface SetupError {
-  readonly type: SetupErrorType;
+  readonly type:
+    | "network"
+    | "binary-not-found"
+    | "permission"
+    | "disk-full"
+    | "missing-assets"
+    | "unknown";
   readonly message: string;
   readonly code?: string;
 }
