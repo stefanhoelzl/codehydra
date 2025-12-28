@@ -347,7 +347,13 @@ describe("ExecaProcessRunner", () => {
 
         // Wait for process to actually exit
         const result = await proc.wait(1000);
-        expect(result.exitCode).toBeNull(); // Killed by signal
+        if (process.platform === "win32") {
+          // Windows: taskkill terminates with exit code 1, not a signal
+          expect(result.exitCode).toBe(1);
+        } else {
+          // Unix: killed by signal returns null exitCode
+          expect(result.exitCode).toBeNull();
+        }
       },
       TEST_TIMEOUT
     );

@@ -567,7 +567,9 @@ export function createMockLlmServer(port = 0): MockLlmServer {
       });
 
       await new Promise<void>((resolve, reject) => {
-        server!.listen(serverPort, "localhost", () => {
+        // Bind to 127.0.0.1 explicitly (not "localhost") to avoid IPv4/IPv6 resolution
+        // issues on Windows where localhost might resolve to ::1 while URLs use 127.0.0.1
+        server!.listen(serverPort, "127.0.0.1", () => {
           const addr = server!.address();
           if (addr && typeof addr === "object") {
             serverPort = addr.port;

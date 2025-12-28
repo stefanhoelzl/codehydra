@@ -45,7 +45,9 @@ async function createOpencodeTestStructure(basePath: string): Promise<{
 
   // Create a fake opencode binary that just exits with the first arg as exit code
   // or 0 if no args. This lets us test exit code propagation.
-  const fakeOpencodePath = join(opencodeVersionDir, isWindows ? "opencode.exe" : "opencode");
+  // On Windows, use .cmd extension (batch scripts can't run as .exe files).
+  // The generated script has fallback logic to find .cmd when .exe doesn't exist.
+  const fakeOpencodePath = join(opencodeVersionDir, isWindows ? "opencode.cmd" : "opencode");
 
   if (isWindows) {
     // Windows batch script that echoes args and exits with code from env
@@ -54,9 +56,6 @@ echo ATTACH_CALLED %*
 exit /b %OPENCODE_EXIT_CODE%
 `;
     await writeFile(fakeOpencodePath, batchContent);
-    // Windows needs a .cmd extension for the script to be executable
-    const cmdPath = fakeOpencodePath.replace(".exe", ".cmd");
-    await writeFile(cmdPath, batchContent);
   } else {
     // Unix shell script
     const shellContent = `#!/bin/sh

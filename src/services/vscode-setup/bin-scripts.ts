@@ -127,13 +127,15 @@ const isWindows = process.platform === "win32";
 const SESSION_LIST_TIMEOUT_MS = 3000;
 
 // Path to opencode binary relative to bin/ directory
-const OPENCODE_BIN = join(
-  __dirname,
-  "..",
-  "opencode",
-  OPENCODE_VERSION,
-  isWindows ? "opencode.exe" : "opencode"
-);
+// On Windows, prefer .exe but fallback to .cmd (for testing or alternative installs)
+const OPENCODE_BIN = (() => {
+  const baseDir = join(__dirname, "..", "opencode", OPENCODE_VERSION);
+  if (!isWindows) return join(baseDir, "opencode");
+  const exePath = join(baseDir, "opencode.exe");
+  const cmdPath = join(baseDir, "opencode.cmd");
+  const { existsSync } = require("fs");
+  return existsSync(exePath) ? exePath : cmdPath;
+})();
 
 /**
  * Make an HTTP GET request and return parsed JSON or null on error.

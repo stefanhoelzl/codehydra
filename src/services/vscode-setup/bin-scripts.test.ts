@@ -142,10 +142,13 @@ describe("generateOpencodeNodeScript", () => {
     expect(content).toContain('require("http")');
   });
 
-  it("does not require fs module (no file I/O)", () => {
+  it("uses fs.existsSync for Windows .cmd fallback", () => {
     const content = generateOpencodeNodeScript(TEST_VERSION);
 
-    expect(content).not.toContain('require("fs")');
+    // On Windows, the script needs to check if .exe exists, fallback to .cmd
+    // This is needed because tests create .cmd files (batch scripts can't be .exe)
+    expect(content).toContain('require("fs")');
+    expect(content).toContain("existsSync");
   });
 
   it("uses path.join for binary path construction", () => {
