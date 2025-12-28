@@ -4,6 +4,7 @@
     workspaceCount?: number;
     hasActiveProject?: boolean;
     hasActiveWorkspace?: boolean;
+    activeWorkspaceDeletionInProgress?: boolean;
   }
 
   let {
@@ -11,12 +12,13 @@
     workspaceCount = 0,
     hasActiveProject = false,
     hasActiveWorkspace = false,
+    activeWorkspaceDeletionInProgress = false,
   }: Props = $props();
 
   const showNavigation = $derived(workspaceCount > 1);
   const showJump = $derived(workspaceCount > 1);
   const showNew = $derived(hasActiveProject);
-  const showDelete = $derived(hasActiveWorkspace);
+  const showDelete = $derived(hasActiveWorkspace && !activeWorkspaceDeletionInProgress);
 </script>
 
 <!-- 

@@ -527,6 +527,26 @@ Error:
 
 ```
 
+**Deletion in progress (sidebar):**
+
+When deletion is in progress, the workspace shows a spinner and the [×] button is hidden to prevent double-deletion:
+
+```
+│ └─ 🌿 feature    ◐     │ ← Spinner, [×] hidden
+```
+
+**Deletion failed (sidebar):**
+
+If deletion fails, a warning icon appears. The [×] button remains hidden. Click the workspace to see the DeletionProgressView with retry options:
+
+```
+│ └─ 🌿 feature    ⚠     │ ← Warning icon (red), [×] hidden
+```
+
+**Shortcut overlay during deletion:**
+
+When the active workspace is being deleted, the Del shortcut hint is hidden in the overlay, and Alt+X+Del does nothing.
+
 ### Agent Status Monitoring
 
 **Flow:**

@@ -61,7 +61,7 @@
   import EmptyState from "./EmptyState.svelte";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
-  import { isDeleting } from "$lib/stores/deletion.svelte.js";
+  import { getDeletionStatus } from "$lib/stores/deletion.svelte.js";
   import { uiMode, setSidebarExpanded } from "$lib/stores/ui-mode.svelte.js";
 
   interface SidebarProps {
@@ -233,7 +233,7 @@
                   agentStatus.counts.busy
                 )}
                 {@const isActive = workspace.path === activeWorkspacePath}
-                {@const workspaceIsDeleting = isDeleting(workspace.path)}
+                {@const deletionStatus = getDeletionStatus(workspace.path)}
                 {@const workspaceRef = {
                   projectId: project.id,
                   workspaceName: workspace.name as WorkspaceName,
@@ -263,17 +263,21 @@
                       {/if}
                       {workspace.name}
                     </button>
-                    <button
-                      type="button"
-                      class="action-btn remove-btn"
-                      id={`remove-ws-${workspace.path}`}
-                      aria-label="Remove workspace"
-                      onclick={() => handleRemoveWorkspace(workspaceRef)}
-                    >
-                      &times;
-                    </button>
-                    {#if workspaceIsDeleting}
+                    {#if deletionStatus === "none"}
+                      <button
+                        type="button"
+                        class="action-btn remove-btn"
+                        id={`remove-ws-${workspace.path}`}
+                        aria-label="Remove workspace"
+                        onclick={() => handleRemoveWorkspace(workspaceRef)}
+                      >
+                        &times;
+                      </button>
+                    {/if}
+                    {#if deletionStatus === "in-progress"}
                       <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                    {:else if deletionStatus === "error"}
+                      <span class="deletion-error" role="img" aria-label="Deletion failed">⚠</span>
                     {:else}
                       <AgentStatusIndicator
                         idleCount={agentStatus.counts.idle}
@@ -292,12 +296,15 @@
                     <button
                       type="button"
                       class="status-indicator-btn"
-                      aria-label={`${workspace.name} in ${project.name} - ${workspaceIsDeleting ? "Deleting" : statusText}`}
+                      aria-label={`${workspace.name} in ${project.name} - ${deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : statusText}`}
                       aria-current={isActive ? "true" : undefined}
                       onclick={() => onSwitchWorkspace(workspaceRef)}
                     >
-                      {#if workspaceIsDeleting}
+                      {#if deletionStatus === "in-progress"}
                         <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                      {:else if deletionStatus === "error"}
+                        <span class="deletion-error" role="img" aria-label="Deletion failed">⚠</span
+                        >
                       {:else}
                         <AgentStatusIndicator
                           idleCount={agentStatus.counts.idle}
@@ -609,6 +616,12 @@
   .deletion-spinner {
     width: 16px;
     height: 16px;
+    flex-shrink: 0;
+  }
+
+  .deletion-error {
+    color: var(--ch-danger);
+    font-size: 14px;
     flex-shrink: 0;
   }
 </style>

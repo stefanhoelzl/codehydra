@@ -33,9 +33,33 @@ export function clearDeletion(workspacePath: string): void {
  * Check if a workspace is currently being deleted.
  * @param workspacePath - Path to the workspace
  * @returns True if deletion is in progress for this workspace
+ * @deprecated Use getDeletionStatus() instead for more precise state handling
  */
 export function isDeleting(workspacePath: string): boolean {
   return _deletionStates.has(workspacePath);
+}
+
+/**
+ * Deletion status type for UI rendering.
+ */
+export type DeletionStatus = "none" | "in-progress" | "error";
+
+/**
+ * Get the deletion status for a workspace.
+ * Returns a discriminated status for cleaner UI conditionals.
+ * @param workspacePath - Path to the workspace
+ * @returns "none" if not deleting, "in-progress" if deletion is ongoing, "error" if deletion failed
+ */
+export function getDeletionStatus(workspacePath: string): DeletionStatus {
+  const state = _deletionStates.get(workspacePath);
+  if (!state) {
+    return "none";
+  }
+  if (state.completed && state.hasErrors) {
+    return "error";
+  }
+  // State exists but not completed with errors = in progress
+  return "in-progress";
 }
 
 /**

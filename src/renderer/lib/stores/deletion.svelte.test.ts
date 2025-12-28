@@ -8,6 +8,7 @@ import {
   clearDeletion,
   isDeleting,
   getDeletionState,
+  getDeletionStatus,
   deletionStates,
   reset,
 } from "./deletion.svelte";
@@ -159,6 +160,61 @@ describe("deletion store", () => {
       expect(deletionStates.value.size).toBe(0);
       expect(isDeleting("/path/to/workspace1")).toBe(false);
       expect(isDeleting("/path/to/workspace2")).toBe(false);
+    });
+  });
+
+  describe("getDeletionStatus", () => {
+    it('should return "none" when no state exists', () => {
+      expect(getDeletionStatus("/path/to/workspace")).toBe("none");
+    });
+
+    it('should return "in-progress" during deletion', () => {
+      const progress = createProgress("/path/to/workspace", {
+        completed: false,
+        hasErrors: false,
+      });
+      setDeletionState(progress);
+
+      expect(getDeletionStatus("/path/to/workspace")).toBe("in-progress");
+    });
+
+    it('should return "none" after successful deletion (state cleared)', () => {
+      const progress = createProgress("/path/to/workspace", {
+        completed: true,
+        hasErrors: false,
+      });
+      setDeletionState(progress);
+      clearDeletion("/path/to/workspace");
+
+      expect(getDeletionStatus("/path/to/workspace")).toBe("none");
+    });
+
+    it('should return "error" on failure', () => {
+      const progress = createProgress("/path/to/workspace", {
+        completed: true,
+        hasErrors: true,
+      });
+      setDeletionState(progress);
+
+      expect(getDeletionStatus("/path/to/workspace")).toBe("error");
+    });
+
+    it("should transition from error to in-progress on retry", () => {
+      // Start in error state
+      const errorProgress = createProgress("/path/to/workspace", {
+        completed: true,
+        hasErrors: true,
+      });
+      setDeletionState(errorProgress);
+      expect(getDeletionStatus("/path/to/workspace")).toBe("error");
+
+      // Retry starts new deletion
+      const retryProgress = createProgress("/path/to/workspace", {
+        completed: false,
+        hasErrors: false,
+      });
+      setDeletionState(retryProgress);
+      expect(getDeletionStatus("/path/to/workspace")).toBe("in-progress");
     });
   });
 });

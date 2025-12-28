@@ -226,6 +226,32 @@ describe("ShortcutOverlay component", () => {
       expect(openHint).not.toHaveClass("shortcut-hint--hidden");
     });
 
+    it("should-hide-delete-hint-when-deletion-in-progress", () => {
+      render(ShortcutOverlay, {
+        props: {
+          ...defaultProps,
+          hasActiveWorkspace: true,
+          activeWorkspaceDeletionInProgress: true,
+        },
+      });
+
+      const delHint = screen.getByLabelText("Delete key to remove workspace");
+      expect(delHint).toHaveClass("shortcut-hint--hidden");
+    });
+
+    it("should-show-delete-hint-when-no-deletion-in-progress", () => {
+      render(ShortcutOverlay, {
+        props: {
+          ...defaultProps,
+          hasActiveWorkspace: true,
+          activeWorkspaceDeletionInProgress: false,
+        },
+      });
+
+      const delHint = screen.getByLabelText("Delete key to remove workspace");
+      expect(delHint).not.toHaveClass("shortcut-hint--hidden");
+    });
+
     it("should-not-cause-layout-shift-when-hints-hidden", () => {
       // Hidden hints should use visibility:hidden (not display:none) to prevent layout shifts
       render(ShortcutOverlay, {

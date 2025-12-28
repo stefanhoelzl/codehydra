@@ -54,6 +54,7 @@
     setDeletionState,
     clearDeletion,
     getDeletionState,
+    getDeletionStatus,
   } from "$lib/stores/deletion.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import type { AggregatedAgentStatus } from "@shared/ipc";
@@ -353,6 +354,8 @@
     workspaceCount={getAllWorkspaces().length}
     hasActiveProject={projects.value.length > 0}
     hasActiveWorkspace={activeWorkspacePath.value !== null}
+    activeWorkspaceDeletionInProgress={activeWorkspacePath.value !== null &&
+      getDeletionStatus(activeWorkspacePath.value) === "in-progress"}
   />
 
   <!-- Backdrop shown only when no workspace is active, to avoid white background -->

@@ -1249,5 +1249,156 @@ describe("Sidebar component", () => {
       expect(container.querySelectorAll("vscode-progress-ring.deletion-spinner")).toHaveLength(1);
       expect(screen.getAllByRole("status")).toHaveLength(1);
     });
+
+    it("hides X button when deletion status is in-progress (expanded layout)", async () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set deletion state (in-progress: completed=false)
+      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      // X button should NOT be rendered for workspace being deleted
+      expect(screen.queryByLabelText("Remove workspace")).not.toBeInTheDocument();
+    });
+
+    it("hides X button when deletion status is error (expanded layout)", async () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set deletion state with error (completed=true, hasErrors=true)
+      const errorState = createDeletionProgress("/test/.worktrees/ws1");
+      errorState.completed = true;
+      errorState.hasErrors = true;
+      deletionStore.setDeletionState(errorState);
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      // X button should NOT be rendered for workspace with deletion error
+      expect(screen.queryByLabelText("Remove workspace")).not.toBeInTheDocument();
+    });
+
+    it("shows warning triangle when deletion status is error (expanded layout)", async () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set deletion state with error
+      const errorState = createDeletionProgress("/test/.worktrees/ws1");
+      errorState.completed = true;
+      errorState.hasErrors = true;
+      deletionStore.setDeletionState(errorState);
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      // Warning triangle should be visible
+      const warning = container.querySelector(".deletion-error");
+      expect(warning).toBeInTheDocument();
+      expect(warning).toHaveTextContent("⚠");
+    });
+
+    it("warning triangle has accessible attributes", async () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      // Set deletion state with error
+      const errorState = createDeletionProgress("/test/.worktrees/ws1");
+      errorState.completed = true;
+      errorState.hasErrors = true;
+      deletionStore.setDeletionState(errorState);
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      // Warning should have role="img" and aria-label
+      const warning = container.querySelector(".deletion-error");
+      expect(warning).toHaveAttribute("role", "img");
+      expect(warning).toHaveAttribute("aria-label", "Deletion failed");
+    });
+
+    it("minimized layout shows warning when deletion status is error", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        name: "test",
+        workspaces: [ws],
+      });
+
+      // Set deletion state with error
+      const errorState = createDeletionProgress("/test/.worktrees/ws1");
+      errorState.completed = true;
+      errorState.hasErrors = true;
+      deletionStore.setDeletionState(errorState);
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
+      });
+
+      // In minimized state, should show warning
+      const warning = container.querySelector(".deletion-error");
+      expect(warning).toBeInTheDocument();
+      expect(warning).toHaveTextContent("⚠");
+      expect(warning).toHaveAttribute("role", "img");
+      expect(warning).toHaveAttribute("aria-label", "Deletion failed");
+
+      // Spinner should NOT be present
+      expect(
+        container.querySelector("vscode-progress-ring.deletion-spinner")
+      ).not.toBeInTheDocument();
+    });
+
+    it("minimized layout aria-label shows Deletion failed when status is error", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProjectWithId({
+        path: "/test" as ProjectPath,
+        name: "test",
+        workspaces: [ws],
+      });
+
+      // Set deletion state with error
+      const errorState = createDeletionProgress("/test/.worktrees/ws1");
+      errorState.completed = true;
+      errorState.hasErrors = true;
+      deletionStore.setDeletionState(errorState);
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
+      });
+
+      // The button aria-label should say "Deletion failed" for error state
+      const statusButton = screen.getByRole("button", { name: /ws1 in test.*deletion failed/i });
+      expect(statusButton).toBeInTheDocument();
+    });
   });
 });

@@ -72,6 +72,14 @@ vi.mock("./dialogs.svelte", () => mockDialogState);
 // Mock the projects store
 vi.mock("./projects.svelte", () => mockProjectsStore);
 
+// Create mock deletion store with vi.hoisted
+const mockDeletionStore = vi.hoisted(() => ({
+  getDeletionStatus: vi.fn(() => "none" as "none" | "in-progress" | "error"),
+}));
+
+// Mock the deletion store
+vi.mock("./deletion.svelte", () => mockDeletionStore);
+
 // Import after mock setup
 import {
   shortcutModeActive,
@@ -99,6 +107,8 @@ describe("shortcuts store", () => {
     reset(); // Reset store state between tests
     // Reset dialog state to closed
     mockDialogState.dialogState.value = { type: "closed" };
+    // Reset deletion status to "none"
+    mockDeletionStore.getDeletionStatus.mockReturnValue("none");
   });
 
   describe("initial state", () => {
@@ -679,6 +689,27 @@ describe("shortcuts store", () => {
         handleShortcutKey("delete");
 
         expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
+      });
+
+      it("should-not-open-remove-dialog-when-deletion-in-progress", () => {
+        const workspaceRef = {
+          projectId: "project-12345678",
+          workspaceName: "feature",
+          path: "/workspace",
+        };
+        mockProjectsStore.activeWorkspace.value = workspaceRef;
+        // Mock getDeletionStatus to return "in-progress"
+        mockDeletionStore.getDeletionStatus.mockReturnValue("in-progress");
+
+        enableShortcutMode();
+        expect(shortcutModeActive.value).toBe(true);
+
+        handleShortcutKey("delete");
+
+        // Dialog should NOT be opened when deletion is in progress
+        expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
+        // Shortcut mode should still be active (no action taken)
+        expect(shortcutModeActive.value).toBe(true);
       });
 
       it("should-deactivate-shortcut-mode-before-opening-dialog", () => {

@@ -11,6 +11,7 @@ import * as api from "$lib/api";
 import { createLogger } from "$lib/logging";
 import type { UIModeChangedEvent } from "@shared/ipc";
 import { openCreateDialog, openRemoveDialog } from "./dialogs.svelte";
+import { getDeletionStatus } from "./deletion.svelte";
 import {
   getAllWorkspaces,
   getWorkspaceRefByIndex,
@@ -226,6 +227,8 @@ function handleDialog(key: DialogKey): void {
     // Delete or Backspace
     const workspaceRef = activeWorkspace.value;
     if (!workspaceRef) return;
+    // Skip if deletion already in progress for this workspace
+    if (getDeletionStatus(workspaceRef.path) === "in-progress") return;
     setModeFromMain("workspace");
     openRemoveDialog(workspaceRef);
   }
