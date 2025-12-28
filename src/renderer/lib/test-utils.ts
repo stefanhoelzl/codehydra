@@ -5,6 +5,7 @@
 
 import { vi } from "vitest";
 import type { Api } from "@shared/electron-api";
+import { MOCK_WORKSPACE_API_DEFAULTS } from "@shared/test-fixtures";
 
 /**
  * Creates a mock API object with all functions mocked.
@@ -31,19 +32,13 @@ export function createMockApi(): Api {
       fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
     },
     workspaces: {
-      create: vi.fn().mockResolvedValue({
-        projectId: "test-12345678",
-        name: "ws",
-        branch: "ws",
-        metadata: { base: "main" },
-        path: "/ws",
-      }),
-      remove: vi.fn().mockResolvedValue({ started: true }),
+      create: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
+      remove: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.removeResult),
       forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue(undefined),
-      getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+      getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
       setMetadata: vi.fn().mockResolvedValue(undefined),
-      getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+      getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
       getOpencodePort: vi.fn().mockResolvedValue(null),
     },
     ui: {

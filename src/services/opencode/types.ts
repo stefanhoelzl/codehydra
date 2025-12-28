@@ -49,11 +49,6 @@ export interface Session {
   readonly title?: string;
 }
 
-/**
- * Response from OpenCode /session endpoint.
- */
-export type SessionListResponse = readonly Session[];
-
 // ============ Session Status ============
 
 /**

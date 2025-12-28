@@ -22,11 +22,3 @@ export {
 
 // Re-export types that renderer tests commonly need
 export type { Project, Workspace, BaseInfo, ProjectId, WorkspaceName } from "@shared/api/types";
-
-/**
- * Convenience function to create a project with one default workspace.
- * Equivalent to: createMockProject(overrides, { includeDefaultWorkspace: true })
- *
- * @deprecated Use createMockProject(overrides, { includeDefaultWorkspace: true }) instead.
- */
-export { createMockProject as createMockProjectWithId } from "@shared/test-fixtures";

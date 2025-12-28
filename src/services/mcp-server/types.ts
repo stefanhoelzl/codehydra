@@ -40,14 +40,6 @@ export interface McpError {
   readonly message: string;
 }
 
-/**
- * Result type for MCP tool operations.
- * @internal Used by test utilities only
- */
-export type McpToolResult<T> =
-  | { readonly success: true; readonly data: T }
-  | { readonly success: false; readonly error: McpError };
-
 // =============================================================================
 // MCP Server Types
 // =============================================================================
@@ -71,14 +63,4 @@ export interface IMcpServer extends IDisposable {
    * Check if the server is running.
    */
   isRunning(): boolean;
-}
-
-/**
- * MCP context for tool handlers.
- * Contains workspace information from the X-Workspace-Path header.
- * @internal Used by test utilities only
- */
-export interface McpContext {
-  readonly workspacePath: string;
-  readonly resolved: McpResolvedWorkspace | null;
 }
