@@ -34,8 +34,8 @@ describe("TarExtractor (boundary)", () => {
     await fs.mkdir(path.join(sourceDir, "subdir"));
     await fs.writeFile(path.join(sourceDir, "subdir", "nested.txt"), "Nested content");
 
-    // Create archive
-    execSync(`tar -czf "${archivePath}" -C "${sourceDir}" .`);
+    // Create archive (--force-local prevents tar from interpreting colons as remote hosts)
+    execSync(`tar --force-local -czf "${archivePath}" -C "${sourceDir}" .`);
 
     // Extract using TarExtractor
     const extractor = new TarExtractor();
@@ -60,8 +60,8 @@ describe("TarExtractor (boundary)", () => {
     await fs.writeFile(path.join(sourceDir, "script.sh"), "#!/bin/sh\necho hello");
     await fs.chmod(path.join(sourceDir, "script.sh"), 0o755);
 
-    // Create archive
-    execSync(`tar -czf "${archivePath}" -C "${sourceDir}" .`);
+    // Create archive (--force-local prevents tar from interpreting colons as remote hosts)
+    execSync(`tar --force-local -czf "${archivePath}" -C "${sourceDir}" .`);
 
     // Extract
     const extractor = new TarExtractor();
@@ -170,7 +170,7 @@ describe("DefaultArchiveExtractor (boundary)", () => {
     await fs.mkdir(sourceDir, { recursive: true });
     await fs.writeFile(path.join(sourceDir, "file.txt"), "tar.gz content");
 
-    execSync(`tar -czf "${archivePath}" -C "${sourceDir}" .`);
+    execSync(`tar --force-local -czf "${archivePath}" -C "${sourceDir}" .`);
 
     const extractor = new DefaultArchiveExtractor();
     await extractor.extract(archivePath, destDir);
@@ -186,7 +186,7 @@ describe("DefaultArchiveExtractor (boundary)", () => {
     await fs.mkdir(sourceDir, { recursive: true });
     await fs.writeFile(path.join(sourceDir, "file.txt"), "tgz content");
 
-    execSync(`tar -czf "${archivePath}" -C "${sourceDir}" .`);
+    execSync(`tar --force-local -czf "${archivePath}" -C "${sourceDir}" .`);
 
     const extractor = new DefaultArchiveExtractor();
     await extractor.extract(archivePath, destDir);
