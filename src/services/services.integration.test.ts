@@ -50,9 +50,9 @@ describe("Services Integration", () => {
       const projectStore = new ProjectStore(projectsDir, fileSystemLayer);
       await projectStore.saveProject(repoPath);
 
-      // Verify project is saved
+      // Verify project is saved (paths are normalized by Path class)
       const savedProjects = await projectStore.loadAllProjects();
-      expect(savedProjects).toContain(repoPath);
+      expect(savedProjects).toContain(new Path(repoPath).toString());
 
       // 2. Create GitWorktreeProvider with SimpleGitClient
       const gitClient = new SimpleGitClient(SILENT_LOGGER);

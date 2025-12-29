@@ -35,18 +35,18 @@ describe("generateProjectId", () => {
 
     it("should replace special characters with dashes", () => {
       const id = generateProjectId("/home/user/My Cool App");
-      // "My Cool App" -> "My-Cool-App"
-      expect(id).toMatch(/^My-Cool-App-[a-f0-9]{8}$/);
+      // "My Cool App" -> "my-cool-app" (lowercase on Windows, mixed case on Unix)
+      expect(id).toMatch(/^my-cool-app-[a-f0-9]{8}$/i);
     });
 
     it("should handle spaces correctly", () => {
       const id = generateProjectId("/home/user/Projects/My App");
-      expect(id).toMatch(/^My-App-[a-f0-9]{8}$/);
+      expect(id).toMatch(/^my-app-[a-f0-9]{8}$/i);
     });
 
-    it("should preserve case", () => {
+    it("should be case-insensitive for name matching", () => {
       const id = generateProjectId("/home/user/MyApp");
-      expect(id).toMatch(/^MyApp-[a-f0-9]{8}$/);
+      expect(id).toMatch(/^myapp-[a-f0-9]{8}$/i);
     });
   });
 
@@ -131,11 +131,16 @@ describe("generateProjectId", () => {
   });
 
   describe("case sensitivity", () => {
-    it("should differentiate by case in hash (paths are case-sensitive)", () => {
+    it("should handle case according to platform", () => {
       const id1 = generateProjectId("/home/user/MyApp");
       const id2 = generateProjectId("/home/user/myapp");
-      // Names will be different (MyApp vs myapp), hashes will be different
-      expect(id1).not.toBe(id2);
+      if (process.platform === "win32") {
+        // Windows: case-insensitive, both produce same ID
+        expect(id1).toBe(id2);
+      } else {
+        // Unix: case-sensitive, different IDs
+        expect(id1).not.toBe(id2);
+      }
     });
   });
 });

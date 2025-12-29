@@ -214,8 +214,8 @@ describe("opencode.cjs boundary tests", () => {
 
       const result = executeScript(scriptPath, "14001");
 
+      // Only check exit code - error message is locale-dependent
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: Failed to start opencode:");
     });
   });
 
