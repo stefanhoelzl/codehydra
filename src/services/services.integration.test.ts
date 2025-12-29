@@ -162,7 +162,7 @@ describe("Services Integration", () => {
         SILENT_LOGGER
       );
 
-      expect(provider.projectRoot.toString()).toBe(repoPath);
+      expect(provider.projectRoot.equals(repoPath)).toBe(true);
 
       // Should be able to discover workspaces
       const workspaces = await provider.discover();
