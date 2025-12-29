@@ -7,7 +7,7 @@
  * - Build metadata: `publisher.name-1.0.0+build123`
  */
 
-import type { FileSystemLayer } from "../platform/filesystem";
+import type { FileSystemLayer, PathLike } from "../platform/filesystem";
 
 /**
  * Parsed extension info from a directory name.
@@ -82,7 +82,7 @@ export function parseExtensionDir(dirName: string): ParsedExtension | null {
  * List all installed extensions in a directory.
  *
  * @param fs FileSystemLayer instance
- * @param extensionsDir Path to the extensions directory
+ * @param extensionsDir Path to the extensions directory (Path object or string)
  * @returns Map of extension ID to installed version
  *
  * @example
@@ -91,7 +91,7 @@ export function parseExtensionDir(dirName: string): ParsedExtension | null {
  */
 export async function listInstalledExtensions(
   fs: FileSystemLayer,
-  extensionsDir: string
+  extensionsDir: PathLike
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
 

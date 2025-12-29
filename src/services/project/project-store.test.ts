@@ -9,6 +9,10 @@ import { ProjectStore } from "./project-store";
 import { CURRENT_PROJECT_VERSION } from "./types";
 import { createMockFileSystemLayer, createDirEntry } from "../platform/filesystem.test-utils";
 import { FileSystemError } from "../errors";
+import type { PathLike } from "../platform/filesystem";
+
+/** Convert PathLike to string for testing */
+const pathString = (p: PathLike): string => (typeof p === "string" ? p : p.toString());
 
 describe("ProjectStore", () => {
   const projectsDir = "/data/projects";
@@ -21,12 +25,12 @@ describe("ProjectStore", () => {
       const mockFs = createMockFileSystemLayer({
         mkdir: {
           implementation: async (path) => {
-            createdDirs.push(path);
+            createdDirs.push(pathString(path));
           },
         },
         writeFile: {
           implementation: async (path, content) => {
-            writtenFiles.set(path, content);
+            writtenFiles.set(pathString(path), content);
           },
         },
       });
@@ -73,7 +77,7 @@ describe("ProjectStore", () => {
         mkdir: { implementation: async () => {} },
         writeFile: {
           implementation: async (path, content) => {
-            writtenFiles.set(path, content);
+            writtenFiles.set(pathString(path), content);
           },
         },
       });
@@ -123,19 +127,19 @@ describe("ProjectStore", () => {
         },
         readFile: {
           implementation: async (path) => {
-            if (path.includes("my-repo-abc12345")) {
+            if (pathString(path).includes("my-repo-abc12345")) {
               return JSON.stringify({
                 version: CURRENT_PROJECT_VERSION,
                 path: "/home/user/projects/my-repo",
               });
             }
-            if (path.includes("other-repo-def67890")) {
+            if (pathString(path).includes("other-repo-def67890")) {
               return JSON.stringify({
                 version: CURRENT_PROJECT_VERSION,
                 path: "/home/user/projects/other-repo",
               });
             }
-            throw new FileSystemError("ENOENT", path, "Not found");
+            throw new FileSystemError("ENOENT", pathString(path), "Not found");
           },
         },
       });
@@ -158,13 +162,13 @@ describe("ProjectStore", () => {
         },
         readFile: {
           implementation: async (path) => {
-            if (path.includes("valid-project")) {
+            if (pathString(path).includes("valid-project")) {
               return JSON.stringify({
                 version: CURRENT_PROJECT_VERSION,
                 path: "/home/user/valid-project",
               });
             }
-            throw new FileSystemError("ENOENT", path, "Not found");
+            throw new FileSystemError("ENOENT", pathString(path), "Not found");
           },
         },
       });
@@ -185,16 +189,16 @@ describe("ProjectStore", () => {
         },
         readFile: {
           implementation: async (path) => {
-            if (path.includes("valid-project")) {
+            if (pathString(path).includes("valid-project")) {
               return JSON.stringify({
                 version: CURRENT_PROJECT_VERSION,
                 path: "/home/user/valid-project",
               });
             }
-            if (path.includes("malformed-project")) {
+            if (pathString(path).includes("malformed-project")) {
               return "not valid json";
             }
-            throw new FileSystemError("ENOENT", path, "Not found");
+            throw new FileSystemError("ENOENT", pathString(path), "Not found");
           },
         },
       });
@@ -215,16 +219,16 @@ describe("ProjectStore", () => {
         },
         readFile: {
           implementation: async (path) => {
-            if (path.includes("valid-project")) {
+            if (pathString(path).includes("valid-project")) {
               return JSON.stringify({
                 version: CURRENT_PROJECT_VERSION,
                 path: "/home/user/valid-project",
               });
             }
-            if (path.includes("missing-path")) {
+            if (pathString(path).includes("missing-path")) {
               return JSON.stringify({ version: CURRENT_PROJECT_VERSION });
             }
-            throw new FileSystemError("ENOENT", path, "Not found");
+            throw new FileSystemError("ENOENT", pathString(path), "Not found");
           },
         },
       });
@@ -246,13 +250,13 @@ describe("ProjectStore", () => {
         },
         readFile: {
           implementation: async (path) => {
-            if (path.includes("valid-project")) {
+            if (pathString(path).includes("valid-project")) {
               return JSON.stringify({
                 version: CURRENT_PROJECT_VERSION,
                 path: "/home/user/valid-project",
               });
             }
-            throw new FileSystemError("ENOENT", path, "Not found");
+            throw new FileSystemError("ENOENT", pathString(path), "Not found");
           },
         },
       });
@@ -272,12 +276,12 @@ describe("ProjectStore", () => {
       const mockFs = createMockFileSystemLayer({
         unlink: {
           implementation: async (path) => {
-            unlinkedPaths.push(path);
+            unlinkedPaths.push(pathString(path));
           },
         },
         rm: {
           implementation: async (path, options) => {
-            rmCalls.push({ path, recursive: options?.recursive });
+            rmCalls.push({ path: pathString(path), recursive: options?.recursive });
           },
         },
       });
@@ -318,7 +322,7 @@ describe("ProjectStore", () => {
       const mockFs = createMockFileSystemLayer({
         unlink: {
           implementation: async (path) => {
-            unlinkedPaths.push(path);
+            unlinkedPaths.push(pathString(path));
           },
         },
         rm: {

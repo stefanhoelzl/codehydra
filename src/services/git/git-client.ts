@@ -4,11 +4,13 @@
  * (e.g., simple-git, nodegit, isomorphic-git).
  */
 
+import type { Path } from "../platform/path";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./types";
 
 /**
  * Interface for git operations.
  * All methods use git terminology (worktree, branch, etc.).
+ * All path parameters use Path class for normalized, cross-platform handling.
  */
 export interface IGitClient {
   /**
@@ -19,7 +21,7 @@ export interface IGitClient {
    * @returns Promise resolving to true if path is a git repository root
    * @throws GitError if path doesn't exist or is inaccessible
    */
-  isRepositoryRoot(path: string): Promise<boolean>;
+  isRepositoryRoot(path: Path): Promise<boolean>;
 
   /**
    * List all worktrees in repository.
@@ -27,7 +29,7 @@ export interface IGitClient {
    * @returns Promise resolving to array of worktree information
    * @throws GitError if not a git repository
    */
-  listWorktrees(repoPath: string): Promise<readonly WorktreeInfo[]>;
+  listWorktrees(repoPath: Path): Promise<readonly WorktreeInfo[]>;
 
   /**
    * Add a new worktree to the repository.
@@ -37,7 +39,7 @@ export interface IGitClient {
    * @returns Promise resolving when worktree is created
    * @throws GitError if branch doesn't exist, path already exists, or not a git repository
    */
-  addWorktree(repoPath: string, worktreePath: string, branch: string): Promise<void>;
+  addWorktree(repoPath: Path, worktreePath: Path, branch: string): Promise<void>;
 
   /**
    * Remove a worktree from the repository.
@@ -46,7 +48,7 @@ export interface IGitClient {
    * @returns Promise resolving when worktree is removed
    * @throws GitError if worktree doesn't exist or not a git repository
    */
-  removeWorktree(repoPath: string, worktreePath: string): Promise<void>;
+  removeWorktree(repoPath: Path, worktreePath: Path): Promise<void>;
 
   /**
    * Prune stale worktree information.
@@ -55,7 +57,7 @@ export interface IGitClient {
    * @returns Promise resolving when pruning is complete
    * @throws GitError if not a git repository
    */
-  pruneWorktrees(repoPath: string): Promise<void>;
+  pruneWorktrees(repoPath: Path): Promise<void>;
 
   /**
    * List all branches in repository.
@@ -63,7 +65,7 @@ export interface IGitClient {
    * @returns Promise resolving to array of branch information (local and remote)
    * @throws GitError if not a git repository
    */
-  listBranches(repoPath: string): Promise<readonly BranchInfo[]>;
+  listBranches(repoPath: Path): Promise<readonly BranchInfo[]>;
 
   /**
    * Create a new branch.
@@ -73,7 +75,7 @@ export interface IGitClient {
    * @returns Promise resolving when branch is created
    * @throws GitError if branch already exists, start point doesn't exist, or not a git repository
    */
-  createBranch(repoPath: string, name: string, startPoint: string): Promise<void>;
+  createBranch(repoPath: Path, name: string, startPoint: string): Promise<void>;
 
   /**
    * Delete a branch.
@@ -82,7 +84,7 @@ export interface IGitClient {
    * @returns Promise resolving when branch is deleted
    * @throws GitError if branch doesn't exist, is checked out, or not a git repository
    */
-  deleteBranch(repoPath: string, name: string): Promise<void>;
+  deleteBranch(repoPath: Path, name: string): Promise<void>;
 
   /**
    * Get the current branch name.
@@ -90,7 +92,7 @@ export interface IGitClient {
    * @returns Promise resolving to branch name, or null if HEAD is detached
    * @throws GitError if path is not a git repository or worktree
    */
-  getCurrentBranch(path: string): Promise<string | null>;
+  getCurrentBranch(path: Path): Promise<string | null>;
 
   /**
    * Get the status of a repository or worktree.
@@ -98,7 +100,7 @@ export interface IGitClient {
    * @returns Promise resolving to status information
    * @throws GitError if path is not a git repository or worktree
    */
-  getStatus(path: string): Promise<StatusResult>;
+  getStatus(path: Path): Promise<StatusResult>;
 
   /**
    * Fetch from a remote.
@@ -107,7 +109,7 @@ export interface IGitClient {
    * @returns Promise resolving when fetch is complete
    * @throws GitError if remote doesn't exist or network error
    */
-  fetch(repoPath: string, remote?: string): Promise<void>;
+  fetch(repoPath: Path, remote?: string): Promise<void>;
 
   /**
    * List all remotes in repository.
@@ -115,7 +117,7 @@ export interface IGitClient {
    * @returns Promise resolving to array of remote names
    * @throws GitError if not a git repository
    */
-  listRemotes(repoPath: string): Promise<readonly string[]>;
+  listRemotes(repoPath: Path): Promise<readonly string[]>;
 
   /**
    * Get a branch-specific configuration value.
@@ -125,7 +127,7 @@ export interface IGitClient {
    * @returns Promise resolving to the config value, or null if not set
    * @throws GitError if not a git repository
    */
-  getBranchConfig(repoPath: string, branch: string, key: string): Promise<string | null>;
+  getBranchConfig(repoPath: Path, branch: string, key: string): Promise<string | null>;
 
   /**
    * Set a branch-specific configuration value.
@@ -136,7 +138,7 @@ export interface IGitClient {
    * @returns Promise resolving when config is set
    * @throws GitError if not a git repository
    */
-  setBranchConfig(repoPath: string, branch: string, key: string, value: string): Promise<void>;
+  setBranchConfig(repoPath: Path, branch: string, key: string, value: string): Promise<void>;
 
   /**
    * Get all branch configuration values under a prefix.
@@ -156,7 +158,7 @@ export interface IGitClient {
    * @throws GitError if not a git repository
    */
   getBranchConfigsByPrefix(
-    repoPath: string,
+    repoPath: Path,
     branch: string,
     prefix: string
   ): Promise<Readonly<Record<string, string>>>;
@@ -171,5 +173,5 @@ export interface IGitClient {
    * @returns Promise resolving when config is unset
    * @throws GitError if not a git repository
    */
-  unsetBranchConfig(repoPath: string, branch: string, key: string): Promise<void>;
+  unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void>;
 }

@@ -84,6 +84,7 @@ function createMockApiWithEvents(): {
       getOpencodePort: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn().mockResolvedValue(undefined),
       getMetadata: vi.fn().mockResolvedValue({ base: "main", note: "test note" }),
+      executeCommand: vi.fn().mockResolvedValue(undefined),
     },
     ui: {
       selectFolder: vi.fn().mockResolvedValue(null),

@@ -160,7 +160,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
 
   async createWrapperScripts(): Promise<void> {
     const binDir = this.pathProvider.binDir;
-    this.logger?.debug("Creating wrapper scripts", { binDir });
+    this.logger?.debug("Creating wrapper scripts", { binDir: binDir.toString() });
     await this.fileSystemLayer.mkdir(binDir, { recursive: true });
 
     const platform = this.platformInfo.platform;
@@ -170,7 +170,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     for (const binary of ["code-server", "opencode"] as const) {
       const binaryPath = this.getBinaryPath(binary);
       const scriptName = binary + (isWindows ? ".cmd" : "");
-      const scriptPath = path.join(binDir, scriptName);
+      const scriptPath = path.join(binDir.toString(), scriptName);
 
       const content = isWindows
         ? this.createWindowsWrapper(binaryPath)
@@ -188,7 +188,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
    */
   private getBinaryDir(binary: BinaryType): string {
     const version = binary === "code-server" ? CODE_SERVER_VERSION : OPENCODE_VERSION;
-    return path.join(this.pathProvider.dataRootDir, binary, version);
+    return path.join(this.pathProvider.dataRootDir.toString(), binary, version);
   }
 
   /**

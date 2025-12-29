@@ -5,38 +5,8 @@
  * CodeHydra (server) and VS Code extensions (clients).
  */
 
-import path from "node:path";
 import type { WorkspaceStatus } from "./api/types";
 import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
-
-// ============================================================================
-// Path Normalization
-// ============================================================================
-
-/**
- * Normalize workspace path for consistent Map lookups across platforms.
- * Uses POSIX-style forward slashes for cross-platform consistency in
- * socket communication. This ensures paths match regardless of OS.
- *
- * @param workspacePath - The workspace path to normalize
- * @returns Normalized path string with forward slashes, without trailing separator
- */
-export function normalizeWorkspacePath(workspacePath: string): string {
-  // First normalize using Node's path (handles .. and . segments, double separators)
-  let normalized = path.normalize(workspacePath);
-
-  // Convert Windows backslashes to forward slashes for cross-platform consistency
-  normalized = normalized.replace(/\\/g, "/");
-
-  // Collapse any remaining double forward slashes (edge case after conversion)
-  normalized = normalized.replace(/\/+/g, "/");
-
-  // Strip trailing separator, but preserve root path (/)
-  if (normalized.length > 1 && normalized.endsWith("/")) {
-    return normalized.slice(0, -1);
-  }
-  return normalized;
-}
 
 // ============================================================================
 // Result Types

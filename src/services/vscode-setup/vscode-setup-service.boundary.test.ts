@@ -52,7 +52,7 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
       binDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
-      vscodeSetupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
+      setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
     });
 
     const service = new VscodeSetupService(
@@ -81,7 +81,7 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
       binDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
-      vscodeSetupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
+      setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
     });
 
     const service = new VscodeSetupService(
@@ -109,7 +109,7 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
       binDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
-      vscodeSetupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
+      setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
     });
 
     const service = new VscodeSetupService(
@@ -135,7 +135,7 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
       binDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
-      vscodeSetupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
+      setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
     });
 
     const service = new VscodeSetupService(

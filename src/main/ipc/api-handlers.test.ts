@@ -30,6 +30,7 @@ function createMockApi(): ICodeHydraApi {
       getOpencodePort: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn(),
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+      executeCommand: vi.fn().mockResolvedValue(undefined),
     },
     ui: {
       selectFolder: vi.fn().mockResolvedValue(null),

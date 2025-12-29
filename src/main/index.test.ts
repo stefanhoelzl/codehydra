@@ -42,13 +42,15 @@ describe("Main process wiring", () => {
   describe("createCodeServerConfig pattern", () => {
     /**
      * This tests the same pattern used in main/index.ts createCodeServerConfig()
+     * PathProvider now returns Path objects, so we convert to native strings for external use.
      */
     function createCodeServerConfig(pathProvider: DefaultPathProvider): CodeServerConfig {
       return {
-        runtimeDir: nodePath.join(pathProvider.dataRootDir, "runtime"),
-        extensionsDir: pathProvider.vscodeExtensionsDir,
-        userDataDir: pathProvider.vscodeUserDataDir,
-        binDir: pathProvider.binDir,
+        binaryPath: pathProvider.codeServerBinaryPath.toNative(),
+        runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
+        extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
+        userDataDir: pathProvider.vscodeUserDataDir.toNative(),
+        binDir: pathProvider.binDir.toNative(),
       };
     }
 
@@ -109,6 +111,7 @@ describe("Main process wiring", () => {
   describe("Full wiring chain", () => {
     it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
       // This tests the full chain as wired in main/index.ts
+      // PathProvider now returns Path objects
       const buildInfo = createMockBuildInfo({ isDevelopment: false });
       const platformInfo = createMockPlatformInfo({
         platform: "darwin",
@@ -116,17 +119,17 @@ describe("Main process wiring", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      // Verify all derived paths are correct
-      expect(pathProvider.dataRootDir).toBe(
+      // Verify all derived paths are correct using .toString() for comparison
+      expect(pathProvider.dataRootDir.toString()).toBe(
         nodePath.join("/Users/test", "Library", "Application Support", "Codehydra")
       );
-      expect(pathProvider.projectsDir).toBe(
+      expect(pathProvider.projectsDir.toString()).toBe(
         nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "projects")
       );
-      expect(pathProvider.vscodeDir).toBe(
+      expect(pathProvider.vscodeDir.toString()).toBe(
         nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "vscode")
       );
-      expect(pathProvider.electronDataDir).toBe(
+      expect(pathProvider.electronDataDir.toString()).toBe(
         nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "electron")
       );
     });
@@ -140,9 +143,10 @@ describe("Main process wiring", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       const workspacesDir = pathProvider.getProjectWorkspacesDir("/home/user/myproject");
+      const workspacesDirStr = workspacesDir.toString();
 
-      expect(workspacesDir).toContain("myproject-");
-      expect(workspacesDir).toMatch(/workspaces$/);
+      expect(workspacesDirStr).toContain("myproject-");
+      expect(workspacesDirStr).toMatch(/workspaces$/);
       const expectedPrefix = nodePath.join(
         "/home/user",
         ".local",
@@ -150,7 +154,7 @@ describe("Main process wiring", () => {
         "codehydra",
         "projects"
       );
-      expect(workspacesDir.startsWith(expectedPrefix)).toBe(true);
+      expect(workspacesDirStr.startsWith(expectedPrefix)).toBe(true);
     });
   });
 });

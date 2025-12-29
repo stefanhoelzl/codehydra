@@ -4,7 +4,7 @@
  * Provides mock factory for FileSystemLayer to enable easy unit testing of consumers.
  */
 
-import type { FileSystemLayer, DirEntry, MkdirOptions, RmOptions } from "./filesystem";
+import type { FileSystemLayer, DirEntry, MkdirOptions, RmOptions, PathLike } from "./filesystem";
 import { FileSystemError } from "../errors";
 
 // ============================================================================
@@ -20,7 +20,7 @@ export interface MockReadFileOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string) => Promise<string>;
+  readonly implementation?: (path: PathLike) => Promise<string>;
 }
 
 /**
@@ -30,7 +30,7 @@ export interface MockWriteFileOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string, content: string) => Promise<void>;
+  readonly implementation?: (path: PathLike, content: string) => Promise<void>;
 }
 
 /**
@@ -40,7 +40,7 @@ export interface MockMkdirOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string, options?: MkdirOptions) => Promise<void>;
+  readonly implementation?: (path: PathLike, options?: MkdirOptions) => Promise<void>;
 }
 
 /**
@@ -52,7 +52,7 @@ export interface MockReaddirOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string) => Promise<readonly DirEntry[]>;
+  readonly implementation?: (path: PathLike) => Promise<readonly DirEntry[]>;
 }
 
 /**
@@ -62,7 +62,7 @@ export interface MockUnlinkOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string) => Promise<void>;
+  readonly implementation?: (path: PathLike) => Promise<void>;
 }
 
 /**
@@ -72,7 +72,7 @@ export interface MockRmOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string, options?: RmOptions) => Promise<void>;
+  readonly implementation?: (path: PathLike, options?: RmOptions) => Promise<void>;
 }
 
 /**
@@ -82,7 +82,7 @@ export interface MockCopyTreeOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (src: string, dest: string) => Promise<void>;
+  readonly implementation?: (src: PathLike, dest: PathLike) => Promise<void>;
 }
 
 /**
@@ -92,7 +92,7 @@ export interface MockMakeExecutableOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string) => Promise<void>;
+  readonly implementation?: (path: PathLike) => Promise<void>;
 }
 
 /**
@@ -102,7 +102,7 @@ export interface MockWriteFileBufferOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (path: string, content: Buffer) => Promise<void>;
+  readonly implementation?: (path: PathLike, content: Buffer) => Promise<void>;
 }
 
 /**
@@ -112,7 +112,7 @@ export interface MockSymlinkOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (target: string, linkPath: string) => Promise<void>;
+  readonly implementation?: (target: PathLike, linkPath: PathLike) => Promise<void>;
 }
 
 /**
@@ -122,7 +122,7 @@ export interface MockRenameOptions {
   /** Error to throw */
   readonly error?: FileSystemError;
   /** Custom implementation */
-  readonly implementation?: (oldPath: string, newPath: string) => Promise<void>;
+  readonly implementation?: (oldPath: PathLike, newPath: PathLike) => Promise<void>;
 }
 
 /**
@@ -185,7 +185,7 @@ export interface MockFileSystemLayerOptions {
  */
 export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions): FileSystemLayer {
   return {
-    async readFile(path: string): Promise<string> {
+    async readFile(path: PathLike): Promise<string> {
       if (options?.readFile?.implementation) {
         return options.readFile.implementation(path);
       }
@@ -195,7 +195,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       return options?.readFile?.content ?? "";
     },
 
-    async writeFile(path: string, content: string): Promise<void> {
+    async writeFile(path: PathLike, content: string): Promise<void> {
       if (options?.writeFile?.implementation) {
         return options.writeFile.implementation(path, content);
       }
@@ -205,7 +205,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async mkdir(path: string, mkdirOptions?: MkdirOptions): Promise<void> {
+    async mkdir(path: PathLike, mkdirOptions?: MkdirOptions): Promise<void> {
       if (options?.mkdir?.implementation) {
         return options.mkdir.implementation(path, mkdirOptions);
       }
@@ -215,7 +215,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async readdir(path: string): Promise<readonly DirEntry[]> {
+    async readdir(path: PathLike): Promise<readonly DirEntry[]> {
       if (options?.readdir?.implementation) {
         return options.readdir.implementation(path);
       }
@@ -225,7 +225,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       return options?.readdir?.entries ?? [];
     },
 
-    async unlink(path: string): Promise<void> {
+    async unlink(path: PathLike): Promise<void> {
       if (options?.unlink?.implementation) {
         return options.unlink.implementation(path);
       }
@@ -235,7 +235,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async rm(path: string, rmOptions?: RmOptions): Promise<void> {
+    async rm(path: PathLike, rmOptions?: RmOptions): Promise<void> {
       if (options?.rm?.implementation) {
         return options.rm.implementation(path, rmOptions);
       }
@@ -245,7 +245,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async copyTree(src: string, dest: string): Promise<void> {
+    async copyTree(src: PathLike, dest: PathLike): Promise<void> {
       if (options?.copyTree?.implementation) {
         return options.copyTree.implementation(src, dest);
       }
@@ -255,7 +255,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async makeExecutable(path: string): Promise<void> {
+    async makeExecutable(path: PathLike): Promise<void> {
       if (options?.makeExecutable?.implementation) {
         return options.makeExecutable.implementation(path);
       }
@@ -265,7 +265,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async writeFileBuffer(path: string, content: Buffer): Promise<void> {
+    async writeFileBuffer(path: PathLike, content: Buffer): Promise<void> {
       if (options?.writeFileBuffer?.implementation) {
         return options.writeFileBuffer.implementation(path, content);
       }
@@ -275,7 +275,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async symlink(target: string, linkPath: string): Promise<void> {
+    async symlink(target: PathLike, linkPath: PathLike): Promise<void> {
       if (options?.symlink?.implementation) {
         return options.symlink.implementation(target, linkPath);
       }
@@ -285,7 +285,7 @@ export function createMockFileSystemLayer(options?: MockFileSystemLayerOptions):
       // Default: succeed silently
     },
 
-    async rename(oldPath: string, newPath: string): Promise<void> {
+    async rename(oldPath: PathLike, newPath: PathLike): Promise<void> {
       if (options?.rename?.implementation) {
         return options.rename.implementation(oldPath, newPath);
       }

@@ -5,7 +5,28 @@
  * - Unit testing of services with mock FileSystemLayer
  * - Boundary testing of DefaultFileSystemLayer against real filesystem
  * - Consistent error handling via FileSystemError
+ *
+ * Path handling:
+ * - All methods accept Path objects or strings
+ * - Internally converts paths to native format using path.toNative()
+ * - This enables gradual migration to Path objects while maintaining backward compatibility
  */
+
+import { Path } from "./path";
+
+/** Type for paths accepted by FileSystemLayer (Path object or string) */
+export type PathLike = Path | string;
+
+/**
+ * Convert a PathLike to a native path string for node:fs operations.
+ * @internal
+ */
+function toNativePath(pathLike: PathLike): string {
+  if (pathLike instanceof Path) {
+    return pathLike.toNative();
+  }
+  return pathLike;
+}
 
 /**
  * Directory entry returned by readdir.
@@ -55,7 +76,8 @@ export type FileSystemErrorCode =
  * Abstraction over filesystem operations.
  * Enables unit testing of services that need filesystem access.
  *
- * All paths are absolute. All text operations use UTF-8 encoding.
+ * All paths are absolute. Paths can be Path objects or strings.
+ * All text operations use UTF-8 encoding.
  * Methods throw FileSystemError on failures.
  *
  * NOTE: No exists() method - use try/catch on actual operations to avoid TOCTOU races.
@@ -64,7 +86,7 @@ export interface FileSystemLayer {
   /**
    * Read entire file as UTF-8 string.
    *
-   * @param path - Absolute path to file
+   * @param path - Absolute path to file (Path object or string)
    * @returns File contents as string
    * @throws FileSystemError with code ENOENT if file not found
    * @throws FileSystemError with code EACCES if permission denied
@@ -74,12 +96,12 @@ export interface FileSystemLayer {
    * const content = await fs.readFile('/path/to/config.json');
    * const config = JSON.parse(content);
    */
-  readFile(path: string): Promise<string>;
+  readFile(path: PathLike): Promise<string>;
 
   /**
    * Write content to file. Overwrites existing file.
    *
-   * @param path - Absolute path to file
+   * @param path - Absolute path to file (Path object or string)
    * @param content - String content to write (UTF-8)
    * @throws FileSystemError with code ENOENT if parent directory doesn't exist
    * @throws FileSystemError with code EACCES if permission denied
@@ -88,13 +110,13 @@ export interface FileSystemLayer {
    * @example
    * await fs.writeFile('/path/to/config.json', JSON.stringify(data, null, 2));
    */
-  writeFile(path: string, content: string): Promise<void>;
+  writeFile(path: PathLike, content: string): Promise<void>;
 
   /**
    * Create directory. Creates parent directories by default.
    * No-op if directory already exists.
    *
-   * @param path - Absolute path to directory
+   * @param path - Absolute path to directory (Path object or string)
    * @param options - mkdir options (recursive defaults to true)
    * @throws FileSystemError with code EEXIST if path exists as a file
    * @throws FileSystemError with code EACCES if permission denied
@@ -102,12 +124,12 @@ export interface FileSystemLayer {
    * @example
    * await fs.mkdir('/path/to/new/directory');
    */
-  mkdir(path: string, options?: MkdirOptions): Promise<void>;
+  mkdir(path: PathLike, options?: MkdirOptions): Promise<void>;
 
   /**
    * List directory contents.
    *
-   * @param path - Absolute path to directory
+   * @param path - Absolute path to directory (Path object or string)
    * @returns Array of directory entries with type information
    * @throws FileSystemError with code ENOENT if directory not found
    * @throws FileSystemError with code ENOTDIR if path is not a directory
@@ -116,12 +138,12 @@ export interface FileSystemLayer {
    * const entries = await fs.readdir('/path/to/dir');
    * const subdirs = entries.filter(e => e.isDirectory);
    */
-  readdir(path: string): Promise<readonly DirEntry[]>;
+  readdir(path: PathLike): Promise<readonly DirEntry[]>;
 
   /**
    * Delete a file.
    *
-   * @param path - Absolute path to file
+   * @param path - Absolute path to file (Path object or string)
    * @throws FileSystemError with code ENOENT if file not found
    * @throws FileSystemError with code EISDIR if path is a directory
    * @throws FileSystemError with code EACCES if permission denied
@@ -129,12 +151,12 @@ export interface FileSystemLayer {
    * @example
    * await fs.unlink('/path/to/file.txt');
    */
-  unlink(path: string): Promise<void>;
+  unlink(path: PathLike): Promise<void>;
 
   /**
    * Delete file or directory.
    *
-   * @param path - Absolute path to file or directory
+   * @param path - Absolute path to file or directory (Path object or string)
    * @param options - rm options
    * @param options.recursive - If true, remove directory contents (default: false)
    * @param options.force - If true, ignore ENOENT errors (default: false)
@@ -154,7 +176,7 @@ export interface FileSystemLayer {
    * @example Remove empty directory only
    * await fs.rm('/path/to/empty-dir');
    */
-  rm(path: string, options?: RmOptions): Promise<void>;
+  rm(path: PathLike, options?: RmOptions): Promise<void>;
 
   /**
    * Copy a file or directory tree to a new location.
@@ -163,8 +185,8 @@ export interface FileSystemLayer {
    * Overwrites existing files at destination.
    * Creates destination parent directories if they don't exist.
    *
-   * @param src - Absolute path to source file or directory
-   * @param dest - Absolute path to destination
+   * @param src - Absolute path to source file or directory (Path object or string)
+   * @param dest - Absolute path to destination (Path object or string)
    * @throws FileSystemError with code ENOENT if source doesn't exist
    * @throws FileSystemError with code EACCES if permission denied
    *
@@ -174,25 +196,25 @@ export interface FileSystemLayer {
    * @example Copy directory
    * await fs.copyTree('/src/configs', '/dest/configs');
    */
-  copyTree(src: string, dest: string): Promise<void>;
+  copyTree(src: PathLike, dest: PathLike): Promise<void>;
 
   /**
    * Make a file executable (sets mode 0o755).
    * On Windows, this is a no-op since executability is determined by file extension.
    *
-   * @param path - Absolute path to file
+   * @param path - Absolute path to file (Path object or string)
    * @throws FileSystemError with code ENOENT if file not found
    * @throws FileSystemError with code EACCES if permission denied
    *
    * @example Make script executable
    * await fs.makeExecutable('/path/to/script.sh');
    */
-  makeExecutable(path: string): Promise<void>;
+  makeExecutable(path: PathLike): Promise<void>;
 
   /**
    * Write binary content to file. Overwrites existing file.
    *
-   * @param path - Absolute path to file
+   * @param path - Absolute path to file (Path object or string)
    * @param content - Buffer content to write
    * @throws FileSystemError with code ENOENT if parent directory doesn't exist
    * @throws FileSystemError with code EACCES if permission denied
@@ -202,21 +224,21 @@ export interface FileSystemLayer {
    * const buffer = await fetchBinaryData();
    * await fs.writeFileBuffer('/path/to/binary', buffer);
    */
-  writeFileBuffer(path: string, content: Buffer): Promise<void>;
+  writeFileBuffer(path: PathLike, content: Buffer): Promise<void>;
 
   /**
    * Create a symbolic link.
    * Removes existing symlink at linkPath before creating new one.
    *
-   * @param target - Path the symlink should point to
-   * @param linkPath - Path where the symlink will be created
+   * @param target - Path the symlink should point to (Path object or string)
+   * @param linkPath - Path where the symlink will be created (Path object or string)
    * @throws FileSystemError with code ENOENT if parent directory of linkPath doesn't exist
    * @throws FileSystemError with code EACCES if permission denied
    *
    * @example Create symlink to versioned directory
    * await fs.symlink('/app/opencode/1.0.0', '/app/opencode/current');
    */
-  symlink(target: string, linkPath: string): Promise<void>;
+  symlink(target: PathLike, linkPath: PathLike): Promise<void>;
 
   /**
    * Rename (move) a file or directory atomically.
@@ -224,8 +246,8 @@ export interface FileSystemLayer {
    * 1. Write to a temp file
    * 2. Rename temp file to target (atomic on most filesystems)
    *
-   * @param oldPath - Current path of the file/directory
-   * @param newPath - New path for the file/directory
+   * @param oldPath - Current path of the file/directory (Path object or string)
+   * @param newPath - New path for the file/directory (Path object or string)
    * @throws FileSystemError with code ENOENT if oldPath doesn't exist
    * @throws FileSystemError with code EACCES if permission denied
    *
@@ -233,7 +255,7 @@ export interface FileSystemLayer {
    * await fs.writeFile('/path/to/file.tmp', content);
    * await fs.rename('/path/to/file.tmp', '/path/to/file');
    */
-  rename(oldPath: string, newPath: string): Promise<void>;
+  rename(oldPath: PathLike, newPath: PathLike): Promise<void>;
 }
 
 // ============================================================================
@@ -309,18 +331,20 @@ function mapError(error: unknown, path: string): FileSystemError {
 /**
  * Default implementation of FileSystemLayer using node:fs/promises.
  * Maps Node.js errors to FileSystemError for consistent error handling.
+ * Accepts both Path objects and strings, converting to native format internally.
  */
 export class DefaultFileSystemLayer implements FileSystemLayer {
   constructor(private readonly logger: Logger) {}
 
-  async readFile(filePath: string): Promise<string> {
-    this.logger.debug("Read", { path: filePath });
+  async readFile(filePath: PathLike): Promise<string> {
+    const nativePath = toNativePath(filePath);
+    this.logger.debug("Read", { path: nativePath });
     try {
-      return await fs.readFile(filePath, "utf-8");
+      return await fs.readFile(nativePath, "utf-8");
     } catch (error) {
-      const fsError = mapError(error, filePath);
+      const fsError = mapError(error, nativePath);
       this.logger.warn("Read failed", {
-        path: filePath,
+        path: nativePath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -328,14 +352,15 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async writeFile(filePath: string, content: string): Promise<void> {
-    this.logger.debug("Write", { path: filePath });
+  async writeFile(filePath: PathLike, content: string): Promise<void> {
+    const nativePath = toNativePath(filePath);
+    this.logger.debug("Write", { path: nativePath });
     try {
-      await fs.writeFile(filePath, content, "utf-8");
+      await fs.writeFile(nativePath, content, "utf-8");
     } catch (error) {
-      const fsError = mapError(error, filePath);
+      const fsError = mapError(error, nativePath);
       this.logger.warn("Write failed", {
-        path: filePath,
+        path: nativePath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -343,15 +368,16 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async mkdir(dirPath: string, options?: MkdirOptions): Promise<void> {
+  async mkdir(dirPath: PathLike, options?: MkdirOptions): Promise<void> {
+    const nativePath = toNativePath(dirPath);
     const recursive = options?.recursive ?? true;
-    this.logger.debug("Mkdir", { path: dirPath });
+    this.logger.debug("Mkdir", { path: nativePath });
     try {
-      await fs.mkdir(dirPath, { recursive });
+      await fs.mkdir(nativePath, { recursive });
     } catch (error) {
-      const fsError = mapError(error, dirPath);
+      const fsError = mapError(error, nativePath);
       this.logger.warn("Mkdir failed", {
-        path: dirPath,
+        path: nativePath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -359,21 +385,22 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async readdir(dirPath: string): Promise<readonly DirEntry[]> {
+  async readdir(dirPath: PathLike): Promise<readonly DirEntry[]> {
+    const nativePath = toNativePath(dirPath);
     try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      const entries = await fs.readdir(nativePath, { withFileTypes: true });
       const result = entries.map((entry) => ({
         name: entry.name,
         isDirectory: entry.isDirectory(),
         isFile: entry.isFile(),
         isSymbolicLink: entry.isSymbolicLink(),
       }));
-      this.logger.debug("Readdir", { path: dirPath, count: result.length });
+      this.logger.debug("Readdir", { path: nativePath, count: result.length });
       return result;
     } catch (error) {
-      const fsError = mapError(error, dirPath);
+      const fsError = mapError(error, nativePath);
       this.logger.warn("Readdir failed", {
-        path: dirPath,
+        path: nativePath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -381,14 +408,15 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async unlink(filePath: string): Promise<void> {
-    this.logger.debug("Unlink", { path: filePath });
+  async unlink(filePath: PathLike): Promise<void> {
+    const nativePath = toNativePath(filePath);
+    this.logger.debug("Unlink", { path: nativePath });
     try {
-      await fs.unlink(filePath);
+      await fs.unlink(nativePath);
     } catch (error) {
-      const fsError = mapError(error, filePath);
+      const fsError = mapError(error, nativePath);
       this.logger.warn("Unlink failed", {
-        path: filePath,
+        path: nativePath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -396,23 +424,24 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async rm(targetPath: string, options?: RmOptions): Promise<void> {
+  async rm(targetPath: PathLike, options?: RmOptions): Promise<void> {
+    const nativePath = toNativePath(targetPath);
     const recursive = options?.recursive ?? false;
     const force = options?.force ?? false;
-    this.logger.debug("Rm", { path: targetPath, recursive });
+    this.logger.debug("Rm", { path: nativePath, recursive });
     try {
       if (recursive) {
         // Use fs.rm for recursive deletion
-        await fs.rm(targetPath, { recursive, force });
+        await fs.rm(nativePath, { recursive, force });
       } else {
         // For non-recursive: check if directory or file
-        const stat = await fs.stat(targetPath);
+        const stat = await fs.stat(nativePath);
         if (stat.isDirectory()) {
           // Use rmdir for directories - fails with ENOTEMPTY if not empty
-          await fs.rmdir(targetPath);
+          await fs.rmdir(nativePath);
         } else {
           // Use rm for files
-          await fs.rm(targetPath, { force });
+          await fs.rm(nativePath, { force });
         }
       }
     } catch (error) {
@@ -421,9 +450,9 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       if (force && nodeError.code === "ENOENT") {
         return;
       }
-      const fsError = mapError(error, targetPath);
+      const fsError = mapError(error, nativePath);
       this.logger.warn("Rm failed", {
-        path: targetPath,
+        path: nativePath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -431,48 +460,52 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async copyTree(src: string, dest: string): Promise<void> {
-    this.logger.debug("CopyTree", { src, dest });
+  async copyTree(src: PathLike, dest: PathLike): Promise<void> {
+    const nativeSrc = toNativePath(src);
+    const nativeDest = toNativePath(dest);
+    this.logger.debug("CopyTree", { src: nativeSrc, dest: nativeDest });
     try {
-      await fs.cp(src, dest, {
+      await fs.cp(nativeSrc, nativeDest, {
         recursive: true,
         force: true,
         preserveTimestamps: true,
       });
     } catch (error) {
-      const fsError = mapError(error, src);
+      const fsError = mapError(error, nativeSrc);
       this.logger.warn("CopyTree failed", {
-        src,
-        dest,
+        src: nativeSrc,
+        dest: nativeDest,
         code: fsError.fsCode,
         error: fsError.message,
       });
       throw fsError;
     }
-    this.logger.debug("CopyTree complete", { src, dest });
+    this.logger.debug("CopyTree complete", { src: nativeSrc, dest: nativeDest });
   }
 
-  async makeExecutable(filePath: string): Promise<void> {
+  async makeExecutable(filePath: PathLike): Promise<void> {
+    const nativePath = toNativePath(filePath);
     // On Windows, executability is determined by file extension, not permissions
     if (process.platform === "win32") {
       return;
     }
 
     try {
-      await fs.chmod(filePath, 0o755);
+      await fs.chmod(nativePath, 0o755);
     } catch (error) {
-      throw mapError(error, filePath);
+      throw mapError(error, nativePath);
     }
   }
 
-  async writeFileBuffer(filePath: string, content: Buffer): Promise<void> {
-    this.logger.debug("WriteBuffer", { path: filePath, size: content.length });
+  async writeFileBuffer(filePath: PathLike, content: Buffer): Promise<void> {
+    const nativePath = toNativePath(filePath);
+    this.logger.debug("WriteBuffer", { path: nativePath, size: content.length });
     try {
-      await fs.writeFile(filePath, content);
+      await fs.writeFile(nativePath, content);
     } catch (error) {
-      const fsError = mapError(error, filePath);
+      const fsError = mapError(error, nativePath);
       this.logger.warn("WriteBuffer failed", {
-        path: filePath,
+        path: nativePath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -480,14 +513,16 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async symlink(target: string, linkPath: string): Promise<void> {
-    this.logger.debug("Symlink", { target, linkPath });
+  async symlink(target: PathLike, linkPath: PathLike): Promise<void> {
+    const nativeTarget = toNativePath(target);
+    const nativeLinkPath = toNativePath(linkPath);
+    this.logger.debug("Symlink", { target: nativeTarget, linkPath: nativeLinkPath });
     try {
       // Remove existing symlink if present
       try {
-        const stat = await fs.lstat(linkPath);
+        const stat = await fs.lstat(nativeLinkPath);
         if (stat.isSymbolicLink()) {
-          await fs.unlink(linkPath);
+          await fs.unlink(nativeLinkPath);
         }
       } catch (error) {
         // Ignore ENOENT - file doesn't exist, which is fine
@@ -500,12 +535,12 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       // Create symlink
       // On Windows, use 'junction' for directories (doesn't require admin)
       const type = process.platform === "win32" ? "junction" : undefined;
-      await fs.symlink(target, linkPath, type);
+      await fs.symlink(nativeTarget, nativeLinkPath, type);
     } catch (error) {
-      const fsError = mapError(error, linkPath);
+      const fsError = mapError(error, nativeLinkPath);
       this.logger.warn("Symlink failed", {
-        target,
-        linkPath,
+        target: nativeTarget,
+        linkPath: nativeLinkPath,
         code: fsError.fsCode,
         error: fsError.message,
       });
@@ -513,15 +548,17 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     }
   }
 
-  async rename(oldPath: string, newPath: string): Promise<void> {
-    this.logger.debug("Rename", { oldPath, newPath });
+  async rename(oldPath: PathLike, newPath: PathLike): Promise<void> {
+    const nativeOldPath = toNativePath(oldPath);
+    const nativeNewPath = toNativePath(newPath);
+    this.logger.debug("Rename", { oldPath: nativeOldPath, newPath: nativeNewPath });
     try {
-      await fs.rename(oldPath, newPath);
+      await fs.rename(nativeOldPath, nativeNewPath);
     } catch (error) {
-      const fsError = mapError(error, oldPath);
+      const fsError = mapError(error, nativeOldPath);
       this.logger.warn("Rename failed", {
-        oldPath,
-        newPath,
+        oldPath: nativeOldPath,
+        newPath: nativeNewPath,
         code: fsError.fsCode,
         error: fsError.message,
       });

@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./opencode-server-manager";
 import { AgentStatusManager } from "./agent-status-manager";
 import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
+import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { SILENT_LOGGER } from "../logging";
 import type { MockSpawnedProcess, MockProcessRunner } from "../platform/process.test-utils";
 import type { PortManager, HttpClient } from "../platform/network";
@@ -44,27 +45,10 @@ function createTestHttpClient(): HttpClient & { fetch: ReturnType<typeof vi.fn> 
 
 /**
  * Create a mock PathProvider for testing.
+ * Uses the standard createMockPathProvider which returns Path objects.
  */
 function createTestPathProvider(): PathProvider {
-  return {
-    dataRootDir: "/test/app-data",
-    projectsDir: "/test/app-data/projects",
-    vscodeDir: "/test/app-data/vscode",
-    vscodeExtensionsDir: "/test/app-data/vscode/extensions",
-    vscodeUserDataDir: "/test/app-data/vscode/user-data",
-    setupMarkerPath: "/test/app-data/.setup-completed",
-    electronDataDir: "/test/app-data/electron",
-    vscodeAssetsDir: "/mock/assets",
-    appIconPath: "/test/resources/icon.png",
-    binDir: "/test/app-data/bin",
-    codeServerDir: "/test/app-data/code-server/1.0.0",
-    opencodeDir: "/test/app-data/opencode/1.0.0",
-    codeServerBinaryPath: "/test/app-data/code-server/1.0.0/bin/code-server",
-    opencodeBinaryPath: "/test/app-data/opencode/1.0.0/opencode",
-    bundledNodePath: "/test/app-data/code-server/1.0.0/lib/node",
-    getProjectWorkspacesDir: (projectPath: string) =>
-      `/test/app-data/projects/${projectPath}/workspaces`,
-  };
+  return createMockPathProvider();
 }
 
 describe("OpenCodeServerManager integration", () => {

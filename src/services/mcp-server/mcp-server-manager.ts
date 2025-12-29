@@ -83,7 +83,7 @@ export class McpServerManager implements IDisposable {
 
       this.logger.info("Manager started", {
         port: this.port,
-        configPath: this.pathProvider.mcpConfigPath,
+        configPath: this.pathProvider.mcpConfigPath.toString(),
       });
 
       return this.port;
@@ -120,10 +120,10 @@ export class McpServerManager implements IDisposable {
    * Get the path to the MCP config file.
    * The config file is written during VS Code setup.
    *
-   * @returns Config file path from PathProvider
+   * @returns Config file path from PathProvider (as normalized string)
    */
   getConfigPath(): string {
-    return this.pathProvider.mcpConfigPath;
+    return this.pathProvider.mcpConfigPath.toString();
   }
 
   /**

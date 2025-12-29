@@ -4,6 +4,18 @@
  *
  * Uses v2 API types where projects and workspaces include IDs from the main process.
  * IDs are NOT generated client-side - they come from API responses.
+ *
+ * ## Path Handling
+ *
+ * All paths in this store are **normalized strings** from the main process:
+ * - POSIX separators (forward slashes) on all platforms
+ * - Lowercase on Windows (case-insensitive filesystem)
+ * - No trailing slashes
+ *
+ * Path comparison in the renderer is safe using `===` since paths are pre-normalized.
+ * The Path class is NOT used in the renderer - all normalization happens in main process.
+ *
+ * Example: `workspace.path === _activeWorkspacePath` works correctly on all platforms.
  */
 
 import type { Project, Workspace, ProjectId, WorkspaceName, WorkspaceRef } from "@shared/api/types";

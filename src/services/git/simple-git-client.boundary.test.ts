@@ -14,19 +14,20 @@ import {
   withTempRepoWithRemote,
 } from "../test-utils";
 import { promises as fs } from "fs";
-import path from "path";
+import nodePath from "path";
 import { simpleGit } from "simple-git";
 import { SILENT_LOGGER } from "../logging";
+import { Path } from "../platform/path";
 
 describe("SimpleGitClient", () => {
   let client: SimpleGitClient;
   let cleanup: () => Promise<void>;
-  let repoPath: string;
+  let repoPath: Path;
 
   beforeEach(async () => {
     client = new SimpleGitClient(SILENT_LOGGER);
     const result = await createTestGitRepo();
-    repoPath = result.path;
+    repoPath = new Path(result.path);
     cleanup = result.cleanup;
   });
 
@@ -43,8 +44,8 @@ describe("SimpleGitClient", () => {
 
     it("returns false for a subdirectory within a git repository", async () => {
       // Create a subdirectory
-      const subDir = path.join(repoPath, "subdir");
-      await fs.mkdir(subDir);
+      const subDir = new Path(repoPath, "subdir");
+      await fs.mkdir(subDir.toNative());
 
       const result = await client.isRepositoryRoot(subDir);
 
@@ -54,7 +55,7 @@ describe("SimpleGitClient", () => {
     it("returns false for a non-git directory", async () => {
       const tempDir = await createTempDir();
       try {
-        const result = await client.isRepositoryRoot(tempDir.path);
+        const result = await client.isRepositoryRoot(new Path(tempDir.path));
         expect(result).toBe(false);
       } finally {
         await tempDir.cleanup();
@@ -62,7 +63,7 @@ describe("SimpleGitClient", () => {
     });
 
     it("throws GitError for non-existent path", async () => {
-      const nonExistentPath = path.join(repoPath, "non-existent");
+      const nonExistentPath = new Path(repoPath, "non-existent");
 
       await expect(client.isRepositoryRoot(nonExistentPath)).rejects.toThrow(GitError);
     });
@@ -73,20 +74,20 @@ describe("SimpleGitClient", () => {
       const worktrees = await client.listWorktrees(repoPath);
 
       expect(worktrees).toHaveLength(1);
-      expect(worktrees[0].isMain).toBe(true);
-      expect(worktrees[0].path).toBe(repoPath);
+      expect(worktrees[0]!.isMain).toBe(true);
+      expect(worktrees[0]!.path.equals(repoPath)).toBe(true);
     });
 
     it("includes branch information", async () => {
       const worktrees = await client.listWorktrees(repoPath);
 
-      expect(worktrees[0].branch).toBe("main");
+      expect(worktrees[0]!.branch).toBe("main");
     });
 
     it("throws GitError for non-git directory", async () => {
       const tempDir = await createTempDir();
       try {
-        await expect(client.listWorktrees(tempDir.path)).rejects.toThrow(GitError);
+        await expect(client.listWorktrees(new Path(tempDir.path))).rejects.toThrow(GitError);
       } finally {
         await tempDir.cleanup();
       }
@@ -94,18 +95,18 @@ describe("SimpleGitClient", () => {
   });
 
   describe("addWorktree and removeWorktree", () => {
-    let worktreePath: string;
+    let worktreePath: Path;
 
     beforeEach(async () => {
       // Create a branch to use for the worktree
       await client.createBranch(repoPath, "feature-branch", "main");
-      worktreePath = path.join(path.dirname(repoPath), "worktree-test");
+      worktreePath = new Path(repoPath.dirname, "worktree-test");
     });
 
     afterEach(async () => {
       // Clean up worktree if it exists
       try {
-        await fs.rm(worktreePath, { recursive: true, force: true });
+        await fs.rm(worktreePath.toNative(), { recursive: true, force: true });
       } catch {
         // Ignore cleanup errors
       }
@@ -119,7 +120,7 @@ describe("SimpleGitClient", () => {
 
       const newWorktree = worktrees.find((w) => !w.isMain);
       expect(newWorktree).toBeDefined();
-      expect(newWorktree!.path).toBe(worktreePath);
+      expect(newWorktree!.path.equals(worktreePath)).toBe(true);
       expect(newWorktree!.branch).toBe("feature-branch");
     });
 
@@ -129,7 +130,7 @@ describe("SimpleGitClient", () => {
 
       const worktrees = await client.listWorktrees(repoPath);
       expect(worktrees).toHaveLength(1);
-      expect(worktrees[0].isMain).toBe(true);
+      expect(worktrees[0]!.isMain).toBe(true);
     });
 
     it("throws GitError when adding worktree with non-existent branch", async () => {
@@ -139,7 +140,8 @@ describe("SimpleGitClient", () => {
     });
 
     it("throws GitError when removing non-existent worktree", async () => {
-      await expect(client.removeWorktree(repoPath, "/non/existent/path")).rejects.toThrow(GitError);
+      const nonExistentPath = new Path(repoPath.dirname, "non-existent");
+      await expect(client.removeWorktree(repoPath, nonExistentPath)).rejects.toThrow(GitError);
     });
   });
 
@@ -147,11 +149,11 @@ describe("SimpleGitClient", () => {
     it("prunes stale worktree entries", async () => {
       // Create a worktree
       await client.createBranch(repoPath, "prune-test", "main");
-      const worktreePath = path.join(path.dirname(repoPath), "worktree-prune");
+      const worktreePath = new Path(repoPath.dirname, "worktree-prune");
       await client.addWorktree(repoPath, worktreePath, "prune-test");
 
       // Manually delete the worktree directory (simulating stale entry)
-      await fs.rm(worktreePath, { recursive: true, force: true });
+      await fs.rm(worktreePath.toNative(), { recursive: true, force: true });
 
       // Prune should not throw
       await expect(client.pruneWorktrees(repoPath)).resolves.not.toThrow();
@@ -221,7 +223,7 @@ describe("SimpleGitClient", () => {
     it("returns null for detached HEAD", async () => {
       const detachedRepo = await createTestGitRepo({ detached: true });
       try {
-        const branch = await client.getCurrentBranch(detachedRepo.path);
+        const branch = await client.getCurrentBranch(new Path(detachedRepo.path));
         expect(branch).toBeNull();
       } finally {
         await detachedRepo.cleanup();
@@ -231,7 +233,7 @@ describe("SimpleGitClient", () => {
     it("throws GitError for non-git directory", async () => {
       const tempDir = await createTempDir();
       try {
-        await expect(client.getCurrentBranch(tempDir.path)).rejects.toThrow(GitError);
+        await expect(client.getCurrentBranch(new Path(tempDir.path))).rejects.toThrow(GitError);
       } finally {
         await tempDir.cleanup();
       }
@@ -251,7 +253,7 @@ describe("SimpleGitClient", () => {
     it("detects dirty state", async () => {
       const dirtyRepo = await createTestGitRepo({ dirty: true });
       try {
-        const status = await client.getStatus(dirtyRepo.path);
+        const status = await client.getStatus(new Path(dirtyRepo.path));
 
         expect(status.isDirty).toBe(true);
         expect(status.modifiedCount + status.untrackedCount).toBeGreaterThan(0);
@@ -262,7 +264,7 @@ describe("SimpleGitClient", () => {
 
     it("counts untracked files", async () => {
       // Create an untracked file
-      await fs.writeFile(path.join(repoPath, "untracked.txt"), "untracked content");
+      await fs.writeFile(nodePath.join(repoPath.toNative(), "untracked.txt"), "untracked content");
 
       const status = await client.getStatus(repoPath);
 
@@ -272,12 +274,11 @@ describe("SimpleGitClient", () => {
 
     it("counts staged files", async () => {
       // Create and stage a file
-      const filePath = path.join(repoPath, "staged.txt");
+      const filePath = nodePath.join(repoPath.toNative(), "staged.txt");
       await fs.writeFile(filePath, "staged content");
 
       // Use simple-git directly to stage the file
-      const simpleGit = (await import("simple-git")).default;
-      const git = simpleGit(repoPath);
+      const git = simpleGit(repoPath.toNative());
       await git.add("staged.txt");
 
       const status = await client.getStatus(repoPath);
@@ -295,7 +296,7 @@ describe("SimpleGitClient", () => {
 
     it("fetches from configured origin", async () => {
       await withTempRepoWithRemote(async (path) => {
-        await expect(client.fetch(path)).resolves.not.toThrow();
+        await expect(client.fetch(new Path(path))).resolves.not.toThrow();
       });
     });
 
@@ -304,7 +305,7 @@ describe("SimpleGitClient", () => {
         // Create commit in remote
         await createCommitInRemote(remotePath, "Remote commit");
 
-        await client.fetch(path);
+        await client.fetch(new Path(path));
 
         // Verify remote ref is updated (origin/main has new commit)
         const git = simpleGit(path);
@@ -315,13 +316,13 @@ describe("SimpleGitClient", () => {
 
     it("fetches with explicit remote name", async () => {
       await withTempRepoWithRemote(async (path) => {
-        await expect(client.fetch(path, "origin")).resolves.not.toThrow();
+        await expect(client.fetch(new Path(path), "origin")).resolves.not.toThrow();
       });
     });
 
     it("throws GitError when fetching from non-existent remote", async () => {
       await withTempRepoWithRemote(async (path) => {
-        await expect(client.fetch(path, "nonexistent")).rejects.toThrow(GitError);
+        await expect(client.fetch(new Path(path), "nonexistent")).rejects.toThrow(GitError);
       });
     });
   });
@@ -335,7 +336,7 @@ describe("SimpleGitClient", () => {
 
     it("returns configured remotes", async () => {
       await withTempRepoWithRemote(async (path) => {
-        const remotes = await client.listRemotes(path);
+        const remotes = await client.listRemotes(new Path(path));
         expect(remotes).toEqual(["origin"]);
       });
     });
@@ -346,7 +347,7 @@ describe("SimpleGitClient", () => {
         const git = simpleGit(path);
         await git.addRemote("upstream", "../upstream.git");
 
-        const remotes = await client.listRemotes(path);
+        const remotes = await client.listRemotes(new Path(path));
         expect(remotes).toHaveLength(2);
         expect(remotes).toContain("origin");
         expect(remotes).toContain("upstream");
@@ -410,7 +411,7 @@ describe("SimpleGitClient", () => {
       const tempDir = await createTempDir();
       try {
         await expect(
-          client.getBranchConfigsByPrefix(tempDir.path, "main", "codehydra")
+          client.getBranchConfigsByPrefix(new Path(tempDir.path), "main", "codehydra")
         ).rejects.toThrow(GitError);
       } finally {
         await tempDir.cleanup();
@@ -444,7 +445,7 @@ describe("SimpleGitClient", () => {
       const tempDir = await createTempDir();
       try {
         await expect(
-          client.unsetBranchConfig(tempDir.path, "main", "codehydra.note")
+          client.unsetBranchConfig(new Path(tempDir.path), "main", "codehydra.note")
         ).rejects.toThrow(GitError);
       } finally {
         await tempDir.cleanup();
@@ -499,12 +500,66 @@ describe("SimpleGitClient", () => {
     it("getBranchConfig throws GitError for non-repo path", async () => {
       const tempDir = await createTempDir();
       try {
-        await expect(client.getBranchConfig(tempDir.path, "main", "base")).rejects.toThrow(
-          GitError
-        );
+        await expect(
+          client.getBranchConfig(new Path(tempDir.path), "main", "base")
+        ).rejects.toThrow(GitError);
       } finally {
         await tempDir.cleanup();
       }
+    });
+  });
+
+  /**
+   * Git POSIX Path Output Verification
+   *
+   * This test verifies that git returns POSIX-style paths (forward slashes) even on Windows.
+   * This is critical for the path normalization strategy:
+   * - Git outputs: "C:/Users/..." (POSIX style)
+   * - We can wrap directly with new Path() without conversion
+   * - Avoids the current bug of converting to native then back to POSIX
+   *
+   * Note: On Unix, paths are already POSIX-style, so this test primarily matters for Windows CI.
+   */
+  describe("git POSIX path output format (raw git output)", () => {
+    it("git worktree list --porcelain returns POSIX paths", async () => {
+      // Test raw git output directly (bypass our client)
+      const git = simpleGit(repoPath.toNative());
+      const rawOutput = await git.raw(["worktree", "list", "--porcelain"]);
+
+      // Parse worktree paths from raw output
+      const lines = rawOutput.split("\n");
+      const worktreePaths: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          worktreePaths.push(line.substring("worktree ".length));
+        }
+      }
+
+      expect(worktreePaths.length).toBeGreaterThanOrEqual(1);
+
+      for (const wtPath of worktreePaths) {
+        // Git on all platforms returns forward slashes (POSIX format)
+        // Even on Windows: "C:/Users/..." not "C:\Users\..."
+        expect(wtPath).not.toContain("\\");
+        // Path should be absolute
+        expect(nodePath.isAbsolute(wtPath)).toBe(true);
+        // Raw git output should be directly usable with Path class
+        expect(() => new Path(wtPath)).not.toThrow();
+      }
+    });
+
+    it("git rev-parse --show-toplevel returns POSIX path", async () => {
+      // Test raw git output for repository root
+      const git = simpleGit(repoPath.toNative());
+      const rawOutput = await git.raw(["rev-parse", "--show-toplevel"]);
+      const rootPath = rawOutput.trim();
+
+      // Git returns POSIX format on all platforms
+      expect(rootPath).not.toContain("\\");
+      // Path should be absolute
+      expect(nodePath.isAbsolute(rootPath)).toBe(true);
+      // Should be directly usable with Path class
+      expect(() => new Path(rootPath)).not.toThrow();
     });
   });
 });

@@ -3,7 +3,6 @@
  * Unit tests for WrapperScriptGenerationService.
  */
 
-import { dirname, sep } from "path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WrapperScriptGenerationService } from "./wrapper-script-generation-service";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
@@ -14,6 +13,51 @@ import {
 } from "../platform/filesystem.test-utils";
 import type { PathProvider } from "../platform/path-provider";
 import type { PlatformInfo } from "../platform/platform-info";
+import type { PathLike } from "../platform/filesystem";
+
+/**
+ * Helper to find a writeFile call by path pattern.
+ * Returns [path, content] if found, undefined otherwise.
+ * @param exactEnd - if true, the pattern must match the end of the path exactly
+ */
+function findWriteCall(
+  mockFs: SpyFileSystemLayer,
+  pathPattern: string,
+  exactEnd: boolean = false
+): [string, string] | undefined {
+  const calls = mockFs.writeFile.mock.calls as Array<[PathLike, string]>;
+  for (const [path, content] of calls) {
+    const pathStr = String(path);
+    if (exactEnd) {
+      // Match exact end of path (e.g., "/opencode" won't match "/opencode.cjs")
+      if (pathStr.endsWith(pathPattern)) {
+        return [pathStr, content];
+      }
+    } else if (pathStr.includes(pathPattern)) {
+      return [pathStr, content];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Helper to check if makeExecutable was called with a path matching pattern.
+ * @param exactEnd - if true, the pattern must match the end of the path exactly
+ */
+function findMakeExecutableCall(
+  mockFs: SpyFileSystemLayer,
+  pathPattern: string,
+  exactEnd: boolean = false
+): boolean {
+  const calls = mockFs.makeExecutable.mock.calls as Array<[PathLike]>;
+  return calls.some(([path]) => {
+    const pathStr = String(path);
+    if (exactEnd) {
+      return pathStr.endsWith(pathPattern);
+    }
+    return pathStr.includes(pathPattern);
+  });
+}
 
 describe("WrapperScriptGenerationService", () => {
   let mockFs: SpyFileSystemLayer;
@@ -49,12 +93,10 @@ describe("WrapperScriptGenerationService", () => {
 
       await service.regenerate();
 
-      // Should write code script
-      // Use path.sep to handle platform differences in test runner vs target platform
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining(`${sep}bin${sep}code`),
-        expect.stringContaining("#!/bin/sh")
-      );
+      // Should write code script - use exactEnd to match "/code" but not "/opencode"
+      const codeCall = findWriteCall(mockFs, "/code", true);
+      expect(codeCall).toBeDefined();
+      expect(codeCall![1]).toContain("#!/bin/sh");
     });
 
     it("generates opencode wrapper script on Unix", async () => {
@@ -67,12 +109,12 @@ describe("WrapperScriptGenerationService", () => {
 
       await service.regenerate();
 
-      // Should write opencode script
-      // Use path.sep to handle platform differences in test runner vs target platform
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining(`${sep}bin${sep}opencode`),
-        expect.stringContaining("#!/bin/sh")
-      );
+      // Should write opencode shell script (the thin wrapper)
+      // Use exactEnd=true to match "/opencode" but not "/opencode.cjs"
+      const opencodeCall = findWriteCall(mockFs, "/opencode", true);
+      expect(opencodeCall).toBeDefined();
+      // The shell wrapper contains a shebang
+      expect(opencodeCall![1]).toContain("#!/bin/sh");
     });
 
     it("generates .cmd scripts on Windows", async () => {
@@ -86,16 +128,14 @@ describe("WrapperScriptGenerationService", () => {
       await service.regenerate();
 
       // Should write code.cmd
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("code.cmd"),
-        expect.stringContaining("@echo off")
-      );
+      const codeCall = findWriteCall(mockFs, "code.cmd");
+      expect(codeCall).toBeDefined();
+      expect(codeCall![1]).toContain("@echo off");
 
       // Should write opencode.cmd
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("opencode.cmd"),
-        expect.stringContaining("@echo off")
-      );
+      const opencodeCall = findWriteCall(mockFs, "opencode.cmd");
+      expect(opencodeCall).toBeDefined();
+      expect(opencodeCall![1]).toContain("@echo off");
     });
 
     it("makes scripts executable on Unix", async () => {
@@ -108,14 +148,9 @@ describe("WrapperScriptGenerationService", () => {
 
       await service.regenerate();
 
-      // Should call makeExecutable for each script
-      // Use path.sep to handle platform differences in test runner vs target platform
-      expect(mockFs.makeExecutable).toHaveBeenCalledWith(
-        expect.stringContaining(`${sep}bin${sep}code`)
-      );
-      expect(mockFs.makeExecutable).toHaveBeenCalledWith(
-        expect.stringContaining(`${sep}bin${sep}opencode`)
-      );
+      // Should call makeExecutable for each script - use exactEnd to avoid false matches
+      expect(findMakeExecutableCall(mockFs, "/code", true)).toBe(true);
+      expect(findMakeExecutableCall(mockFs, "/opencode", true)).toBe(true);
     });
 
     it("does not call makeExecutable on Windows", async () => {
@@ -143,11 +178,9 @@ describe("WrapperScriptGenerationService", () => {
       await service.regenerate();
 
       // The code script should reference code-linux.sh
-      // Use path.sep to handle platform differences in test runner vs target platform
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining(`${sep}bin${sep}code`),
-        expect.stringContaining("code-linux.sh")
-      );
+      const codeCall = findWriteCall(mockFs, "/code", true);
+      expect(codeCall).toBeDefined();
+      expect(codeCall![1]).toContain("code-linux.sh");
     });
 
     it("generates correct remote-cli path on macOS", async () => {
@@ -161,11 +194,9 @@ describe("WrapperScriptGenerationService", () => {
       await service.regenerate();
 
       // The code script should reference code-darwin.sh
-      // Use path.sep to handle platform differences in test runner vs target platform
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining(`${sep}bin${sep}code`),
-        expect.stringContaining("code-darwin.sh")
-      );
+      const codeCall = findWriteCall(mockFs, "/code", true);
+      expect(codeCall).toBeDefined();
+      expect(codeCall![1]).toContain("code-darwin.sh");
     });
 
     it("generates correct remote-cli path on Windows", async () => {
@@ -179,10 +210,9 @@ describe("WrapperScriptGenerationService", () => {
       await service.regenerate();
 
       // The code.cmd script should reference code.cmd
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining("code.cmd"),
-        expect.stringContaining("remote-cli\\code.cmd")
-      );
+      const codeCall = findWriteCall(mockFs, "code.cmd", true);
+      expect(codeCall).toBeDefined();
+      expect(codeCall![1]).toContain("remote-cli\\code.cmd");
     });
 
     it("writes exactly 3 scripts plus OpenCode config on Unix", async () => {
@@ -231,7 +261,7 @@ describe("WrapperScriptGenerationService", () => {
       await service.regenerate();
 
       expect(mockLogger.debug).toHaveBeenCalledWith("Regenerating wrapper scripts", {
-        binDir: mockPathProvider.binDir,
+        binDir: mockPathProvider.binDir.toString(),
       });
       expect(mockLogger.info).toHaveBeenCalledWith("Startup files regenerated", {
         scripts: 3,
@@ -249,8 +279,8 @@ describe("WrapperScriptGenerationService", () => {
       await service.regenerate();
 
       // Should create directory for OpenCode config (dirname of mcpConfigPath)
-      // Use dirname() to handle platform path differences (forward vs backslash)
-      expect(mockFs.mkdir).toHaveBeenCalledWith(dirname(mockPathProvider.mcpConfigPath));
+      // Path objects have a dirname accessor that returns a Path
+      expect(mockFs.mkdir).toHaveBeenCalledWith(mockPathProvider.mcpConfigPath.dirname);
     });
   });
 });

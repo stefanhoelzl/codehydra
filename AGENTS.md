@@ -82,6 +82,37 @@ All external system access MUST go through abstraction interfaces. Direct librar
 
 **Full details**: See [Service Layer Patterns](docs/PATTERNS.md#service-layer-patterns) for implementation examples and mock factories.
 
+### Path Handling Requirements
+
+**ALWAYS use the `Path` class for internal path handling.**
+
+All internal path handling MUST use the `Path` class for cross-platform consistency:
+
+```typescript
+import { Path } from "../services/platform/path";
+
+// CORRECT: Use Path for all path handling
+const projectPath = new Path(inputPath);
+const workspacePath = new Path(projectPath, "workspaces", name);
+map.set(path.toString(), value);     // Use toString() for Map keys
+if (path1.equals(path2)) { ... }     // Use equals() for comparison
+if (child.isChildOf(parent)) { ... } // Use isChildOf() for containment
+
+// WRONG: Ad-hoc normalization
+path.replace(/\\/g, "/");            // ❌ Use Path instead
+path.normalize(inputPath);           // ❌ Doesn't handle case sensitivity
+path1 === path2;                     // ❌ Fails for "C:\foo" vs "C:/foo"
+```
+
+**Key rules:**
+
+1. **Services receive `Path` objects** - all internal path handling uses `Path`
+2. **IPC uses strings** - shared types in `src/shared/` use `string` for paths
+3. **Conversion at IPC boundary** - `new Path(incoming)` and `path.toString()` for outgoing
+4. **Renderer receives normalized strings** - safe for `===` comparison (already normalized by main process)
+
+**Full details**: See [Path Handling Patterns](docs/PATTERNS.md#path-handling-patterns) for code examples.
+
 ---
 
 ## Quick Start

@@ -1,33 +1,48 @@
 /**
  * Application state management.
  * Manages open projects, workspace providers, and coordinates with ViewManager.
+ *
+ * Path Handling:
+ * - All internal path handling uses the `Path` class for normalized, cross-platform handling
+ * - Project paths and workspace paths are stored as normalized strings (via path.toString())
+ * - Map keys use normalized string paths for consistent lookup
+ * - ViewManager receives string paths (will be migrated to Path in Step 5.5)
  */
 
-import path from "node:path";
 import {
   createGitWorktreeProvider,
   KeepFilesService,
+  Path,
   type IWorkspaceProvider,
   type PathProvider,
   type ProjectStore,
-  type Workspace,
+  type Workspace as InternalWorkspace,
   type FileSystemLayer,
   type LoggingService,
   type Logger,
   urlForFolder,
 } from "../services";
 import type { IViewManager } from "./managers/view-manager.interface";
-import type { Project, ProjectPath, WorkspacePath } from "../shared/ipc";
+import type { WorkspacePath } from "../shared/ipc";
+import type { Project, ProjectId } from "../shared/api/types";
 import type { AgentStatusManager } from "../services/opencode/agent-status-manager";
 import type { OpenCodeServerManager } from "../services/opencode/opencode-server-manager";
 import { getErrorMessage } from "../shared/error-utils";
+import { toIpcWorkspaces } from "./api/workspace-conversion";
+import { generateProjectId } from "../shared/api/id-utils";
 
 /**
  * Runtime state for an open project.
  */
 interface OpenProject {
-  /** Project metadata */
-  readonly project: Project;
+  /** Project ID (generated from path) */
+  readonly id: ProjectId;
+  /** Project name (basename of path) */
+  readonly name: string;
+  /** Normalized project path */
+  readonly path: Path;
+  /** Internal workspaces (with Path-based paths) */
+  readonly workspaces: readonly InternalWorkspace[];
   /** Workspace provider for git operations */
   readonly provider: IWorkspaceProvider;
 }
@@ -43,7 +58,14 @@ export class AppState {
   private readonly fileSystemLayer: FileSystemLayer;
   private readonly loggingService: LoggingService;
   private readonly logger: Logger;
+  /**
+   * Map of normalized project path strings to open project state.
+   * Keys use path.toString() for consistent cross-platform lookup.
+   */
   private readonly openProjects: Map<string, OpenProject> = new Map();
+  /**
+   * Map of normalized project path strings to last used base branch.
+   */
   private readonly lastBaseBranches: Map<string, string> = new Map();
   private agentStatusManager: AgentStatusManager | null = null;
   private serverManager: OpenCodeServerManager | null = null;
@@ -111,23 +133,28 @@ export class AppState {
    * Sets the last used base branch for a project.
    * This is used to remember the user's branch selection within a session.
    *
-   * @param projectPath - Path to the project
+   * @param projectPath - Path to the project (string, will be normalized)
    * @param branch - Branch name that was used
    */
   setLastBaseBranch(projectPath: string, branch: string): void {
-    this.lastBaseBranches.set(projectPath, branch);
+    // Normalize the path for consistent Map key
+    const normalizedKey = new Path(projectPath).toString();
+    this.lastBaseBranches.set(normalizedKey, branch);
   }
 
   /**
    * Gets the default base branch for a project.
    * Returns the last used branch if set, otherwise falls back to provider's defaultBase().
    *
-   * @param projectPath - Path to the project
+   * @param projectPath - Path to the project (string, will be normalized)
    * @returns The default branch name, or undefined if not determinable
    */
   async getDefaultBaseBranch(projectPath: string): Promise<string | undefined> {
+    // Normalize the path for consistent Map lookup
+    const normalizedKey = new Path(projectPath).toString();
+
     // Check runtime cache first
-    const lastBranch = this.lastBaseBranches.get(projectPath);
+    const lastBranch = this.lastBaseBranches.get(normalizedKey);
     if (lastBranch) {
       return lastBranch;
     }
@@ -153,11 +180,15 @@ export class AppState {
    * Opens a project by path.
    * Validates it's a git repository, discovers workspaces, creates views.
    *
-   * @param projectPath - Absolute path to the project (git repository)
-   * @returns The opened Project
+   * @param projectPathInput - Absolute path to the project (git repository)
+   * @returns The opened Project (IPC type with string paths)
    * @throws WorkspaceError if path is not a valid git repository
    */
-  async openProject(projectPath: string): Promise<Project> {
+  async openProject(projectPathInput: string): Promise<Project> {
+    // Normalize the project path immediately
+    const projectPath = new Path(projectPathInput);
+    const projectPathStr = projectPath.toString();
+
     // Create workspace provider (validates it's a git repo)
     const workspacesDir = this.pathProvider.getProjectWorkspacesDir(projectPath);
     const keepFilesService = new KeepFilesService(
@@ -178,60 +209,62 @@ export class AppState {
       void provider.cleanupOrphanedWorkspaces().catch((err: unknown) => {
         this.logger.error(
           "Workspace cleanup failed",
-          { projectPath },
+          { projectPath: projectPathStr },
           err instanceof Error ? err : undefined
         );
       });
     }
 
     // Discover existing workspaces (excludes main directory)
+    // Returns internal Workspace with Path-based paths
     const workspaces = await provider.discover();
 
     // Create views for each workspace and start OpenCode servers
+    // ViewManager still uses string paths (will be migrated in Step 5.5)
     for (const workspace of workspaces) {
-      const url = this.getWorkspaceUrl(workspace.path);
-      this.viewManager.createWorkspaceView(workspace.path, url, projectPath);
-
-      this.startOpenCodeServerAsync(workspace.path);
+      const workspacePathStr = workspace.path.toString();
+      const url = this.getWorkspaceUrl(workspacePathStr);
+      this.viewManager.createWorkspaceView(workspacePathStr, url, projectPathStr);
+      this.startOpenCodeServerAsync(workspacePathStr);
     }
 
     // First workspace will be set as active after project is registered
     const firstWorkspace = workspaces[0];
 
+    // Generate project ID from normalized path
+    const projectId = generateProjectId(projectPathStr);
+
     // Store in internal state first (needed for getDefaultBaseBranch to work)
-    this.openProjects.set(projectPath, {
-      project: {
-        path: projectPath as ProjectPath,
-        name: path.basename(projectPath),
-        workspaces,
-      },
+    this.openProjects.set(projectPathStr, {
+      id: projectId,
+      name: projectPath.basename,
+      path: projectPath,
+      workspaces,
       provider,
     });
 
     // Get default base branch (uses lastBaseBranches cache or provider fallback)
-    const defaultBaseBranch = await this.getDefaultBaseBranch(projectPath);
+    const defaultBaseBranch = await this.getDefaultBaseBranch(projectPathStr);
 
-    // Create final project object with defaultBaseBranch (only include if defined)
+    // Build IPC Project object with string-based paths
     const project: Project = {
-      path: projectPath as ProjectPath,
-      name: path.basename(projectPath),
-      workspaces,
+      id: projectId,
+      path: projectPathStr,
+      name: projectPath.basename,
+      workspaces: toIpcWorkspaces(workspaces, projectId),
       ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
     };
-
-    // Update stored project with defaultBaseBranch
-    this.openProjects.set(projectPath, { project, provider });
 
     // Set first workspace as active now that project is registered
     // (callback in setActiveWorkspace needs findProjectForWorkspace to work)
     // Only change active workspace if the new project has workspaces
     // If empty, keep the current active workspace (user can still work in other projects)
     if (firstWorkspace) {
-      this.viewManager.setActiveWorkspace(firstWorkspace.path);
+      this.viewManager.setActiveWorkspace(firstWorkspace.path.toString());
     }
 
     // Persist to store
-    await this.projectStore.saveProject(projectPath);
+    await this.projectStore.saveProject(projectPathStr);
 
     return project;
   }
@@ -240,30 +273,31 @@ export class AppState {
    * Closes a project.
    * Destroys all workspace views, cleans up state, and removes from persistent storage.
    *
-   * @param projectPath - Path to the project to close
+   * @param projectPathInput - Path to the project to close
    */
-  async closeProject(projectPath: string): Promise<void> {
-    const openProject = this.openProjects.get(projectPath);
+  async closeProject(projectPathInput: string): Promise<void> {
+    const normalizedKey = new Path(projectPathInput).toString();
+    const openProject = this.openProjects.get(normalizedKey);
     if (!openProject) {
       return;
     }
 
     // Stop all OpenCode servers for this project
     if (this.serverManager) {
-      await this.serverManager.stopAllForProject(projectPath);
+      await this.serverManager.stopAllForProject(normalizedKey);
     }
 
     // Destroy all workspace views
-    for (const workspace of openProject.project.workspaces) {
-      await this.viewManager.destroyWorkspaceView(workspace.path);
+    for (const workspace of openProject.workspaces) {
+      await this.viewManager.destroyWorkspaceView(workspace.path.toString());
     }
 
     // Remove from state
-    this.openProjects.delete(projectPath);
+    this.openProjects.delete(normalizedKey);
 
     // Remove from persistent storage (fail silently)
     try {
-      await this.projectStore.removeProject(projectPath);
+      await this.projectStore.removeProject(normalizedKey);
     } catch {
       // Fail silently as per requirements
     }
@@ -272,24 +306,40 @@ export class AppState {
   /**
    * Gets a project by path.
    *
-   * @param projectPath - Path to the project
-   * @returns The Project or undefined if not open
+   * @param projectPathInput - Path to the project
+   * @returns The Project (IPC type) or undefined if not open
    */
-  getProject(projectPath: string): Project | undefined {
-    return this.openProjects.get(projectPath)?.project;
+  getProject(projectPathInput: string): Project | undefined {
+    const normalizedKey = new Path(projectPathInput).toString();
+    const openProject = this.openProjects.get(normalizedKey);
+    if (!openProject) {
+      return undefined;
+    }
+
+    // Convert to IPC Project type
+    return {
+      id: openProject.id,
+      path: openProject.path.toString(),
+      name: openProject.name,
+      workspaces: toIpcWorkspaces(openProject.workspaces, openProject.id),
+    };
   }
 
   /**
    * Gets all open projects with current defaultBaseBranch.
    *
-   * @returns Promise resolving to array of all open projects
+   * @returns Promise resolving to array of all open projects (IPC type)
    */
   async getAllProjects(): Promise<Project[]> {
     const result: Project[] = [];
     for (const openProject of this.openProjects.values()) {
-      const defaultBaseBranch = await this.getDefaultBaseBranch(openProject.project.path);
+      const projectPathStr = openProject.path.toString();
+      const defaultBaseBranch = await this.getDefaultBaseBranch(projectPathStr);
       result.push({
-        ...openProject.project,
+        id: openProject.id,
+        path: projectPathStr,
+        name: openProject.name,
+        workspaces: toIpcWorkspaces(openProject.workspaces, openProject.id),
         ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
       });
     }
@@ -299,17 +349,18 @@ export class AppState {
   /**
    * Gets the workspace provider for a project.
    *
-   * @param projectPath - Path to the project
+   * @param projectPathInput - Path to the project
    * @returns The IWorkspaceProvider or undefined if project not open
    */
-  getWorkspaceProvider(projectPath: string): IWorkspaceProvider | undefined {
-    return this.openProjects.get(projectPath)?.provider;
+  getWorkspaceProvider(projectPathInput: string): IWorkspaceProvider | undefined {
+    const normalizedKey = new Path(projectPathInput).toString();
+    return this.openProjects.get(normalizedKey)?.provider;
   }
 
   /**
    * Generates a code-server URL for a workspace.
    *
-   * @param workspacePath - Absolute path to the workspace directory
+   * @param workspacePath - Absolute path to the workspace directory (string)
    * @returns The code-server URL
    */
   getWorkspaceUrl(workspacePath: string): string {
@@ -335,29 +386,26 @@ export class AppState {
 
   /**
    * Finds the project that contains a workspace.
+   * Uses Path class for proper cross-platform comparison.
    *
-   * @param workspacePath - Path to the workspace
-   * @returns The Project containing the workspace, or undefined
+   * @param workspacePathInput - Path to the workspace
+   * @returns The Project (IPC type) containing the workspace, or undefined
    */
-  findProjectForWorkspace(workspacePath: string): Project | undefined {
-    // Normalize the input path for comparison:
-    // - Use path.normalize to handle forward/backslashes
-    // - On Windows, use case-insensitive comparison (filesystem is case-insensitive)
-    // - On Linux/macOS, use case-sensitive comparison (filesystem is case-sensitive)
-    const isWindows = process.platform === "win32";
-    const normalizePath = (p: string) => {
-      const normalized = path.normalize(p);
-      return isWindows ? normalized.toLowerCase() : normalized;
-    };
-
-    const normalizedInput = normalizePath(workspacePath);
+  findProjectForWorkspace(workspacePathInput: string): Project | undefined {
+    // Use Path.equals() for proper cross-platform comparison
+    // This handles case-insensitivity on Windows and separator normalization
+    const inputPath = new Path(workspacePathInput);
 
     for (const openProject of this.openProjects.values()) {
-      const found = openProject.project.workspaces.find(
-        (w) => normalizePath(w.path) === normalizedInput
-      );
+      const found = openProject.workspaces.find((w) => w.path.equals(inputPath));
       if (found) {
-        return openProject.project;
+        // Convert to IPC Project type
+        return {
+          id: openProject.id,
+          path: openProject.path.toString(),
+          name: openProject.name,
+          workspaces: toIpcWorkspaces(openProject.workspaces, openProject.id),
+        };
       }
     }
     return undefined;
@@ -367,32 +415,31 @@ export class AppState {
    * Adds a workspace to an open project.
    * Creates a view and updates the project state.
    *
-   * @param projectPath - Path to the project
-   * @param workspace - The workspace to add
+   * @param projectPathInput - Path to the project
+   * @param workspace - The internal workspace to add (with Path-based path)
    */
-  addWorkspace(projectPath: string, workspace: Workspace): void {
-    const openProject = this.openProjects.get(projectPath);
+  addWorkspace(projectPathInput: string, workspace: InternalWorkspace): void {
+    const normalizedKey = new Path(projectPathInput).toString();
+    const openProject = this.openProjects.get(normalizedKey);
     if (!openProject) {
       return;
     }
 
     // Create view for the workspace
-    const url = this.getWorkspaceUrl(workspace.path);
-    this.viewManager.createWorkspaceView(workspace.path, url, projectPath);
+    const workspacePathStr = workspace.path.toString();
+    const url = this.getWorkspaceUrl(workspacePathStr);
+    this.viewManager.createWorkspaceView(workspacePathStr, url, normalizedKey);
 
-    // Update project state
-    const updatedProject: Project = {
-      ...openProject.project,
-      workspaces: [...openProject.project.workspaces, workspace],
+    // Update internal project state
+    const updatedProject: OpenProject = {
+      ...openProject,
+      workspaces: [...openProject.workspaces, workspace],
     };
 
-    this.openProjects.set(projectPath, {
-      ...openProject,
-      project: updatedProject,
-    });
+    this.openProjects.set(normalizedKey, updatedProject);
 
     // Start OpenCode server for the workspace (agent status tracking is wired via callback)
-    this.startOpenCodeServerAsync(workspace.path);
+    this.startOpenCodeServerAsync(workspacePathStr);
   }
 
   /**
@@ -415,32 +462,34 @@ export class AppState {
    * Removes a workspace from an open project.
    * Destroys the view and updates the project state.
    *
-   * @param projectPath - Path to the project
-   * @param workspacePath - Path to the workspace to remove
+   * @param projectPathInput - Path to the project
+   * @param workspacePathInput - Path to the workspace to remove
    */
-  async removeWorkspace(projectPath: string, workspacePath: string): Promise<void> {
-    const openProject = this.openProjects.get(projectPath);
+  async removeWorkspace(projectPathInput: string, workspacePathInput: string): Promise<void> {
+    const normalizedKey = new Path(projectPathInput).toString();
+    const openProject = this.openProjects.get(normalizedKey);
     if (!openProject) {
       return;
     }
 
+    // Normalize workspace path for comparison
+    const workspacePath = new Path(workspacePathInput);
+    const workspacePathStr = workspacePath.toString();
+
     // Stop OpenCode server (this will trigger onServerStopped callback, which removes agent status)
     if (this.serverManager) {
-      await this.serverManager.stopServer(workspacePath);
+      await this.serverManager.stopServer(workspacePathStr);
     }
 
     // Destroy the workspace view
-    await this.viewManager.destroyWorkspaceView(workspacePath);
+    await this.viewManager.destroyWorkspaceView(workspacePathStr);
 
-    // Update project state
-    const updatedProject: Project = {
-      ...openProject.project,
-      workspaces: openProject.project.workspaces.filter((w) => w.path !== workspacePath),
+    // Update internal project state using Path.equals() for comparison
+    const updatedProject: OpenProject = {
+      ...openProject,
+      workspaces: openProject.workspaces.filter((w) => !w.path.equals(workspacePath)),
     };
 
-    this.openProjects.set(projectPath, {
-      ...openProject,
-      project: updatedProject,
-    });
+    this.openProjects.set(normalizedKey, updatedProject);
   }
 }

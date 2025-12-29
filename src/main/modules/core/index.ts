@@ -48,6 +48,7 @@ import {
   tryResolveWorkspace as tryResolveWorkspaceShared,
   type InternalResolvedWorkspace,
 } from "../../api/id-utils";
+import { Path } from "../../../services";
 
 // =============================================================================
 // Types
@@ -264,7 +265,12 @@ export class CoreModule implements IApiModule {
     this.deps.appState.addWorkspace(projectPath, internalWorkspace);
     this.deps.appState.setLastBaseBranch(projectPath, payload.base);
 
-    const workspace = this.toApiWorkspace(payload.projectId, internalWorkspace);
+    // Convert internal workspace (with Path) to API workspace (with string path)
+    const workspace = this.toApiWorkspace(payload.projectId, {
+      path: internalWorkspace.path.toString(),
+      branch: internalWorkspace.branch,
+      metadata: internalWorkspace.metadata,
+    });
     this.api.emit("workspace:created", { projectId: payload.projectId, workspace });
 
     return workspace;
@@ -340,7 +346,8 @@ export class CoreModule implements IApiModule {
     const { projectPath, workspace } = await this.resolveWorkspace(payload);
 
     const provider = this.deps.appState.getWorkspaceProvider(projectPath);
-    const isDirty = provider ? await provider.isDirty(workspace.path) : false;
+    // Convert string path to Path for provider method
+    const isDirty = provider ? await provider.isDirty(new Path(workspace.path)) : false;
 
     const agentStatusManager = this.deps.appState.getAgentStatusManager();
     if (!agentStatusManager) {
@@ -381,7 +388,8 @@ export class CoreModule implements IApiModule {
       throw new Error(`No workspace provider for project: ${payload.projectId}`);
     }
 
-    await provider.setMetadata(workspace.path, payload.key, payload.value);
+    // Convert string path to Path for provider method
+    await provider.setMetadata(new Path(workspace.path), payload.key, payload.value);
 
     this.api.emit("workspace:metadata-changed", {
       projectId: payload.projectId,
@@ -401,7 +409,8 @@ export class CoreModule implements IApiModule {
       throw new Error(`No workspace provider for project: ${payload.projectId}`);
     }
 
-    return provider.getMetadata(workspace.path);
+    // Convert string path to Path for provider method
+    return provider.getMetadata(new Path(workspace.path));
   }
 
   private async workspaceExecuteCommand(payload: WorkspaceExecuteCommandPayload): Promise<unknown> {
@@ -664,7 +673,8 @@ export class CoreModule implements IApiModule {
       try {
         const provider = this.deps.appState.getWorkspaceProvider(projectPath);
         if (provider) {
-          await provider.removeWorkspace(workspacePath, !keepBranch);
+          // Convert branded string path to Path for provider method
+          await provider.removeWorkspace(new Path(workspacePath), !keepBranch);
         }
         updateOp("cleanup-workspace", "done");
       } catch (error) {

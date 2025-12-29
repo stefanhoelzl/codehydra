@@ -2,68 +2,73 @@ import { join, isAbsolute } from "node:path";
 import type { BuildInfo } from "./build-info";
 import type { PlatformInfo } from "./platform-info";
 import { projectDirName } from "./paths";
+import { Path } from "./path";
 import { CODE_SERVER_VERSION, OPENCODE_VERSION, BINARY_CONFIGS } from "../binary-download/versions";
 
 /**
  * Application path provider.
  * Abstracts platform-specific and build-mode-specific paths.
+ *
+ * All path properties return `Path` objects for consistent cross-platform handling.
+ * Use `path.toString()` for Map keys and comparisons.
+ * Use `path.toNative()` for external process spawning (handled internally by FileSystemLayer/ProcessRunner).
  */
 export interface PathProvider {
   /** Root directory for all application data */
-  readonly dataRootDir: string;
+  readonly dataRootDir: Path;
 
   /** Directory for project data: `<dataRoot>/projects/` */
-  readonly projectsDir: string;
+  readonly projectsDir: Path;
 
   /** Directory for VS Code config: `<dataRoot>/vscode/` */
-  readonly vscodeDir: string;
+  readonly vscodeDir: Path;
 
   /** Directory for VS Code extensions: `<dataRoot>/vscode/extensions/` */
-  readonly vscodeExtensionsDir: string;
+  readonly vscodeExtensionsDir: Path;
 
   /** Directory for VS Code user data: `<dataRoot>/vscode/user-data/` */
-  readonly vscodeUserDataDir: string;
+  readonly vscodeUserDataDir: Path;
 
   /** Path to setup marker: `<dataRoot>/.setup-completed` */
-  readonly setupMarkerPath: string;
+  readonly setupMarkerPath: Path;
 
   /** Directory for Electron data: `<dataRoot>/electron/` */
-  readonly electronDataDir: string;
+  readonly electronDataDir: Path;
 
   /** Directory for VS Code assets bundled with the app: `<appPath>/out/main/assets/` */
-  readonly vscodeAssetsDir: string;
+  readonly vscodeAssetsDir: Path;
 
   /** Path to the application icon: `resources/icon.png` */
-  readonly appIconPath: string;
+  readonly appIconPath: Path;
 
   /** Directory for CLI wrapper scripts: `<dataRoot>/bin/` */
-  readonly binDir: string;
+  readonly binDir: Path;
 
   /** Directory for code-server binary: `<dataRoot>/code-server/<version>/` */
-  readonly codeServerDir: string;
+  readonly codeServerDir: Path;
 
   /** Directory for opencode binary: `<dataRoot>/opencode/<version>/` */
-  readonly opencodeDir: string;
+  readonly opencodeDir: Path;
 
   /** Absolute path to code-server binary executable */
-  readonly codeServerBinaryPath: string;
+  readonly codeServerBinaryPath: Path;
 
   /** Absolute path to opencode binary executable */
-  readonly opencodeBinaryPath: string;
+  readonly opencodeBinaryPath: Path;
 
   /** Absolute path to bundled Node.js executable from code-server */
-  readonly bundledNodePath: string;
+  readonly bundledNodePath: Path;
 
   /** Path to MCP config file: `<dataRoot>/opencode/codehydra-mcp.json` */
-  readonly mcpConfigPath: string;
+  readonly mcpConfigPath: Path;
 
   /**
    * Get the workspaces directory for a project.
-   * @param projectPath Absolute path to the project
-   * @returns `<projectsDir>/<name>-<hash>/workspaces/`
+   * @param projectPath Absolute path to the project (string or Path)
+   * @returns `<projectsDir>/<name>-<hash>/workspaces/` as Path
    * @throws TypeError if projectPath is not an absolute path
    */
-  getProjectWorkspacesDir(projectPath: string): string;
+  getProjectWorkspacesDir(projectPath: string | Path): Path;
 }
 
 /**
@@ -77,60 +82,61 @@ export interface PathProvider {
  * - Production Windows: `<home>/AppData/Roaming/Codehydra/`
  */
 export class DefaultPathProvider implements PathProvider {
-  readonly dataRootDir: string;
-  readonly projectsDir: string;
-  readonly vscodeDir: string;
-  readonly vscodeExtensionsDir: string;
-  readonly vscodeUserDataDir: string;
-  readonly setupMarkerPath: string;
-  readonly electronDataDir: string;
-  readonly vscodeAssetsDir: string;
-  readonly appIconPath: string;
-  readonly binDir: string;
-  readonly codeServerDir: string;
-  readonly opencodeDir: string;
-  readonly codeServerBinaryPath: string;
-  readonly opencodeBinaryPath: string;
-  readonly bundledNodePath: string;
-  readonly mcpConfigPath: string;
+  readonly dataRootDir: Path;
+  readonly projectsDir: Path;
+  readonly vscodeDir: Path;
+  readonly vscodeExtensionsDir: Path;
+  readonly vscodeUserDataDir: Path;
+  readonly setupMarkerPath: Path;
+  readonly electronDataDir: Path;
+  readonly vscodeAssetsDir: Path;
+  readonly appIconPath: Path;
+  readonly binDir: Path;
+  readonly codeServerDir: Path;
+  readonly opencodeDir: Path;
+  readonly codeServerBinaryPath: Path;
+  readonly opencodeBinaryPath: Path;
+  readonly bundledNodePath: Path;
+  readonly mcpConfigPath: Path;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
-    this.dataRootDir = this.computeDataRootDir(buildInfo, platformInfo);
-    this.projectsDir = join(this.dataRootDir, "projects");
-    this.vscodeDir = join(this.dataRootDir, "vscode");
-    this.vscodeExtensionsDir = join(this.vscodeDir, "extensions");
-    this.vscodeUserDataDir = join(this.vscodeDir, "user-data");
-    this.setupMarkerPath = join(this.dataRootDir, ".setup-completed");
-    this.electronDataDir = join(this.dataRootDir, "electron");
+    const dataRootDirStr = this.computeDataRootDir(buildInfo, platformInfo);
+    this.dataRootDir = new Path(dataRootDirStr);
+    this.projectsDir = new Path(this.dataRootDir, "projects");
+    this.vscodeDir = new Path(this.dataRootDir, "vscode");
+    this.vscodeExtensionsDir = new Path(this.vscodeDir, "extensions");
+    this.vscodeUserDataDir = new Path(this.vscodeDir, "user-data");
+    this.setupMarkerPath = new Path(this.dataRootDir, ".setup-completed");
+    this.electronDataDir = new Path(this.dataRootDir, "electron");
     // Assets are bundled at out/main/assets/ (same path in dev and prod)
-    this.vscodeAssetsDir = join(buildInfo.appPath, "out", "main", "assets");
+    this.vscodeAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets");
     this.appIconPath = this.computeAppIconPath(buildInfo);
-    this.binDir = join(this.dataRootDir, "bin");
+    this.binDir = new Path(this.dataRootDir, "bin");
 
     // Binary directories with version
-    this.codeServerDir = join(this.dataRootDir, "code-server", CODE_SERVER_VERSION);
-    this.opencodeDir = join(this.dataRootDir, "opencode", OPENCODE_VERSION);
+    this.codeServerDir = new Path(this.dataRootDir, "code-server", CODE_SERVER_VERSION);
+    this.opencodeDir = new Path(this.dataRootDir, "opencode", OPENCODE_VERSION);
 
     // Binary paths (platform-specific)
     const platform = platformInfo.platform as "darwin" | "linux" | "win32";
-    this.codeServerBinaryPath = join(
+    this.codeServerBinaryPath = new Path(
       this.codeServerDir,
       BINARY_CONFIGS["code-server"].extractedBinaryPath(platform)
     );
-    this.opencodeBinaryPath = join(
+    this.opencodeBinaryPath = new Path(
       this.opencodeDir,
       BINARY_CONFIGS.opencode.extractedBinaryPath(platform)
     );
 
     // Bundled Node.js from code-server distribution
-    this.bundledNodePath = join(
+    this.bundledNodePath = new Path(
       this.codeServerDir,
       "lib",
       platform === "win32" ? "node.exe" : "node"
     );
 
     // MCP config file path
-    this.mcpConfigPath = join(this.dataRootDir, "opencode", "codehydra-mcp.json");
+    this.mcpConfigPath = new Path(this.dataRootDir, "opencode", "codehydra-mcp.json");
   }
 
   /**
@@ -138,26 +144,27 @@ export class DefaultPathProvider implements PathProvider {
    * In development: relative to process.cwd()
    * In production: relative to __dirname (bundled resources)
    */
-  private computeAppIconPath(buildInfo: BuildInfo): string {
+  private computeAppIconPath(buildInfo: BuildInfo): Path {
     if (buildInfo.isDevelopment) {
-      return join(process.cwd(), "resources", "icon.png");
+      return new Path(process.cwd(), "resources", "icon.png");
     }
     // In production, resources are in the app.asar or extracted resources folder
     // electron-vite places resources at the root level next to the app
-    return join(process.cwd(), "resources", "icon.png");
+    return new Path(process.cwd(), "resources", "icon.png");
   }
 
   /**
    * Get the workspaces directory for a project.
-   * @param projectPath Absolute path to the project
-   * @returns `<projectsDir>/<name>-<hash>/workspaces/`
+   * @param projectPath Absolute path to the project (string or Path)
+   * @returns `<projectsDir>/<name>-<hash>/workspaces/` as Path
    * @throws TypeError if projectPath is not an absolute path
    */
-  getProjectWorkspacesDir(projectPath: string): string {
-    if (!projectPath || !isAbsolute(projectPath)) {
-      throw new TypeError(`projectPath must be an absolute path, got: "${projectPath}"`);
+  getProjectWorkspacesDir(projectPath: string | Path): Path {
+    const pathStr = projectPath instanceof Path ? projectPath.toString() : projectPath;
+    if (!pathStr || !isAbsolute(pathStr)) {
+      throw new TypeError(`projectPath must be an absolute path, got: "${pathStr}"`);
     }
-    return join(this.projectsDir, projectDirName(projectPath), "workspaces");
+    return new Path(this.projectsDir, projectDirName(pathStr), "workspaces");
   }
 
   /**

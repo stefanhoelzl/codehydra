@@ -3,11 +3,12 @@
  * Installs extensions and writes configuration files.
  */
 
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
 import type { Logger } from "../logging/index";
+import { Path } from "../platform/path";
 import { VscodeSetupError, getErrorMessage } from "../errors";
 import {
   type IVscodeSetup,
@@ -31,7 +32,7 @@ export class VscodeSetupService implements IVscodeSetup {
   private readonly processRunner: ProcessRunner;
   private readonly pathProvider: PathProvider;
   private readonly fs: FileSystemLayer;
-  private readonly assetsDir: string;
+  private readonly assetsDir: Path;
   private readonly platformInfo: PlatformInfo;
   private readonly binaryDownloadService: BinaryDownloadService | null;
   private readonly logger: Logger | undefined;
@@ -97,7 +98,8 @@ export class VscodeSetupService implements IVscodeSetup {
       }
 
       // Load extensions config
-      const configContent = await this.fs.readFile(join(this.assetsDir, "extensions.json"));
+      const configPath = new Path(this.assetsDir, "extensions.json");
+      const configContent = await this.fs.readFile(configPath);
       const parsed = JSON.parse(configContent) as unknown;
       const validation = validateExtensionsConfig(parsed);
       if (!validation.isValid) {
@@ -178,8 +180,8 @@ export class VscodeSetupService implements IVscodeSetup {
       const version = installedExtensions.get(extId);
       if (version) {
         const extDirName = `${extId}-${version}`;
-        const extPath = join(extensionsDir, extDirName);
-        this.logger?.debug("Cleaning extension", { extId, path: extPath });
+        const extPath = new Path(extensionsDir, extDirName);
+        this.logger?.debug("Cleaning extension", { extId, path: extPath.toString() });
         await this.fs.rm(extPath, { recursive: true, force: true });
       }
     }
@@ -329,8 +331,8 @@ export class VscodeSetupService implements IVscodeSetup {
     const vscodeDir = this.pathProvider.vscodeDir;
     const appDataRoot = this.pathProvider.dataRootDir;
 
-    // Security: Validate path is under app data directory
-    if (!vscodeDir.startsWith(appDataRoot)) {
+    // Security: Validate path is under app data directory using Path.isChildOf
+    if (!vscodeDir.isChildOf(appDataRoot)) {
       throw new VscodeSetupError(
         `Invalid vscode directory path: ${vscodeDir} is not under ${appDataRoot}`,
         "path-validation"
@@ -351,7 +353,8 @@ export class VscodeSetupService implements IVscodeSetup {
 
     for (const asset of requiredAssets) {
       try {
-        await this.fs.readFile(join(this.assetsDir, asset));
+        const assetPath = new Path(this.assetsDir, asset);
+        await this.fs.readFile(assetPath);
       } catch {
         missingAssets.push(asset);
       }
@@ -391,7 +394,7 @@ export class VscodeSetupService implements IVscodeSetup {
     onProgress?.({ step: "config", message: "Writing MCP config..." });
 
     const configPath = this.pathProvider.mcpConfigPath;
-    const configDir = dirname(configPath);
+    const configDir = configPath.dirname;
 
     // Ensure directory exists
     await this.fs.mkdir(configDir);
@@ -421,12 +424,12 @@ export class VscodeSetupService implements IVscodeSetup {
     // Resolve target binary paths
     const targetPaths = this.resolveTargetPaths();
 
-    // Generate scripts for this platform
-    const scripts = generateScripts(this.platformInfo, targetPaths, binDir);
+    // Generate scripts for this platform - pass native path for bin scripts
+    const scripts = generateScripts(this.platformInfo, targetPaths, binDir.toNative());
 
     // Write each script
     for (const script of scripts) {
-      const scriptPath = join(binDir, script.filename);
+      const scriptPath = new Path(binDir, script.filename);
       await this.fs.writeFile(scriptPath, script.content);
 
       // Make executable on Unix
@@ -462,7 +465,7 @@ export class VscodeSetupService implements IVscodeSetup {
     return {
       codeRemoteCli: remoteCli,
       opencodeBinary: this.resolveOpencodePath(),
-      bundledNodePath: this.pathProvider.bundledNodePath,
+      bundledNodePath: this.pathProvider.bundledNodePath.toNative(),
     };
   }
 
@@ -484,7 +487,7 @@ export class VscodeSetupService implements IVscodeSetup {
     } catch {
       // require.resolve failed (bundled Electron context)
       // Use pathProvider.codeServerDir directly since we know the binary location
-      return this.pathProvider.codeServerDir;
+      return this.pathProvider.codeServerDir.toNative();
     }
   }
 
@@ -494,7 +497,7 @@ export class VscodeSetupService implements IVscodeSetup {
   private resolveRemoteCliPath(codeServerDir: string): string {
     if (!codeServerDir) {
       // If we couldn't find the code-server directory, use the binary path from pathProvider
-      return this.pathProvider.codeServerBinaryPath;
+      return this.pathProvider.codeServerBinaryPath.toNative();
     }
 
     const isWindows = this.platformInfo.platform === "win32";
@@ -515,7 +518,7 @@ export class VscodeSetupService implements IVscodeSetup {
   private resolveOpencodePath(): string | null {
     // Return the opencode binary path from PathProvider
     // The binary is downloaded during setup by BinaryDownloadService
-    return this.pathProvider.opencodeBinaryPath;
+    return this.pathProvider.opencodeBinaryPath.toNative();
   }
 
   /**
@@ -529,7 +532,8 @@ export class VscodeSetupService implements IVscodeSetup {
     extensionsToInstall?: readonly string[]
   ): Promise<SetupResult> {
     // Load extensions config from assets
-    const configContent = await this.fs.readFile(join(this.assetsDir, "extensions.json"));
+    const configPath = new Path(this.assetsDir, "extensions.json");
+    const configContent = await this.fs.readFile(configPath);
     const parsed = JSON.parse(configContent) as unknown;
 
     // Validate config format
@@ -560,13 +564,13 @@ export class VscodeSetupService implements IVscodeSetup {
       onProgress?.({ step: "extensions", message: `Installing ${bundledExt.id}...` });
 
       // Copy vsix from assets to vscode directory for installation
-      const srcPath = join(this.assetsDir, bundledExt.vsix);
-      const destPath = join(this.pathProvider.vscodeDir, bundledExt.vsix);
+      const srcPath = new Path(this.assetsDir, bundledExt.vsix);
+      const destPath = new Path(this.pathProvider.vscodeDir, bundledExt.vsix);
       await this.fs.mkdir(this.pathProvider.vscodeDir);
       await this.fs.copyTree(srcPath, destPath);
 
       // Install the extension using code-server
-      const result = await this.runInstallExtension(destPath);
+      const result = await this.runInstallExtension(destPath.toNative());
       if (!result.success) {
         return result;
       }
@@ -595,11 +599,11 @@ export class VscodeSetupService implements IVscodeSetup {
    * @returns Result indicating success or failure
    */
   private async runInstallExtension(extensionIdOrPath: string): Promise<SetupResult> {
-    const proc = this.processRunner.run(this.pathProvider.codeServerBinaryPath, [
+    const proc = this.processRunner.run(this.pathProvider.codeServerBinaryPath.toNative(), [
       "--install-extension",
       extensionIdOrPath,
       "--extensions-dir",
-      this.pathProvider.vscodeExtensionsDir,
+      this.pathProvider.vscodeExtensionsDir.toNative(),
     ]);
     const result = await proc.wait();
 

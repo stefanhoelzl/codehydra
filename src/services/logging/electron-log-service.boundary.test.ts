@@ -10,6 +10,7 @@ import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockBuildInfo } from "../platform/build-info.test-utils";
+import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import type { PathProvider } from "../platform/path-provider";
 
 // Test timeout for file operations
@@ -17,19 +18,12 @@ const WRITE_DELAY_MS = 100;
 
 /**
  * Create a minimal PathProvider for boundary tests.
+ * Uses createMockPathProvider with the temp directory as dataRootDir.
  */
 function createTestPathProvider(dataRootDir: string): PathProvider {
-  return {
+  return createMockPathProvider({
     dataRootDir,
-    projectsDir: join(dataRootDir, "projects"),
-    vscodeDir: join(dataRootDir, "vscode"),
-    vscodeExtensionsDir: join(dataRootDir, "vscode", "extensions"),
-    vscodeUserDataDir: join(dataRootDir, "vscode", "user-data"),
-    vscodeSetupMarkerPath: join(dataRootDir, "vscode", ".setup-completed"),
-    electronDataDir: join(dataRootDir, "electron"),
-    getProjectWorkspacesDir: (projectPath: string) =>
-      join(dataRootDir, "projects", projectPath, "workspaces"),
-  };
+  });
 }
 
 /**

@@ -206,7 +206,7 @@ export class ElectronLogService implements LoggingService {
     this.allowedLoggers = parseLoggerFilter(process.env.CODEHYDRA_LOGGER);
 
     // Configure file transport
-    const logsDir = join(pathProvider.dataRootDir, "logs");
+    const logsDir = join(pathProvider.dataRootDir.toNative(), "logs");
     const filename = generateSessionFilename();
     log.transports.file.resolvePathFn = (): string => join(logsDir, filename);
     log.transports.file.level = this.logLevel;

@@ -12,7 +12,6 @@
 
 import { Server, type Socket } from "socket.io";
 import { createServer, type Server as HttpServer } from "node:http";
-import path from "node:path";
 import type { Logger } from "../logging";
 import { SILENT_LOGGER, logAtLevel } from "../logging";
 import type { PortManager } from "../platform/network";
@@ -30,7 +29,6 @@ import {
   type LogContext,
   COMMAND_TIMEOUT_MS,
   SHUTDOWN_DISCONNECT_TIMEOUT_MS,
-  normalizeWorkspacePath,
   validateSetMetadataRequest,
   validateDeleteWorkspaceRequest,
   validateExecuteCommandRequest,
@@ -39,6 +37,7 @@ import {
 import { LogLevel } from "../logging/types";
 import type { WorkspaceStatus } from "../../shared/api/types";
 import { getErrorMessage } from "../errors";
+import { Path } from "../platform/path";
 
 // ============================================================================
 // Types
@@ -251,7 +250,7 @@ export class PluginServer {
    * @returns True if connected
    */
   isConnected(workspacePath: string): boolean {
-    const normalized = normalizeWorkspacePath(workspacePath);
+    const normalized = new Path(workspacePath).toString();
     return this.connections.has(normalized);
   }
 
@@ -270,7 +269,7 @@ export class PluginServer {
     args?: readonly unknown[],
     timeoutMs: number = COMMAND_TIMEOUT_MS
   ): Promise<PluginResult<unknown>> {
-    const normalized = normalizeWorkspacePath(workspacePath);
+    const normalized = new Path(workspacePath).toString();
     const socket = this.connections.get(normalized);
 
     if (!socket) {
@@ -380,7 +379,16 @@ export class PluginServer {
     options?: { timeoutMs?: number }
   ): Promise<void> {
     const timeoutMs = options?.timeoutMs ?? SHUTDOWN_DISCONNECT_TIMEOUT_MS;
-    const normalized = normalizeWorkspacePath(workspacePath);
+
+    // Best-effort: handle invalid paths gracefully (empty, relative, etc.)
+    let normalized: string;
+    try {
+      normalized = new Path(workspacePath).toString();
+    } catch {
+      this.logger.debug("Shutdown skipped: invalid workspace path", { path: workspacePath });
+      return;
+    }
+
     const socket = this.connections.get(normalized);
 
     if (!socket) {
@@ -481,13 +489,14 @@ export class PluginServer {
         return;
       }
 
-      const workspacePath = normalizeWorkspacePath(auth.workspacePath);
-
-      // Validate workspacePath is an absolute path
-      if (!path.isAbsolute(workspacePath)) {
-        this.logger.warn("Connection rejected: relative path", {
+      // Normalize and validate workspacePath (Path throws on relative paths)
+      let workspacePath: string;
+      try {
+        workspacePath = new Path(auth.workspacePath).toString();
+      } catch {
+        this.logger.warn("Connection rejected: invalid path", {
           socketId: socket.id,
-          path: workspacePath,
+          path: auth.workspacePath,
         });
         socket.disconnect(true);
         return;

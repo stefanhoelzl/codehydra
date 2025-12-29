@@ -138,7 +138,7 @@ const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("
  * CRITICAL: Must be called BEFORE app.whenReady()
  */
 function redirectElectronDataPaths(): void {
-  const electronDir = pathProvider.electronDataDir;
+  const electronDir = pathProvider.electronDataDir.toNative();
   ["userData", "sessionData", "logs", "crashDumps"].forEach((name) => {
     app.setPath(name, nodePath.join(electronDir, name));
   });
@@ -152,11 +152,11 @@ redirectElectronDataPaths();
  */
 function createCodeServerConfig(): CodeServerConfig {
   return {
-    binaryPath: pathProvider.codeServerBinaryPath,
-    runtimeDir: nodePath.join(pathProvider.dataRootDir, "runtime"),
-    extensionsDir: pathProvider.vscodeExtensionsDir,
-    userDataDir: pathProvider.vscodeUserDataDir,
-    binDir: pathProvider.binDir,
+    binaryPath: pathProvider.codeServerBinaryPath.toNative(),
+    runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
+    extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
+    userDataDir: pathProvider.vscodeUserDataDir.toNative(),
+    binDir: pathProvider.binDir.toNative(),
   };
 }
 
@@ -293,7 +293,7 @@ async function startServices(): Promise<void> {
   viewManager.updateCodeServerPort(port);
 
   // Create ProjectStore and AppState
-  const projectStore = new ProjectStore(pathProvider.projectsDir, fileSystemLayer);
+  const projectStore = new ProjectStore(pathProvider.projectsDir.toString(), fileSystemLayer);
   appState = new AppState(
     projectStore,
     viewManager,
@@ -575,7 +575,7 @@ async function bootstrap(): Promise<void> {
     loggingService.createLogger("window"),
     platformInfo,
     windowTitle,
-    pathProvider.appIconPath
+    pathProvider.appIconPath.toNative()
   );
 
   // 6. Create ViewManager with port=0 initially

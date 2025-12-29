@@ -21,6 +21,7 @@ import {
   type ProjectStore,
   type FileSystemLayer,
   type MockLoggingService,
+  Path,
 } from "../services";
 import type { AgentStatusManager } from "../services/opencode/agent-status-manager";
 import type { OpenCodeServerManager } from "../services/opencode/opencode-server-manager";
@@ -125,6 +126,7 @@ function createMockServerManager(): OpenCodeServerManager {
       for (const cb of stoppedCallbacks) {
         cb(path);
       }
+      return { success: true };
     }),
     stopAllForProject: vi.fn().mockResolvedValue(undefined),
     getPort: vi.fn().mockReturnValue(undefined),
@@ -162,6 +164,23 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
     mockServerManager = createMockServerManager();
     mockFileSystemLayer = createMockFileSystemLayer();
     mockLoggingService = createMockLoggingService();
+
+    // Set up workspace provider mock implementations with Path objects
+    // (Type assertions needed because hoisted mock types are strings but runtime uses Path)
+    mockWorkspaceProvider.discover.mockResolvedValue([
+      {
+        name: "feature-1",
+        path: new Path("/project/.worktrees/feature-1") as unknown as string,
+        branch: "feature-1",
+      },
+    ]);
+    mockWorkspaceProvider.createWorkspace.mockImplementation((name: string) =>
+      Promise.resolve({
+        name,
+        path: new Path(`/project/.worktrees/${name}`) as unknown as string,
+        branch: name,
+      })
+    );
   });
 
   afterEach(() => {
@@ -197,6 +216,7 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         // Simulate callback firing (which would call agentStatusManager.removeWorkspace)
         vi.mocked(mockAgentStatusManager.removeWorkspace)(path as WorkspacePath);
         executionOrder.push("agentStatusManager.removeWorkspace");
+        return { success: true };
       });
 
       vi.mocked(mockViewManager.destroyWorkspaceView).mockImplementation(async () => {
@@ -297,6 +317,7 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
 
       vi.mocked(mockServerManager.stopServer).mockImplementation(async () => {
         serverStopped = true;
+        return { success: true };
       });
 
       vi.mocked(mockViewManager.destroyWorkspaceView).mockImplementation(async () => {
@@ -384,10 +405,18 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
 
   describe("removeWorkspace with multiple workspaces", () => {
     beforeEach(() => {
-      // Configure mock to return two workspaces
+      // Configure mock to return two workspaces (with Path objects for runtime compatibility)
       mockWorkspaceProvider.discover.mockResolvedValue([
-        { name: "feature-1", path: "/project/.worktrees/feature-1", branch: "feature-1" },
-        { name: "feature-2", path: "/project/.worktrees/feature-2", branch: "feature-2" },
+        {
+          name: "feature-1",
+          path: new Path("/project/.worktrees/feature-1") as unknown as string,
+          branch: "feature-1",
+        },
+        {
+          name: "feature-2",
+          path: new Path("/project/.worktrees/feature-2") as unknown as string,
+          branch: "feature-2",
+        },
       ]);
     });
 

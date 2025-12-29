@@ -8,6 +8,7 @@
 - [CSS Theming Patterns](#css-theming-patterns)
 - [Renderer Setup Functions](#renderer-setup-functions)
 - [Service Layer Patterns](#service-layer-patterns)
+- [Path Handling Patterns](#path-handling-patterns)
 - [OpenCode Integration](#opencode-integration)
 - [Plugin Interface](#plugin-interface)
 
@@ -928,6 +929,131 @@ class MyService {
 | `PortManager`     | `createMockPortManager()`     | `platform/network.test-utils.ts`       |
 | `ProcessRunner`   | `createMockProcessRunner()`   | `platform/process.test-utils.ts`       |
 | `PathProvider`    | `createMockPathProvider()`    | `platform/path-provider.test-utils.ts` |
+
+---
+
+## Path Handling Patterns
+
+CodeHydra uses the `Path` class for all internal path handling to ensure cross-platform consistency.
+
+### Path Class Overview
+
+The `Path` class normalizes paths to a canonical internal format:
+
+- **POSIX separators**: Always forward slashes (`/`)
+- **Absolute paths required**: Throws error on relative paths
+- **Case normalization**: Lowercase on Windows (case-insensitive filesystem)
+- **Clean format**: No trailing slashes, no `..` or `.` segments
+
+```typescript
+import { Path } from "../services/platform/path";
+
+// Create normalized path
+const p = new Path("C:\\Users\\Name\\Project");
+p.toString(); // "c:/users/name/project" (Windows)
+p.toString(); // "/home/user/project" (Unix)
+
+// Join paths
+const sub = new Path(p, "src", "index.ts");
+sub.toString(); // "c:/users/name/project/src/index.ts"
+
+// Convert relative paths (explicit only)
+const abs = new Path(Path.cwd(), "./relative/path");
+```
+
+### When to Use Each Method
+
+| Method        | Use Case                                         |
+| ------------- | ------------------------------------------------ |
+| `toString()`  | Map keys, comparisons, JSON serialization        |
+| `toNative()`  | (Internal use by FileSystemLayer, ProcessRunner) |
+| `equals()`    | Path comparison (handles different formats)      |
+| `isChildOf()` | Containment checks (not `startsWith()`)          |
+
+### IPC Boundary Handling
+
+IPC boundaries handle the Path↔string conversion:
+
+```
+Renderer (strings) ──IPC──► Main Process IPC Handlers ──► Services (Path objects)
+                              │
+                              ├─ INCOMING: new Path(payload.path)
+                              └─ OUTGOING: path.toString() (automatic via toJSON)
+```
+
+- **Shared types in `src/shared/`**: Use `string` for paths (IPC compatibility)
+- **Internal services**: Use `Path` objects for all path handling
+- **Renderer**: Receives pre-normalized strings; safe to compare with `===`
+
+### Common Patterns
+
+**Creating Path from external input:**
+
+```typescript
+// File dialog result
+const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+const projectPath = new Path(result.filePaths[0]);
+
+// Git output (already POSIX format on all platforms)
+const worktrees = await gitClient.listWorktrees(projectRoot);
+// worktree.path is already a Path object
+
+// Config file (may contain old native paths)
+const config = JSON.parse(content);
+const projectPath = new Path(config.path); // Auto-normalizes
+```
+
+**Using paths in Maps:**
+
+```typescript
+// CORRECT: Use toString() as key
+const views = new Map<string, WebContentsView>();
+views.set(path.toString(), view);
+views.get(path.toString());
+
+// WRONG: Using Path object as key (reference equality)
+const views = new Map<Path, View>(); // ❌
+```
+
+**Path comparison:**
+
+```typescript
+// CORRECT: Use equals() for cross-format comparison
+if (workspacePath.equals(projectRoot)) { ... }
+if (workspace.path.equals(inputPath)) { ... }
+
+// WRONG: Direct comparison (may fail on Windows)
+if (workspacePath === otherPath) { ... } // ❌ May fail for "C:\foo" vs "C:/foo"
+```
+
+**Containment checks:**
+
+```typescript
+// CORRECT: Use isChildOf() for proper containment
+if (workspacePath.isChildOf(projectRoot)) { ... }
+
+// WRONG: startsWith() has false positives
+if (path.startsWith(parent)) { ... } // ❌ "/foo-bar".startsWith("/foo") = true
+```
+
+### Testing with Paths
+
+Paths in tests should use `Path.toString()` for comparisons:
+
+```typescript
+// Verify a path was stored correctly
+const stored = service.getPath();
+expect(stored.toString()).toBe("/normalized/path");
+
+// Compare path equality
+expect(path1.equals(path2)).toBe(true);
+
+// Mock PathProvider returns Path objects
+const mockPathProvider = createMockPathProvider({
+  vscodeDir: new Path("/test/vscode"),
+  projectsDir: new Path("/test/projects"),
+});
+```
 
 ---
 

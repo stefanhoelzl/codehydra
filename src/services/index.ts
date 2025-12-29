@@ -40,6 +40,9 @@ export { ProjectStore } from "./project/project-store";
 // Platform utilities (pure functions - no build-mode dependencies)
 export { sanitizeWorkspaceName, encodePathForUrl, projectDirName } from "./platform/paths";
 
+// Path class for normalized cross-platform path handling
+export { Path } from "./platform/path";
+
 // Build info abstraction
 export type { BuildInfo } from "./platform/build-info";
 export { createMockBuildInfo } from "./platform/build-info.test-utils";
@@ -84,6 +87,7 @@ export type {
   MkdirOptions,
   RmOptions,
   FileSystemErrorCode,
+  PathLike,
 } from "./platform/filesystem";
 export { createMockFileSystemLayer, createDirEntry } from "./platform/filesystem.test-utils";
 
@@ -128,7 +132,7 @@ export type { GitWorktreeProviderOptions } from "./git/git-worktree-provider";
 /**
  * Factory function to create a GitWorktreeProvider with a SimpleGitClient.
  *
- * @param projectRoot Absolute path to the git repository
+ * @param projectRoot Absolute path to the git repository (Path)
  * @param workspacesDir Directory where worktrees will be created. Callers must obtain this
  *   from `PathProvider.getProjectWorkspacesDir(projectRoot)` to ensure consistent worktree placement.
  * @param fileSystemLayer FileSystemLayer for cleanup operations
@@ -139,8 +143,8 @@ export type { GitWorktreeProviderOptions } from "./git/git-worktree-provider";
  * @throws WorkspaceError if path is invalid or not a git repository
  */
 export async function createGitWorktreeProvider(
-  projectRoot: string,
-  workspacesDir: string,
+  projectRoot: import("./platform/path").Path,
+  workspacesDir: import("./platform/path").Path,
   fileSystemLayer: import("./platform/filesystem").FileSystemLayer,
   gitLogger: import("./logging").Logger,
   worktreeLogger: import("./logging").Logger,

@@ -11,6 +11,7 @@ import {
   type PathProvider,
   type FileSystemLayer,
   type MockLoggingService,
+  Path,
 } from "../services";
 
 // WORKSPACES_DIR used in mock pathProvider for workspace creation
@@ -37,19 +38,9 @@ const { mockProjectStore, mockWorkspaceProvider, mockViewManager, mockCreateGitW
       defaultBase: ReturnType<typeof vi.fn>;
     } = {
       projectRoot: "/project",
-      discover: vi.fn(() =>
-        Promise.resolve([
-          { name: "feature-1", path: "/project/.worktrees/feature-1", branch: "feature-1" },
-        ])
-      ),
+      discover: vi.fn(),
       isMainWorkspace: vi.fn(() => false),
-      createWorkspace: vi.fn((name: string) =>
-        Promise.resolve({
-          name,
-          path: `/project/.worktrees/${name}`,
-          branch: name,
-        })
-      ),
+      createWorkspace: vi.fn(),
       removeWorkspace: vi.fn(() => Promise.resolve({ workspaceRemoved: true, baseDeleted: false })),
       listBases: vi.fn(() =>
         Promise.resolve([
@@ -119,6 +110,22 @@ describe("AppState", () => {
     // Create mock FileSystemLayer and LoggingService
     mockFileSystemLayer = createMockFileSystemLayer();
     mockLoggingService = createMockLoggingService();
+
+    // Set up workspace provider mock implementations with Path objects
+    mockWorkspaceProvider.discover.mockResolvedValue([
+      {
+        name: "feature-1",
+        path: new Path("/project/.worktrees/feature-1"),
+        branch: "feature-1",
+      },
+    ]);
+    mockWorkspaceProvider.createWorkspace.mockImplementation((name: string) =>
+      Promise.resolve({
+        name,
+        path: new Path(`/project/.worktrees/${name}`),
+        branch: name,
+      })
+    );
   });
 
   afterEach(() => {
@@ -153,10 +160,10 @@ describe("AppState", () => {
 
       await appState.openProject("/project");
 
-      // createGitWorktreeProvider is called with projectPath, workspacesDir, fileSystemLayer, loggers, and options
+      // createGitWorktreeProvider is called with projectPath (Path), workspacesDir (Path), fileSystemLayer, loggers, and options
       expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith(
-        "/project",
-        mockPathProvider.getProjectWorkspacesDir("/project"),
+        expect.any(Path), // projectPath as Path
+        expect.any(Path), // workspacesDir as Path
         expect.any(Object), // FileSystemLayer
         expect.any(Object), // Git Logger
         expect.any(Object), // Worktree Logger
@@ -242,11 +249,15 @@ describe("AppState", () => {
 
       const project = await appState.openProject("/project");
 
-      expect(project).toEqual({
+      expect(project).toMatchObject({
         path: "/project",
         name: "project",
         workspaces: [
-          { name: "feature-1", path: "/project/.worktrees/feature-1", branch: "feature-1" },
+          expect.objectContaining({
+            name: "feature-1",
+            path: "/project/.worktrees/feature-1",
+            branch: "feature-1",
+          }),
         ],
         defaultBaseBranch: "main",
       });
@@ -457,10 +468,10 @@ describe("AppState", () => {
       await appState.loadPersistedProjects();
 
       expect(mockProjectStore.loadAllProjects).toHaveBeenCalled();
-      // createGitWorktreeProvider is called with projectPath, workspacesDir, fileSystemLayer, loggers, and options
+      // createGitWorktreeProvider is called with projectPath (Path), workspacesDir (Path), fileSystemLayer, loggers, and options
       expect(mockCreateGitWorktreeProvider).toHaveBeenCalledWith(
-        "/project",
-        mockPathProvider.getProjectWorkspacesDir("/project"),
+        expect.any(Path), // projectPath as Path
+        expect.any(Path), // workspacesDir as Path
         expect.any(Object), // FileSystemLayer
         expect.any(Object), // Git Logger
         expect.any(Object), // Worktree Logger

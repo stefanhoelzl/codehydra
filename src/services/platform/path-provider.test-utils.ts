@@ -1,20 +1,44 @@
 /**
  * Test utilities for PathProvider.
  */
-import { join } from "node:path";
 import type { PathProvider } from "./path-provider";
+import { Path } from "./path";
 import { projectDirName } from "./paths";
 import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versions";
 
 /**
  * Options for createMockPathProvider.
- * All path properties can be overridden.
+ * All path properties can be overridden with Path objects or strings.
  * getProjectWorkspacesDir can be overridden with a custom function.
  */
-export interface MockPathProviderOptions extends Partial<
-  Omit<PathProvider, "getProjectWorkspacesDir">
-> {
-  getProjectWorkspacesDir?: (projectPath: string) => string;
+export interface MockPathProviderOptions {
+  dataRootDir?: Path | string;
+  projectsDir?: Path | string;
+  vscodeDir?: Path | string;
+  vscodeExtensionsDir?: Path | string;
+  vscodeUserDataDir?: Path | string;
+  setupMarkerPath?: Path | string;
+  electronDataDir?: Path | string;
+  vscodeAssetsDir?: Path | string;
+  appIconPath?: Path | string;
+  binDir?: Path | string;
+  codeServerDir?: Path | string;
+  opencodeDir?: Path | string;
+  codeServerBinaryPath?: Path | string;
+  opencodeBinaryPath?: Path | string;
+  bundledNodePath?: Path | string;
+  mcpConfigPath?: Path | string;
+  getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
+}
+
+/**
+ * Helper to ensure a value is a Path object.
+ */
+function ensurePath(value: Path | string | undefined, defaultValue: string): Path {
+  if (value instanceof Path) {
+    return value;
+  }
+  return new Path(value ?? defaultValue);
 }
 
 /**
@@ -25,41 +49,53 @@ export interface MockPathProviderOptions extends Partial<
  * @returns Mock PathProvider object
  */
 export function createMockPathProvider(overrides?: MockPathProviderOptions): PathProvider {
-  // Use join() for all paths to ensure cross-platform compatibility
-  const dataRootDir = overrides?.dataRootDir ?? join("/test", "app-data");
-  const projectsDir = overrides?.projectsDir ?? join("/test", "app-data", "projects");
-  const vscodeDir = overrides?.vscodeDir ?? join("/test", "app-data", "vscode");
+  const dataRootDir = ensurePath(overrides?.dataRootDir, "/test/app-data");
+  const projectsDir = ensurePath(overrides?.projectsDir, "/test/app-data/projects");
+  const vscodeDir = ensurePath(overrides?.vscodeDir, "/test/app-data/vscode");
 
-  const defaultGetProjectWorkspacesDir = (projectPath: string): string => {
-    return join(projectsDir, projectDirName(projectPath), "workspaces");
+  const defaultGetProjectWorkspacesDir = (projectPath: string | Path): Path => {
+    const pathStr = projectPath instanceof Path ? projectPath.toString() : projectPath;
+    return new Path(projectsDir, projectDirName(pathStr), "workspaces");
   };
 
-  const codeServerDir =
-    overrides?.codeServerDir ?? join("/test", "app-data", "code-server", CODE_SERVER_VERSION);
-  const opencodeDir =
-    overrides?.opencodeDir ?? join("/test", "app-data", "opencode", OPENCODE_VERSION);
+  const codeServerDir = ensurePath(
+    overrides?.codeServerDir,
+    `/test/app-data/code-server/${CODE_SERVER_VERSION}`
+  );
+  const opencodeDir = ensurePath(
+    overrides?.opencodeDir,
+    `/test/app-data/opencode/${OPENCODE_VERSION}`
+  );
 
   return {
     dataRootDir,
     projectsDir,
     vscodeDir,
-    vscodeExtensionsDir:
-      overrides?.vscodeExtensionsDir ?? join("/test", "app-data", "vscode", "extensions"),
-    vscodeUserDataDir:
-      overrides?.vscodeUserDataDir ?? join("/test", "app-data", "vscode", "user-data"),
-    setupMarkerPath: overrides?.setupMarkerPath ?? join("/test", "app-data", ".setup-completed"),
-    electronDataDir: overrides?.electronDataDir ?? join("/test", "app-data", "electron"),
-    vscodeAssetsDir: overrides?.vscodeAssetsDir ?? join("/mock", "assets"),
-    appIconPath: overrides?.appIconPath ?? join("/test", "resources", "icon.png"),
-    binDir: overrides?.binDir ?? join("/test", "app-data", "bin"),
+    vscodeExtensionsDir: ensurePath(
+      overrides?.vscodeExtensionsDir,
+      "/test/app-data/vscode/extensions"
+    ),
+    vscodeUserDataDir: ensurePath(overrides?.vscodeUserDataDir, "/test/app-data/vscode/user-data"),
+    setupMarkerPath: ensurePath(overrides?.setupMarkerPath, "/test/app-data/.setup-completed"),
+    electronDataDir: ensurePath(overrides?.electronDataDir, "/test/app-data/electron"),
+    vscodeAssetsDir: ensurePath(overrides?.vscodeAssetsDir, "/mock/assets"),
+    appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
+    binDir: ensurePath(overrides?.binDir, "/test/app-data/bin"),
     codeServerDir,
     opencodeDir,
-    codeServerBinaryPath:
-      overrides?.codeServerBinaryPath ?? join(codeServerDir, "bin", "code-server"),
-    opencodeBinaryPath: overrides?.opencodeBinaryPath ?? join(opencodeDir, "opencode"),
-    bundledNodePath: overrides?.bundledNodePath ?? join(codeServerDir, "lib", "node"),
-    mcpConfigPath:
-      overrides?.mcpConfigPath ?? join("/test", "app-data", "opencode", "codehydra-mcp.json"),
+    codeServerBinaryPath: ensurePath(
+      overrides?.codeServerBinaryPath,
+      `${codeServerDir.toString()}/bin/code-server`
+    ),
+    opencodeBinaryPath: ensurePath(
+      overrides?.opencodeBinaryPath,
+      `${opencodeDir.toString()}/opencode`
+    ),
+    bundledNodePath: ensurePath(overrides?.bundledNodePath, `${codeServerDir.toString()}/lib/node`),
+    mcpConfigPath: ensurePath(
+      overrides?.mcpConfigPath,
+      "/test/app-data/opencode/codehydra-mcp.json"
+    ),
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

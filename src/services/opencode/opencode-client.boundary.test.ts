@@ -47,7 +47,7 @@ describe("OpenCodeClient boundary tests", () => {
     });
     const platformInfo = new NodePlatformInfo();
     const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-    opencodeBinaryPath = pathProvider.opencodeBinaryPath;
+    opencodeBinaryPath = pathProvider.opencodeBinaryPath.toString();
 
     // Fail fast if binary doesn't exist - npm install should have downloaded it
     if (!existsSync(opencodeBinaryPath)) {
@@ -642,7 +642,7 @@ describe("OpenCodeClient permission flow boundary tests", () => {
     });
     const platformInfo = new NodePlatformInfo();
     const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-    opencodeBinaryPath = pathProvider.opencodeBinaryPath;
+    opencodeBinaryPath = pathProvider.opencodeBinaryPath.toString();
 
     // Fail fast if binary doesn't exist - npm install should have downloaded it
     if (!existsSync(opencodeBinaryPath)) {

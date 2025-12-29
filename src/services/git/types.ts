@@ -3,14 +3,16 @@
  * All properties are readonly for immutability.
  */
 
+import type { Path } from "../platform/path";
+
 /**
  * Information about a git worktree.
  */
 export interface WorktreeInfo {
   /** Worktree name (derived from directory name) */
   readonly name: string;
-  /** Absolute path to the worktree directory */
-  readonly path: string;
+  /** Absolute path to the worktree directory (normalized Path) */
+  readonly path: Path;
   /** Branch checked out in worktree, null if detached HEAD */
   readonly branch: string | null;
   /** Whether this is the main worktree */
@@ -47,8 +49,8 @@ export interface StatusResult {
 export interface Workspace {
   /** Workspace name */
   readonly name: string;
-  /** Absolute path to the workspace directory */
-  readonly path: string;
+  /** Absolute path to the workspace directory (normalized Path) */
+  readonly path: Path;
   /** Branch checked out in workspace, null if detached HEAD */
   readonly branch: string | null;
   /**

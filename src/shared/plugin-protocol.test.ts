@@ -7,7 +7,6 @@ import {
   validateSetMetadataRequest,
   validateExecuteCommandRequest,
   validateLogRequest,
-  normalizeWorkspacePath,
   COMMAND_TIMEOUT_MS,
   SHUTDOWN_DISCONNECT_TIMEOUT_MS,
   type ServerToClientEvents,
@@ -468,33 +467,6 @@ describe("validateLogRequest", () => {
   });
 });
 
-describe("normalizeWorkspacePath", () => {
-  it("normalizes path with trailing separator", () => {
-    expect(normalizeWorkspacePath("/test/workspace/")).toBe("/test/workspace");
-  });
-
-  it("normalizes path with double separators", () => {
-    expect(normalizeWorkspacePath("/test//workspace")).toBe("/test/workspace");
-  });
-
-  it("handles Windows-style paths by converting to forward slashes", () => {
-    // Windows backslashes are converted to forward slashes for cross-platform consistency
-    expect(normalizeWorkspacePath("C:\\Users\\test\\workspace")).toBe("C:/Users/test/workspace");
-  });
-
-  it("handles Windows paths with trailing backslash", () => {
-    expect(normalizeWorkspacePath("C:\\Users\\test\\workspace\\")).toBe("C:/Users/test/workspace");
-  });
-
-  it("handles empty string", () => {
-    expect(normalizeWorkspacePath("")).toBe(".");
-  });
-
-  it("handles root path", () => {
-    expect(normalizeWorkspacePath("/")).toBe("/");
-  });
-
-  it("handles relative path", () => {
-    expect(normalizeWorkspacePath("relative/path")).toBe("relative/path");
-  });
-});
+// Note: normalizeWorkspacePath was removed.
+// Path normalization is now handled by the Path class (services/platform/path.ts)
+// which is tested in path.test.ts

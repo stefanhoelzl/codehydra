@@ -9,11 +9,11 @@
  * the scripts themselves, making it safe to run unconditionally.
  */
 
-import { dirname, join } from "node:path";
 import type { PathProvider } from "../platform/path-provider";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
 import type { Logger } from "../logging/index";
+import { Path } from "../platform/path";
 import { generateOpencodeConfigContent, generateScripts } from "./bin-scripts";
 import type { BinTargetPaths } from "./types";
 
@@ -42,7 +42,7 @@ export class WrapperScriptGenerationService {
   async regenerate(): Promise<void> {
     const binDir = this.pathProvider.binDir;
 
-    this.logger?.debug("Regenerating wrapper scripts", { binDir });
+    this.logger?.debug("Regenerating wrapper scripts", { binDir: binDir.toString() });
 
     // Create bin directory (no-op if exists)
     await this.fs.mkdir(binDir);
@@ -50,12 +50,12 @@ export class WrapperScriptGenerationService {
     // Resolve target binary paths
     const targetPaths = this.resolveTargetPaths();
 
-    // Generate scripts for this platform
-    const scripts = generateScripts(this.platformInfo, targetPaths, binDir);
+    // Generate scripts for this platform - pass native path for bin scripts
+    const scripts = generateScripts(this.platformInfo, targetPaths, binDir.toNative());
 
     // Write each script
     for (const script of scripts) {
-      const scriptPath = join(binDir, script.filename);
+      const scriptPath = new Path(binDir, script.filename);
       await this.fs.writeFile(scriptPath, script.content);
 
       // Make executable on Unix
@@ -80,7 +80,7 @@ export class WrapperScriptGenerationService {
    */
   private async regenerateOpencodeConfig(): Promise<void> {
     const configPath = this.pathProvider.mcpConfigPath;
-    const configDir = dirname(configPath);
+    const configDir = configPath.dirname;
 
     // Ensure directory exists
     await this.fs.mkdir(configDir);
@@ -89,7 +89,7 @@ export class WrapperScriptGenerationService {
     const configContent = generateOpencodeConfigContent();
     await this.fs.writeFile(configPath, configContent);
 
-    this.logger?.debug("Regenerated OpenCode config", { path: configPath });
+    this.logger?.debug("Regenerated OpenCode config", { path: configPath.toString() });
   }
 
   /**
@@ -106,9 +106,9 @@ export class WrapperScriptGenerationService {
     const remoteCli = this.resolveRemoteCliPath(codeServerDir);
 
     return {
-      codeRemoteCli: remoteCli,
-      opencodeBinary: this.pathProvider.opencodeBinaryPath,
-      bundledNodePath: this.pathProvider.bundledNodePath,
+      codeRemoteCli: remoteCli.toNative(),
+      opencodeBinary: this.pathProvider.opencodeBinaryPath.toNative(),
+      bundledNodePath: this.pathProvider.bundledNodePath.toNative(),
     };
   }
 
@@ -118,15 +118,15 @@ export class WrapperScriptGenerationService {
    * @param codeServerDir - Path to code-server installation directory
    * @returns Path to the remote-cli script
    */
-  private resolveRemoteCliPath(codeServerDir: string): string {
+  private resolveRemoteCliPath(codeServerDir: Path): Path {
     const isWindows = this.platformInfo.platform === "win32";
 
     if (isWindows) {
-      return join(codeServerDir, "lib", "vscode", "bin", "remote-cli", "code.cmd");
+      return new Path(codeServerDir, "lib", "vscode", "bin", "remote-cli", "code.cmd");
     }
 
     // Unix: the script is named based on platform
     const platform = this.platformInfo.platform === "darwin" ? "darwin" : "linux";
-    return join(codeServerDir, "lib", "vscode", "bin", "remote-cli", `code-${platform}.sh`);
+    return new Path(codeServerDir, "lib", "vscode", "bin", "remote-cli", `code-${platform}.sh`);
   }
 }

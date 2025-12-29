@@ -3,25 +3,29 @@
  */
 
 import simpleGit, { type SimpleGit, type SimpleGitOptions } from "simple-git";
-import path from "path";
 import { GitError, getErrorMessage } from "../errors";
 import type { IGitClient } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./types";
 import type { Logger } from "../logging";
+import { Path } from "../platform/path";
 
 /**
  * Implementation of IGitClient using the simple-git library.
  * Wraps simple-git calls and maps errors to GitError.
+ *
+ * All path parameters use the Path class for normalized, cross-platform handling.
+ * Internally converts to native format when calling simple-git.
  */
 export class SimpleGitClient implements IGitClient {
   constructor(private readonly logger: Logger) {}
 
   /**
    * Create a simple-git instance for a given path.
+   * Accepts Path and converts to native format for simple-git.
    */
-  private getGit(basePath: string): SimpleGit {
+  private getGit(basePath: Path): SimpleGit {
     const options: Partial<SimpleGitOptions> = {
-      baseDir: basePath,
+      baseDir: basePath.toNative(),
       binary: "git",
       maxConcurrentProcesses: 6,
       trimmed: true,
@@ -36,14 +40,14 @@ export class SimpleGitClient implements IGitClient {
   private async wrapGitOperation<T>(
     operation: () => Promise<T>,
     opName: string,
-    repoPath: string,
+    repoPath: Path,
     errorMessage: string
   ): Promise<T> {
     try {
       return await operation();
     } catch (error: unknown) {
       const errMsg = getErrorMessage(error);
-      this.logger.warn("Git error", { op: opName, path: repoPath, error: errMsg });
+      this.logger.warn("Git error", { op: opName, path: repoPath.toString(), error: errMsg });
       throw new GitError(`${errorMessage}: ${errMsg}`);
     }
   }
@@ -52,7 +56,7 @@ export class SimpleGitClient implements IGitClient {
    * Check if path is inside a git repository.
    * Used internally for pre-validation in config operations.
    */
-  private async isInsideRepository(repoPath: string): Promise<boolean> {
+  private async isInsideRepository(repoPath: Path): Promise<boolean> {
     try {
       const git = this.getGit(repoPath);
       const result = await git.checkIsRepo();
@@ -62,7 +66,7 @@ export class SimpleGitClient implements IGitClient {
     }
   }
 
-  async isRepositoryRoot(repoPath: string): Promise<boolean> {
+  async isRepositoryRoot(repoPath: Path): Promise<boolean> {
     try {
       const git = this.getGit(repoPath);
 
@@ -70,34 +74,39 @@ export class SimpleGitClient implements IGitClient {
       const isRepo = await git.checkIsRepo();
       if (!isRepo) {
         this.logger.debug("IsRepositoryRoot", {
-          path: repoPath,
+          path: repoPath.toString(),
           result: false,
           reason: "not a repo",
         });
         return false;
       }
 
-      // Get the actual repository root
+      // Get the actual repository root - git returns POSIX paths
       const root = await git.revparse(["--show-toplevel"]);
-      const normalizedRoot = path.normalize(root.trim());
-      const normalizedPath = path.normalize(repoPath);
+      // Wrap git output directly with Path (git returns POSIX format)
+      const rootPath = new Path(root.trim());
 
-      const isRoot = normalizedRoot === normalizedPath;
+      // Compare normalized paths
+      const isRoot = rootPath.equals(repoPath);
       this.logger.debug("IsRepositoryRoot", {
-        path: repoPath,
-        root: normalizedRoot,
+        path: repoPath.toString(),
+        root: rootPath.toString(),
         result: isRoot,
       });
       return isRoot;
     } catch (error: unknown) {
       // If the path doesn't exist or is inaccessible, throw GitError
       const errMsg = getErrorMessage(error);
-      this.logger.warn("Git error", { op: "isRepositoryRoot", path: repoPath, error: errMsg });
+      this.logger.warn("Git error", {
+        op: "isRepositoryRoot",
+        path: repoPath.toString(),
+        error: errMsg,
+      });
       throw new GitError(`Failed to check repository root: ${errMsg}`);
     }
   }
 
-  async listWorktrees(repoPath: string): Promise<readonly WorktreeInfo[]> {
+  async listWorktrees(repoPath: Path): Promise<readonly WorktreeInfo[]> {
     const worktrees = await this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -110,16 +119,17 @@ export class SimpleGitClient implements IGitClient {
 
         for (const entry of entries) {
           const lines = entry.split("\n");
-          let worktreePath = "";
+          let worktreePath: Path | null = null;
           let branch: string | null = null;
           let isMain = false;
 
           for (const line of lines) {
             if (line.startsWith("worktree ")) {
-              // Normalize path for cross-platform consistency.
-              // Git on Windows outputs forward slashes (C:/Users/...),
-              // but Node.js path.normalize() converts to backslashes.
-              worktreePath = path.normalize(line.substring("worktree ".length));
+              // Git on all platforms outputs POSIX paths (C:/Users/...)
+              // Wrap directly with Path - no conversion needed!
+              // This is the KEY FIX: don't use path.normalize() which
+              // would convert to native format (backslashes on Windows)
+              worktreePath = new Path(line.substring("worktree ".length));
             } else if (line.startsWith("branch ")) {
               // Branch format is "refs/heads/branch-name"
               const ref = line.substring("branch ".length);
@@ -136,7 +146,7 @@ export class SimpleGitClient implements IGitClient {
           isMain = worktreesResult.length === 0;
 
           if (worktreePath) {
-            const name = path.basename(worktreePath);
+            const name = worktreePath.basename;
             worktreesResult.push({
               name,
               path: worktreePath,
@@ -153,37 +163,39 @@ export class SimpleGitClient implements IGitClient {
       "Failed to list worktrees"
     );
 
-    this.logger.debug("ListWorktrees", { path: repoPath, count: worktrees.length });
+    this.logger.debug("ListWorktrees", { path: repoPath.toString(), count: worktrees.length });
     return worktrees;
   }
 
-  async addWorktree(repoPath: string, worktreePath: string, branch: string): Promise<void> {
+  async addWorktree(repoPath: Path, worktreePath: Path, branch: string): Promise<void> {
     await this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
-        await git.raw(["worktree", "add", worktreePath, branch]);
+        // Pass native path to git command
+        await git.raw(["worktree", "add", worktreePath.toNative(), branch]);
       },
       "addWorktree",
       repoPath,
-      `Failed to add worktree at ${worktreePath}`
+      `Failed to add worktree at ${worktreePath.toString()}`
     );
-    this.logger.debug("AddWorktree", { path: worktreePath, branch });
+    this.logger.debug("AddWorktree", { path: worktreePath.toString(), branch });
   }
 
-  async removeWorktree(repoPath: string, worktreePath: string): Promise<void> {
+  async removeWorktree(repoPath: Path, worktreePath: Path): Promise<void> {
     await this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
-        await git.raw(["worktree", "remove", worktreePath, "--force"]);
+        // Pass native path to git command
+        await git.raw(["worktree", "remove", worktreePath.toNative(), "--force"]);
       },
       "removeWorktree",
       repoPath,
-      `Failed to remove worktree at ${worktreePath}`
+      `Failed to remove worktree at ${worktreePath.toString()}`
     );
-    this.logger.debug("RemoveWorktree", { path: worktreePath });
+    this.logger.debug("RemoveWorktree", { path: worktreePath.toString() });
   }
 
-  async pruneWorktrees(repoPath: string): Promise<void> {
+  async pruneWorktrees(repoPath: Path): Promise<void> {
     return this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -195,7 +207,7 @@ export class SimpleGitClient implements IGitClient {
     );
   }
 
-  async listBranches(repoPath: string): Promise<readonly BranchInfo[]> {
+  async listBranches(repoPath: Path): Promise<readonly BranchInfo[]> {
     const branches = await this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -231,11 +243,15 @@ export class SimpleGitClient implements IGitClient {
 
     const localCount = branches.filter((b) => !b.isRemote).length;
     const remoteCount = branches.filter((b) => b.isRemote).length;
-    this.logger.debug("ListBranches", { path: repoPath, local: localCount, remote: remoteCount });
+    this.logger.debug("ListBranches", {
+      path: repoPath.toString(),
+      local: localCount,
+      remote: remoteCount,
+    });
     return branches;
   }
 
-  async createBranch(repoPath: string, name: string, startPoint: string): Promise<void> {
+  async createBranch(repoPath: Path, name: string, startPoint: string): Promise<void> {
     return this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -247,7 +263,7 @@ export class SimpleGitClient implements IGitClient {
     );
   }
 
-  async deleteBranch(repoPath: string, name: string): Promise<void> {
+  async deleteBranch(repoPath: Path, name: string): Promise<void> {
     return this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -260,7 +276,7 @@ export class SimpleGitClient implements IGitClient {
     );
   }
 
-  async getCurrentBranch(repoPath: string): Promise<string | null> {
+  async getCurrentBranch(repoPath: Path): Promise<string | null> {
     return this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -279,7 +295,7 @@ export class SimpleGitClient implements IGitClient {
     );
   }
 
-  async getStatus(repoPath: string): Promise<StatusResult> {
+  async getStatus(repoPath: Path): Promise<StatusResult> {
     const status = await this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -306,11 +322,11 @@ export class SimpleGitClient implements IGitClient {
       "Failed to get status"
     );
 
-    this.logger.debug("GetStatus", { path: repoPath, dirty: status.isDirty });
+    this.logger.debug("GetStatus", { path: repoPath.toString(), dirty: status.isDirty });
     return status;
   }
 
-  async fetch(repoPath: string, remote?: string): Promise<void> {
+  async fetch(repoPath: Path, remote?: string): Promise<void> {
     await this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -325,10 +341,10 @@ export class SimpleGitClient implements IGitClient {
       repoPath,
       `Failed to fetch${remote ? ` from ${remote}` : ""}`
     );
-    this.logger.debug("Fetch", { path: repoPath, remote: remote ?? "all" });
+    this.logger.debug("Fetch", { path: repoPath.toString(), remote: remote ?? "all" });
   }
 
-  async listRemotes(repoPath: string): Promise<readonly string[]> {
+  async listRemotes(repoPath: Path): Promise<readonly string[]> {
     return this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -341,11 +357,11 @@ export class SimpleGitClient implements IGitClient {
     );
   }
 
-  async getBranchConfig(repoPath: string, branch: string, key: string): Promise<string | null> {
+  async getBranchConfig(repoPath: Path, branch: string, key: string): Promise<string | null> {
     // First, verify it's a git repository
     const isRepo = await this.isInsideRepository(repoPath);
     if (!isRepo) {
-      throw new GitError(`Not a git repository: ${repoPath}`);
+      throw new GitError(`Not a git repository: ${repoPath.toString()}`);
     }
 
     try {
@@ -360,17 +376,16 @@ export class SimpleGitClient implements IGitClient {
         return null;
       }
       const errMsg = getErrorMessage(error);
-      this.logger.warn("Git error", { op: "getBranchConfig", path: repoPath, error: errMsg });
+      this.logger.warn("Git error", {
+        op: "getBranchConfig",
+        path: repoPath.toString(),
+        error: errMsg,
+      });
       throw new GitError(`Failed to get branch config: ${errMsg}`);
     }
   }
 
-  async setBranchConfig(
-    repoPath: string,
-    branch: string,
-    key: string,
-    value: string
-  ): Promise<void> {
+  async setBranchConfig(repoPath: Path, branch: string, key: string, value: string): Promise<void> {
     return this.wrapGitOperation(
       async () => {
         const git = this.getGit(repoPath);
@@ -384,14 +399,14 @@ export class SimpleGitClient implements IGitClient {
   }
 
   async getBranchConfigsByPrefix(
-    repoPath: string,
+    repoPath: Path,
     branch: string,
     prefix: string
   ): Promise<Readonly<Record<string, string>>> {
     // First, verify it's a git repository
     const isRepo = await this.isInsideRepository(repoPath);
     if (!isRepo) {
-      throw new GitError(`Not a git repository: ${repoPath}`);
+      throw new GitError(`Not a git repository: ${repoPath.toString()}`);
     }
 
     try {
@@ -412,13 +427,13 @@ export class SimpleGitClient implements IGitClient {
         if (spaceIndex === -1) continue;
 
         const fullKey = line.substring(0, spaceIndex);
-        const value = line.substring(spaceIndex + 1);
+        const configValue = line.substring(spaceIndex + 1);
 
         // Extract the key after the prefix (branch.<branch>.<prefix>.<key>)
         const prefixPattern = `branch.${branch}.${prefix}.`;
         if (fullKey.startsWith(prefixPattern)) {
-          const key = fullKey.substring(prefixPattern.length);
-          result[key] = value;
+          const configKeyName = fullKey.substring(prefixPattern.length);
+          result[configKeyName] = configValue;
         }
       }
 
@@ -431,18 +446,18 @@ export class SimpleGitClient implements IGitClient {
       const errMsg = getErrorMessage(error);
       this.logger.warn("Git error", {
         op: "getBranchConfigsByPrefix",
-        path: repoPath,
+        path: repoPath.toString(),
         error: errMsg,
       });
       throw new GitError(`Failed to get branch configs: ${errMsg}`);
     }
   }
 
-  async unsetBranchConfig(repoPath: string, branch: string, key: string): Promise<void> {
+  async unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void> {
     // First, verify it's a git repository
     const isRepo = await this.isInsideRepository(repoPath);
     if (!isRepo) {
-      throw new GitError(`Not a git repository: ${repoPath}`);
+      throw new GitError(`Not a git repository: ${repoPath.toString()}`);
     }
 
     try {
@@ -455,7 +470,11 @@ export class SimpleGitClient implements IGitClient {
         return;
       }
       const errMsg = getErrorMessage(error);
-      this.logger.warn("Git error", { op: "unsetBranchConfig", path: repoPath, error: errMsg });
+      this.logger.warn("Git error", {
+        op: "unsetBranchConfig",
+        path: repoPath.toString(),
+        error: errMsg,
+      });
       throw new GitError(`Failed to unset branch config: ${errMsg}`);
     }
   }

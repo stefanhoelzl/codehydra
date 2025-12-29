@@ -8,70 +8,15 @@
  * - getProjectWorkspacesDir()
  *
  * This file tests only pure utility functions with no build-mode dependencies.
+ *
+ * NOTE: Path normalization tests are in path.test.ts (Path class).
  */
 
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
-import { normalizePath, projectDirName, sanitizeWorkspaceName, encodePathForUrl } from "./paths";
+import { projectDirName, sanitizeWorkspaceName, encodePathForUrl } from "./paths";
 
 describe("paths utility functions", () => {
-  describe("normalizePath", () => {
-    it("normalizes path and strips trailing separator by default", () => {
-      const result = normalizePath("/foo/bar/");
-
-      expect(result).toBe("/foo/bar");
-    });
-
-    it("handles double slashes", () => {
-      const result = normalizePath("/foo//bar");
-
-      expect(result).toBe("/foo/bar");
-    });
-
-    it("handles . and .. segments", () => {
-      const result = normalizePath("/foo/./bar/../baz");
-
-      expect(result).toBe("/foo/baz");
-    });
-
-    it("preserves root path", () => {
-      const result = normalizePath("/");
-
-      expect(result).toBe("/");
-    });
-
-    it("converts backslashes to forward slashes when option enabled", () => {
-      const result = normalizePath("C:\\foo\\bar\\", { forwardSlashes: true });
-
-      expect(result).toBe("C:/foo/bar");
-    });
-
-    it("preserves trailing separator when option disabled", () => {
-      const result = normalizePath("/foo/bar/", { stripTrailing: false });
-
-      // path.normalize removes trailing slash on POSIX, but let's verify behavior
-      expect(result).toMatch(/^\/foo\/bar\/?$/);
-    });
-
-    it("handles empty segments after forward slash conversion", () => {
-      const result = normalizePath("C:\\foo\\\\bar", { forwardSlashes: true });
-
-      expect(result).toBe("C:/foo/bar");
-    });
-
-    it("handles mixed slashes with forwardSlashes option", () => {
-      const result = normalizePath("C:\\foo/bar\\baz/", { forwardSlashes: true });
-
-      expect(result).toBe("C:/foo/bar/baz");
-    });
-
-    it("works without options object", () => {
-      const result = normalizePath("/foo/bar/");
-
-      expect(result).toBe("/foo/bar");
-    });
-  });
-
   describe("projectDirName", () => {
     it("generates name from folder name and hash", () => {
       const projectPath = "/home/user/projects/my-repo";

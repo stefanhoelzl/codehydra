@@ -14,6 +14,7 @@ import { SILENT_LOGGER } from "./logging";
 import { createMockFileSystemLayer } from "./platform/filesystem.test-utils";
 import { createGitWorktreeProvider } from "./index";
 import { projectDirName } from "./platform/paths";
+import { Path } from "./platform/path";
 import path from "path";
 
 describe("Services Integration", () => {
@@ -57,10 +58,11 @@ describe("Services Integration", () => {
       const gitClient = new SimpleGitClient(SILENT_LOGGER);
       const workspacesDir = getWorkspacesDir(repoPath);
       const provider = await GitWorktreeProvider.create(
-        repoPath,
+        new Path(repoPath),
         gitClient,
-        workspacesDir,
-        fileSystemLayer
+        new Path(workspacesDir),
+        fileSystemLayer,
+        SILENT_LOGGER
       );
 
       // 3. Discover workspaces (empty initially)
@@ -95,10 +97,11 @@ describe("Services Integration", () => {
       const gitClient = new SimpleGitClient(SILENT_LOGGER);
       const workspacesDir = getWorkspacesDir(repoPath);
       const provider = await GitWorktreeProvider.create(
-        repoPath,
+        new Path(repoPath),
         gitClient,
-        workspacesDir,
-        fileSystemLayer
+        new Path(workspacesDir),
+        fileSystemLayer,
+        SILENT_LOGGER
       );
 
       // Create multiple workspaces
@@ -152,13 +155,14 @@ describe("Services Integration", () => {
       const workspacesDir = getWorkspacesDir(repoPath);
       const fileSystemLayer = new DefaultFileSystemLayer(SILENT_LOGGER);
       const provider = await createGitWorktreeProvider(
-        repoPath,
-        workspacesDir,
+        new Path(repoPath),
+        new Path(workspacesDir),
         fileSystemLayer,
+        SILENT_LOGGER,
         SILENT_LOGGER
       );
 
-      expect(provider.projectRoot).toBe(repoPath);
+      expect(provider.projectRoot.toString()).toBe(repoPath);
 
       // Should be able to discover workspaces
       const workspaces = await provider.discover();
@@ -171,7 +175,13 @@ describe("Services Integration", () => {
         const workspacesDir = getWorkspacesDir(nonGitDir.path);
         const fileSystemLayer = new DefaultFileSystemLayer(SILENT_LOGGER);
         await expect(
-          createGitWorktreeProvider(nonGitDir.path, workspacesDir, fileSystemLayer, SILENT_LOGGER)
+          createGitWorktreeProvider(
+            new Path(nonGitDir.path),
+            new Path(workspacesDir),
+            fileSystemLayer,
+            SILENT_LOGGER,
+            SILENT_LOGGER
+          )
         ).rejects.toThrow();
       } finally {
         await nonGitDir.cleanup();
@@ -185,10 +195,10 @@ describe("Services Integration", () => {
       const mockGitClient = {
         isRepositoryRoot: async () => true,
         listWorktrees: async () => [
-          { name: "main", path: "/mock/repo", branch: "main", isMain: true },
+          { name: "main", path: new Path("/mock/repo"), branch: "main", isMain: true },
           {
             name: "feature",
-            path: "/mock/workspaces/feature",
+            path: new Path("/mock/workspaces/feature"),
             branch: "feature",
             isMain: false,
           },
@@ -219,10 +229,11 @@ describe("Services Integration", () => {
 
       const mockFileSystemLayer = createMockFileSystemLayer();
       const provider = await GitWorktreeProvider.create(
-        "/mock/repo",
+        new Path("/mock/repo"),
         mockGitClient,
-        "/mock/workspaces",
-        mockFileSystemLayer
+        new Path("/mock/workspaces"),
+        mockFileSystemLayer,
+        SILENT_LOGGER
       );
 
       // Should work with the mock
@@ -250,10 +261,11 @@ describe("Services Integration", () => {
         const gitClient = new SimpleGitClient(SILENT_LOGGER);
         const workspacesDir = getWorkspacesDir(repo.path);
         const provider = await GitWorktreeProvider.create(
-          repo.path,
+          new Path(repo.path),
           gitClient,
-          workspacesDir,
-          fileSystemLayer
+          new Path(workspacesDir),
+          fileSystemLayer,
+          SILENT_LOGGER
         );
 
         // Create a workspace
@@ -264,7 +276,7 @@ describe("Services Integration", () => {
         expect(isDirty).toBe(false);
 
         // Main repo is dirty
-        const mainDirty = await provider.isDirty(repo.path);
+        const mainDirty = await provider.isDirty(new Path(repo.path));
         expect(mainDirty).toBe(true);
 
         // Cleanup

@@ -32,7 +32,7 @@ export async function createMockSetupState(options: {
 
   if (options.complete) {
     const marker: SetupMarker = {
-      version: options.version ?? CURRENT_SETUP_VERSION,
+      schemaVersion: options.version ?? CURRENT_SETUP_VERSION,
       completedAt: new Date().toISOString(),
     };
     await writeFile(join(vscodeDir, ".setup-completed"), JSON.stringify(marker, null, 2), "utf-8");
@@ -93,7 +93,7 @@ export async function verifySetupCompleted(vscodeDir: string): Promise<boolean> 
   try {
     const content = await readFile(join(vscodeDir, ".setup-completed"), "utf-8");
     const marker = JSON.parse(content) as SetupMarker;
-    return marker.version === CURRENT_SETUP_VERSION;
+    return marker.schemaVersion === CURRENT_SETUP_VERSION;
   } catch {
     return false;
   }

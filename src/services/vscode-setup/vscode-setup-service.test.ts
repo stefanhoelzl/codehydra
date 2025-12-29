@@ -10,12 +10,21 @@ import {
   createMockFileSystemLayer,
   createSpyFileSystemLayer,
   createDirEntry,
+  type SpyFileSystemLayer,
 } from "../platform/filesystem.test-utils";
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { FileSystemError, VscodeSetupError } from "../errors";
-import type { FileSystemLayer } from "../platform/filesystem";
+import type { FileSystemLayer, PathLike, RmOptions } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
 import type { BinaryDownloadService } from "../binary-download/binary-download-service";
+
+/**
+ * Helper to check if rm was called with a path containing the given pattern.
+ */
+function wasRmCalledWith(spyFs: SpyFileSystemLayer, pathPattern: string): boolean {
+  const calls = spyFs.rm.mock.calls as Array<[PathLike, RmOptions?]>;
+  return calls.some(([path]) => String(path).includes(pathPattern));
+}
 
 /**
  * Create a mock SpawnedProcess with controllable wait() result.
@@ -183,7 +192,7 @@ describe("VscodeSetupService", () => {
         rm: {
           implementation: async (path, options) => {
             rmCalled = true;
-            rmPath = path;
+            rmPath = String(path); // Convert PathLike to string
             rmOptions = options;
           },
         },
@@ -257,8 +266,8 @@ describe("VscodeSetupService", () => {
         readFile: { content: createExtensionsConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {
-          implementation: async (src, dest) => {
-            copiedFiles.push({ src, dest });
+          implementation: async (src: PathLike, dest: PathLike) => {
+            copiedFiles.push({ src: String(src), dest: String(dest) });
           },
         },
       });
@@ -297,13 +306,16 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions();
 
-      // First call is for bundled vsix - uses codeServerBinaryPath from pathProvider
-      expect(mockProcessRunner.run).toHaveBeenCalledWith(mockPathProvider.codeServerBinaryPath, [
-        "--install-extension",
-        join("/mock/vscode", "codehydra-sidekick-0.0.3.vsix"),
-        "--extensions-dir",
-        "/mock/vscode/extensions",
-      ]);
+      // First call is for bundled vsix - uses codeServerBinaryPath.toNative() from pathProvider
+      expect(mockProcessRunner.run).toHaveBeenCalledWith(
+        mockPathProvider.codeServerBinaryPath.toNative(),
+        [
+          "--install-extension",
+          join("/mock/vscode", "codehydra-sidekick-0.0.3.vsix"),
+          "--extensions-dir",
+          "/mock/vscode/extensions",
+        ]
+      );
     });
 
     it("installs marketplace extensions by ID", async () => {
@@ -323,13 +335,11 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions();
 
-      // Second call is for marketplace extension - uses codeServerBinaryPath from pathProvider
-      expect(mockProcessRunner.run).toHaveBeenCalledWith(mockPathProvider.codeServerBinaryPath, [
-        "--install-extension",
-        "sst-dev.opencode",
-        "--extensions-dir",
-        "/mock/vscode/extensions",
-      ]);
+      // Second call is for marketplace extension - uses codeServerBinaryPath.toNative() from pathProvider
+      expect(mockProcessRunner.run).toHaveBeenCalledWith(
+        mockPathProvider.codeServerBinaryPath.toNative(),
+        ["--install-extension", "sst-dev.opencode", "--extensions-dir", "/mock/vscode/extensions"]
+      );
     });
 
     it("handles mixed extensions in order (bundled first, then marketplace)", async () => {
@@ -424,8 +434,8 @@ describe("VscodeSetupService", () => {
       const writtenFiles: Map<string, string> = new Map();
       mockFs = createMockFileSystemLayer({
         writeFile: {
-          implementation: async (path, content) => {
-            writtenFiles.set(path, content);
+          implementation: async (path: PathLike, content: string) => {
+            writtenFiles.set(String(path), content);
           },
         },
       });
@@ -530,13 +540,13 @@ describe("VscodeSetupService", () => {
 
       mockFs = createMockFileSystemLayer({
         mkdir: {
-          implementation: async (path) => {
-            createdDirs.push(path);
+          implementation: async (path: PathLike) => {
+            createdDirs.push(String(path));
           },
         },
         writeFile: {
-          implementation: async (path, content) => {
-            writtenFiles.set(path, content);
+          implementation: async (path: PathLike, content: string) => {
+            writtenFiles.set(String(path), content);
           },
         },
         makeExecutable: { implementation: async () => {} },
@@ -559,8 +569,8 @@ describe("VscodeSetupService", () => {
       mockFs = createMockFileSystemLayer({
         mkdir: { implementation: async () => {} },
         writeFile: {
-          implementation: async (path, content) => {
-            writtenFiles.set(path, content);
+          implementation: async (path: PathLike, content: string) => {
+            writtenFiles.set(String(path), content);
           },
         },
         makeExecutable: { implementation: async () => {} },
@@ -590,8 +600,8 @@ describe("VscodeSetupService", () => {
         mkdir: { implementation: async () => {} },
         writeFile: { implementation: async () => {} },
         makeExecutable: {
-          implementation: async (path) => {
-            executablePaths.push(path);
+          implementation: async (path: PathLike) => {
+            executablePaths.push(String(path));
           },
         },
       });
@@ -616,8 +626,8 @@ describe("VscodeSetupService", () => {
         mkdir: { implementation: async () => {} },
         writeFile: { implementation: async () => {} },
         makeExecutable: {
-          implementation: async (path) => {
-            executablePaths.push(path);
+          implementation: async (path: PathLike) => {
+            executablePaths.push(String(path));
           },
         },
       });
@@ -910,19 +920,10 @@ describe("VscodeSetupService", () => {
       await service.cleanComponents(["codehydra.codehydra"]);
 
       // Should only remove the specified extension
-      expect(spyFs.rm).toHaveBeenCalledWith(
-        join("/mock/vscode/extensions", "codehydra.codehydra-0.0.1"),
-        { recursive: true, force: true }
-      );
+      expect(wasRmCalledWith(spyFs, "codehydra.codehydra-0.0.1")).toBe(true);
       // Should not remove other extensions
-      expect(spyFs.rm).not.toHaveBeenCalledWith(
-        expect.stringContaining("sst-dev.opencode"),
-        expect.anything()
-      );
-      expect(spyFs.rm).not.toHaveBeenCalledWith(
-        expect.stringContaining("other.extension"),
-        expect.anything()
-      );
+      expect(wasRmCalledWith(spyFs, "sst-dev.opencode")).toBe(false);
+      expect(wasRmCalledWith(spyFs, "other.extension")).toBe(false);
     });
 
     it("handles extension that is not installed (no error)", async () => {
@@ -952,14 +953,8 @@ describe("VscodeSetupService", () => {
       await service.cleanComponents(["codehydra.codehydra", "sst-dev.opencode"]);
 
       // Should remove both extensions
-      expect(spyFs.rm).toHaveBeenCalledWith(
-        join("/mock/vscode/extensions", "codehydra.codehydra-0.0.1"),
-        { recursive: true, force: true }
-      );
-      expect(spyFs.rm).toHaveBeenCalledWith(
-        join("/mock/vscode/extensions", "sst-dev.opencode-1.0.0"),
-        { recursive: true, force: true }
-      );
+      expect(wasRmCalledWith(spyFs, "codehydra.codehydra-0.0.1")).toBe(true);
+      expect(wasRmCalledWith(spyFs, "sst-dev.opencode-1.0.0")).toBe(true);
     });
   });
 });

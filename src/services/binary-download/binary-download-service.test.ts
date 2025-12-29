@@ -13,6 +13,7 @@ import { createMockArchiveExtractor } from "./archive-extractor.test-utils";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { FileSystemError } from "../errors";
+import type { PathLike } from "../platform/filesystem";
 
 describe("DefaultBinaryDownloadService", () => {
   const mockHttpClient = createMockHttpClient();
@@ -247,13 +248,13 @@ describe("DefaultBinaryDownloadService", () => {
           },
         },
         rename: {
-          implementation: async (oldPath, newPath) => {
-            renameCalls.push({ oldPath, newPath });
+          implementation: async (oldPath: PathLike, newPath: PathLike) => {
+            renameCalls.push({ oldPath: String(oldPath), newPath: String(newPath) });
           },
         },
         rm: {
-          implementation: async (path, options) => {
-            rmCalls.push({ path, options });
+          implementation: async (path: PathLike, options: unknown) => {
+            rmCalls.push({ path: String(path), options });
           },
         },
       });
@@ -298,13 +299,13 @@ describe("DefaultBinaryDownloadService", () => {
 
       const trackingFs = createMockFileSystemLayer({
         mkdir: {
-          implementation: async (path, options) => {
-            mkdirCalls.push({ path, options });
+          implementation: async (path: PathLike, options: unknown) => {
+            mkdirCalls.push({ path: String(path), options });
           },
         },
         writeFile: {
-          implementation: async (path, content) => {
-            writeFileCalls.push({ path, content });
+          implementation: async (path: PathLike, content: string) => {
+            writeFileCalls.push({ path: String(path), content });
           },
         },
       });
@@ -330,8 +331,8 @@ describe("DefaultBinaryDownloadService", () => {
 
       const trackingFs = createMockFileSystemLayer({
         writeFile: {
-          implementation: async (path, content) => {
-            writeFileCalls.push({ path, content });
+          implementation: async (path: PathLike, content: string) => {
+            writeFileCalls.push({ path: String(path), content });
           },
         },
       });
@@ -363,8 +364,8 @@ describe("DefaultBinaryDownloadService", () => {
 
       const trackingFs = createMockFileSystemLayer({
         writeFile: {
-          implementation: async (path, content) => {
-            writeFileCalls.push({ path, content });
+          implementation: async (path: PathLike, content: string) => {
+            writeFileCalls.push({ path: String(path), content });
           },
         },
       });

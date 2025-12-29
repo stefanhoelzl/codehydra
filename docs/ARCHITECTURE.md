@@ -352,15 +352,42 @@ All external system access goes through abstraction interfaces defined in `src/s
 
 **CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
 
-| External System  | Interface         | Implementation           | Test Mock Factory             |
-| ---------------- | ----------------- | ------------------------ | ----------------------------- |
-| Filesystem       | `FileSystemLayer` | `DefaultFileSystemLayer` | `createMockFileSystemLayer()` |
-| HTTP requests    | `HttpClient`      | `DefaultNetworkLayer`    | `createMockHttpClient()`      |
-| Port operations  | `PortManager`     | `DefaultNetworkLayer`    | `createMockPortManager()`     |
-| Process spawning | `ProcessRunner`   | `ExecaProcessRunner`     | `createMockProcessRunner()`   |
-| Build info       | `BuildInfo`       | `ElectronBuildInfo`      | `createMockBuildInfo()`       |
-| Platform info    | `PlatformInfo`    | `NodePlatformInfo`       | `createMockPlatformInfo()`    |
-| Path resolution  | `PathProvider`    | `DefaultPathProvider`    | `createMockPathProvider()`    |
+| External System    | Interface         | Implementation           | Test Mock Factory             |
+| ------------------ | ----------------- | ------------------------ | ----------------------------- |
+| Filesystem         | `FileSystemLayer` | `DefaultFileSystemLayer` | `createMockFileSystemLayer()` |
+| HTTP requests      | `HttpClient`      | `DefaultNetworkLayer`    | `createMockHttpClient()`      |
+| Port operations    | `PortManager`     | `DefaultNetworkLayer`    | `createMockPortManager()`     |
+| Process spawning   | `ProcessRunner`   | `ExecaProcessRunner`     | `createMockProcessRunner()`   |
+| Build info         | `BuildInfo`       | `ElectronBuildInfo`      | `createMockBuildInfo()`       |
+| Platform info      | `PlatformInfo`    | `NodePlatformInfo`       | `createMockPlatformInfo()`    |
+| Path resolution    | `PathProvider`    | `DefaultPathProvider`    | `createMockPathProvider()`    |
+| Path normalization | `Path` (class)    | Self-normalizing object  | Use `Path` directly           |
+
+**Path Class:**
+
+The `Path` class normalizes filesystem paths to a canonical internal format:
+
+- **POSIX separators**: Always forward slashes (`/`)
+- **Absolute only**: Throws on relative paths
+- **Case normalization**: Lowercase on Windows
+- **Clean format**: No trailing slashes, resolved `..` segments
+
+```typescript
+import { Path } from "../services/platform/path";
+
+const p = new Path("C:\\Users\\Name");
+p.toString(); // "c:/users/name" (Windows)
+p.toNative(); // "c:\users\name" (for OS APIs)
+p.equals("C:/users/name"); // true (case-insensitive on Windows)
+```
+
+**IPC Boundary Handling:**
+
+- **Internal services**: Use `Path` objects for all path handling
+- **IPC types (`src/shared/`)**: Use `string` (paths serialized via `toString()`)
+- **Renderer**: Receives pre-normalized strings; safe for `===` comparison
+
+See [Path Handling Patterns](PATTERNS.md#path-handling-patterns) for detailed examples.
 
 **Boundary test files:**
 

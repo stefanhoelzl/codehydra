@@ -8,11 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PluginServer, type ApiCallHandlers } from "./plugin-server";
-import {
-  normalizeWorkspacePath,
-  COMMAND_TIMEOUT_MS,
-  SHUTDOWN_DISCONNECT_TIMEOUT_MS,
-} from "../../shared/plugin-protocol";
+import { COMMAND_TIMEOUT_MS, SHUTDOWN_DISCONNECT_TIMEOUT_MS } from "../../shared/plugin-protocol";
 import { createMockPortManager } from "../platform/network.test-utils";
 import { SILENT_LOGGER } from "../logging/logging.test-utils";
 
@@ -23,37 +19,8 @@ describe("PluginServer", () => {
     });
   });
 
-  describe("normalizeWorkspacePath", () => {
-    it("normalizes path with trailing separator", () => {
-      // Use regex to match both Unix (/) and Windows (\) path separators
-      expect(normalizeWorkspacePath("/test/workspace/")).toMatch(/[/\\]test[/\\]workspace$/);
-    });
-
-    it("normalizes path with double separators", () => {
-      expect(normalizeWorkspacePath("/test//workspace")).toMatch(/[/\\]test[/\\]workspace$/);
-    });
-
-    it("handles Windows-style paths", () => {
-      // path.normalize converts backslashes to forward slashes on POSIX
-      // but keeps them on Windows - we just verify it doesn't crash
-      const result = normalizeWorkspacePath("C:\\Users\\test\\workspace");
-      expect(result).toBeTruthy();
-      expect(result.length).toBeGreaterThan(0);
-    });
-
-    it("handles empty string", () => {
-      expect(normalizeWorkspacePath("")).toBe(".");
-    });
-
-    it("handles root path", () => {
-      // Root path is "/" on Unix and "\" on Windows
-      expect(normalizeWorkspacePath("/")).toMatch(/^[/\\]$/);
-    });
-
-    it("handles relative path", () => {
-      expect(normalizeWorkspacePath("relative/path")).toMatch(/^relative[/\\]path$/);
-    });
-  });
+  // Note: normalizeWorkspacePath tests moved to Path class tests (path.test.ts)
+  // The PluginServer now uses Path internally for cross-platform normalization
 
   describe("onConnect", () => {
     let server: PluginServer;
@@ -246,6 +213,7 @@ describe("PluginServer", () => {
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
+        executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };
 
       // Should not throw
@@ -261,6 +229,7 @@ describe("PluginServer", () => {
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
+        executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };
 
       const handlers2: ApiCallHandlers = {
@@ -275,6 +244,7 @@ describe("PluginServer", () => {
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: { note: "test" } }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
+        executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };
 
       server.onApiCall(handlers1);
@@ -292,6 +262,7 @@ describe("PluginServer", () => {
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
+        executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
       };
 
       // Should not throw - handlers are registered

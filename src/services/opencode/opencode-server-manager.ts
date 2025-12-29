@@ -17,6 +17,7 @@ import type { PathProvider } from "../platform/path-provider";
 import type { Logger } from "../logging";
 import type { IDisposable, Unsubscribe } from "./types";
 import { waitForHealthy } from "../platform/health-check";
+import { Path } from "../platform/path";
 
 /**
  * Callback types for OpenCodeServerManager.
@@ -141,10 +142,10 @@ export class OpenCodeServerManager implements IDisposable {
     // Build environment variables with MCP config if available
     let env: NodeJS.ProcessEnv | undefined;
     if (this.mcpConfig) {
-      // Convert Windows backslashes to forward slashes for the workspace path.
+      // Use Path.toString() for the workspace path (already POSIX format).
       // OpenCode substitutes {env:CODEHYDRA_WORKSPACE_PATH} directly into JSON,
       // so backslashes would become invalid escape sequences and cause JSON parsing errors.
-      const normalizedWorkspacePath = workspacePath.replace(/\\/g, "/");
+      const normalizedWorkspacePath = new Path(workspacePath).toString();
       env = {
         ...process.env,
         OPENCODE_CONFIG: this.mcpConfig.configPath,
@@ -154,7 +155,7 @@ export class OpenCodeServerManager implements IDisposable {
     }
 
     // Spawn opencode serve
-    const opencodeCmd = this.pathProvider.opencodeBinaryPath;
+    const opencodeCmd = this.pathProvider.opencodeBinaryPath.toNative();
     const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {
       cwd: workspacePath,
       ...(env && { env }),

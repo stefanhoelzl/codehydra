@@ -3,7 +3,6 @@
  * Unit tests for GitWorktreeProvider using mocked IGitClient.
  */
 
-import { join } from "path";
 import { describe, it, expect, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
 import type { IGitClient } from "./git-client";
@@ -13,6 +12,7 @@ import { createMockFileSystemLayer, createDirEntry } from "../platform/filesyste
 import { FileSystemError } from "../errors";
 import { createMockLogger } from "../logging/logging.test-utils";
 import { delay } from "../test-utils";
+import { Path } from "../platform/path";
 
 /**
  * Create a mock IGitClient for testing.
@@ -45,8 +45,8 @@ function createMockGitClient(overrides: Partial<IGitClient> = {}): IGitClient {
 }
 
 describe("GitWorktreeProvider", () => {
-  const PROJECT_ROOT = "/home/user/projects/my-repo";
-  const WORKSPACES_DIR = "/home/user/app-data/projects/my-repo-abc12345/workspaces";
+  const PROJECT_ROOT = new Path("/home/user/projects/my-repo");
+  const WORKSPACES_DIR = new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces");
   const mockFs = createMockFileSystemLayer();
   const mockLogger = createMockLogger();
 
@@ -63,29 +63,18 @@ describe("GitWorktreeProvider", () => {
       );
 
       expect(provider).toBeInstanceOf(GitWorktreeProvider);
-      expect(provider.projectRoot).toBe(PROJECT_ROOT);
+      expect(provider.projectRoot.toString()).toBe(PROJECT_ROOT.toString());
     });
 
-    it("throws WorkspaceError for relative project path", async () => {
-      const mockClient = createMockGitClient();
-
-      await expect(
-        GitWorktreeProvider.create("relative/path", mockClient, WORKSPACES_DIR, mockFs, mockLogger)
-      ).rejects.toThrow(WorkspaceError);
+    it("throws error for relative project path (Path constructor rejects)", () => {
+      // Path constructor throws for relative paths - this is tested in path.test.ts
+      // Verifying that the pattern works as expected
+      expect(() => new Path("relative/path")).toThrow(/must be absolute/);
     });
 
-    it("throws WorkspaceError for relative workspacesDir", async () => {
-      const mockClient = createMockGitClient();
-
-      await expect(
-        GitWorktreeProvider.create(
-          PROJECT_ROOT,
-          mockClient,
-          "relative/workspaces",
-          mockFs,
-          mockLogger
-        )
-      ).rejects.toThrow(WorkspaceError);
+    it("throws error for relative workspacesDir (Path constructor rejects)", () => {
+      // Path constructor throws for relative paths - this is tested in path.test.ts
+      expect(() => new Path("relative/workspaces")).toThrow(/must be absolute/);
     });
 
     it("throws WorkspaceError when path is not a git repository root", async () => {
@@ -138,7 +127,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-branch",
-          path: "/data/workspaces/feature-branch",
+          path: new Path("/data/workspaces/feature-branch"),
           branch: "feature-branch",
           isMain: false,
         },
@@ -157,7 +146,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].name).toBe("feature-branch");
+      expect(workspaces[0]!.name).toBe("feature-branch");
     });
 
     it("handles detached HEAD workspaces", async () => {
@@ -165,7 +154,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "detached-workspace",
-          path: "/data/workspaces/detached",
+          path: new Path("/data/workspaces/detached"),
           branch: null,
           isMain: false,
         },
@@ -184,7 +173,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].branch).toBeNull();
+      expect(workspaces[0]!.branch).toBeNull();
     });
 
     it("returns multiple workspaces", async () => {
@@ -192,13 +181,13 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-a",
-          path: "/data/workspaces/feature-a",
+          path: new Path("/data/workspaces/feature-a"),
           branch: "feature-a",
           isMain: false,
         },
         {
           name: "feature-b",
-          path: "/data/workspaces/feature-b",
+          path: new Path("/data/workspaces/feature-b"),
           branch: "feature-b",
           isMain: false,
         },
@@ -221,26 +210,21 @@ describe("GitWorktreeProvider", () => {
 
     it("skips corrupted worktree entries without throwing", async () => {
       // Simulate worktrees with invalid/missing data that git might return
+      // Note: We can't create WorktreeInfo with empty path since Path throws for empty strings
+      // So we test with valid-looking but potentially problematic entries
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         // Valid worktree
         {
           name: "feature-valid",
-          path: "/data/workspaces/feature-valid",
+          path: new Path("/data/workspaces/feature-valid"),
           branch: "feature-valid",
-          isMain: false,
-        },
-        // Worktree with empty path (corrupted)
-        {
-          name: "",
-          path: "",
-          branch: null,
           isMain: false,
         },
         // Worktree with empty name but valid path
         {
           name: "",
-          path: "/data/workspaces/unnamed",
+          path: new Path("/data/workspaces/unnamed"),
           branch: "unnamed-branch",
           isMain: false,
         },
@@ -271,7 +255,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -291,7 +275,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].metadata.base).toBe("develop");
+      expect(workspaces[0]!.metadata.base).toBe("develop");
     });
 
     it("falls back to branch name when config returns null", async () => {
@@ -299,7 +283,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -319,7 +303,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].metadata.base).toBe("feature-x");
+      expect(workspaces[0]!.metadata.base).toBe("feature-x");
     });
 
     it("falls back to workspace name when detached HEAD (branch is null)", async () => {
@@ -327,7 +311,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "detached-workspace",
-          path: "/data/workspaces/detached-workspace",
+          path: new Path("/data/workspaces/detached-workspace"),
           branch: null,
           isMain: false,
         },
@@ -347,7 +331,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].metadata.base).toBe("detached-workspace");
+      expect(workspaces[0]!.metadata.base).toBe("detached-workspace");
     });
 
     it("logs warning and uses fallback when getBranchConfigsByPrefix throws", async () => {
@@ -355,7 +339,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -377,7 +361,7 @@ describe("GitWorktreeProvider", () => {
 
       expect(workspaces).toHaveLength(1);
       // Should fall back to branch name
-      expect(workspaces[0].metadata.base).toBe("feature-x");
+      expect(workspaces[0]!.metadata.base).toBe("feature-x");
     });
 
     it("fallback priority: config > branch > name", async () => {
@@ -386,21 +370,21 @@ describe("GitWorktreeProvider", () => {
         // Has config - should use config value
         {
           name: "workspace-a",
-          path: "/data/workspaces/workspace-a",
+          path: new Path("/data/workspaces/workspace-a"),
           branch: "branch-a",
           isMain: false,
         },
         // No config - should use branch
         {
           name: "workspace-b",
-          path: "/data/workspaces/workspace-b",
+          path: new Path("/data/workspaces/workspace-b"),
           branch: "branch-b",
           isMain: false,
         },
         // No config, no branch (detached) - should use name
         {
           name: "workspace-c",
-          path: "/data/workspaces/workspace-c",
+          path: new Path("/data/workspaces/workspace-c"),
           branch: null,
           isMain: false,
         },
@@ -503,8 +487,8 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.fetchedRemotes).toContain("origin");
       expect(result.failedRemotes).toHaveLength(1);
-      expect(result.failedRemotes[0].remote).toBe("backup");
-      expect(result.failedRemotes[0].error).toContain("Network error");
+      expect(result.failedRemotes[0]!.remote).toBe("backup");
+      expect(result.failedRemotes[0]!.error).toContain("Network error");
     });
 
     it("returns empty arrays when no remotes exist", async () => {
@@ -669,7 +653,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "existing-workspace",
-          path: "/data/workspaces/existing-workspace",
+          path: new Path("/data/workspaces/existing-workspace"),
           branch: "checked-out-branch",
           isMain: false,
         },
@@ -851,7 +835,7 @@ describe("GitWorktreeProvider", () => {
 
   describe("removeWorkspace", () => {
     it("removes workspace without deleting branch", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -877,7 +861,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("deletes orphaned directory when worktree unregistered after error", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktreesBefore: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -917,7 +901,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws when still registered after error", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -939,7 +923,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws when orphaned directory deletion fails", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktreesBefore: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -958,7 +942,7 @@ describe("GitWorktreeProvider", () => {
       // Mock fs where directory exists but rm fails (e.g., files still locked)
       const mockFsWithRmError = createMockFileSystemLayer({
         readdir: { entries: [createDirEntry("locked-file.txt", { isFile: true })] },
-        rm: { error: new FileSystemError("EACCES", worktreePath, "Permission denied") },
+        rm: { error: new FileSystemError("EACCES", worktreePath.toNative(), "Permission denied") },
       });
 
       const provider = await GitWorktreeProvider.create(
@@ -976,7 +960,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("succeeds when orphaned directory already deleted", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktreesBefore: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -994,7 +978,7 @@ describe("GitWorktreeProvider", () => {
 
       // Mock fs where directory doesn't exist (ENOENT on readdir)
       const mockFsNoDir = createMockFileSystemLayer({
-        readdir: { error: new FileSystemError("ENOENT", worktreePath, "Not found") },
+        readdir: { error: new FileSystemError("ENOENT", worktreePath.toNative(), "Not found") },
       });
 
       const provider = await GitWorktreeProvider.create(
@@ -1011,7 +995,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("removes workspace and deletes branch when requested", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -1053,7 +1037,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles detached HEAD workspace (no branch to delete)", async () => {
-      const worktreePath = "/data/workspaces/detached";
+      const worktreePath = new Path("/data/workspaces/detached");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "detached", path: worktreePath, branch: null, isMain: false },
@@ -1077,7 +1061,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns success when worktree already removed and directory gone (idempotent)", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       // Worktree is NOT in the list - already removed
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
@@ -1088,7 +1072,7 @@ describe("GitWorktreeProvider", () => {
 
       // Mock fs where directory doesn't exist
       const mockFsNoDir = createMockFileSystemLayer({
-        readdir: { error: new FileSystemError("ENOENT", worktreePath, "Not found") },
+        readdir: { error: new FileSystemError("ENOENT", worktreePath.toNative(), "Not found") },
       });
 
       const provider = await GitWorktreeProvider.create(
@@ -1107,7 +1091,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("deletes orphaned directory when worktree already unregistered (retry scenario)", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       // Worktree is NOT in the list - already unregistered from previous attempt
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
@@ -1140,7 +1124,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns success when branch already deleted (idempotent)", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -1169,7 +1153,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("multiple calls return success (full idempotent flow)", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktreesWithWorkspace: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
@@ -1240,7 +1224,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const dirty = await provider.isDirty("/data/workspaces/feature-x");
+      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
 
       expect(dirty).toBe(false);
     });
@@ -1262,7 +1246,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const dirty = await provider.isDirty("/data/workspaces/feature-x");
+      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
 
       expect(dirty).toBe(true);
     });
@@ -1284,7 +1268,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const dirty = await provider.isDirty("/data/workspaces/feature-x");
+      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
 
       expect(dirty).toBe(true);
     });
@@ -1306,7 +1290,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const dirty = await provider.isDirty("/data/workspaces/feature-x");
+      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
 
       expect(dirty).toBe(true);
     });
@@ -1338,7 +1322,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const isMain = provider.isMainWorkspace("/data/workspaces/feature-x");
+      const isMain = provider.isMainWorkspace(new Path("/data/workspaces/feature-x"));
 
       expect(isMain).toBe(false);
     });
@@ -1353,21 +1337,24 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      // Path with trailing slash should still match
-      const isMain = provider.isMainWorkspace(PROJECT_ROOT + "/");
+      // Path with trailing slash normalizes to same value - Path handles this automatically
+      // Testing that two different Path constructions with equivalent strings match
+      const pathWithTrailingSlash = new Path(PROJECT_ROOT.toString() + "/");
+      const isMain = provider.isMainWorkspace(pathWithTrailingSlash);
 
       expect(isMain).toBe(true);
     });
   });
 
   describe("path normalization", () => {
-    it("normalizeWorktreePath should remove trailing slashes", async () => {
-      const worktreePath = "/data/workspaces/feature-x/";
+    it("Path class removes trailing slashes", async () => {
+      // Path automatically normalizes trailing slashes
+      const worktreePath = new Path("/data/workspaces/feature-x/");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -1389,14 +1376,14 @@ describe("GitWorktreeProvider", () => {
       expect(result.workspaceRemoved).toBe(true);
     });
 
-    it("normalizeWorktreePath should handle mixed separators", async () => {
-      // Path with ./  components should normalize correctly
-      const worktreePath = "/data/workspaces/./feature-x";
+    it("Path class handles mixed separators", async () => {
+      // Path normalizes ./ components
+      const worktreePath = new Path("/data/workspaces/./feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -1418,14 +1405,14 @@ describe("GitWorktreeProvider", () => {
       expect(result.workspaceRemoved).toBe(true);
     });
 
-    it("normalizeWorktreePath should normalize paths when comparing", async () => {
-      // Worktree returned by git has trailing slash
-      const worktreePath = "/data/workspaces/feature-x";
+    it("Path class normalizes paths when comparing", async () => {
+      // Worktree returned by git has trailing slash - Path normalizes it
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x/",
+          path: new Path("/data/workspaces/feature-x/"),
           branch: "feature-x",
           isMain: false,
         },
@@ -1566,7 +1553,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: join(WORKSPACES_DIR, "feature-x"),
+          path: new Path(WORKSPACES_DIR, "feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -1597,7 +1584,7 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.removedCount).toBe(1);
       expect(result.failedPaths).toHaveLength(0);
-      expect(rmFn).toHaveBeenCalledWith(join(WORKSPACES_DIR, "orphan-workspace"), {
+      expect(rmFn).toHaveBeenCalledWith(new Path(WORKSPACES_DIR, "orphan-workspace"), {
         recursive: true,
         force: true,
       });
@@ -1608,7 +1595,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: join(WORKSPACES_DIR, "feature-x"),
+          path: new Path(WORKSPACES_DIR, "feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -1730,7 +1717,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "orphan-workspace",
-          path: join(WORKSPACES_DIR, "orphan-workspace"),
+          path: new Path(WORKSPACES_DIR, "orphan-workspace"),
           branch: "orphan-workspace",
           isMain: false,
         },
@@ -1801,16 +1788,13 @@ describe("GitWorktreeProvider", () => {
       const mockClient = createMockGitClient({
         listWorktrees: vi.fn().mockResolvedValue(worktrees),
       });
+      const orphanPath = new Path(WORKSPACES_DIR, "orphan-workspace");
       const mockFsWithRmError = createMockFileSystemLayer({
         readdir: {
           entries: [createDirEntry("orphan-workspace", { isDirectory: true })],
         },
         rm: {
-          error: new FileSystemError(
-            "EACCES",
-            join(WORKSPACES_DIR, "orphan-workspace"),
-            "Permission denied"
-          ),
+          error: new FileSystemError("EACCES", orphanPath.toNative(), "Permission denied"),
         },
       });
 
@@ -1827,7 +1811,7 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.removedCount).toBe(0);
       expect(result.failedPaths).toHaveLength(1);
-      expect(result.failedPaths[0]?.path).toBe(join(WORKSPACES_DIR, "orphan-workspace"));
+      expect(result.failedPaths[0]?.path).toBe(orphanPath.toString());
     });
 
     it("fails silently when listWorktrees throws", async () => {
@@ -1858,7 +1842,7 @@ describe("GitWorktreeProvider", () => {
           ]),
       });
       const mockFsNotFound = createMockFileSystemLayer({
-        readdir: { error: new FileSystemError("ENOENT", WORKSPACES_DIR, "Not found") },
+        readdir: { error: new FileSystemError("ENOENT", WORKSPACES_DIR.toNative(), "Not found") },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1900,12 +1884,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("normalizes paths when comparing", async () => {
-      // Worktree path has trailing slash
+      // Worktree path has trailing slash - Path normalizes it automatically
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: join(WORKSPACES_DIR, "feature-x") + "/",
+          path: new Path(WORKSPACES_DIR.toString() + "/feature-x/"),
           branch: "feature-x",
           isMain: false,
         },
@@ -1995,7 +1979,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -2015,7 +1999,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].metadata.base).toBe("develop");
+      expect(workspaces[0]!.metadata.base).toBe("develop");
     });
 
     it("returns metadata with base fallback to branch when no config", async () => {
@@ -2023,7 +2007,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -2043,7 +2027,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].metadata.base).toBe("feature-x"); // Falls back to branch
+      expect(workspaces[0]!.metadata.base).toBe("feature-x"); // Falls back to branch
     });
 
     it("returns metadata with base fallback to name when no branch (detached HEAD)", async () => {
@@ -2051,7 +2035,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "detached-workspace",
-          path: "/data/workspaces/detached-workspace",
+          path: new Path("/data/workspaces/detached-workspace"),
           branch: null,
           isMain: false,
         },
@@ -2071,7 +2055,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].metadata.base).toBe("detached-workspace"); // Falls back to name
+      expect(workspaces[0]!.metadata.base).toBe("detached-workspace"); // Falls back to name
     });
 
     it("returns full metadata from config (multiple keys)", async () => {
@@ -2079,7 +2063,7 @@ describe("GitWorktreeProvider", () => {
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
           name: "feature-x",
-          path: "/data/workspaces/feature-x",
+          path: new Path("/data/workspaces/feature-x"),
           branch: "feature-x",
           isMain: false,
         },
@@ -2103,7 +2087,7 @@ describe("GitWorktreeProvider", () => {
       const workspaces = await provider.discover();
 
       expect(workspaces).toHaveLength(1);
-      expect(workspaces[0].metadata).toEqual({
+      expect(workspaces[0]!.metadata).toEqual({
         base: "main",
         note: "WIP auth feature",
         model: "claude-4",
@@ -2136,7 +2120,7 @@ describe("GitWorktreeProvider", () => {
 
   describe("setMetadata", () => {
     it("validates key format (rejects invalid)", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
@@ -2171,7 +2155,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("calls setBranchConfig correctly", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
@@ -2203,7 +2187,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("calls unsetBranchConfig when value is null", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
@@ -2263,7 +2247,7 @@ describe("GitWorktreeProvider", () => {
       await provider.createWorkspace("feature-x", "main");
 
       expect(mockKeepFilesService.copyToWorkspace).toHaveBeenCalledWith(
-        PROJECT_ROOT,
+        PROJECT_ROOT.toString(),
         expect.stringContaining("feature-x")
       );
     });
@@ -2373,7 +2357,7 @@ describe("GitWorktreeProvider", () => {
 
       expect(workspace.name).toBe("feature-x");
       expect(mockKeepFilesService.copyToWorkspace).toHaveBeenCalledWith(
-        PROJECT_ROOT,
+        PROJECT_ROOT.toString(),
         expect.stringContaining("feature-x")
       );
     });
@@ -2381,7 +2365,7 @@ describe("GitWorktreeProvider", () => {
 
   describe("getMetadata", () => {
     it("applies base fallback when not in config", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {
@@ -2410,7 +2394,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns all metadata keys", async () => {
-      const worktreePath = "/data/workspaces/feature-x";
+      const worktreePath = new Path("/data/workspaces/feature-x");
       const worktrees: WorktreeInfo[] = [
         { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
         {

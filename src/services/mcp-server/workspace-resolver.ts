@@ -2,11 +2,12 @@
  * Workspace resolver for MCP server.
  *
  * Resolves workspace paths from MCP headers to project/workspace identifiers.
+ * Uses Path class for cross-platform path handling.
  */
 
-import * as path from "node:path";
 import type { McpResolvedWorkspace } from "./types";
 import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
+import { Path } from "../platform/path";
 
 /**
  * Interface for AppState workspace lookup.
@@ -25,6 +26,9 @@ export interface WorkspaceLookup {
 
 /**
  * Resolve a workspace path to project and workspace identifiers.
+ *
+ * Uses Path class for proper cross-platform normalization.
+ * This ensures paths like "C:\foo" and "C:/foo" resolve to the same workspace.
  *
  * @param workspacePath - The workspace path from MCP header
  * @param appState - AppState or WorkspaceLookup for finding the project
@@ -47,33 +51,31 @@ export function resolveWorkspace(
     return null;
   }
 
-  // Normalize the path
+  // Normalize the path using Path class for cross-platform consistency
   let normalizedPath: string;
   try {
-    normalizedPath = path.normalize(workspacePath);
+    // Path constructor validates absolute paths and normalizes
+    normalizedPath = new Path(workspacePath).toString();
   } catch {
-    // path.normalize can throw on malformed paths
-    return null;
-  }
-
-  // Must be an absolute path
-  if (!path.isAbsolute(normalizedPath)) {
+    // Path constructor throws on relative or invalid paths
     return null;
   }
 
   // Find the project containing this workspace
+  // AppState.findProjectForWorkspace also normalizes its input
   const project = appState.findProjectForWorkspace(normalizedPath);
   if (!project) {
     return null;
   }
 
   // Verify the workspace exists in the project
+  // Workspaces in project are already normalized strings
   const workspace = project.workspaces.find((w) => w.path === normalizedPath);
   if (!workspace) {
     return null;
   }
 
-  // Generate project ID
+  // Generate project ID (uses same normalization)
   const projectId = generateProjectId(project.path);
 
   // Extract workspace name from path basename

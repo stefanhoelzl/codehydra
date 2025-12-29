@@ -2,66 +2,65 @@
  * Tests for PathProvider interface, mock factory, and DefaultPathProvider.
  */
 
-import { join, sep } from "node:path";
 import { describe, it, expect } from "vitest";
 import { createMockPathProvider } from "./path-provider.test-utils";
 import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
+import { Path } from "./path";
 import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versions";
 
 describe("createMockPathProvider", () => {
-  it("returns sensible default paths", () => {
+  it("returns sensible default paths as Path objects", () => {
     const pathProvider = createMockPathProvider();
 
-    // Use regex to match both Unix (/) and Windows (\) path separators
-    expect(pathProvider.dataRootDir).toMatch(/[/\\]test[/\\]app-data$/);
-    expect(pathProvider.projectsDir).toMatch(/[/\\]test[/\\]app-data[/\\]projects$/);
-    expect(pathProvider.vscodeDir).toMatch(/[/\\]test[/\\]app-data[/\\]vscode$/);
-    expect(pathProvider.vscodeExtensionsDir).toMatch(
-      /[/\\]test[/\\]app-data[/\\]vscode[/\\]extensions$/
+    // All properties should be Path objects with normalized POSIX paths
+    expect(pathProvider.dataRootDir).toBeInstanceOf(Path);
+    expect(pathProvider.dataRootDir.toString()).toBe("/test/app-data");
+    expect(pathProvider.projectsDir.toString()).toBe("/test/app-data/projects");
+    expect(pathProvider.vscodeDir.toString()).toBe("/test/app-data/vscode");
+    expect(pathProvider.vscodeExtensionsDir.toString()).toBe("/test/app-data/vscode/extensions");
+    expect(pathProvider.vscodeUserDataDir.toString()).toBe("/test/app-data/vscode/user-data");
+    expect(pathProvider.setupMarkerPath.toString()).toBe("/test/app-data/.setup-completed");
+    expect(pathProvider.electronDataDir.toString()).toBe("/test/app-data/electron");
+    expect(pathProvider.vscodeAssetsDir.toString()).toBe("/mock/assets");
+    expect(pathProvider.appIconPath.toString()).toBe("/test/resources/icon.png");
+    expect(pathProvider.binDir.toString()).toBe("/test/app-data/bin");
+    expect(pathProvider.codeServerDir.toString()).toBe(
+      `/test/app-data/code-server/${CODE_SERVER_VERSION}`
     );
-    expect(pathProvider.vscodeUserDataDir).toMatch(
-      /[/\\]test[/\\]app-data[/\\]vscode[/\\]user-data$/
+    expect(pathProvider.opencodeDir.toString()).toBe(`/test/app-data/opencode/${OPENCODE_VERSION}`);
+    expect(pathProvider.codeServerBinaryPath.toString()).toBe(
+      `/test/app-data/code-server/${CODE_SERVER_VERSION}/bin/code-server`
     );
-    expect(pathProvider.setupMarkerPath).toMatch(/[/\\]test[/\\]app-data[/\\]\.setup-completed$/);
-    expect(pathProvider.electronDataDir).toMatch(/[/\\]test[/\\]app-data[/\\]electron$/);
-    expect(pathProvider.vscodeAssetsDir).toMatch(/[/\\]mock[/\\]assets$/);
-    expect(pathProvider.appIconPath).toMatch(/[/\\]test[/\\]resources[/\\]icon\.png$/);
-    expect(pathProvider.binDir).toMatch(/[/\\]test[/\\]app-data[/\\]bin$/);
-    expect(pathProvider.codeServerDir).toMatch(
-      new RegExp(`[/\\\\]test[/\\\\]app-data[/\\\\]code-server[/\\\\]${CODE_SERVER_VERSION}$`)
+    expect(pathProvider.opencodeBinaryPath.toString()).toBe(
+      `/test/app-data/opencode/${OPENCODE_VERSION}/opencode`
     );
-    expect(pathProvider.opencodeDir).toMatch(
-      new RegExp(`[/\\\\]test[/\\\\]app-data[/\\\\]opencode[/\\\\]${OPENCODE_VERSION}$`)
-    );
-    expect(pathProvider.codeServerBinaryPath).toMatch(
-      new RegExp(
-        `[/\\\\]test[/\\\\]app-data[/\\\\]code-server[/\\\\]${CODE_SERVER_VERSION}[/\\\\]bin[/\\\\]code-server$`
-      )
-    );
-    expect(pathProvider.opencodeBinaryPath).toMatch(
-      new RegExp(
-        `[/\\\\]test[/\\\\]app-data[/\\\\]opencode[/\\\\]${OPENCODE_VERSION}[/\\\\]opencode$`
-      )
-    );
-    expect(pathProvider.bundledNodePath).toMatch(
-      new RegExp(
-        `[/\\\\]test[/\\\\]app-data[/\\\\]code-server[/\\\\]${CODE_SERVER_VERSION}[/\\\\]lib[/\\\\]node$`
-      )
+    expect(pathProvider.bundledNodePath.toString()).toBe(
+      `/test/app-data/code-server/${CODE_SERVER_VERSION}/lib/node`
     );
   });
 
-  it("accepts override for individual paths", () => {
+  it("accepts override for individual paths with strings", () => {
     const pathProvider = createMockPathProvider({
       dataRootDir: "/custom/root",
       vscodeDir: "/custom/vscode",
     });
 
-    expect(pathProvider.dataRootDir).toBe("/custom/root");
-    expect(pathProvider.vscodeDir).toBe("/custom/vscode");
-    // Other paths should still be defaults (use regex for cross-platform separators)
-    expect(pathProvider.projectsDir).toMatch(/[/\\]test[/\\]app-data[/\\]projects$/);
+    expect(pathProvider.dataRootDir.toString()).toBe("/custom/root");
+    expect(pathProvider.vscodeDir.toString()).toBe("/custom/vscode");
+    // Other paths should still be defaults
+    expect(pathProvider.projectsDir.toString()).toBe("/test/app-data/projects");
+  });
+
+  it("accepts override for individual paths with Path objects", () => {
+    const pathProvider = createMockPathProvider({
+      dataRootDir: new Path("/custom/root"),
+      vscodeDir: new Path("/custom/vscode"),
+    });
+
+    expect(pathProvider.dataRootDir.toString()).toBe("/custom/root");
+    expect(pathProvider.vscodeDir.toString()).toBe("/custom/vscode");
   });
 
   it("allows overriding all paths", () => {
@@ -83,85 +82,90 @@ describe("createMockPathProvider", () => {
       bundledNodePath: "/j/lib/node",
     });
 
-    expect(pathProvider.dataRootDir).toBe("/a");
-    expect(pathProvider.projectsDir).toBe("/b");
-    expect(pathProvider.vscodeDir).toBe("/c");
-    expect(pathProvider.vscodeExtensionsDir).toBe("/d");
-    expect(pathProvider.vscodeUserDataDir).toBe("/e");
-    expect(pathProvider.setupMarkerPath).toBe("/f");
-    expect(pathProvider.electronDataDir).toBe("/g");
-    expect(pathProvider.vscodeAssetsDir).toBe("/h");
-    expect(pathProvider.appIconPath).toBe("/h/icon.png");
-    expect(pathProvider.binDir).toBe("/i");
-    expect(pathProvider.codeServerDir).toBe("/j");
-    expect(pathProvider.opencodeDir).toBe("/k");
-    expect(pathProvider.codeServerBinaryPath).toBe("/j/bin/code-server");
-    expect(pathProvider.opencodeBinaryPath).toBe("/k/opencode");
-    expect(pathProvider.bundledNodePath).toBe("/j/lib/node");
+    expect(pathProvider.dataRootDir.toString()).toBe("/a");
+    expect(pathProvider.projectsDir.toString()).toBe("/b");
+    expect(pathProvider.vscodeDir.toString()).toBe("/c");
+    expect(pathProvider.vscodeExtensionsDir.toString()).toBe("/d");
+    expect(pathProvider.vscodeUserDataDir.toString()).toBe("/e");
+    expect(pathProvider.setupMarkerPath.toString()).toBe("/f");
+    expect(pathProvider.electronDataDir.toString()).toBe("/g");
+    expect(pathProvider.vscodeAssetsDir.toString()).toBe("/h");
+    expect(pathProvider.appIconPath.toString()).toBe("/h/icon.png");
+    expect(pathProvider.binDir.toString()).toBe("/i");
+    expect(pathProvider.codeServerDir.toString()).toBe("/j");
+    expect(pathProvider.opencodeDir.toString()).toBe("/k");
+    expect(pathProvider.codeServerBinaryPath.toString()).toBe("/j/bin/code-server");
+    expect(pathProvider.opencodeBinaryPath.toString()).toBe("/k/opencode");
+    expect(pathProvider.bundledNodePath.toString()).toBe("/j/lib/node");
   });
 
-  it("getProjectWorkspacesDir returns path with project hash", () => {
+  it("getProjectWorkspacesDir returns Path with project hash", () => {
     const pathProvider = createMockPathProvider();
 
     const result = pathProvider.getProjectWorkspacesDir("/home/user/myproject");
 
+    // Returns Path object
+    expect(result).toBeInstanceOf(Path);
     // Uses projectDirName internally: <name>-<8-char-hash>
-    // Note: Uses path.join() internally so paths have platform-specific separators
-    expect(result).toContain("myproject-");
-    expect(result).toContain(`${sep}workspaces`);
-    expect(result.startsWith(join("/test/app-data/projects") + sep)).toBe(true);
+    expect(result.toString()).toContain("myproject-");
+    expect(result.toString()).toContain("/workspaces");
+    expect(result.toString().startsWith("/test/app-data/projects/")).toBe(true);
   });
 
   it("getProjectWorkspacesDir can be overridden", () => {
+    const customPath = new Path("/custom/workspaces");
     const pathProvider = createMockPathProvider({
-      getProjectWorkspacesDir: () => "/custom/workspaces",
+      getProjectWorkspacesDir: () => customPath,
     });
 
-    expect(pathProvider.getProjectWorkspacesDir("/any/path")).toBe("/custom/workspaces");
+    expect(pathProvider.getProjectWorkspacesDir("/any/path")).toBe(customPath);
   });
 
   it("returns object satisfying PathProvider interface", () => {
     const pathProvider: PathProvider = createMockPathProvider();
 
     // TypeScript ensures type compatibility at compile time
-    // This test verifies the interface is implemented correctly
-    expect(typeof pathProvider.dataRootDir).toBe("string");
-    expect(typeof pathProvider.projectsDir).toBe("string");
-    expect(typeof pathProvider.vscodeDir).toBe("string");
-    expect(typeof pathProvider.vscodeExtensionsDir).toBe("string");
-    expect(typeof pathProvider.vscodeUserDataDir).toBe("string");
-    expect(typeof pathProvider.setupMarkerPath).toBe("string");
-    expect(typeof pathProvider.electronDataDir).toBe("string");
-    expect(typeof pathProvider.vscodeAssetsDir).toBe("string");
-    expect(typeof pathProvider.appIconPath).toBe("string");
-    expect(typeof pathProvider.binDir).toBe("string");
-    expect(typeof pathProvider.codeServerDir).toBe("string");
-    expect(typeof pathProvider.opencodeDir).toBe("string");
-    expect(typeof pathProvider.codeServerBinaryPath).toBe("string");
-    expect(typeof pathProvider.opencodeBinaryPath).toBe("string");
-    expect(typeof pathProvider.bundledNodePath).toBe("string");
+    // This test verifies the interface is implemented correctly - all should be Path instances
+    expect(pathProvider.dataRootDir).toBeInstanceOf(Path);
+    expect(pathProvider.projectsDir).toBeInstanceOf(Path);
+    expect(pathProvider.vscodeDir).toBeInstanceOf(Path);
+    expect(pathProvider.vscodeExtensionsDir).toBeInstanceOf(Path);
+    expect(pathProvider.vscodeUserDataDir).toBeInstanceOf(Path);
+    expect(pathProvider.setupMarkerPath).toBeInstanceOf(Path);
+    expect(pathProvider.electronDataDir).toBeInstanceOf(Path);
+    expect(pathProvider.vscodeAssetsDir).toBeInstanceOf(Path);
+    expect(pathProvider.appIconPath).toBeInstanceOf(Path);
+    expect(pathProvider.binDir).toBeInstanceOf(Path);
+    expect(pathProvider.codeServerDir).toBeInstanceOf(Path);
+    expect(pathProvider.opencodeDir).toBeInstanceOf(Path);
+    expect(pathProvider.codeServerBinaryPath).toBeInstanceOf(Path);
+    expect(pathProvider.opencodeBinaryPath).toBeInstanceOf(Path);
+    expect(pathProvider.bundledNodePath).toBeInstanceOf(Path);
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
   });
 });
 
 describe("DefaultPathProvider", () => {
   describe("development mode", () => {
-    it("returns ./app-data/ based paths", () => {
+    it("returns ./app-data/ based paths as Path objects", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
+      // All should be Path objects
+      expect(pathProvider.dataRootDir).toBeInstanceOf(Path);
+
       // In dev mode, uses process.cwd() + ./app-data/
       // We can't predict exact cwd, but we can verify the structure
-      expect(pathProvider.dataRootDir).toMatch(/app-data$/);
-      expect(pathProvider.projectsDir).toMatch(/app-data[/\\]projects$/);
-      expect(pathProvider.vscodeDir).toMatch(/app-data[/\\]vscode$/);
-      expect(pathProvider.vscodeExtensionsDir).toMatch(/app-data[/\\]vscode[/\\]extensions$/);
-      expect(pathProvider.vscodeUserDataDir).toMatch(/app-data[/\\]vscode[/\\]user-data$/);
-      expect(pathProvider.setupMarkerPath).toMatch(/app-data[/\\]\.setup-completed$/);
-      expect(pathProvider.electronDataDir).toMatch(/app-data[/\\]electron$/);
-      expect(pathProvider.appIconPath).toMatch(/resources[/\\]icon\.png$/);
-      expect(pathProvider.binDir).toMatch(/app-data[/\\]bin$/);
+      expect(pathProvider.dataRootDir.toString()).toMatch(/app-data$/);
+      expect(pathProvider.projectsDir.toString()).toMatch(/app-data\/projects$/);
+      expect(pathProvider.vscodeDir.toString()).toMatch(/app-data\/vscode$/);
+      expect(pathProvider.vscodeExtensionsDir.toString()).toMatch(/app-data\/vscode\/extensions$/);
+      expect(pathProvider.vscodeUserDataDir.toString()).toMatch(/app-data\/vscode\/user-data$/);
+      expect(pathProvider.setupMarkerPath.toString()).toMatch(/app-data\/\.setup-completed$/);
+      expect(pathProvider.electronDataDir.toString()).toMatch(/app-data\/electron$/);
+      expect(pathProvider.appIconPath.toString()).toMatch(/resources\/icon\.png$/);
+      expect(pathProvider.binDir.toString()).toMatch(/app-data\/bin$/);
     });
 
     it("returns versioned binary directories", () => {
@@ -169,11 +173,11 @@ describe("DefaultPathProvider", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerDir).toMatch(
-        new RegExp(`app-data[/\\\\]code-server[/\\\\]${CODE_SERVER_VERSION}$`)
+      expect(pathProvider.codeServerDir.toString()).toMatch(
+        new RegExp(`app-data/code-server/${CODE_SERVER_VERSION}$`)
       );
-      expect(pathProvider.opencodeDir).toMatch(
-        new RegExp(`app-data[/\\\\]opencode[/\\\\]${OPENCODE_VERSION}$`)
+      expect(pathProvider.opencodeDir.toString()).toMatch(
+        new RegExp(`app-data/opencode/${OPENCODE_VERSION}$`)
       );
     });
 
@@ -182,9 +186,9 @@ describe("DefaultPathProvider", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerBinaryPath).toMatch(/bin[/\\]code-server$/);
-      expect(pathProvider.opencodeBinaryPath).toMatch(/opencode$/);
-      expect(pathProvider.opencodeBinaryPath).not.toMatch(/\.exe$/);
+      expect(pathProvider.codeServerBinaryPath.toString()).toMatch(/bin\/code-server$/);
+      expect(pathProvider.opencodeBinaryPath.toString()).toMatch(/opencode$/);
+      expect(pathProvider.opencodeBinaryPath.toString()).not.toMatch(/\.exe$/);
     });
 
     it("returns bundled Node path for Unix", () => {
@@ -192,8 +196,8 @@ describe("DefaultPathProvider", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.bundledNodePath).toMatch(/lib[/\\]node$/);
-      expect(pathProvider.bundledNodePath).not.toMatch(/\.exe$/);
+      expect(pathProvider.bundledNodePath.toString()).toMatch(/lib\/node$/);
+      expect(pathProvider.bundledNodePath.toString()).not.toMatch(/\.exe$/);
     });
 
     it("returns vscodeAssetsDir based on appPath", () => {
@@ -201,8 +205,8 @@ describe("DefaultPathProvider", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      // Uses join() internally so separators are platform-specific
-      expect(pathProvider.vscodeAssetsDir).toBe(join("/dev/project", "out", "main", "assets"));
+      // Path normalizes to POSIX format
+      expect(pathProvider.vscodeAssetsDir.toString()).toBe("/dev/project/out/main/assets");
     });
 
     it("ignores platform in development mode", () => {
@@ -223,9 +227,9 @@ describe("DefaultPathProvider", () => {
       );
 
       // All should use ./app-data/ structure (relative to cwd)
-      expect(linuxProvider.dataRootDir).toMatch(/app-data$/);
-      expect(darwinProvider.dataRootDir).toMatch(/app-data$/);
-      expect(win32Provider.dataRootDir).toMatch(/app-data$/);
+      expect(linuxProvider.dataRootDir.toString()).toMatch(/app-data$/);
+      expect(darwinProvider.dataRootDir.toString()).toMatch(/app-data$/);
+      expect(win32Provider.dataRootDir.toString()).toMatch(/app-data$/);
     });
   });
 
@@ -241,19 +245,30 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      // Uses join() internally so separators are platform-specific
-      const dataRoot = join("/home/testuser", ".local", "share", "codehydra");
-      expect(pathProvider.dataRootDir).toBe(dataRoot);
-      expect(pathProvider.projectsDir).toBe(join(dataRoot, "projects"));
-      expect(pathProvider.vscodeDir).toBe(join(dataRoot, "vscode"));
-      expect(pathProvider.vscodeExtensionsDir).toBe(join(dataRoot, "vscode", "extensions"));
-      expect(pathProvider.vscodeUserDataDir).toBe(join(dataRoot, "vscode", "user-data"));
-      expect(pathProvider.setupMarkerPath).toBe(join(dataRoot, ".setup-completed"));
-      expect(pathProvider.electronDataDir).toBe(join(dataRoot, "electron"));
-      expect(pathProvider.vscodeAssetsDir).toBe(
-        join("/opt/codehydra/resources/app.asar", "out", "main", "assets")
+      // Path normalizes to POSIX format
+      expect(pathProvider.dataRootDir.toString()).toBe("/home/testuser/.local/share/codehydra");
+      expect(pathProvider.projectsDir.toString()).toBe(
+        "/home/testuser/.local/share/codehydra/projects"
       );
-      expect(pathProvider.binDir).toBe(join(dataRoot, "bin"));
+      expect(pathProvider.vscodeDir.toString()).toBe(
+        "/home/testuser/.local/share/codehydra/vscode"
+      );
+      expect(pathProvider.vscodeExtensionsDir.toString()).toBe(
+        "/home/testuser/.local/share/codehydra/vscode/extensions"
+      );
+      expect(pathProvider.vscodeUserDataDir.toString()).toBe(
+        "/home/testuser/.local/share/codehydra/vscode/user-data"
+      );
+      expect(pathProvider.setupMarkerPath.toString()).toBe(
+        "/home/testuser/.local/share/codehydra/.setup-completed"
+      );
+      expect(pathProvider.electronDataDir.toString()).toBe(
+        "/home/testuser/.local/share/codehydra/electron"
+      );
+      expect(pathProvider.vscodeAssetsDir.toString()).toBe(
+        "/opt/codehydra/resources/app.asar/out/main/assets"
+      );
+      expect(pathProvider.binDir.toString()).toBe("/home/testuser/.local/share/codehydra/bin");
     });
 
     it("binDir is under dataRootDir", () => {
@@ -267,7 +282,7 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.binDir.startsWith(pathProvider.dataRootDir)).toBe(true);
+      expect(pathProvider.binDir.isChildOf(pathProvider.dataRootDir)).toBe(true);
     });
 
     it("returns versioned binary directories", () => {
@@ -281,11 +296,11 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerDir).toBe(
-        join("/home/testuser", ".local", "share", "codehydra", "code-server", CODE_SERVER_VERSION)
+      expect(pathProvider.codeServerDir.toString()).toBe(
+        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}`
       );
-      expect(pathProvider.opencodeDir).toBe(
-        join("/home/testuser", ".local", "share", "codehydra", "opencode", OPENCODE_VERSION)
+      expect(pathProvider.opencodeDir.toString()).toBe(
+        `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}`
       );
     });
 
@@ -300,28 +315,11 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerBinaryPath).toBe(
-        join(
-          "/home/testuser",
-          ".local",
-          "share",
-          "codehydra",
-          "code-server",
-          CODE_SERVER_VERSION,
-          "bin",
-          "code-server"
-        )
+      expect(pathProvider.codeServerBinaryPath.toString()).toBe(
+        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}/bin/code-server`
       );
-      expect(pathProvider.opencodeBinaryPath).toBe(
-        join(
-          "/home/testuser",
-          ".local",
-          "share",
-          "codehydra",
-          "opencode",
-          OPENCODE_VERSION,
-          "opencode"
-        )
+      expect(pathProvider.opencodeBinaryPath.toString()).toBe(
+        `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}/opencode`
       );
     });
   });
@@ -338,15 +336,28 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      // Uses join() internally so separators are platform-specific
-      const dataRoot = join("/Users/testuser", "Library", "Application Support", "Codehydra");
-      expect(pathProvider.dataRootDir).toBe(dataRoot);
-      expect(pathProvider.projectsDir).toBe(join(dataRoot, "projects"));
-      expect(pathProvider.vscodeDir).toBe(join(dataRoot, "vscode"));
-      expect(pathProvider.vscodeExtensionsDir).toBe(join(dataRoot, "vscode", "extensions"));
-      expect(pathProvider.vscodeUserDataDir).toBe(join(dataRoot, "vscode", "user-data"));
-      expect(pathProvider.setupMarkerPath).toBe(join(dataRoot, ".setup-completed"));
-      expect(pathProvider.electronDataDir).toBe(join(dataRoot, "electron"));
+      // Path normalizes to POSIX format
+      expect(pathProvider.dataRootDir.toString()).toBe(
+        "/Users/testuser/Library/Application Support/Codehydra"
+      );
+      expect(pathProvider.projectsDir.toString()).toBe(
+        "/Users/testuser/Library/Application Support/Codehydra/projects"
+      );
+      expect(pathProvider.vscodeDir.toString()).toBe(
+        "/Users/testuser/Library/Application Support/Codehydra/vscode"
+      );
+      expect(pathProvider.vscodeExtensionsDir.toString()).toBe(
+        "/Users/testuser/Library/Application Support/Codehydra/vscode/extensions"
+      );
+      expect(pathProvider.vscodeUserDataDir.toString()).toBe(
+        "/Users/testuser/Library/Application Support/Codehydra/vscode/user-data"
+      );
+      expect(pathProvider.setupMarkerPath.toString()).toBe(
+        "/Users/testuser/Library/Application Support/Codehydra/.setup-completed"
+      );
+      expect(pathProvider.electronDataDir.toString()).toBe(
+        "/Users/testuser/Library/Application Support/Codehydra/electron"
+      );
     });
 
     it("returns versioned binary directories and correct paths", () => {
@@ -360,35 +371,22 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerDir).toBe(
-        join(
-          "/Users/testuser",
-          "Library",
-          "Application Support",
-          "Codehydra",
-          "code-server",
-          CODE_SERVER_VERSION
-        )
+      expect(pathProvider.codeServerDir.toString()).toBe(
+        `/Users/testuser/Library/Application Support/Codehydra/code-server/${CODE_SERVER_VERSION}`
       );
-      expect(pathProvider.opencodeDir).toBe(
-        join(
-          "/Users/testuser",
-          "Library",
-          "Application Support",
-          "Codehydra",
-          "opencode",
-          OPENCODE_VERSION
-        )
+      expect(pathProvider.opencodeDir.toString()).toBe(
+        `/Users/testuser/Library/Application Support/Codehydra/opencode/${OPENCODE_VERSION}`
       );
       // macOS uses Unix-style paths (no .exe extension)
-      expect(pathProvider.codeServerBinaryPath).toContain(join("bin", "code-server"));
-      expect(pathProvider.codeServerBinaryPath).not.toContain(".cmd");
-      expect(pathProvider.opencodeBinaryPath).toContain("opencode");
-      expect(pathProvider.opencodeBinaryPath).not.toContain(".exe");
+      expect(pathProvider.codeServerBinaryPath.toString()).toContain("/bin/code-server");
+      expect(pathProvider.codeServerBinaryPath.toString()).not.toContain(".cmd");
+      expect(pathProvider.opencodeBinaryPath.toString()).toContain("opencode");
+      expect(pathProvider.opencodeBinaryPath.toString()).not.toContain(".exe");
     });
   });
 
-  describe("production mode - Windows", () => {
+  // Windows-specific tests only run on Windows because Path class checks actual platform
+  describe.skipIf(process.platform !== "win32")("production mode - Windows", () => {
     it("returns <home>/AppData/Roaming/Codehydra/ based paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
@@ -402,15 +400,15 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      // Use join() for expected values since path separators are platform-specific
-      expect(pathProvider.dataRootDir).toBe(
-        join("C:/Users/TestUser", "AppData", "Roaming", "Codehydra")
+      // Path normalizes to POSIX format with lowercase on Windows
+      expect(pathProvider.dataRootDir.toString()).toBe(
+        "c:/users/testuser/appdata/roaming/codehydra"
       );
-      expect(pathProvider.projectsDir).toBe(
-        join("C:/Users/TestUser", "AppData", "Roaming", "Codehydra", "projects")
+      expect(pathProvider.projectsDir.toString()).toBe(
+        "c:/users/testuser/appdata/roaming/codehydra/projects"
       );
-      expect(pathProvider.vscodeDir).toBe(
-        join("C:/Users/TestUser", "AppData", "Roaming", "Codehydra", "vscode")
+      expect(pathProvider.vscodeDir.toString()).toBe(
+        "c:/users/testuser/appdata/roaming/codehydra/vscode"
       );
     });
 
@@ -426,8 +424,8 @@ describe("DefaultPathProvider", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       // Windows uses .cmd for code-server and .exe for opencode
-      expect(pathProvider.codeServerBinaryPath).toMatch(/bin[/\\]code-server\.cmd$/);
-      expect(pathProvider.opencodeBinaryPath).toMatch(/opencode\.exe$/);
+      expect(pathProvider.codeServerBinaryPath.toString()).toMatch(/bin\/code-server\.cmd$/);
+      expect(pathProvider.opencodeBinaryPath.toString()).toMatch(/opencode\.exe$/);
     });
 
     it("returns bundled Node path with .exe extension", () => {
@@ -441,7 +439,7 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.bundledNodePath).toMatch(/lib[/\\]node\.exe$/);
+      expect(pathProvider.bundledNodePath.toString()).toMatch(/lib\/node\.exe$/);
     });
   });
 
@@ -459,12 +457,32 @@ describe("DefaultPathProvider", () => {
 
       const result = pathProvider.getProjectWorkspacesDir("/home/testuser/projects/myapp");
 
+      // Should return a Path object
+      expect(result).toBeInstanceOf(Path);
       // Should be <projectsDir>/<name>-<hash>/workspaces/
-      // Uses join() internally so separators are platform-specific
-      const expectedPrefix = join("/home/testuser", ".local", "share", "codehydra", "projects");
-      expect(result).toContain("myapp-");
-      expect(result).toMatch(/workspaces$/);
-      expect(result.startsWith(expectedPrefix + sep)).toBe(true);
+      expect(result.toString()).toContain("myapp-");
+      expect(result.toString()).toMatch(/workspaces$/);
+      expect(result.toString().startsWith("/home/testuser/.local/share/codehydra/projects/")).toBe(
+        true
+      );
+    });
+
+    it("accepts Path object as input", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
+      const platformInfo = createMockPlatformInfo({
+        platform: "linux",
+        homeDir: "/home/testuser",
+      });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      const projectPath = new Path("/home/testuser/projects/myapp");
+      const result = pathProvider.getProjectWorkspacesDir(projectPath);
+
+      expect(result).toBeInstanceOf(Path);
+      expect(result.toString()).toContain("myapp-");
     });
 
     it("throws TypeError for relative path", () => {

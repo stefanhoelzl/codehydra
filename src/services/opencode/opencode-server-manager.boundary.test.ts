@@ -21,12 +21,15 @@ import { tmpdir } from "node:os";
 import { CI_TIMEOUT_MS } from "../platform/network.test-utils";
 import { delay } from "../test-utils";
 
+import type { PathProvider } from "../platform/path-provider";
+import type { Path } from "../platform/path";
+
 /**
  * Check if opencode binary exists and is executable.
  */
-function isOpencodeAvailable(pathProvider: { opencodeBinaryPath: string }): boolean {
+function isOpencodeAvailable(pathProvider: { opencodeBinaryPath: Path }): boolean {
   try {
-    return existsSync(pathProvider.opencodeBinaryPath);
+    return existsSync(pathProvider.opencodeBinaryPath.toNative());
   } catch {
     return false;
   }
@@ -35,25 +38,8 @@ function isOpencodeAvailable(pathProvider: { opencodeBinaryPath: string }): bool
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;
   let manager: OpenCodeServerManager;
-  // Custom path provider that overrides dataRootDir for testing
-  let pathProvider: {
-    dataRootDir: string;
-    opencodeBinaryPath: string;
-    projectsDir: string;
-    vscodeDir: string;
-    vscodeExtensionsDir: string;
-    vscodeUserDataDir: string;
-    setupMarkerPath: string;
-    electronDataDir: string;
-    vscodeAssetsDir: string;
-    appIconPath: string;
-    binDir: string;
-    codeServerDir: string;
-    opencodeDir: string;
-    codeServerBinaryPath: string;
-    bundledNodePath: string;
-    getProjectWorkspacesDir: (projectPath: string) => string;
-  };
+  // Use the actual PathProvider type since all properties are now Path objects
+  let pathProvider: PathProvider;
   let networkLayer: DefaultNetworkLayer;
   let processRunner: ExecaProcessRunner;
   let skipTests = false;
@@ -78,25 +64,8 @@ describe("OpenCodeServerManager Boundary Tests", () => {
 
     // Create a custom path provider that uses test directory for data
     // but real opencode binary path
-    pathProvider = {
-      dataRootDir: testDir,
-      projectsDir: realPathProvider.projectsDir,
-      vscodeDir: realPathProvider.vscodeDir,
-      vscodeExtensionsDir: realPathProvider.vscodeExtensionsDir,
-      vscodeUserDataDir: realPathProvider.vscodeUserDataDir,
-      setupMarkerPath: realPathProvider.setupMarkerPath,
-      electronDataDir: realPathProvider.electronDataDir,
-      vscodeAssetsDir: realPathProvider.vscodeAssetsDir,
-      appIconPath: realPathProvider.appIconPath,
-      binDir: realPathProvider.binDir,
-      codeServerDir: realPathProvider.codeServerDir,
-      opencodeDir: realPathProvider.opencodeDir,
-      codeServerBinaryPath: realPathProvider.codeServerBinaryPath,
-      bundledNodePath: realPathProvider.bundledNodePath,
-      opencodeBinaryPath: realPathProvider.opencodeBinaryPath,
-      getProjectWorkspacesDir: (projectPath: string) =>
-        realPathProvider.getProjectWorkspacesDir(projectPath),
-    };
+    // Use the real path provider since all properties are now Path objects
+    pathProvider = realPathProvider;
 
     // Create dependencies using silent loggers (no Electron dependency)
     networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
@@ -107,7 +76,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     if (skipTests) {
       console.log(
         "Skipping boundary tests: opencode binary not found at",
-        realPathProvider.opencodeBinaryPath
+        realPathProvider.opencodeBinaryPath.toString()
       );
     }
   });

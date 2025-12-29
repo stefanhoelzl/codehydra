@@ -253,7 +253,7 @@ describe("BinaryDownloadService (integration)", () => {
         await service.createWrapperScripts();
 
         // Verify scripts were created
-        const binDir = pathProvider.binDir;
+        const binDir = pathProvider.binDir.toString();
         const codeServerScript = path.join(binDir, "code-server");
         const opencodeScript = path.join(binDir, "opencode");
 

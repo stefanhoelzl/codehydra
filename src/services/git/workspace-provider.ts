@@ -4,17 +4,19 @@
  * (e.g., git worktrees, plain directories, docker containers).
  */
 
+import type { Path } from "../platform/path";
 import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspace } from "./types";
 
 /**
  * Interface for workspace operations.
  * Uses domain terms (workspace, base) rather than git-specific terms.
+ * All path parameters use the Path class for normalized, cross-platform handling.
  */
 export interface IWorkspaceProvider {
   /**
-   * The root path of the project.
+   * The root path of the project (normalized Path).
    */
-  readonly projectRoot: string;
+  readonly projectRoot: Path;
 
   /**
    * Discover all existing workspaces.
@@ -52,7 +54,7 @@ export interface IWorkspaceProvider {
    * @returns Promise resolving to removal result
    * @throws WorkspaceError if removal fails or path is the main workspace
    */
-  removeWorkspace(workspacePath: string, deleteBase: boolean): Promise<RemovalResult>;
+  removeWorkspace(workspacePath: Path, deleteBase: boolean): Promise<RemovalResult>;
 
   /**
    * Check if a workspace has uncommitted changes.
@@ -60,14 +62,14 @@ export interface IWorkspaceProvider {
    * @returns Promise resolving to true if workspace has uncommitted changes
    * @throws WorkspaceError if check fails
    */
-  isDirty(workspacePath: string): Promise<boolean>;
+  isDirty(workspacePath: Path): Promise<boolean>;
 
   /**
    * Check if a path is the main (non-removable) workspace.
    * @param workspacePath Absolute path to check
    * @returns true if the path is the main workspace
    */
-  isMainWorkspace(workspacePath: string): boolean;
+  isMainWorkspace(workspacePath: Path): boolean;
 
   /**
    * Cleanup orphaned workspace directories (optional).
@@ -93,7 +95,7 @@ export interface IWorkspaceProvider {
    * @param value Value to set, or null to delete the key
    * @throws WorkspaceError with code "INVALID_METADATA_KEY" if key format invalid
    */
-  setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
+  setMetadata(workspacePath: Path, key: string, value: string | null): Promise<void>;
 
   /**
    * Get all metadata for a workspace.
@@ -101,5 +103,5 @@ export interface IWorkspaceProvider {
    * @param workspacePath Absolute path to the workspace
    * @returns Metadata record with at least `base` key
    */
-  getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
+  getMetadata(workspacePath: Path): Promise<Readonly<Record<string, string>>>;
 }

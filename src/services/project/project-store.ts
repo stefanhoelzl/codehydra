@@ -1,5 +1,8 @@
 /**
  * ProjectStore - Persists project configurations across sessions.
+ *
+ * Paths are normalized to canonical format (POSIX separators, lowercase on Windows)
+ * both on save and on load. This auto-migrates old configs with native paths.
  */
 
 import path from "path";
@@ -8,6 +11,7 @@ import { CURRENT_PROJECT_VERSION } from "./types";
 import { ProjectStoreError, getErrorMessage } from "../errors";
 import { projectDirName } from "../platform/paths";
 import type { FileSystemLayer } from "../platform/filesystem";
+import { Path } from "../platform/path";
 
 /**
  * Store for persisting project configurations.
@@ -35,13 +39,15 @@ export class ProjectStore {
    * @throws ProjectStoreError if save fails
    */
   async saveProject(projectPath: string): Promise<void> {
-    const dirName = projectDirName(projectPath);
+    // Normalize the path to canonical format for consistent storage
+    const normalizedPath = new Path(projectPath).toString();
+    const dirName = projectDirName(normalizedPath);
     const projectDir = path.join(this.projectsDir, dirName);
     const configPath = path.join(projectDir, "config.json");
 
     const config: ProjectConfig = {
       version: CURRENT_PROJECT_VERSION,
-      path: projectPath,
+      path: normalizedPath,
     };
 
     try {
@@ -85,7 +91,15 @@ export class ProjectStore {
             "path" in parsed &&
             typeof (parsed as Record<string, unknown>).path === "string"
           ) {
-            projects.push((parsed as { path: string }).path);
+            // Normalize path on load - auto-migrates old native paths to canonical format
+            const rawPath = (parsed as { path: string }).path;
+            try {
+              const normalizedPath = new Path(rawPath).toString();
+              projects.push(normalizedPath);
+            } catch {
+              // Invalid path format - skip this entry
+              continue;
+            }
           }
         } catch {
           // Skip invalid entries (ENOENT, malformed JSON, etc.)

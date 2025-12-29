@@ -87,7 +87,7 @@ describe("KeepFilesService", () => {
           readdir: {
             entries: [createDirEntry(".env", { isFile: true })],
           },
-          copyTree: { result: { copiedCount: 1, skippedSymlinks: [] } },
+          copyTree: {},
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -130,10 +130,13 @@ describe("KeepFilesService", () => {
           readdir: readdirFn,
           copyTree: copyTreeFn,
           writeFile: vi.fn(),
+          writeFileBuffer: vi.fn(),
           mkdir: vi.fn(),
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
+          symlink: vi.fn(),
+          rename: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -156,7 +159,7 @@ describe("KeepFilesService", () => {
               createDirEntry("README.md", { isFile: true }),
             ],
           },
-          copyTree: { result: { copiedCount: 1, skippedSymlinks: [] } },
+          copyTree: {},
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -194,10 +197,13 @@ describe("KeepFilesService", () => {
           readdir: readdirFn,
           copyTree: copyTreeFn,
           writeFile: vi.fn(),
+          writeFileBuffer: vi.fn(),
           mkdir: vi.fn(),
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
+          symlink: vi.fn(),
+          rename: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -230,10 +236,13 @@ describe("KeepFilesService", () => {
           readdir: readdirFn,
           copyTree: copyTreeFn,
           writeFile: vi.fn(),
+          writeFileBuffer: vi.fn(),
           mkdir: vi.fn(),
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
+          symlink: vi.fn(),
+          rename: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -259,12 +268,15 @@ describe("KeepFilesService", () => {
         const mockFs: FileSystemLayer = {
           readFile: readFileFn,
           readdir: readdirFn,
-          copyTree: vi.fn().mockResolvedValue({ copiedCount: 1, skippedSymlinks: [] }),
+          copyTree: vi.fn().mockResolvedValue(undefined),
           writeFile: vi.fn(),
+          writeFileBuffer: vi.fn(),
           mkdir: vi.fn(),
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
+          symlink: vi.fn(),
+          rename: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -287,7 +299,7 @@ describe("KeepFilesService", () => {
               createDirEntry("file.txt", { isFile: true }),
             ],
           },
-          copyTree: { result: { copiedCount: 1, skippedSymlinks: [] } },
+          copyTree: {},
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -309,7 +321,7 @@ describe("KeepFilesService", () => {
               createDirEntry(".env.local", { isFile: true }),
             ],
           },
-          copyTree: { result: { copiedCount: 1, skippedSymlinks: [] } },
+          copyTree: {},
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 

@@ -70,6 +70,7 @@ function registerAllMethodsWithOneOverride<P extends MethodPath>(
     "workspaces.getOpencodePort": async () => null,
     "workspaces.setMetadata": async () => {},
     "workspaces.getMetadata": async () => ({}),
+    "workspaces.executeCommand": async () => undefined,
     "ui.selectFolder": async () => null,
     "ui.getActiveWorkspace": async () => null,
     "ui.switchWorkspace": async () => {},
