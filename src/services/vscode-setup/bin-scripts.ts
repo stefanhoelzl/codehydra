@@ -248,7 +248,11 @@ function findMatchingSession(sessions, directory) {
     if (sessionId) args.push("--session", sessionId);
     
     // 5. Spawn opencode
-    const result = spawnSync(OPENCODE_BIN, args, { stdio: "inherit" });
+    // Note: .cmd files on Windows require shell:true to execute
+    const result = spawnSync(OPENCODE_BIN, args, {
+      stdio: "inherit",
+      shell: OPENCODE_BIN.endsWith(".cmd"),
+    });
 
     // 6. Exit with child's exit code
     if (result.error) {
