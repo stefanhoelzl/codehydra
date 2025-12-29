@@ -401,11 +401,10 @@ export function generateScripts(
 
 /**
  * OpenCode configuration structure.
- * Includes MCP server configuration and default agent settings.
+ * Includes MCP server configuration for the CodeHydra MCP server.
  */
 interface OpencodeConfig {
   $schema: string;
-  default_agent: string;
   mcp: {
     codehydra: {
       type: "remote";
@@ -421,21 +420,23 @@ interface OpencodeConfig {
 /**
  * Generate OpenCode configuration content.
  *
- * The config includes:
- * - Default agent set to "plan" for plan mode
- * - MCP server configuration with environment variable substitution:
- *   - `{env:CODEHYDRA_MCP_PORT}` - Resolved to the actual port at runtime
- *   - `{env:CODEHYDRA_WORKSPACE_PATH}` - Resolved to the workspace path at runtime
+ * The config includes MCP server configuration with environment variable substitution:
+ * - `{env:CODEHYDRA_MCP_PORT}` - Resolved to the actual port at runtime
+ * - `{env:CODEHYDRA_WORKSPACE_PATH}` - Resolved to the workspace path at runtime
  *
  * This is a static config file written during setup. OpenCode reads these
  * env var references and substitutes them when connecting to the MCP server.
+ *
+ * Note: default_agent is intentionally NOT set here. This config is passed via
+ * OPENCODE_CONFIG which takes precedence over project configs. By omitting
+ * default_agent, users can set their preferred agent in their project's
+ * opencode.jsonc or global config.
  *
  * @returns JSON string for the config file
  */
 export function generateOpencodeConfigContent(): string {
   const config: OpencodeConfig = {
     $schema: "https://opencode.ai/config.json",
-    default_agent: "plan",
     mcp: {
       codehydra: {
         type: "remote",

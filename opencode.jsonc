@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "default_agent": "feature",
   "model": "anthropic/claude-opus-4-5",
   "provider": {
     "anthropic": {

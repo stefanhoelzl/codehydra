@@ -62,11 +62,11 @@ describe("generateOpencodeConfigContent", () => {
     expect(parsed.mcp.codehydra.enabled).toBe(true);
   });
 
-  it("sets default_agent to plan", () => {
+  it("does not set default_agent (allows user config to take precedence)", () => {
     const config = generateOpencodeConfigContent();
     const parsed = JSON.parse(config);
 
-    expect(parsed.default_agent).toBe("plan");
+    expect(parsed.default_agent).toBeUndefined();
   });
 
   it("includes JSON schema reference", () => {

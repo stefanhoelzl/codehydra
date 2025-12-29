@@ -239,22 +239,6 @@ describe("WrapperScriptGenerationService", () => {
       });
     });
 
-    it("regenerates OpenCode config with default_agent set to plan", async () => {
-      const service = new WrapperScriptGenerationService(
-        mockPathProvider,
-        mockFs,
-        mockPlatformInfo
-      );
-
-      await service.regenerate();
-
-      // Should write OpenCode config
-      expect(mockFs.writeFile).toHaveBeenCalledWith(
-        mockPathProvider.mcpConfigPath,
-        expect.stringContaining('"default_agent": "plan"')
-      );
-    });
-
     it("creates OpenCode config directory before writing config", async () => {
       const service = new WrapperScriptGenerationService(
         mockPathProvider,
