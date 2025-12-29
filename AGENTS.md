@@ -130,12 +130,15 @@ path1 === path2;                     // ❌ Fails for "C:\foo" vs "C:/foo"
 
 ### Essential Commands
 
-| Command                | Purpose                           |
-| ---------------------- | --------------------------------- |
-| `npm run dev`          | Start development mode            |
-| `npm run validate:fix` | Fix lint/format issues, run tests |
-| `npm test`             | Run all tests                     |
-| `npm run build`        | Build for production              |
+| Command                | Purpose                             |
+| ---------------------- | ----------------------------------- |
+| `npm run dev`          | Start development mode              |
+| `npm run validate:fix` | Fix lint/format issues, run tests   |
+| `npm test`             | Run all tests                       |
+| `npm run build`        | Build for production                |
+| `npm run dist`         | Create distributable for current OS |
+| `npm run dist:linux`   | Create Linux AppImage               |
+| `npm run dist:win`     | Create Windows portable exe         |
 
 ### Key Documents
 

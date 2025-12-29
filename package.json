@@ -23,7 +23,10 @@
     "check": "svelte-check --tsconfig ./tsconfig.web.json --fail-on-warnings",
     "validate": "npm run format:check && npm run lint && npm run check && npm run test:legacy && npm run test:integration && npm run build",
     "validate:fix": "npm run format && npm run lint:fix && npm run check && npm run test:legacy && npm run test:integration && npm run build",
-    "postinstall": "tsx scripts/download-binaries.ts"
+    "postinstall": "tsx scripts/download-binaries.ts",
+    "dist": "npm run build && electron-builder && tsx scripts/validate-dist.ts",
+    "dist:win": "npm run build && electron-builder --win && tsx scripts/validate-dist.ts --platform win",
+    "dist:linux": "npm run build && electron-builder --linux && tsx scripts/validate-dist.ts --platform linux"
   },
   "keywords": [],
   "author": "",
@@ -56,6 +59,7 @@
     "@vscode/vsce": "^3.7.1",
     "archiver": "^7.0.1",
     "electron": "^39.2.6",
+    "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.1",
     "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.1.8",

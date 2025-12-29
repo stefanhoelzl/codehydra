@@ -1,0 +1,61 @@
+appId: com.codehydra.app
+productName: CodeHydra
+copyright: Copyright © 2025 CodeHydra
+
+# Build directories
+directories:
+  output: dist
+  buildResources: resources
+
+# Files to include in the package
+files:
+  - out/**/*
+  - package.json
+  - "!out/**/*.map"
+  - "!out/**/*.test.*"
+
+# Copy icons outside ASAR for runtime access (app badge, etc.)
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+  - from: resources/icon.ico
+    to: icon.ico
+
+# ASAR archive settings
+asar: true
+# Note: No asarUnpack needed - simple-git is pure JS (spawns git CLI),
+# and socket.io's optional native deps are already externalized in vite config
+
+# Windows configuration
+win:
+  target:
+    - target: portable
+      arch: [x64]
+  icon: resources/icon.ico
+
+# Note: portable.useAppDirWhenRunning is NOT set because PathProvider
+# doesn't support portable mode yet. Data goes to %APPDATA%\Codehydra\
+
+# Linux configuration
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  icon: resources/icon.png
+  category: Development
+  synopsis: Multi-workspace IDE for parallel AI agent development
+  description: |
+    CodeHydra is a multi-workspace IDE designed for parallel AI agent development.
+    Each workspace runs in an isolated environment with its own VS Code instance.
+
+# AppImage-specific settings
+appImage:
+  artifactName: ${productName}-${version}.${ext}
+
+# macOS configuration (future enhancement - not implemented)
+# mac:
+#   target:
+#     - target: dmg
+#       arch: [x64, arm64]
+#   icon: resources/icon.png
+#   category: public.app-category.developer-tools

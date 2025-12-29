@@ -1533,6 +1533,31 @@ extensions/
 2. `vite-plugin-static-copy` - copies `dist/extensions/*` to `out/main/assets/` during build
 3. `npm run build` - runs both steps sequentially
 
+### Distribution Build
+
+The `dist/` directory contains both intermediate build artifacts and final distributables:
+
+```
+dist/
+├── extensions/                # Extension builds (intermediate, copied to out/main/assets/)
+│   ├── codehydra-sidekick-*.vsix
+│   └── extensions.json
+├── win-unpacked/              # Unpacked Windows app (for debugging)
+├── linux-unpacked/            # Unpacked Linux app (for debugging)
+├── CodeHydra-0.1.0.exe        # Windows portable executable
+└── CodeHydra-0.1.0.AppImage   # Linux AppImage
+```
+
+**Distribution commands:**
+
+| Command              | Platform   | Output                          |
+| -------------------- | ---------- | ------------------------------- |
+| `npm run dist`       | Current OS | Platform-specific distributable |
+| `npm run dist:win`   | Windows    | `dist/CodeHydra-x.x.x.exe`      |
+| `npm run dist:linux` | Linux      | `dist/CodeHydra-x.x.x.AppImage` |
+
+**Note:** Cross-platform builds have limitations - Windows portable can only be built on Windows, Linux AppImage can only be built on Linux.
+
 ### Runtime Asset Resolution
 
 ```

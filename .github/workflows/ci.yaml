@@ -35,3 +35,10 @@ jobs:
 
       - run: npm run validate
       - run: npm run test:boundary
+
+      - run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodeHydra-${{ runner.os == 'Windows' && 'win' || 'linux' }}
+          path: dist/CodeHydra-*
+          retention-days: 7
