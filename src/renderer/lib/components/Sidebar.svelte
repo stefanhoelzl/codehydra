@@ -491,7 +491,11 @@
   }
 
   .workspace-item:hover {
-    background: var(--ch-input-bg);
+    background: var(--ch-list-hover-bg);
+  }
+
+  .workspace-item.active:hover {
+    background: var(--ch-list-active-bg);
   }
 
   .workspace-item:focus-within {
