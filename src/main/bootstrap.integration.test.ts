@@ -125,6 +125,7 @@ function createMockViewManager(): IViewManager {
         if (idx >= 0) modeChangeHandlers.splice(idx, 1);
       };
     }),
+    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
     // Test helper for emitting mode changes
     _emitModeChange: (event: { mode: string; previousMode: string }) => {

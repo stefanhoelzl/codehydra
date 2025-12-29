@@ -123,6 +123,17 @@ export interface IViewManager {
   onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe;
 
   /**
+   * Subscribe to workspace change events.
+   *
+   * Called when the active workspace changes via setActiveWorkspace().
+   * The callback receives the new workspace path (or null if no workspace is active).
+   *
+   * @param callback - Called when active workspace changes
+   * @returns Unsubscribe function
+   */
+  onWorkspaceChange(callback: (path: string | null) => void): Unsubscribe;
+
+  /**
    * Updates the code-server port.
    * Used after setup completes to update the port for origin checking.
    *

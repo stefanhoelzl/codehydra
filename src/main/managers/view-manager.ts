@@ -89,6 +89,10 @@ export class ViewManager implements IViewManager {
    */
   private readonly modeChangeCallbacks: Set<(event: UIModeChangedEvent) => void> = new Set();
   /**
+   * Callbacks for workspace change events.
+   */
+  private readonly workspaceChangeCallbacks: Set<(path: string | null) => void> = new Set();
+  /**
    * Tracks which workspaces have had their URL loaded.
    * Used to ensure URL is only loaded on first activation (lazy loading).
    */
@@ -330,9 +334,9 @@ export class ViewManager implements IViewManager {
       // Ignore errors - view may be in inconsistent state
     }
 
-    // If this was the active workspace, clear it
+    // If this was the active workspace, clear it via setActiveWorkspace to trigger callbacks
     if (this.activeWorkspacePath === workspacePath) {
-      this.activeWorkspacePath = null;
+      this.setActiveWorkspace(null, false);
     }
 
     // If this was the attached workspace, clear it and detach from window
@@ -520,10 +524,14 @@ export class ViewManager implements IViewManager {
    */
   setActiveWorkspace(workspacePath: string | null, focus: boolean = true): void {
     // Reentrant guard
-    if (this.isChangingWorkspace) return;
+    if (this.isChangingWorkspace) {
+      return;
+    }
 
     // Same workspace is no-op
-    if (this.activeWorkspacePath === workspacePath) return;
+    if (this.activeWorkspacePath === workspacePath) {
+      return;
+    }
 
     try {
       this.isChangingWorkspace = true;
@@ -564,6 +572,19 @@ export class ViewManager implements IViewManager {
       if (focus && workspacePath) {
         const view = this.workspaceViews.get(workspacePath);
         view?.webContents.focus();
+      }
+
+      // Notify subscribers of workspace change
+      for (const callback of this.workspaceChangeCallbacks) {
+        try {
+          callback(workspacePath);
+        } catch (error) {
+          this.logger.error(
+            "Error in workspace change callback",
+            {},
+            error instanceof Error ? error : undefined
+          );
+        }
       }
     } finally {
       this.isChangingWorkspace = false;
@@ -695,6 +716,19 @@ export class ViewManager implements IViewManager {
     this.modeChangeCallbacks.add(callback);
     return () => {
       this.modeChangeCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Subscribe to workspace change events.
+   *
+   * @param callback - Called when active workspace changes
+   * @returns Unsubscribe function
+   */
+  onWorkspaceChange(callback: (path: string | null) => void): Unsubscribe {
+    this.workspaceChangeCallbacks.add(callback);
+    return () => {
+      this.workspaceChangeCallbacks.delete(callback);
     };
   }
 

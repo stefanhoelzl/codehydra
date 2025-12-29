@@ -96,6 +96,7 @@ function createMockViewManager(): IViewManager {
     setMode: vi.fn(),
     getMode: vi.fn().mockReturnValue("workspace"),
     onModeChange: vi.fn().mockReturnValue(() => {}),
+    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
   } as unknown as IViewManager;
 }

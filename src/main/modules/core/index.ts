@@ -46,7 +46,7 @@ import {
   resolveProjectPath,
   resolveWorkspace as resolveWorkspaceShared,
   tryResolveWorkspace as tryResolveWorkspaceShared,
-  type ResolvedWorkspace,
+  type InternalResolvedWorkspace,
 } from "../../api/id-utils";
 
 // =============================================================================
@@ -286,8 +286,9 @@ export class CoreModule implements IApiModule {
     if (isActive && !payload.skipSwitch) {
       const switched = await this.switchToNextWorkspaceIfAvailable(projectPath, workspace.path);
       if (!switched) {
+        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
+        // wired in index.ts, not directly here
         this.deps.viewManager.setActiveWorkspace(null, false);
-        this.api.emit("workspace:switched", null);
       }
     }
 
@@ -312,8 +313,9 @@ export class CoreModule implements IApiModule {
     if (wasActive) {
       const switched = await this.switchToNextWorkspaceIfAvailable(projectPath, workspace.path);
       if (!switched) {
+        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
+        // wired in index.ts, not directly here
         this.deps.viewManager.setActiveWorkspace(null, false);
-        this.api.emit("workspace:switched", null);
       }
     }
 
@@ -470,7 +472,7 @@ export class CoreModule implements IApiModule {
    * Resolve a workspace from payload, throwing on not found.
    * Uses shared utility from id-utils.
    */
-  private resolveWorkspace(payload: WorkspaceRefPayload): Promise<ResolvedWorkspace> {
+  private resolveWorkspace(payload: WorkspaceRefPayload): Promise<InternalResolvedWorkspace> {
     return resolveWorkspaceShared(payload, this.deps.appState);
   }
 
@@ -480,7 +482,7 @@ export class CoreModule implements IApiModule {
    */
   private tryResolveWorkspace(
     payload: WorkspaceRefPayload
-  ): Promise<ResolvedWorkspace | undefined> {
+  ): Promise<InternalResolvedWorkspace | undefined> {
     return tryResolveWorkspaceShared(payload, this.deps.appState);
   }
 
@@ -493,16 +495,14 @@ export class CoreModule implements IApiModule {
     // First, try to find another workspace in the same project
     const currentProject = allProjects.find((p) => p.path === currentProjectPath);
     if (currentProject) {
-      const otherWorkspace = currentProject.workspaces.find((w) => w.path !== excludeWorkspacePath);
+      const otherWorkspace = currentProject.workspaces.find(
+        (w: { path: string }) => w.path !== excludeWorkspacePath
+      );
       if (otherWorkspace) {
-        const projectId = generateProjectId(currentProjectPath);
-        const workspaceName = extractWorkspaceName(otherWorkspace.path);
-        this.deps.viewManager.setActiveWorkspace(otherWorkspace.path, false);
-        this.api.emit("workspace:switched", {
-          projectId,
-          workspaceName,
-          path: otherWorkspace.path,
-        });
+        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
+        // wired in index.ts, not directly here
+        // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
+        this.deps.viewManager.setActiveWorkspace(otherWorkspace.path, true);
         return true;
       }
     }
@@ -512,14 +512,10 @@ export class CoreModule implements IApiModule {
       if (project.path === currentProjectPath) continue;
       const firstWorkspace = project.workspaces[0];
       if (firstWorkspace) {
-        const projectId = generateProjectId(project.path);
-        const workspaceName = extractWorkspaceName(firstWorkspace.path);
-        this.deps.viewManager.setActiveWorkspace(firstWorkspace.path, false);
-        this.api.emit("workspace:switched", {
-          projectId,
-          workspaceName,
-          path: firstWorkspace.path,
-        });
+        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
+        // wired in index.ts, not directly here
+        // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
+        this.deps.viewManager.setActiveWorkspace(firstWorkspace.path, true);
         return true;
       }
     }

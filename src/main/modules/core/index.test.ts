@@ -78,6 +78,7 @@ function createMockViewManager(): IViewManager {
     setMode: vi.fn(),
     getMode: vi.fn().mockReturnValue("workspace"),
     onModeChange: vi.fn().mockReturnValue(() => {}),
+    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
   } as unknown as IViewManager;
 }
@@ -475,7 +476,7 @@ describe("core.workspaces.remove.last-workspace", () => {
     registry = createMockRegistry();
   });
 
-  it("emits workspace:switched(null) when removing last active workspace", async () => {
+  it("calls setActiveWorkspace(null) when removing last active workspace", async () => {
     const workspacePath = `${TEST_PROJECT_PATH}/workspaces/feature`;
     const workspaceName = "feature" as import("../../../shared/api/types").WorkspaceName;
     const emitDeletionProgress = vi.fn();
@@ -513,12 +514,6 @@ describe("core.workspaces.remove.last-workspace", () => {
     deps = createMockDeps({ appState, viewManager, emitDeletionProgress });
     new CoreModule(registry, deps);
 
-    // Track workspace:switched events
-    const switchedEvents: unknown[] = [];
-    registry.on("workspace:switched", (event: unknown) => {
-      switchedEvents.push(event);
-    });
-
     const handler = registry.getHandler("workspaces.remove");
     const result = await handler!({
       projectId: TEST_PROJECT_ID,
@@ -528,15 +523,12 @@ describe("core.workspaces.remove.last-workspace", () => {
 
     expect(result).toEqual({ started: true });
 
-    // workspace:switched(null) should be emitted synchronously before fire-and-forget
-    expect(switchedEvents).toHaveLength(1);
-    expect(switchedEvents[0]).toBeNull();
-
     // viewManager.setActiveWorkspace(null) should have been called
+    // Note: workspace:switched event is emitted via ViewManager callback (wired in index.ts)
     expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(null, false);
   });
 
-  it("does not emit workspace:switched(null) when other workspaces exist", async () => {
+  it("calls setActiveWorkspace with next workspace when other workspaces exist", async () => {
     const workspacePath1 = `${TEST_PROJECT_PATH}/workspaces/feature1`;
     const workspacePath2 = `${TEST_PROJECT_PATH}/workspaces/feature2`;
     const workspaceName = "feature1" as import("../../../shared/api/types").WorkspaceName;
@@ -581,12 +573,6 @@ describe("core.workspaces.remove.last-workspace", () => {
     deps = createMockDeps({ appState, viewManager, emitDeletionProgress });
     new CoreModule(registry, deps);
 
-    // Track workspace:switched events
-    const switchedEvents: unknown[] = [];
-    registry.on("workspace:switched", (event: unknown) => {
-      switchedEvents.push(event);
-    });
-
     const handler = registry.getHandler("workspaces.remove");
     await handler!({
       projectId: TEST_PROJECT_ID,
@@ -594,16 +580,10 @@ describe("core.workspaces.remove.last-workspace", () => {
       keepBranch: true,
     });
 
-    // Should switch to the other workspace, not null
-    expect(switchedEvents).toHaveLength(1);
-    expect(switchedEvents[0]).not.toBeNull();
-    expect(switchedEvents[0]).toMatchObject({
-      path: workspacePath2,
-      workspaceName: "feature2",
-    });
-
     // viewManager.setActiveWorkspace should be called with the other workspace
-    expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(workspacePath2, false);
+    // Note: workspace:switched event is emitted via ViewManager callback (wired in index.ts)
+    // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
+    expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(workspacePath2, true);
   });
 
   it("does not switch workspace when skipSwitch is true (retry scenario)", async () => {

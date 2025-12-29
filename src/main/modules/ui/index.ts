@@ -150,13 +150,9 @@ export class UiModule implements IApiModule {
     const { workspace } = await resolveWorkspace(payload, this.deps.appState);
 
     const focus = payload.focus ?? true;
+    // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
+    // wired in index.ts, not directly here
     this.deps.viewManager.setActiveWorkspace(workspace.path, focus);
-
-    this.api.emit("workspace:switched", {
-      projectId: payload.projectId,
-      workspaceName: payload.workspaceName,
-      path: workspace.path,
-    });
   }
 
   private async setMode(payload: UiSetModePayload): Promise<void> {

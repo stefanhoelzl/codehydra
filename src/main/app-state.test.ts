@@ -252,7 +252,7 @@ describe("AppState", () => {
       });
     });
 
-    it("handles project with zero workspaces", async () => {
+    it("handles project with zero workspaces without changing active workspace", async () => {
       mockWorkspaceProvider.discover.mockResolvedValueOnce([]);
 
       const appState = new AppState(
@@ -267,7 +267,9 @@ describe("AppState", () => {
       const project = await appState.openProject("/project");
 
       expect(project.workspaces).toEqual([]);
-      expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith(null);
+      // Empty project should NOT call setActiveWorkspace
+      // This preserves the currently active workspace from another project
+      expect(mockViewManager.setActiveWorkspace).not.toHaveBeenCalled();
     });
   });
 

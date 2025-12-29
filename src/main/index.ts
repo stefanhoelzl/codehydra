@@ -39,7 +39,7 @@ import { wireApiEvents, formatWindowTitle, registerLogHandlers } from "./ipc";
 import { initializeBootstrap, type BootstrapResult } from "./bootstrap";
 import type { CoreModuleDeps } from "./modules/core";
 import type { UiModuleDeps } from "./modules/ui";
-import { generateProjectId } from "./api/id-utils";
+import { generateProjectId, extractWorkspaceName } from "./api/id-utils";
 import type { ICodeHydraApi, Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
@@ -439,8 +439,31 @@ async function startServices(): Promise<void> {
     mcpServerManager = null;
   }
 
-  // Load persisted projects
+  // Load persisted projects FIRST (before wiring callback)
+  // This prevents startup events from being emitted and racing with renderer
   await appState.loadPersistedProjects();
+
+  // Wire workspace change callback AFTER loading projects
+  // This ensures events are only emitted for user-initiated actions, not startup
+  // Capture appState for closure - it's guaranteed to be set by now
+  const appStateForCallback = appState;
+  viewManager.onWorkspaceChange((path) => {
+    if (path === null) {
+      bootstrapResult?.registry.emit("workspace:switched", null);
+      return;
+    }
+    const project = appStateForCallback.findProjectForWorkspace(path);
+    if (!project) {
+      // Workspace not found - skip event emission
+      // This can happen during cleanup or race conditions
+      return;
+    }
+    bootstrapResult?.registry.emit("workspace:switched", {
+      projectId: generateProjectId(project.path),
+      workspaceName: extractWorkspaceName(path),
+      path,
+    });
+  });
 
   // Set first workspace active if any projects loaded
   const projects = await appState.getAllProjects();
@@ -449,7 +472,8 @@ async function startServices(): Promise<void> {
     if (firstWorkspace) {
       viewManager.setActiveWorkspace(firstWorkspace.path);
 
-      // Set initial window title (workspace:switched event not emitted for startup activation)
+      // Set initial window title (event is emitted but UI not loaded yet,
+      // so renderer will get correct state via getActiveWorkspace() on mount)
       const projectName = projects[0]?.name;
       const workspaceName = nodePath.basename(firstWorkspace.path);
       const title = formatWindowTitle(projectName, workspaceName, buildInfo.gitBranch);

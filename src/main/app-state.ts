@@ -195,9 +195,8 @@ export class AppState {
       this.startOpenCodeServerAsync(workspace.path);
     }
 
-    // Set first workspace as active, or null if none
+    // First workspace will be set as active after project is registered
     const firstWorkspace = workspaces[0];
-    this.viewManager.setActiveWorkspace(firstWorkspace?.path ?? null);
 
     // Store in internal state first (needed for getDefaultBaseBranch to work)
     this.openProjects.set(projectPath, {
@@ -222,6 +221,14 @@ export class AppState {
 
     // Update stored project with defaultBaseBranch
     this.openProjects.set(projectPath, { project, provider });
+
+    // Set first workspace as active now that project is registered
+    // (callback in setActiveWorkspace needs findProjectForWorkspace to work)
+    // Only change active workspace if the new project has workspaces
+    // If empty, keep the current active workspace (user can still work in other projects)
+    if (firstWorkspace) {
+      this.viewManager.setActiveWorkspace(firstWorkspace.path);
+    }
 
     // Persist to store
     await this.projectStore.saveProject(projectPath);

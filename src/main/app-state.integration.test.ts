@@ -99,6 +99,7 @@ function createMockViewManager(): IViewManager {
     setMode: vi.fn(),
     getMode: vi.fn().mockReturnValue("workspace"),
     onModeChange: vi.fn().mockReturnValue(() => {}),
+    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
   } as unknown as IViewManager;
 }
@@ -423,6 +424,98 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
       expect(mockViewManager.destroyWorkspaceView).toHaveBeenCalledWith(
         "/project/.worktrees/feature-1"
       );
+    });
+  });
+
+  describe("workspace:switched event via onWorkspaceChange callback", () => {
+    it("opening empty project does not change active workspace", async () => {
+      // Configure mock to return empty workspace list
+      mockWorkspaceProvider.discover.mockResolvedValue([]);
+
+      appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService
+      );
+
+      await appState.openProject("/project");
+
+      // Verify setActiveWorkspace was NOT called for empty project
+      // This preserves the currently active workspace from another project
+      expect(mockViewManager.setActiveWorkspace).not.toHaveBeenCalled();
+    });
+
+    it("opening project with workspaces sets first workspace active", async () => {
+      // Configure mock to return workspaces
+      mockWorkspaceProvider.discover.mockResolvedValue([
+        {
+          name: "feature-1",
+          path: "/project/.worktrees/feature-1",
+          branch: "feature-1",
+        },
+        {
+          name: "feature-2",
+          path: "/project/.worktrees/feature-2",
+          branch: "feature-2",
+        },
+      ]);
+
+      appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService
+      );
+
+      await appState.openProject("/project");
+
+      // Verify setActiveWorkspace was called with first workspace path
+      expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith(
+        "/project/.worktrees/feature-1"
+      );
+    });
+
+    it("opening empty project AFTER non-empty project preserves active workspace", async () => {
+      const workspaceChanges: Array<string | null> = [];
+
+      // Mock setActiveWorkspace to track calls
+      vi.mocked(mockViewManager.setActiveWorkspace).mockImplementation((path: string | null) => {
+        workspaceChanges.push(path);
+      });
+
+      appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService
+      );
+
+      // First: open project A with workspaces
+      mockWorkspaceProvider.discover.mockResolvedValue([
+        {
+          name: "feature-1",
+          path: "/projectA/.worktrees/feature-1",
+          branch: "feature-1",
+        },
+      ]);
+      mockWorkspaceProvider.projectRoot = "/projectA";
+      await appState.openProject("/projectA");
+
+      // Second: open project B with no workspaces (empty)
+      mockWorkspaceProvider.discover.mockResolvedValue([]);
+      mockWorkspaceProvider.projectRoot = "/projectB";
+      await appState.openProject("/projectB");
+
+      // Verify only first project changed active workspace
+      // Empty project should NOT call setActiveWorkspace, preserving the current active workspace
+      expect(workspaceChanges).toEqual(["/projectA/.worktrees/feature-1"]);
     });
   });
 });

@@ -163,7 +163,6 @@
   function handleCloseProject(projectId: ProjectId): void {
     const project = projects.value.find((p) => p.id === projectId);
     if (!project) {
-      // Project already closed or not in store - early return
       return;
     }
     // Always show dialog for closing projects, even if empty

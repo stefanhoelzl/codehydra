@@ -2622,4 +2622,183 @@ describe("ViewManager", () => {
       manager.destroy();
     });
   });
+
+  describe("onWorkspaceChange", () => {
+    it("onWorkspaceChange-fires-on-change: callback called when workspace changes", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const onWorkspaceChange = vi.fn();
+      manager.onWorkspaceChange(onWorkspaceChange);
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(onWorkspaceChange).toHaveBeenCalledTimes(1);
+      expect(onWorkspaceChange).toHaveBeenCalledWith("/path/to/workspace");
+    });
+
+    it("onWorkspaceChange-fires-null: callback called with null when set to null", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // First activate a workspace
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const onWorkspaceChange = vi.fn();
+      manager.onWorkspaceChange(onWorkspaceChange);
+
+      // Then set to null
+      manager.setActiveWorkspace(null);
+
+      expect(onWorkspaceChange).toHaveBeenCalledTimes(1);
+      expect(onWorkspaceChange).toHaveBeenCalledWith(null);
+    });
+
+    it("onWorkspaceChange-no-op: callback NOT fired when same workspace", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const onWorkspaceChange = vi.fn();
+      manager.onWorkspaceChange(onWorkspaceChange);
+
+      // Set to same workspace again
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(onWorkspaceChange).not.toHaveBeenCalled();
+    });
+
+    it("onWorkspaceChange-unsubscribe: unsubscribed callback not called", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const onWorkspaceChange = vi.fn();
+      const unsubscribe = manager.onWorkspaceChange(onWorkspaceChange);
+
+      // Unsubscribe before activation
+      unsubscribe();
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(onWorkspaceChange).not.toHaveBeenCalled();
+    });
+
+    it("onWorkspaceChange-multiple: multiple callbacks all called", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const callback1 = vi.fn();
+      const callback2 = vi.fn();
+      const callback3 = vi.fn();
+
+      manager.onWorkspaceChange(callback1);
+      manager.onWorkspaceChange(callback2);
+      manager.onWorkspaceChange(callback3);
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(callback1).toHaveBeenCalledTimes(1);
+      expect(callback2).toHaveBeenCalledTimes(1);
+      expect(callback3).toHaveBeenCalledTimes(1);
+      expect(callback1).toHaveBeenCalledWith("/path/to/workspace");
+      expect(callback2).toHaveBeenCalledWith("/path/to/workspace");
+      expect(callback3).toHaveBeenCalledWith("/path/to/workspace");
+    });
+
+    it("onWorkspaceChange-error-handling: continues with other callbacks if one throws", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const callback1 = vi.fn();
+      const callback2 = vi.fn(() => {
+        throw new Error("Test error");
+      });
+      const callback3 = vi.fn();
+
+      manager.onWorkspaceChange(callback1);
+      manager.onWorkspaceChange(callback2);
+      manager.onWorkspaceChange(callback3);
+
+      // Should not throw
+      expect(() => manager.setActiveWorkspace("/path/to/workspace")).not.toThrow();
+
+      // All callbacks should be called despite error
+      expect(callback1).toHaveBeenCalled();
+      expect(callback2).toHaveBeenCalled();
+      expect(callback3).toHaveBeenCalled();
+    });
+  });
 });
