@@ -8,13 +8,14 @@
   It does NOT render its own <main> landmark - App.svelte owns that.
   
   Responsibilities:
-  - Initialize IPC calls on mount (listProjects, getAllAgentStatuses)
-  - Subscribe to domain events (project/workspace/agent changes)
+  - Initialize IPC calls on mount via initializeApp
+  - Subscribe to domain events via setupDomainEventBindings
+  - Subscribe to deletion progress via setupDeletionProgress
   - Sync dialog state with main process z-order
   - Render Sidebar, dialogs, and ShortcutOverlay
 -->
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import * as api from "$lib/api";
   import {
     projects,
@@ -22,14 +23,6 @@
     loadingState,
     loadingError,
     getAllWorkspaces,
-    setProjects,
-    addProject,
-    removeProject,
-    setActiveWorkspace,
-    setLoaded,
-    setError,
-    addWorkspace,
-    removeWorkspace,
   } from "$lib/stores/projects.svelte.js";
   import {
     dialogState,
@@ -43,10 +36,15 @@
     syncMode,
     desiredMode,
   } from "$lib/stores/ui-mode.svelte.js";
-  import { updateStatus, setAllStatuses } from "$lib/stores/agent-status.svelte.js";
-  import { setupDomainEvents } from "$lib/utils/domain-events";
   import { AgentNotificationService } from "$lib/services/agent-notifications";
   import { createLogger } from "$lib/logging";
+
+  // Setup functions
+  import { setupDeletionProgress } from "$lib/utils/setup-deletion-progress";
+  import { setupDomainEventBindings } from "$lib/utils/setup-domain-event-bindings";
+  import { initializeApp } from "$lib/utils/initialize-app";
+
+  // Components
   import Sidebar from "./Sidebar.svelte";
   import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
@@ -55,14 +53,13 @@
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import DeletionProgressView from "./DeletionProgressView.svelte";
   import Logo from "./Logo.svelte";
+
   import {
-    setDeletionState,
     clearDeletion,
     getDeletionState,
     getDeletionStatus,
   } from "$lib/stores/deletion.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
-  import type { Project, WorkspaceStatus, AgentStatus, DeletionProgress } from "@shared/api/types";
   import { getErrorMessage } from "@shared/error-utils";
 
   const logger = createLogger("ui");
@@ -73,44 +70,16 @@
   // Error state for open project dialog
   let openProjectError = $state<string | null>(null);
 
-  /**
-   * Fetch all workspace agent statuses using v2 API.
-   * Iterates all workspaces across all projects.
-   */
-  async function fetchAllAgentStatuses(
-    projectList: readonly Project[]
-  ): Promise<Record<string, AgentStatus>> {
-    const result: Record<string, AgentStatus> = {};
-
-    // Fetch status for each workspace in parallel
-    const statusPromises: Promise<void>[] = [];
-    for (const project of projectList) {
-      for (const workspace of project.workspaces) {
-        const promise = api.workspaces
-          .getStatus(project.id, workspace.name)
-          .then((status: WorkspaceStatus) => {
-            result[workspace.path] = status.agent;
-          })
-          .catch(() => {
-            // Ignore errors for individual workspaces
-          });
-        statusPromises.push(promise);
-      }
-    }
-    await Promise.all(statusPromises);
-    return result;
-  }
-
   // Sync dialog state to central ui-mode store
   $effect(() => {
     const isDialogOpen = dialogState.value.type !== "closed";
     setDialogOpen(isDialogOpen);
-    // Note: shortcutModeActive guard not needed - ui-mode store handles priority
   });
 
   // Sync desiredMode with main process (single IPC sync point)
+  // Note: desiredMode.value is accessed to establish reactive dependency,
+  // then syncMode() reads it internally and sends to main process
   $effect(() => {
-    // Access desiredMode to track it, then sync
     void desiredMode.value;
     syncMode();
   });
@@ -120,146 +89,35 @@
     activeWorkspacePath.value ? getDeletionState(activeWorkspacePath.value) : undefined
   );
 
-  // Initialize and subscribe to domain events on mount
+  // Initialize and subscribe to events on mount
   onMount(() => {
-    // Create notification service for chime sounds when agents become idle
-    // This must be created before setupDomainEvents so we can seed it with initial statuses
     const notificationService = new AgentNotificationService();
 
-    // Subscribe to deletion progress events
-    const unsubscribeDeletionProgress = api.on<DeletionProgress>(
-      "workspace:deletion-progress",
-      (progress) => {
-        setDeletionState(progress);
-        // Auto-clear on successful completion
-        if (progress.completed && !progress.hasErrors) {
-          clearDeletion(progress.workspacePath);
-        }
-      }
-    );
+    // Compose setup functions - each returns cleanup callback
+    const cleanupDeletion = setupDeletionProgress();
+    const cleanupDomainEvents = setupDomainEventBindings(notificationService);
 
-    // Initialize - load projects, agent statuses, and optionally auto-open picker
-    const initProjectsAndStatuses = async (): Promise<void> => {
-      try {
-        // Use v2 API for listing projects (returns projects with IDs)
-        const projectList = await api.projects.list();
-        // v2 projects have IDs - store now accepts v2 Project type directly
-        setProjects([...projectList]);
-
-        // Get initial active workspace from main process state
-        const activeRef = await api.ui.getActiveWorkspace();
-        if (activeRef) {
-          setActiveWorkspace(activeRef.path);
-        }
-        setLoaded();
-
-        // Focus first focusable element after DOM settles with project list rendered
-        await tick();
-        const firstFocusable = containerRef?.querySelector<HTMLElement>(
-          'button:not([tabindex="-1"]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-        );
-        firstFocusable?.focus();
-
-        // Fetch agent statuses for all workspaces using v2 API
-        try {
-          const statuses = await fetchAllAgentStatuses(projectList);
-          setAllStatuses(statuses);
-          // Seed notification service with initial counts so chimes work on first status change
-          // Extract counts from each status (strip total), defaulting to zeros for "none" status
-          const initialCounts = Object.fromEntries(
-            Object.entries(statuses).map(([path, status]) => [
-              path,
-              status.type === "none"
-                ? { idle: 0, busy: 0 }
-                : { idle: status.counts.idle, busy: status.counts.busy },
-            ])
-          );
-          notificationService.seedInitialCounts(initialCounts);
-        } catch {
-          // Agent status is optional, don't fail if it doesn't work
-        }
-
-        // Auto-open project picker when no projects exist (first launch experience)
-        if (projectList.length === 0) {
-          await handleOpenProject();
-        }
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to load projects");
-      }
-    };
-    void initProjectsAndStatuses();
-
-    // Subscribe to domain events using API helper
-    // API uses ProjectId and WorkspaceRef instead of paths.
-    // Store functions accept API types directly.
-    // Cast api to DomainEventApi since preload has looser typing
-    const cleanup = setupDomainEvents(
-      api as import("$lib/utils/domain-events").DomainEventApi,
-      {
-        addProject: (project) => {
-          // Project format - store accepts directly
-          addProject(project);
-          logger.debug("Store updated", { store: "projects" });
-        },
-        removeProject: (projectId) => {
-          // Find project by ID and remove by path
-          const project = projects.value.find((p) => p.id === projectId);
-          if (project) {
-            removeProject(project.path);
-            logger.debug("Store updated", { store: "projects" });
-          }
-        },
-        addWorkspace: (projectId, workspace) => {
-          // Find project by ID to get path
-          const project = projects.value.find((p) => p.id === projectId);
-          if (project) {
-            addWorkspace(project.path, workspace);
-            logger.debug("Store updated", { store: "projects" });
-          }
-        },
-        removeWorkspace: (ref) => {
-          // Find project by ID to get path
-          const project = projects.value.find((p) => p.id === ref.projectId);
-          if (project) {
-            removeWorkspace(project.path, ref.path);
-            logger.debug("Store updated", { store: "projects" });
-          }
-        },
-        setActiveWorkspace: (ref) => {
-          // uses WorkspaceRef | null, store uses path | null
-          setActiveWorkspace(ref?.path ?? null);
-          logger.debug("Store updated", { store: "projects" });
-        },
-        updateAgentStatus: (ref, status) => {
-          // Store v2 AgentStatus directly (no conversion needed)
-          updateStatus(ref.path, status.agent);
-          logger.debug("Store updated", { store: "agent-status" });
-        },
-      },
-      {
-        // Auto-open create dialog when project has no workspaces
-        onProjectOpenedHook: (project) => {
-          if (project.workspaces.length === 0 && dialogState.value.type === "closed") {
-            openCreateDialog(project.id);
-          }
-        },
-      },
-      {
-        // Pass in our notification service so it receives status change events
-        notificationService,
-      }
-    );
-
-    // Listen for open project events from shortcut mode
+    // Window event listener - inline (single use case, no abstraction needed)
     const handleOpenProjectEvent = (): void => {
       void handleOpenProject();
     };
     window.addEventListener("codehydra:open-project", handleOpenProjectEvent);
 
-    // Cleanup subscriptions on unmount
+    // Initialize app (async with no-op cleanup for consistent composition)
+    let cleanupInit = (): void => {};
+    void initializeApp({
+      containerRef,
+      notificationService,
+      onAutoOpenProject: handleOpenProject,
+    }).then((cleanup) => {
+      cleanupInit = cleanup;
+    });
+
+    // Combined cleanup
     return () => {
-      cleanup();
-      unsubscribeDeletionProgress();
+      cleanupDeletion();
+      cleanupDomainEvents();
+      cleanupInit();
       window.removeEventListener("codehydra:open-project", handleOpenProjectEvent);
     };
   });
@@ -308,6 +166,8 @@
       // Project already closed or not in store - early return
       return;
     }
+    // Always show dialog for closing projects, even if empty
+    // User should confirm they want to stop tracking the project
     logger.debug("Dialog opened", { type: "close-project" });
     openCloseProjectDialog(projectId);
   }

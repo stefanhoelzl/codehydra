@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import type { Project, Workspace, ProjectId, WorkspaceName } from "@shared/api/types";
 
 // v2 API event callbacks - MainView uses api.v2.on() which stores callbacks here
@@ -275,8 +275,8 @@ describe("Integration tests", () => {
       });
     });
 
-    it("close project: click [×] → closeProject → project:closed event → project removed from sidebar", async () => {
-      // Use project with no workspaces for direct close (projects with workspaces show dialog)
+    it("close project: click [×] → dialog opens → confirm → closeProject → project:closed event → project removed from sidebar", async () => {
+      // Projects always show dialog before closing (user confirms they want to stop tracking)
       const project = createProject("my-project", []);
       mockApi.projects.list.mockResolvedValue([project]);
 
@@ -293,6 +293,18 @@ describe("Integration tests", () => {
       // Click close project button
       const closeButton = screen.getByLabelText(/close project/i);
       await fireEvent.click(closeButton);
+
+      // Verify dialog opens (projects always show confirmation dialog)
+      const dialog = await waitFor(() => {
+        const d = screen.getByRole("dialog");
+        expect(d).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: /close project/i })).toBeInTheDocument();
+        return d;
+      });
+
+      // Confirm the close dialog - use within() to scope to dialog
+      const confirmButton = within(dialog).getByRole("button", { name: /close project/i });
+      await fireEvent.click(confirmButton);
 
       // Verify closeProject was called (v2 API uses projectId)
       await waitFor(() => {

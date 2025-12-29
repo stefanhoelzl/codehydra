@@ -1,6 +1,13 @@
 /**
  * Tests for MainView component.
- * Tests IPC initialization, event subscriptions, and rendering.
+ *
+ * These are component integration tests that verify the behavior through the rendered
+ * component. They test that setup functions are wired correctly and work together.
+ *
+ * For focused tests of individual setup functions, see:
+ * - setup-deletion-progress.test.ts
+ * - setup-domain-event-bindings.test.ts
+ * - initialize-app.test.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

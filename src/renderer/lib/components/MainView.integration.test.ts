@@ -149,7 +149,7 @@ describe("MainView close project integration", () => {
       }
     });
 
-    it("closes project directly when clicking close on project with no workspaces", async () => {
+    it("shows dialog when clicking close on project with no workspaces", async () => {
       render(MainView);
 
       // Wait for projects to load
@@ -165,9 +165,9 @@ describe("MainView close project integration", () => {
 
       await vi.runAllTimersAsync();
 
-      // Should call API directly, no dialog
-      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithoutWorkspaces.id);
-      expect(dialogsStore.dialogState.value.type).toBe("closed");
+      // Should open dialog even for empty projects - user confirms closing
+      expect(mockApi.projects.close).not.toHaveBeenCalled();
+      expect(dialogsStore.dialogState.value.type).toBe("close-project");
     });
 
     it("handles project not found in store (race condition)", async () => {

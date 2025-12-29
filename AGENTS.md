@@ -451,10 +451,10 @@ src/renderer/
 
 The renderer has a two-component architecture for startup:
 
-| Component       | Responsibility                                                       |
-| --------------- | -------------------------------------------------------------------- |
-| App.svelte      | Mode router: setup vs normal. Owns global events (shortcuts, setup). |
-| MainView.svelte | Normal app container. Owns IPC initialization and domain events.     |
+| Component       | Responsibility                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| App.svelte      | Mode router: setup vs normal. Owns global events (shortcuts, setup).                        |
+| MainView.svelte | Normal app container. Composes setup functions for initialization, domain events, deletion. |
 
 **IPC Initialization Timing Rules:**
 

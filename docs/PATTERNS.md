@@ -6,6 +6,7 @@
 - [VSCode Elements Patterns](#vscode-elements-patterns)
 - [UI Patterns](#ui-patterns)
 - [CSS Theming Patterns](#css-theming-patterns)
+- [Renderer Setup Functions](#renderer-setup-functions)
 - [Service Layer Patterns](#service-layer-patterns)
 - [OpenCode Integration](#opencode-integration)
 - [Plugin Interface](#plugin-interface)
@@ -473,6 +474,135 @@ Use the global `.ch-visually-hidden` class for screen reader only text (NOT comp
 ```
 
 The class is defined in `src/renderer/lib/styles/global.css`.
+
+---
+
+## Renderer Setup Functions
+
+Complex `onMount` logic can be extracted into focused **setup functions** that return cleanup callbacks. This improves testability and single responsibility.
+
+### When to Extract
+
+- `onMount` exceeds ~100 lines
+- Multiple unrelated concerns in one `onMount`
+- Logic needs to be tested in isolation
+- Similar setup logic could be reused
+
+### Pattern
+
+```typescript
+// lib/utils/setup-feature.ts
+
+// Type-safe API interface (constrained to needed events)
+export interface FeatureApi {
+  on(event: "feature:event", handler: (data: Data) => void): () => void;
+}
+
+// Default API - lazy loaded to avoid circular dependencies
+let defaultApi: FeatureApi | undefined;
+
+function getDefaultApi(): FeatureApi {
+  if (!defaultApi) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const api = require("$lib/api");
+    defaultApi = { on: api.on };
+  }
+  return defaultApi;
+}
+
+export function setupFeature(apiImpl: FeatureApi = getDefaultApi()): () => void {
+  const unsubscribe = apiImpl.on("feature:event", (data) => {
+    updateStore(data);
+  });
+  return unsubscribe; // cleanup callback
+}
+```
+
+```svelte
+<!-- Component.svelte -->
+<script>
+  import { onMount } from "svelte";
+  import { setupFeature } from "$lib/utils/setup-feature";
+  import { setupOtherFeature } from "$lib/utils/setup-other-feature";
+
+  onMount(() => {
+    const cleanup1 = setupFeature();
+    const cleanup2 = setupOtherFeature();
+
+    return () => {
+      cleanup1();
+      cleanup2();
+    };
+  });
+</script>
+```
+
+### Testing Setup Functions
+
+Use **behavioral mocks** that verify state changes, not call tracking:
+
+```typescript
+// Create behavioral mock with in-memory state
+import * as store from "$lib/stores/feature.svelte.js";
+
+function createMockApi() {
+  let handler: ((data: Data) => void) | undefined;
+  let unsubscribed = false;
+
+  const api: FeatureApi = {
+    on: (_event, h) => {
+      handler = h;
+      return () => {
+        handler = undefined;
+        unsubscribed = true;
+      };
+    },
+  };
+
+  return {
+    api,
+    emit: (data: Data) => handler?.(data),
+    unsubscribeCalled: () => unsubscribed,
+  };
+}
+
+// Test actual behavior
+it("updates store when event is emitted", () => {
+  const { api, emit } = createMockApi();
+
+  setupFeature(api);
+  emit(testData);
+
+  expect(store.getState()).toEqual(expectedState);
+});
+
+// Test cleanup stops updates
+it("cleanup stops updates", () => {
+  const { api, emit, unsubscribeCalled } = createMockApi();
+
+  const cleanup = setupFeature(api);
+  cleanup();
+
+  expect(unsubscribeCalled()).toBe(true);
+  emit(otherData);
+  expect(store.getState()).toBeUndefined(); // unchanged after cleanup
+});
+```
+
+### Naming Convention
+
+- Use `setup*` prefix (e.g., `setupDomainEvents`, `setupDeletionProgress`)
+- For one-time async initialization, use `initialize*` (e.g., `initializeApp`)
+- Always return `() => void` cleanup callback for consistent composition
+
+### Files
+
+| File                             | Purpose                                             |
+| -------------------------------- | --------------------------------------------------- |
+| `setup-deletion-progress.ts`     | Workspace deletion progress event subscription      |
+| `setup-domain-event-bindings.ts` | Domain events wired to stores (wraps domain-events) |
+| `initialize-app.ts`              | App initialization (projects, statuses, focus)      |
+| `domain-events.ts`               | Core domain event subscription helper               |
 
 ---
 

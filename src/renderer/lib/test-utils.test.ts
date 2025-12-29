@@ -45,7 +45,7 @@ describe("createMockApi", () => {
     const api = createMockApi();
 
     const workspace = await api.workspaces.create("id", "name", "main");
-    expect(workspace.name).toBe("ws");
+    expect(workspace.name).toBe("test"); // Uses MOCK_WORKSPACE_API_DEFAULTS.workspace
 
     const removeResult = await api.workspaces.remove("id", "name");
     expect(removeResult.started).toBe(true);
