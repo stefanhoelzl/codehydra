@@ -122,13 +122,11 @@ export class Path {
     // Convert to POSIX format
     let normalized = joined.replace(/\\/g, "/");
 
-    // Collapse multiple slashes (but preserve UNC paths on Windows: //server/share)
-    if (isWindows && normalized.startsWith("//")) {
-      // UNC path: preserve leading //, collapse rest
-      normalized = "//" + normalized.slice(2).replace(/\/+/g, "/");
-    } else {
-      normalized = normalized.replace(/\/+/g, "/");
-    }
+    // Detect UNC path before collapsing slashes (exactly 2 leading slashes followed by non-slash)
+    const isUncPath = isWindows && /^\/\/[^/]/.test(normalized);
+
+    // Collapse multiple slashes
+    normalized = normalized.replace(/\/+/g, "/");
 
     // Check if path is absolute
     const isAbsolute = normalized.startsWith("/") || (isWindows && /^[a-zA-Z]:\//.test(normalized));
@@ -158,8 +156,15 @@ export class Path {
 
     normalized = resolvedSegments.join("/");
 
-    // Ensure Unix paths start with /
-    if (!isWindows && !normalized.startsWith("/")) {
+    // Ensure paths that started with / still start with /
+    // This handles Unix root "/" and Unix-style paths on Windows (Git Bash, WSL)
+    const originalStartsWithSlash = joined.replace(/\\/g, "/").startsWith("/");
+    if (originalStartsWithSlash && !normalized.startsWith("/")) {
+      normalized = "/" + normalized;
+    }
+
+    // Restore UNC path prefix (// for network paths)
+    if (isUncPath && !normalized.startsWith("//")) {
       normalized = "/" + normalized;
     }
 
