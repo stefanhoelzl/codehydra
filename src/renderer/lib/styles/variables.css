@@ -23,8 +23,9 @@
   --vscode-foreground: #cccccc;
   --vscode-editor-background: #1e1e1e;
   --vscode-panel-border: #454545;
-  --vscode-input-border: #3c3c3c;
-  --vscode-input-background: #3c3c3c;
+  --vscode-settings-textInputBackground: #3c3c3c;
+  --vscode-settings-textInputBorder: #3c3c3c;
+  --vscode-settings-textInputForeground: #cccccc;
   --vscode-button-background: #0e639c;
   --vscode-button-foreground: #ffffff;
   --vscode-button-hoverBackground: #1177bb;
@@ -36,9 +37,9 @@
   --vscode-badge-background: #4d4d4d;
   --vscode-badge-foreground: #ffffff;
   --vscode-progressBar-background: #0e70c0;
-  --vscode-checkbox-background: #3c3c3c;
-  --vscode-checkbox-border: #6b6b6b;
-  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-settings-checkboxBackground: #3c3c3c;
+  --vscode-settings-checkboxBorder: #3c3c3c;
+  --vscode-settings-checkboxForeground: #f0f0f0;
 
   /* Core colors */
   --ch-foreground: var(--vscode-foreground, #cccccc);
@@ -46,7 +47,7 @@
 
   /* Border colors */
   --ch-border: var(--vscode-panel-border, #454545);
-  --ch-input-border: var(--vscode-input-border, #3c3c3c);
+  --ch-input-border: var(--vscode-settings-textInputBorder, #3c3c3c);
   --ch-input-hover-border: #5a5a5a;
 
   /* Button colors */
@@ -57,7 +58,7 @@
   --ch-button-disabled-fg: #8c8c8c;
 
   /* Input colors */
-  --ch-input-bg: var(--vscode-input-background, #3c3c3c);
+  --ch-input-bg: var(--vscode-settings-textInputBackground, #3c3c3c);
   --ch-input-disabled-bg: #2d2d2d;
   --ch-input-disabled-fg: #6c6c6c;
 
@@ -182,8 +183,9 @@
     --vscode-foreground: #3c3c3c;
     --vscode-editor-background: #ffffff;
     --vscode-panel-border: #e5e5e5;
-    --vscode-input-border: #cecece;
-    --vscode-input-background: #ffffff;
+    --vscode-settings-textInputBackground: #ffffff;
+    --vscode-settings-textInputBorder: #cecece;
+    --vscode-settings-textInputForeground: #3c3c3c;
     --vscode-button-background: #007acc;
     --vscode-button-foreground: #ffffff;
     --vscode-button-hoverBackground: #0062a3;
@@ -195,9 +197,9 @@
     --vscode-badge-background: #c4c4c4;
     --vscode-badge-foreground: #333333;
     --vscode-progressBar-background: #0066b8;
-    --vscode-checkbox-background: #ffffff;
-    --vscode-checkbox-border: #919191;
-    --vscode-checkbox-foreground: #616161;
+    --vscode-settings-checkboxBackground: #ffffff;
+    --vscode-settings-checkboxBorder: #919191;
+    --vscode-settings-checkboxForeground: #616161;
 
     /* Core colors */
     --ch-foreground: var(--vscode-foreground, #3c3c3c);
@@ -205,7 +207,7 @@
 
     /* Border colors */
     --ch-border: var(--vscode-panel-border, #e5e5e5);
-    --ch-input-border: var(--vscode-input-border, #cecece);
+    --ch-input-border: var(--vscode-settings-textInputBorder, #cecece);
     --ch-input-hover-border: #b0b0b0;
 
     /* Button colors */
@@ -213,7 +215,7 @@
     --ch-button-disabled-fg: #a0a0a0;
 
     /* Input colors */
-    --ch-input-bg: var(--vscode-input-background, #ffffff);
+    --ch-input-bg: var(--vscode-settings-textInputBackground, #ffffff);
     --ch-input-disabled-bg: #f0f0f0;
     --ch-input-disabled-fg: #a0a0a0;
 
