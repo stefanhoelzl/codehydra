@@ -58,9 +58,9 @@ function createMockBinaryDownloadService(
 }
 
 /**
- * Create default mock extensions.json content.
+ * Create default mock manifest.json content.
  */
-function createExtensionsConfig(): string {
+function createManifestConfig(): string {
   return JSON.stringify({
     marketplace: ["sst-dev.opencode"],
     bundled: [
@@ -246,16 +246,16 @@ describe("VscodeSetupService", () => {
       await expect(service.validateAssets()).resolves.not.toThrow();
     });
 
-    it("throws VscodeSetupError when extensions.json is missing", async () => {
+    it("throws VscodeSetupError when manifest.json is missing", async () => {
       mockFs = createMockFileSystemLayer({
         readFile: {
-          error: new FileSystemError("ENOENT", "/mock/assets/extensions.json", "Not found"),
+          error: new FileSystemError("ENOENT", "/mock/assets/manifest.json", "Not found"),
         },
       });
 
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await expect(service.validateAssets()).rejects.toThrow(VscodeSetupError);
-      await expect(service.validateAssets()).rejects.toThrow(/extensions\.json/);
+      await expect(service.validateAssets()).rejects.toThrow(/manifest\.json/);
     });
   });
 
@@ -263,7 +263,7 @@ describe("VscodeSetupService", () => {
     it("copies bundled vsix to vscodeDir before install", async () => {
       const copiedFiles: Array<{ src: string; dest: string }> = [];
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {
           implementation: async (src: PathLike, dest: PathLike) => {
@@ -291,7 +291,7 @@ describe("VscodeSetupService", () => {
 
     it("installs bundled extension via code-server", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
       });
@@ -320,7 +320,7 @@ describe("VscodeSetupService", () => {
 
     it("installs marketplace extensions by ID", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
       });
@@ -344,7 +344,7 @@ describe("VscodeSetupService", () => {
 
     it("handles mixed extensions in order (bundled first, then marketplace)", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
       });
@@ -376,7 +376,7 @@ describe("VscodeSetupService", () => {
 
     it("returns error on non-zero exit code", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
       });
@@ -403,7 +403,7 @@ describe("VscodeSetupService", () => {
 
     it("returns binary-not-found error when spawn fails", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
       });
@@ -466,7 +466,7 @@ describe("VscodeSetupService", () => {
     it("validates assets before proceeding", async () => {
       mockFs = createMockFileSystemLayer({
         readFile: {
-          error: new FileSystemError("ENOENT", "/mock/assets/extensions.json", "Not found"),
+          error: new FileSystemError("ENOENT", "/mock/assets/manifest.json", "Not found"),
         },
       });
 
@@ -478,7 +478,7 @@ describe("VscodeSetupService", () => {
 
     it("runs all setup steps in order and returns success", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
         writeFile: { implementation: async () => {} },
@@ -510,7 +510,7 @@ describe("VscodeSetupService", () => {
 
     it("returns error when extension install fails", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
       });
@@ -716,7 +716,7 @@ describe("VscodeSetupService", () => {
       });
 
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
         writeFile: { implementation: async () => {} },
@@ -758,7 +758,7 @@ describe("VscodeSetupService", () => {
       });
 
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
         writeFile: { implementation: async () => {} },
@@ -808,7 +808,7 @@ describe("VscodeSetupService", () => {
       });
 
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
       });
 
       const service = new VscodeSetupService(
@@ -837,7 +837,7 @@ describe("VscodeSetupService", () => {
       });
 
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
         writeFile: { implementation: async () => {} },
@@ -877,7 +877,7 @@ describe("VscodeSetupService", () => {
 
     it("works without BinaryDownloadService (backward compatibility)", async () => {
       mockFs = createMockFileSystemLayer({
-        readFile: { content: createExtensionsConfig() },
+        readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
         copyTree: {},
         writeFile: { implementation: async () => {} },

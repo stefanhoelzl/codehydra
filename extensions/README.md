@@ -6,8 +6,8 @@ This directory contains the source code for VS Code extensions used by CodeHydra
 
 ```
 extensions/
-├── extensions.json           # Extension manifest (marketplace + bundled)
-├── codehydra-sidekick/       # Custom sidekick extension source
+├── external.json             # External extensions (marketplace IDs)
+├── sidekick/                 # Custom sidekick extension source
 │   ├── package.json          # Extension manifest
 │   ├── extension.js          # Extension entry point
 │   ├── api.d.ts              # TypeScript declarations for third-party use
@@ -25,10 +25,11 @@ npm run build:extensions
 
 This:
 
-1. Installs dependencies for each extension
-2. Builds the extension using esbuild
-3. Packages the extension as a `.vsix` file
-4. Outputs to `dist/extensions/`
+1. Discovers all extension folders in `extensions/`
+2. Reads each extension's `package.json` for metadata
+3. Installs dependencies, builds, and packages each extension as a `.vsix` file
+4. Generates `dist/extensions/manifest.json` with the complete extension manifest
+5. Outputs `.vsix` files to `dist/extensions/`
 
 The main `npm run build` command runs `build:extensions` before `electron-vite build`, ensuring the packaged extensions are available for bundling.
 
@@ -36,28 +37,36 @@ The main `npm run build` command runs `build:extensions` before `electron-vite b
 
 1. Create a new directory under `extensions/` (e.g., `extensions/my-extension/`)
 2. Add required files:
-   - `package.json` with VS Code extension manifest
+   - `package.json` with VS Code extension manifest (must include `publisher`, `name`, `version`)
    - `extension.js` or TypeScript source
    - `.vscodeignore` to exclude dev files from the package
-3. Update `extensions/extensions.json` to include the extension in the `bundled` array
-4. Update the `build:extensions` script in `package.json` to build the new extension
+   - `npm run build` script to compile the extension
+3. Run `npm run build:extensions` - the new extension will be auto-discovered and built
 
-## Extension Manifest (extensions.json)
+## External Extensions (external.json)
 
-The `extensions.json` file defines which extensions to install:
+The `external.json` file lists marketplace extension IDs to install:
+
+```json
+["sst-dev.opencode", "publisher.another-extension"]
+```
+
+## Generated Manifest (dist/extensions/manifest.json)
+
+At build time, `manifest.json` is generated with the complete extension configuration:
 
 ```json
 {
-  "marketplace": ["publisher.extension-id"],
+  "marketplace": ["sst-dev.opencode"],
   "bundled": [
     {
       "id": "codehydra.sidekick",
-      "version": "0.0.2",
-      "vsix": "codehydra-sidekick-0.0.2.vsix"
+      "version": "0.0.3",
+      "vsix": "sidekick-0.0.3.vsix"
     }
   ]
 }
 ```
 
-- `marketplace`: Extensions installed from the VS Code marketplace
-- `bundled`: Extensions packaged with the application (built from this directory)
+- `marketplace`: Extensions installed from the VS Code marketplace (from `external.json`)
+- `bundled`: Extensions packaged with the application (auto-discovered from extension folders)

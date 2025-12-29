@@ -1389,7 +1389,7 @@ function wirePluginApi(pluginServer: PluginServer, api: ICodeHydraApi, appState:
 ### Type Declarations for Third-Party Extensions
 
 TypeScript declarations for the API are in:
-`extensions/codehydra-sidekick/api.d.ts`
+`extensions/sidekick/api.d.ts`
 
 Third-party extension developers should copy this file into their project for type safety.
 
@@ -1491,7 +1491,7 @@ app.whenReady()
   Show SetupScreen     # Blocking UI with progress bar
        │
        ▼
-  validateAssets()     # Check settings.json, keybindings.json, extensions.json exist
+  validateAssets()     # Check manifest.json exists
        │
        ▼
   Run SELECTIVE setup:
@@ -1519,9 +1519,9 @@ VS Code extension sources are stored in the `extensions/` directory at the proje
 
 ```
 extensions/
-├── extensions.json            # Extension manifest (marketplace + bundled)
+├── external.json              # External extension IDs (marketplace)
 ├── README.md                  # Documentation for adding extensions
-└── codehydra-sidekick/        # Custom extension source
+└── sidekick/                  # Custom extension source
     ├── package.json
     ├── extension.js
     └── api.d.ts
@@ -1529,7 +1529,7 @@ extensions/
 
 ### Build Process
 
-1. `npm run build:extensions` - packages extensions to `dist/extensions/`
+1. `npm run build:extensions` - auto-discovers extension folders, packages them to `dist/extensions/`, and generates `manifest.json`
 2. `vite-plugin-static-copy` - copies `dist/extensions/*` to `out/main/assets/` during build
 3. `npm run build` - runs both steps sequentially
 
@@ -1564,7 +1564,7 @@ out/main/assets/ (ASAR in prod)
 │   └── <version>/                 # e.g., 0.1.47/
 │       └── opencode[.exe]         # Actual opencode binary
 ├── vscode/
-│   ├── codehydra-sidekick-0.0.2.vsix # Copied from assets for installation
+│   ├── sidekick-0.0.3.vsix     # Copied from assets for installation
 │   ├── extensions/
 │   │   ├── codehydra.sidekick-0.0.1/  # Installed by code-server
 │   │   └── sst-dev.opencode-X.X.X/    # Installed by code-server
@@ -1582,7 +1582,7 @@ The setup system uses a **preflight-based approach** instead of a single version
 
 1. **Preflight checks** detect what's missing/outdated:
    - Binary versions (code-server, opencode directories exist?)
-   - Extension versions (matches `extensions.json` config?)
+   - Extension versions (matches `manifest.json` config?)
    - Marker validity (has `schemaVersion: 1`?)
 
 2. **Selective setup** runs only for components that need installation

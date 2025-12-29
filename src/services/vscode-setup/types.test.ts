@@ -55,7 +55,7 @@ describe("validateExtensionsConfig", () => {
     if (!result.isValid) {
       expect(result.error).toContain("bundled[0] is a string");
       expect(result.error).toContain("{ id, version, vsix }");
-      expect(result.error).toContain("Please update extensions.json");
+      expect(result.error).toContain("Please update manifest.json");
     }
   });
 
@@ -64,7 +64,7 @@ describe("validateExtensionsConfig", () => {
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("extensions.json must be an object");
+      expect(result.error).toBe("manifest.json must be an object");
     }
   });
 
@@ -73,7 +73,7 @@ describe("validateExtensionsConfig", () => {
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("extensions.json must be an object");
+      expect(result.error).toBe("manifest.json must be an object");
     }
   });
 
@@ -84,7 +84,7 @@ describe("validateExtensionsConfig", () => {
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("extensions.json must have a 'marketplace' array");
+      expect(result.error).toBe("manifest.json must have a 'marketplace' array");
     }
   });
 
@@ -95,7 +95,7 @@ describe("validateExtensionsConfig", () => {
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("extensions.json must have a 'bundled' array");
+      expect(result.error).toBe("manifest.json must have a 'bundled' array");
     }
   });
 

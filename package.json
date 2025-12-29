@@ -8,7 +8,7 @@
     "preinstall": "node scripts/check-path-length.cjs",
     "setup": "npm install && npm run build",
     "dev": "npm run build && electron-vite dev",
-    "build:extensions": "node -e \"require('fs').mkdirSync('dist/extensions',{recursive:true})\" && cd extensions/codehydra-sidekick && npm install && npm run build && vsce package --no-dependencies -o ../../dist/extensions/codehydra-sidekick-0.0.3.vsix && node -e \"require('fs').copyFileSync('../../extensions/extensions.json','../../dist/extensions/extensions.json')\"",
+    "build:extensions": "tsx scripts/build-extensions.ts",
     "build": "npm run build:extensions && electron-vite build",
     "preview": "electron-vite preview",
     "test": "vitest run",

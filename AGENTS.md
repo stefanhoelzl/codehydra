@@ -176,16 +176,16 @@ VS Code setup assets are stored as dedicated files instead of inline code.
 
 ### Asset Files
 
-| File                             | Purpose                                              |
-| -------------------------------- | ---------------------------------------------------- |
-| `extensions/extensions.json`     | Extension manifest (marketplace + bundled vsix)      |
-| `extensions/codehydra-sidekick/` | Custom extension source (packaged to .vsix at build) |
+| File                       | Purpose                                              |
+| -------------------------- | ---------------------------------------------------- |
+| `extensions/external.json` | External extension IDs (marketplace)                 |
+| `extensions/sidekick/`     | Custom extension source (packaged to .vsix at build) |
 
 **Note:** There are no `settings.json` or `keybindings.json` asset files. VS Code settings with `window` or `resource` scope can be configured via the sidekick extension's `configurationDefaults` in `package.json`. Application-scope settings (like telemetry and workspace trust) cannot be set by extensions.
 
 ### Build Process
 
-1. **Extension packaging**: `npm run build:extensions` uses `@vscode/vsce` to package extensions to `dist/extensions/`
+1. **Extension packaging**: `npm run build:extensions` auto-discovers extension folders and packages them to `dist/extensions/`, generating `manifest.json`
 2. **Asset bundling**: `vite-plugin-static-copy` copies `dist/extensions/*` to `out/main/assets/` during build
 3. **Full build**: `npm run build` runs both steps sequentially
 

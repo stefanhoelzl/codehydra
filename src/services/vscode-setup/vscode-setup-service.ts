@@ -98,7 +98,7 @@ export class VscodeSetupService implements IVscodeSetup {
       }
 
       // Load extensions config
-      const configPath = new Path(this.assetsDir, "extensions.json");
+      const configPath = new Path(this.assetsDir, "manifest.json");
       const configContent = await this.fs.readFile(configPath);
       const parsed = JSON.parse(configContent) as unknown;
       const validation = validateExtensionsConfig(parsed);
@@ -348,7 +348,7 @@ export class VscodeSetupService implements IVscodeSetup {
    * @throws VscodeSetupError with type "missing-assets" if any asset is missing
    */
   async validateAssets(): Promise<void> {
-    const requiredAssets = ["extensions.json"];
+    const requiredAssets = ["manifest.json"];
     const missingAssets: string[] = [];
 
     for (const asset of requiredAssets) {
@@ -532,7 +532,7 @@ export class VscodeSetupService implements IVscodeSetup {
     extensionsToInstall?: readonly string[]
   ): Promise<SetupResult> {
     // Load extensions config from assets
-    const configPath = new Path(this.assetsDir, "extensions.json");
+    const configPath = new Path(this.assetsDir, "manifest.json");
     const configContent = await this.fs.readFile(configPath);
     const parsed = JSON.parse(configContent) as unknown;
 
