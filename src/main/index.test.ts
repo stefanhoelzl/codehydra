@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DefaultPathProvider, type CodeServerConfig } from "../services";
 import { createMockBuildInfo } from "../services/platform/build-info.test-utils";
 import { createMockPlatformInfo } from "../services/platform/platform-info.test-utils";
-import nodePath from "node:path";
+import { Path } from "../services/platform/path";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
@@ -47,7 +47,7 @@ describe("Main process wiring", () => {
     function createCodeServerConfig(pathProvider: DefaultPathProvider): CodeServerConfig {
       return {
         binaryPath: pathProvider.codeServerBinaryPath.toNative(),
-        runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
+        runtimeDir: new Path(pathProvider.dataRootDir, "runtime").toNative(),
         extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
         userDataDir: pathProvider.vscodeUserDataDir.toNative(),
         binDir: pathProvider.binDir.toNative(),
@@ -66,26 +66,25 @@ describe("Main process wiring", () => {
       expect(config.userDataDir).toMatch(/app-data[/\\]vscode[/\\]user-data$/);
     });
 
-    it("returns paths from pathProvider in production mode", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
-      const platformInfo = createMockPlatformInfo({
-        platform: "linux",
-        homeDir: "/home/testuser",
-      });
-      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+    it.skipIf(process.platform !== "linux")(
+      "returns paths from pathProvider in production mode",
+      () => {
+        const buildInfo = createMockBuildInfo({ isDevelopment: false });
+        const platformInfo = createMockPlatformInfo({
+          platform: "linux",
+          homeDir: "/home/testuser",
+        });
+        const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      const config = createCodeServerConfig(pathProvider);
+        const config = createCodeServerConfig(pathProvider);
 
-      expect(config.runtimeDir).toBe(
-        nodePath.join("/home/testuser", ".local", "share", "codehydra", "runtime")
-      );
-      expect(config.extensionsDir).toBe(
-        nodePath.join("/home/testuser", ".local", "share", "codehydra", "vscode", "extensions")
-      );
-      expect(config.userDataDir).toBe(
-        nodePath.join("/home/testuser", ".local", "share", "codehydra", "vscode", "user-data")
-      );
-    });
+        expect(config.runtimeDir).toBe("/home/testuser/.local/share/codehydra/runtime");
+        expect(config.extensionsDir).toBe(
+          "/home/testuser/.local/share/codehydra/vscode/extensions"
+        );
+        expect(config.userDataDir).toBe("/home/testuser/.local/share/codehydra/vscode/user-data");
+      }
+    );
   });
 
   describe("DevTools registration pattern", () => {
@@ -108,10 +107,8 @@ describe("Main process wiring", () => {
     });
   });
 
-  describe("Full wiring chain", () => {
+  describe.skipIf(process.platform !== "darwin")("Full wiring chain (Darwin)", () => {
     it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
-      // This tests the full chain as wired in main/index.ts
-      // PathProvider now returns Path objects
       const buildInfo = createMockBuildInfo({ isDevelopment: false });
       const platformInfo = createMockPlatformInfo({
         platform: "darwin",
@@ -119,21 +116,22 @@ describe("Main process wiring", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      // Verify all derived paths are correct using .toString() for comparison
       expect(pathProvider.dataRootDir.toString()).toBe(
-        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra")
+        "/Users/test/Library/Application Support/Codehydra"
       );
       expect(pathProvider.projectsDir.toString()).toBe(
-        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "projects")
+        "/Users/test/Library/Application Support/Codehydra/projects"
       );
       expect(pathProvider.vscodeDir.toString()).toBe(
-        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "vscode")
+        "/Users/test/Library/Application Support/Codehydra/vscode"
       );
       expect(pathProvider.electronDataDir.toString()).toBe(
-        nodePath.join("/Users/test", "Library", "Application Support", "Codehydra", "electron")
+        "/Users/test/Library/Application Support/Codehydra/electron"
       );
     });
+  });
 
+  describe.skipIf(process.platform !== "linux")("Full wiring chain (Linux)", () => {
     it("getProjectWorkspacesDir works through the chain", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: false });
       const platformInfo = createMockPlatformInfo({
@@ -147,14 +145,30 @@ describe("Main process wiring", () => {
 
       expect(workspacesDirStr).toContain("myproject-");
       expect(workspacesDirStr).toMatch(/workspaces$/);
-      const expectedPrefix = nodePath.join(
-        "/home/user",
-        ".local",
-        "share",
-        "codehydra",
-        "projects"
+      expect(workspacesDirStr.startsWith("/home/user/.local/share/codehydra/projects")).toBe(true);
+    });
+  });
+
+  describe.skipIf(process.platform !== "win32")("Full wiring chain (Windows)", () => {
+    it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const platformInfo = createMockPlatformInfo({
+        platform: "win32",
+        homeDir: "C:/Users/test",
+      });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      // Windows paths are normalized to lowercase by Path class
+      expect(pathProvider.dataRootDir.toString()).toBe("c:/users/test/appdata/roaming/codehydra");
+      expect(pathProvider.projectsDir.toString()).toBe(
+        "c:/users/test/appdata/roaming/codehydra/projects"
       );
-      expect(workspacesDirStr.startsWith(expectedPrefix)).toBe(true);
+      expect(pathProvider.vscodeDir.toString()).toBe(
+        "c:/users/test/appdata/roaming/codehydra/vscode"
+      );
+      expect(pathProvider.electronDataDir.toString()).toBe(
+        "c:/users/test/appdata/roaming/codehydra/electron"
+      );
     });
   });
 });
