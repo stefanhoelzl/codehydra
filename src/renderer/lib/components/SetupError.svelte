@@ -39,8 +39,6 @@
   <Logo animated={false} />
   <div class="error-content" role="alert">
     <h1>Setup Failed</h1>
-    <p class="error-description">Setup could not be completed.</p>
-    <p class="error-hint">Please check your internet connection.</p>
     <p class="error-details">Error: {errorMessage}</p>
   </div>
 
@@ -68,17 +66,6 @@
     font-size: 1.5rem;
     font-weight: 500;
     color: var(--ch-danger, #f14c4c);
-  }
-
-  .error-description {
-    margin: 0 0 0.5rem;
-    font-size: 0.875rem;
-  }
-
-  .error-hint {
-    margin: 0 0 1rem;
-    font-size: 0.875rem;
-    opacity: 0.8;
   }
 
   .error-details {

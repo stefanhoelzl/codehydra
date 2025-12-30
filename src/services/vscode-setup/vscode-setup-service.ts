@@ -22,7 +22,7 @@ import {
   validateExtensionsManifest,
 } from "./types";
 import { generateScripts, generateOpencodeConfigContent } from "./bin-scripts";
-import { listInstalledExtensions } from "./extension-utils";
+import { listInstalledExtensions, removeFromExtensionsJson } from "./extension-utils";
 import type { BinaryDownloadService } from "../binary-download/binary-download-service";
 
 /**
@@ -225,6 +225,18 @@ export class VscodeSetupService implements IVscodeSetup {
     const extensionsToInstall = preflight
       ? [...preflight.missingExtensions, ...preflight.outdatedExtensions]
       : undefined;
+
+    // Clean stale entries from extensions.json before installing
+    // This prevents "restart required" errors when VS Code thinks an extension
+    // is still registered even though its folder is missing
+    if (extensionsToInstall && extensionsToInstall.length > 0) {
+      await removeFromExtensionsJson(
+        this.fs,
+        this.pathProvider.vscodeExtensionsDir,
+        extensionsToInstall
+      );
+    }
+
     const extensionsResult = await this.installExtensions(onProgress, extensionsToInstall);
     if (!extensionsResult.success) {
       return extensionsResult;

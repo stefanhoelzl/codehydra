@@ -27,4 +27,8 @@ export {
   type BinaryType,
   validateExtensionsManifest,
 } from "./types";
-export { parseExtensionDir, listInstalledExtensions } from "./extension-utils";
+export {
+  parseExtensionDir,
+  listInstalledExtensions,
+  removeFromExtensionsJson,
+} from "./extension-utils";
