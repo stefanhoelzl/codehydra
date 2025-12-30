@@ -4,7 +4,8 @@
  * This script:
  * 1. Discovers all extension folders in extensions/
  * 2. Builds and packages each extension as a .vsix file
- * 3. Generates dist/extensions/manifest.json with the complete extension manifest
+ * 3. Downloads external extensions from VS Code Marketplace
+ * 4. Generates dist/extensions/manifest.json with the complete extension manifest
  *
  * Usage: npm run build:extensions
  *        npx tsx scripts/build-extensions.ts
@@ -30,37 +31,92 @@ interface BundledExtension {
   vsix: string;
 }
 
-interface Manifest {
-  marketplace: string[];
-  bundled: BundledExtension[];
+interface ExternalExtension {
+  id: string;
+  version: string;
 }
 
 /**
- * Read and parse external.json to get marketplace extension IDs.
+ * Read and parse external.json to get external extension configs.
+ * Format: [{ "id": "publisher.name", "version": "X.Y.Z" }]
  */
-function readExternalExtensions(): string[] {
+function readExternalExtensions(): ExternalExtension[] {
   try {
     const content = fs.readFileSync(EXTERNAL_JSON, "utf-8");
     const parsed: unknown = JSON.parse(content);
 
     if (!Array.isArray(parsed)) {
-      throw new Error("external.json must be an array of extension IDs");
+      throw new Error("external.json must be an array of extension objects");
     }
 
-    for (const item of parsed) {
-      if (typeof item !== "string") {
-        throw new Error("external.json must contain only string extension IDs");
+    const extensions: ExternalExtension[] = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const item = parsed[i];
+      if (typeof item !== "object" || item === null) {
+        throw new Error(`external.json[${i}] must be an object with { id, version }`);
       }
+      const obj = item as Record<string, unknown>;
+      if (typeof obj.id !== "string" || !obj.id) {
+        throw new Error(`external.json[${i}].id must be a non-empty string`);
+      }
+      if (typeof obj.version !== "string" || !obj.version) {
+        throw new Error(`external.json[${i}].version must be a non-empty string`);
+      }
+      extensions.push({ id: obj.id, version: obj.version });
     }
 
-    return parsed as string[];
+    return extensions;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      console.log("No external.json found, skipping marketplace extensions");
+      console.log("No external.json found, skipping external extensions");
       return [];
     }
     throw error;
   }
+}
+
+/**
+ * Download a VS Code extension from the marketplace.
+ *
+ * URL format:
+ * https://{publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/{publisher}/extension/{name}/{version}/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage
+ *
+ * @param ext Extension config with id and version
+ * @returns Filename of the downloaded vsix
+ */
+async function downloadExtension(ext: ExternalExtension): Promise<string> {
+  // Parse extension id: "publisher.name" -> publisher="publisher", name="name"
+  const dotIndex = ext.id.indexOf(".");
+  if (dotIndex === -1) {
+    throw new Error(`Invalid extension id format: "${ext.id}". Expected "publisher.name"`);
+  }
+  const publisher = ext.id.slice(0, dotIndex);
+  const name = ext.id.slice(dotIndex + 1);
+
+  const url =
+    `https://${publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/` +
+    `${publisher}/extension/${name}/${ext.version}/assetbyname/` +
+    `Microsoft.VisualStudio.Services.VSIXPackage`;
+
+  // Use extension id (publisher.name) with dots replaced by hyphens for vsix filename
+  const vsixName = `${ext.id.replace(/\./g, "-")}-${ext.version}.vsix`;
+  const outputPath = path.join(DIST_DIR, vsixName);
+
+  console.log(`  Downloading ${ext.id}@${ext.version}...`);
+  console.log(`  URL: ${url}`);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download ${ext.id}@${ext.version}: HTTP ${response.status} ${response.statusText}`
+    );
+  }
+
+  const buffer = await response.arrayBuffer();
+  fs.writeFileSync(outputPath, Buffer.from(buffer));
+
+  console.log(`  Downloaded ${vsixName} (${(buffer.byteLength / 1024).toFixed(1)} KB)`);
+  return vsixName;
 }
 
 /**
@@ -136,32 +192,51 @@ async function main(): Promise<void> {
   // Create dist/extensions/ directory
   fs.mkdirSync(DIST_DIR, { recursive: true });
 
-  // Read external extensions (marketplace)
-  const marketplace = readExternalExtensions();
+  // Read external extensions (will be downloaded from marketplace)
+  const externalExtensions = readExternalExtensions();
   console.log(
-    `Marketplace extensions: ${marketplace.length > 0 ? marketplace.join(", ") : "(none)"}`
+    `External extensions: ${externalExtensions.length > 0 ? externalExtensions.map((e) => `${e.id}@${e.version}`).join(", ") : "(none)"}`
   );
 
   // Find and build all extension directories
   const extDirs = findExtensionDirs();
   console.log(`Extension directories: ${extDirs.length > 0 ? extDirs.join(", ") : "(none)"}`);
 
-  const bundled: BundledExtension[] = [];
+  const manifest: BundledExtension[] = [];
 
+  // Build local extensions
   for (const extDir of extDirs) {
     const pkg = readExtensionPackageJson(extDir);
     const id = `${pkg.publisher}.${pkg.name}`;
     const vsix = buildExtension(extDir, id, pkg.version);
 
-    bundled.push({
+    manifest.push({
       id,
       version: pkg.version,
       vsix,
     });
   }
 
-  // Write manifest.json
-  const manifest: Manifest = { marketplace, bundled };
+  // Download external extensions from marketplace
+  if (externalExtensions.length > 0) {
+    console.log("\nDownloading external extensions from marketplace...");
+    for (const ext of externalExtensions) {
+      try {
+        const vsix = await downloadExtension(ext);
+        manifest.push({
+          id: ext.id,
+          version: ext.version,
+          vsix,
+        });
+      } catch (error) {
+        // Build must fail if external extension cannot be downloaded
+        console.error(`\nFailed to download extension: ${ext.id}@${ext.version}`);
+        throw error;
+      }
+    }
+  }
+
+  // Write manifest.json as a flat array (new format)
   const manifestPath = path.join(DIST_DIR, "manifest.json");
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
   console.log(`\nGenerated manifest.json:`);

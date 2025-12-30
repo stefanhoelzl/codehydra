@@ -19,12 +19,12 @@ export {
   type BinTargetPaths,
   type GeneratedScript,
   type ScriptFilename,
-  type ExtensionsConfig,
-  type BundledExtensionConfig,
+  type ExtensionsManifest,
+  type ExtensionConfig,
   type PreflightResult,
   type PreflightError,
   type PreflightErrorType,
   type BinaryType,
-  validateExtensionsConfig,
+  validateExtensionsManifest,
 } from "./types";
 export { parseExtensionDir, listInstalledExtensions } from "./extension-utils";

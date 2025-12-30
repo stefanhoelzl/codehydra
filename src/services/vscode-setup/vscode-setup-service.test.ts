@@ -58,23 +58,26 @@ function createMockBinaryDownloadService(
 }
 
 /**
- * Create default mock manifest.json content.
+ * Create default mock manifest.json content (new flat array format).
  */
 function createManifestConfig(): string {
-  return JSON.stringify({
-    marketplace: ["sst-dev.opencode"],
-    bundled: [
-      {
-        id: "codehydra.sidekick",
-        version: "0.0.3",
-        vsix: "codehydra-sidekick-0.0.3.vsix",
-      },
-    ],
-  });
+  return JSON.stringify([
+    {
+      id: "codehydra.sidekick",
+      version: "0.0.3",
+      vsix: "codehydra-sidekick-0.0.3.vsix",
+    },
+    {
+      id: "sst-dev.opencode",
+      version: "0.0.13",
+      vsix: "sst-dev-opencode-0.0.13.vsix",
+    },
+  ]);
 }
 
 /**
  * Create a preflight result for full setup (all components missing).
+ * All extensions are now bundled - no marketplace distinction.
  */
 function createFullSetupPreflightResult(): {
   success: true;
@@ -318,36 +321,7 @@ describe("VscodeSetupService", () => {
       );
     });
 
-    it("installs marketplace extensions by ID", async () => {
-      mockFs = createMockFileSystemLayer({
-        readFile: { content: createManifestConfig() },
-        mkdir: { implementation: async () => {} },
-        copyTree: {},
-      });
-      vi.mocked(mockProcessRunner.run).mockReturnValue(
-        createMockSpawnedProcess({
-          stdout: "Extension installed",
-          stderr: "",
-          exitCode: 0,
-        })
-      );
-
-      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
-      await service.installExtensions();
-
-      // Second call is for marketplace extension - uses codeServerBinaryPath.toNative() from pathProvider
-      expect(mockProcessRunner.run).toHaveBeenCalledWith(
-        mockPathProvider.codeServerBinaryPath.toNative(),
-        [
-          "--install-extension",
-          "sst-dev.opencode",
-          "--extensions-dir",
-          mockPathProvider.vscodeExtensionsDir.toNative(),
-        ]
-      );
-    });
-
-    it("handles mixed extensions in order (bundled first, then marketplace)", async () => {
+    it("installs all extensions from bundled vsix files", async () => {
       mockFs = createMockFileSystemLayer({
         readFile: { content: createManifestConfig() },
         mkdir: { implementation: async () => {} },
@@ -365,13 +339,15 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions(progressCallback);
 
-      // Verify order: bundled vsix first, then marketplace
+      // Verify both extensions installed from vsix files
       expect(mockProcessRunner.run).toHaveBeenCalledTimes(2);
       const calls = vi.mocked(mockProcessRunner.run).mock.calls;
       expect(calls[0]?.[1]?.[1]).toBe(
         new Path("/mock/vscode", "codehydra-sidekick-0.0.3.vsix").toNative()
       );
-      expect(calls[1]?.[1]?.[1]).toBe("sst-dev.opencode");
+      expect(calls[1]?.[1]?.[1]).toBe(
+        new Path("/mock/vscode", "sst-dev-opencode-0.0.13.vsix").toNative()
+      );
 
       // Verify progress messages
       const progressMessages = progressCallback.mock.calls.map(
@@ -797,7 +773,7 @@ describe("VscodeSetupService", () => {
         success: true,
         needsSetup: true, // Still needs setup for extensions
         missingBinaries: [], // No missing binaries
-        missingExtensions: ["codehydra.codehydra", "sst-dev.opencode"],
+        missingExtensions: ["codehydra.sidekick", "sst-dev.opencode"],
         outdatedExtensions: [],
       };
       await service.setup(preflight);

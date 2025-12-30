@@ -179,29 +179,39 @@ VS Code setup assets are stored as dedicated files instead of inline code.
 
 ### Asset Files
 
-| File                       | Purpose                                              |
-| -------------------------- | ---------------------------------------------------- |
-| `extensions/external.json` | External extension IDs (marketplace)                 |
-| `extensions/sidekick/`     | Custom extension source (packaged to .vsix at build) |
+| File                       | Purpose                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| `extensions/external.json` | External extension IDs and versions (downloaded at build time) |
+| `extensions/sidekick/`     | Custom extension source (packaged to .vsix at build)           |
 
 **Note:** There are no `settings.json` or `keybindings.json` asset files. VS Code settings with `window` or `resource` scope can be configured via the sidekick extension's `configurationDefaults` in `package.json`. Application-scope settings (like telemetry and workspace trust) cannot be set by extensions.
 
 ### Build Process
 
-1. **Extension packaging**: `npm run build:extensions` auto-discovers extension folders and packages them to `dist/extensions/`, generating `manifest.json`
+1. **Extension packaging**: `npm run build:extensions` auto-discovers extension folders, packages them to `dist/extensions/`, downloads external extensions from VS Code Marketplace, and generates `manifest.json`
 2. **Asset bundling**: `vite-plugin-static-copy` copies `dist/extensions/*` to `out/main/assets/` during build
 3. **Full build**: `npm run build` runs both steps sequentially
+
+**Manifest format** (flat array - all extensions are pre-bundled):
+
+```json
+[
+  { "id": "codehydra.sidekick", "version": "0.0.3", "vsix": "codehydra-sidekick-0.0.3.vsix" },
+  { "id": "sst-dev.opencode", "version": "0.0.13", "vsix": "sst-dev-opencode-0.0.13.vsix" }
+]
+```
 
 ### Runtime Flow
 
 ```
 out/main/assets/ (ASAR in prod)
     │
-    └─► *.vsix ──► <app-data>/vscode/ ──► code-server --install-extension
+    └─► *.vsix (pre-bundled) ──► <app-data>/vscode/ ──► code-server --install-extension
 ```
 
 - `PathProvider.vscodeAssetsDir` resolves to `<appPath>/out/main/assets/`
 - Node.js `fs` module reads transparently from ASAR in production
+- All extensions (local and external) are bundled at build time - no marketplace downloads at runtime
 - Files are copied to app-data before use (external processes can't read ASAR)
 
 ## Binary Distribution

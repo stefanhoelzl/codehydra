@@ -3,159 +3,135 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { validateExtensionsConfig } from "./types";
+import { validateExtensionsManifest } from "./types";
 
-describe("validateExtensionsConfig", () => {
-  it("accepts valid config with new bundled format", () => {
-    const config = {
-      marketplace: ["sst-dev.opencode"],
-      bundled: [
-        {
-          id: "codehydra.codehydra",
-          version: "0.0.1",
-          vsix: "codehydra.vscode-0.0.1.vsix",
-        },
-      ],
-    };
+describe("validateExtensionsManifest", () => {
+  it("accepts valid manifest with array format", () => {
+    const manifest = [
+      {
+        id: "codehydra.sidekick",
+        version: "0.0.3",
+        vsix: "codehydra-sidekick-0.0.3.vsix",
+      },
+      {
+        id: "sst-dev.opencode",
+        version: "0.0.13",
+        vsix: "sst-dev-opencode-0.0.13.vsix",
+      },
+    ];
 
-    const result = validateExtensionsConfig(config);
+    const result = validateExtensionsManifest(manifest);
 
     expect(result.isValid).toBe(true);
     if (result.isValid) {
-      expect(result.config.marketplace).toEqual(["sst-dev.opencode"]);
-      expect(result.config.bundled).toHaveLength(1);
-      expect(result.config.bundled[0]).toEqual({
-        id: "codehydra.codehydra",
-        version: "0.0.1",
-        vsix: "codehydra.vscode-0.0.1.vsix",
+      expect(result.manifest).toHaveLength(2);
+      expect(result.manifest[0]).toEqual({
+        id: "codehydra.sidekick",
+        version: "0.0.3",
+        vsix: "codehydra-sidekick-0.0.3.vsix",
+      });
+      expect(result.manifest[1]).toEqual({
+        id: "sst-dev.opencode",
+        version: "0.0.13",
+        vsix: "sst-dev-opencode-0.0.13.vsix",
       });
     }
   });
 
-  it("accepts config with empty arrays", () => {
-    const config = {
-      marketplace: [],
-      bundled: [],
-    };
-
-    const result = validateExtensionsConfig(config);
+  it("accepts empty array", () => {
+    const result = validateExtensionsManifest([]);
 
     expect(result.isValid).toBe(true);
+    if (result.isValid) {
+      expect(result.manifest).toHaveLength(0);
+    }
   });
 
-  it("detects legacy bundled format with helpful error", () => {
-    const legacyConfig = {
-      marketplace: ["sst-dev.opencode"],
-      bundled: ["codehydra.vscode-0.0.1.vsix"], // Old format: string instead of object
-    };
-
-    const result = validateExtensionsConfig(legacyConfig);
+  it("rejects non-array value", () => {
+    const result = validateExtensionsManifest({ marketplace: [], bundled: [] });
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toContain("bundled[0] is a string");
+      expect(result.error).toBe("manifest.json must be an array of extension objects");
+    }
+  });
+
+  it("rejects null value", () => {
+    const result = validateExtensionsManifest(null);
+
+    expect(result.isValid).toBe(false);
+    if (!result.isValid) {
+      expect(result.error).toBe("manifest.json must be an array of extension objects");
+    }
+  });
+
+  it("rejects string value", () => {
+    const result = validateExtensionsManifest("not an array");
+
+    expect(result.isValid).toBe(false);
+    if (!result.isValid) {
+      expect(result.error).toBe("manifest.json must be an array of extension objects");
+    }
+  });
+
+  it("detects string items with helpful error", () => {
+    const manifest = ["codehydra.sidekick-0.0.3.vsix"];
+
+    const result = validateExtensionsManifest(manifest);
+
+    expect(result.isValid).toBe(false);
+    if (!result.isValid) {
+      expect(result.error).toContain("manifest.json[0] is a string");
       expect(result.error).toContain("{ id, version, vsix }");
       expect(result.error).toContain("Please update manifest.json");
     }
   });
 
-  it("rejects null value", () => {
-    const result = validateExtensionsConfig(null);
+  it("rejects item missing id", () => {
+    const result = validateExtensionsManifest([{ version: "0.0.1", vsix: "test.vsix" }]);
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("manifest.json must be an object");
+      expect(result.error).toBe("manifest.json[0].id must be a non-empty string");
     }
   });
 
-  it("rejects non-object value", () => {
-    const result = validateExtensionsConfig("not an object");
+  it("rejects item missing version", () => {
+    const result = validateExtensionsManifest([{ id: "test.ext", vsix: "test.vsix" }]);
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("manifest.json must be an object");
+      expect(result.error).toBe("manifest.json[0].version must be a non-empty string");
     }
   });
 
-  it("rejects missing marketplace field", () => {
-    const result = validateExtensionsConfig({
-      bundled: [],
-    });
+  it("rejects item missing vsix", () => {
+    const result = validateExtensionsManifest([{ id: "test.ext", version: "0.0.1" }]);
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("manifest.json must have a 'marketplace' array");
+      expect(result.error).toBe("manifest.json[0].vsix must be a non-empty string");
     }
   });
 
-  it("rejects missing bundled field", () => {
-    const result = validateExtensionsConfig({
-      marketplace: [],
-    });
+  it("rejects item with empty id", () => {
+    const result = validateExtensionsManifest([{ id: "", version: "0.0.1", vsix: "test.vsix" }]);
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("manifest.json must have a 'bundled' array");
+      expect(result.error).toBe("manifest.json[0].id must be a non-empty string");
     }
   });
 
-  it("rejects non-string marketplace items", () => {
-    const result = validateExtensionsConfig({
-      marketplace: [123],
-      bundled: [],
-    });
+  it("reports correct index for error in middle of array", () => {
+    const result = validateExtensionsManifest([
+      { id: "test.ext1", version: "0.0.1", vsix: "test1.vsix" },
+      { id: "test.ext2", version: "0.0.2" }, // missing vsix
+    ]);
 
     expect(result.isValid).toBe(false);
     if (!result.isValid) {
-      expect(result.error).toBe("marketplace items must be strings");
-    }
-  });
-
-  it("rejects bundled item missing id", () => {
-    const result = validateExtensionsConfig({
-      marketplace: [],
-      bundled: [{ version: "0.0.1", vsix: "test.vsix" }],
-    });
-
-    expect(result.isValid).toBe(false);
-    if (!result.isValid) {
-      expect(result.error).toBe("bundled[0].id must be a non-empty string");
-    }
-  });
-
-  it("rejects bundled item missing version", () => {
-    const result = validateExtensionsConfig({
-      marketplace: [],
-      bundled: [{ id: "test.ext", vsix: "test.vsix" }],
-    });
-
-    expect(result.isValid).toBe(false);
-    if (!result.isValid) {
-      expect(result.error).toBe("bundled[0].version must be a non-empty string");
-    }
-  });
-
-  it("rejects bundled item missing vsix", () => {
-    const result = validateExtensionsConfig({
-      marketplace: [],
-      bundled: [{ id: "test.ext", version: "0.0.1" }],
-    });
-
-    expect(result.isValid).toBe(false);
-    if (!result.isValid) {
-      expect(result.error).toBe("bundled[0].vsix must be a non-empty string");
-    }
-  });
-
-  it("rejects bundled item with empty id", () => {
-    const result = validateExtensionsConfig({
-      marketplace: [],
-      bundled: [{ id: "", version: "0.0.1", vsix: "test.vsix" }],
-    });
-
-    expect(result.isValid).toBe(false);
-    if (!result.isValid) {
-      expect(result.error).toBe("bundled[0].id must be a non-empty string");
+      expect(result.error).toBe("manifest.json[1].vsix must be a non-empty string");
     }
   });
 });

@@ -19,7 +19,7 @@ import {
   type BinTargetPaths,
   type PreflightResult,
   type BinaryType,
-  validateExtensionsConfig,
+  validateExtensionsManifest,
 } from "./types";
 import { generateScripts, generateOpencodeConfigContent } from "./bin-scripts";
 import { listInstalledExtensions } from "./extension-utils";
@@ -97,18 +97,18 @@ export class VscodeSetupService implements IVscodeSetup {
         }
       }
 
-      // Load extensions config
+      // Load extensions manifest
       const configPath = new Path(this.assetsDir, "manifest.json");
       const configContent = await this.fs.readFile(configPath);
       const parsed = JSON.parse(configContent) as unknown;
-      const validation = validateExtensionsConfig(parsed);
+      const validation = validateExtensionsManifest(parsed);
       if (!validation.isValid) {
         return {
           success: false,
           error: { type: "unknown", message: validation.error },
         };
       }
-      const config = validation.config;
+      const manifest = validation.manifest;
 
       // List installed extensions
       const installedExtensions = await listInstalledExtensions(
@@ -116,20 +116,13 @@ export class VscodeSetupService implements IVscodeSetup {
         this.pathProvider.vscodeExtensionsDir
       );
 
-      // Check marketplace extensions (any version)
-      for (const extId of config.marketplace) {
-        if (!installedExtensions.has(extId)) {
-          missingExtensions.push(extId);
-        }
-      }
-
-      // Check bundled extensions (exact version)
-      for (const bundledExt of config.bundled) {
-        const installedVersion = installedExtensions.get(bundledExt.id);
+      // Check all extensions (exact version required)
+      for (const ext of manifest) {
+        const installedVersion = installedExtensions.get(ext.id);
         if (!installedVersion) {
-          missingExtensions.push(bundledExt.id);
-        } else if (installedVersion !== bundledExt.version) {
-          outdatedExtensions.push(bundledExt.id);
+          missingExtensions.push(ext.id);
+        } else if (installedVersion !== ext.version) {
+          outdatedExtensions.push(ext.id);
         }
       }
 
@@ -522,7 +515,7 @@ export class VscodeSetupService implements IVscodeSetup {
   }
 
   /**
-   * Install all extensions (bundled vsix and marketplace).
+   * Install all extensions from bundled vsix files.
    * @param onProgress Optional callback for progress updates
    * @param extensionsToInstall Optional list of extension IDs to install (for selective setup)
    * @returns Result indicating success or failure
@@ -531,60 +524,60 @@ export class VscodeSetupService implements IVscodeSetup {
     onProgress?: ProgressCallback,
     extensionsToInstall?: readonly string[]
   ): Promise<SetupResult> {
-    // Load extensions config from assets
+    // Load extensions manifest from assets
     const configPath = new Path(this.assetsDir, "manifest.json");
     const configContent = await this.fs.readFile(configPath);
     const parsed = JSON.parse(configContent) as unknown;
 
-    // Validate config format
-    const validation = validateExtensionsConfig(parsed);
+    // Validate manifest format
+    const validation = validateExtensionsManifest(parsed);
     if (!validation.isValid) {
       return {
         success: false,
         error: {
           type: "missing-assets",
           message: validation.error,
-          code: "INVALID_EXTENSIONS_CONFIG",
+          code: "INVALID_EXTENSIONS_MANIFEST",
         },
       };
     }
-    const config = validation.config;
+    const manifest = validation.manifest;
 
     // If extensionsToInstall is provided, filter to only those extensions
     // Otherwise, install all extensions (full setup)
     const shouldInstall = (extId: string) =>
       extensionsToInstall === undefined || extensionsToInstall.includes(extId);
 
-    // Install bundled extensions (vsix files)
-    for (const bundledExt of config.bundled) {
-      if (!shouldInstall(bundledExt.id)) {
+    // Install all extensions from bundled vsix files
+    for (const ext of manifest) {
+      if (!shouldInstall(ext.id)) {
         continue;
       }
 
-      onProgress?.({ step: "extensions", message: `Installing ${bundledExt.id}...` });
+      onProgress?.({ step: "extensions", message: `Installing ${ext.id}...` });
+
+      // Check that vsix file exists in assets
+      const srcPath = new Path(this.assetsDir, ext.vsix);
+      try {
+        await this.fs.readFile(srcPath);
+      } catch {
+        return {
+          success: false,
+          error: {
+            type: "missing-assets",
+            message: `Bundled extension vsix not found: ${ext.vsix}. Expected at: ${srcPath}`,
+            code: "VSIX_NOT_FOUND",
+          },
+        };
+      }
 
       // Copy vsix from assets to vscode directory for installation
-      const srcPath = new Path(this.assetsDir, bundledExt.vsix);
-      const destPath = new Path(this.pathProvider.vscodeDir, bundledExt.vsix);
+      const destPath = new Path(this.pathProvider.vscodeDir, ext.vsix);
       await this.fs.mkdir(this.pathProvider.vscodeDir);
       await this.fs.copyTree(srcPath, destPath);
 
       // Install the extension using code-server
       const result = await this.runInstallExtension(destPath.toNative());
-      if (!result.success) {
-        return result;
-      }
-    }
-
-    // Install marketplace extensions
-    for (const extensionId of config.marketplace) {
-      if (!shouldInstall(extensionId)) {
-        continue;
-      }
-
-      onProgress?.({ step: "extensions", message: `Installing ${extensionId}...` });
-
-      const result = await this.runInstallExtension(extensionId);
       if (!result.success) {
         return result;
       }

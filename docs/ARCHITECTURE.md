@@ -1519,7 +1519,7 @@ VS Code extension sources are stored in the `extensions/` directory at the proje
 
 ```
 extensions/
-├── external.json              # External extension IDs (marketplace)
+├── external.json              # External extension IDs and versions (downloaded at build time)
 ├── README.md                  # Documentation for adding extensions
 └── sidekick/                  # Custom extension source
     ├── package.json
@@ -1529,9 +1529,11 @@ extensions/
 
 ### Build Process
 
-1. `npm run build:extensions` - auto-discovers extension folders, packages them to `dist/extensions/`, and generates `manifest.json`
+1. `npm run build:extensions` - auto-discovers extension folders, packages them to `dist/extensions/`, downloads external extensions from VS Code Marketplace, and generates `manifest.json` (flat array of all extensions)
 2. `vite-plugin-static-copy` - copies `dist/extensions/*` to `out/main/assets/` during build
 3. `npm run build` - runs both steps sequentially
+
+**Note:** External extensions are downloaded during the build process, not at runtime. This ensures reproducible builds and eliminates runtime network dependencies for extension installation.
 
 ### Distribution Build
 
@@ -1607,7 +1609,7 @@ The setup system uses a **preflight-based approach** instead of a single version
 
 1. **Preflight checks** detect what's missing/outdated:
    - Binary versions (code-server, opencode directories exist?)
-   - Extension versions (matches `manifest.json` config?)
+   - Extension versions (each extension in manifest.json array must match installed version)
    - Marker validity (has `schemaVersion: 1`?)
 
 2. **Selective setup** runs only for components that need installation
