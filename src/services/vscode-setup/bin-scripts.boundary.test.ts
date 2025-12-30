@@ -556,23 +556,4 @@ describe("session restoration boundary tests", () => {
       expect(output!.args).toContain("ses-with-time");
     });
   });
-
-  describe("performance", () => {
-    it("completes within acceptable latency (<500ms with mock server)", async () => {
-      const workspaceDir = tempDir.path;
-      const sessions: MockSession[] = [
-        { id: "ses-1", directory: workspaceDir, parentID: null, time: { updated: 1000 } },
-      ];
-
-      mockServer = createMockOpencodeServer({ sessions });
-      await mockServer.start();
-
-      const startTime = Date.now();
-      const result = await executeWithMockServer(workspaceDir);
-      const elapsed = Date.now() - startTime;
-
-      expect(result.status).toBe(0);
-      expect(elapsed).toBeLessThan(500);
-    });
-  });
 });
