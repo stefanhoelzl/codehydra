@@ -11,24 +11,8 @@
 
 import * as nodePath from "node:path";
 
-// Internal platform state (can be overridden for testing)
-let isWindowsPlatform = process.platform === "win32";
-
-/**
- * Set whether the platform is Windows for testing purposes.
- * @internal
- */
-export function setPlatformForTesting(isWindows: boolean): void {
-  isWindowsPlatform = isWindows;
-}
-
-/**
- * Reset platform detection to actual values.
- * @internal
- */
-export function resetPlatform(): void {
-  isWindowsPlatform = process.platform === "win32";
-}
+// Platform detection (constant, not mutable)
+const isWindowsPlatform = process.platform === "win32";
 
 /**
  * Immutable path object that normalizes paths to a canonical internal format.

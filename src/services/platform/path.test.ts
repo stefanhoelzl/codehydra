@@ -7,14 +7,10 @@
  * - Unix-specific tests (skipIf Windows)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Path, setPlatformForTesting, resetPlatform } from "./path";
+import { describe, it, expect } from "vitest";
+import { Path } from "./path";
 
 describe("Path", () => {
-  afterEach(() => {
-    resetPlatform();
-  });
-
   // ==========================================================================
   // Cross-Platform Tests
   // ==========================================================================
@@ -340,44 +336,6 @@ describe("Path", () => {
     it("toNative returns same as toString", () => {
       const p = new Path("/foo/bar");
       expect(p.toNative()).toBe("/foo/bar");
-    });
-  });
-
-  // ==========================================================================
-  // Platform Simulation Tests (using setPlatformForTesting)
-  // ==========================================================================
-
-  describe("platform simulation", () => {
-    describe("simulated Windows", () => {
-      beforeEach(() => {
-        setPlatformForTesting(true);
-      });
-
-      it("normalizes to lowercase", () => {
-        const p = new Path("C:/FOO/Bar");
-        expect(p.toString()).toBe("c:/foo/bar");
-      });
-
-      it("accepts Windows-style absolute paths", () => {
-        const p = new Path("D:\\Projects\\MyApp");
-        expect(p.toString()).toBe("d:/projects/myapp");
-      });
-    });
-
-    describe("simulated Unix", () => {
-      beforeEach(() => {
-        setPlatformForTesting(false);
-      });
-
-      it("preserves case", () => {
-        const p = new Path("/FOO/Bar");
-        expect(p.toString()).toBe("/FOO/Bar");
-      });
-
-      it("rejects Windows-style paths as relative", () => {
-        // On Unix, "C:/foo" is relative (no leading /)
-        expect(() => new Path("C:/foo")).toThrow("Path must be absolute");
-      });
     });
   });
 });

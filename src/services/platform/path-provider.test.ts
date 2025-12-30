@@ -233,7 +233,7 @@ describe("DefaultPathProvider", () => {
     });
   });
 
-  describe("production mode - Linux", () => {
+  describe.skipIf(process.platform === "win32")("production mode - Linux", () => {
     it("returns ~/.local/share/codehydra/ based paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
@@ -324,7 +324,7 @@ describe("DefaultPathProvider", () => {
     });
   });
 
-  describe("production mode - macOS", () => {
+  describe.skipIf(process.platform === "win32")("production mode - macOS", () => {
     it("returns ~/Library/Application Support/Codehydra/ based paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
