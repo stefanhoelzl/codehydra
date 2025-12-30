@@ -88,6 +88,14 @@ function parseElectronFlags(flags: string | undefined): { name: string; value?: 
 // 1. applyElectronFlags() needs to log
 // 2. redirectElectronDataPaths() needs pathProvider
 const buildInfo: BuildInfo = new ElectronBuildInfo();
+
+// Disable ASAR virtual filesystem in development mode.
+// Prevents file handle issues on Windows when deleting workspaces
+// that contain node_modules/electron directories.
+if (buildInfo.isDevelopment) {
+  process.noAsar = true;
+}
+
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
