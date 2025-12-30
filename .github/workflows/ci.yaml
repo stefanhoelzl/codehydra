@@ -12,7 +12,7 @@ jobs:
       matrix:
         # Use windows-2025 to test on Windows Server 2025 where wmic.exe is unavailable
         # This verifies @vscode/windows-process-tree works correctly
-        os: [ubuntu-latest, windows-2025]
+        os: [ubuntu-24.04, windows-2025]
 
     steps:
       - uses: actions/checkout@v4

@@ -23,7 +23,7 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2025
     env:
       VERSION: ${{ inputs.version }}
       PACKAGE_DIR: code-server-${{ inputs.version }}-win32-x64
