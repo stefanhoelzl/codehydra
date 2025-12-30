@@ -4,7 +4,6 @@
  */
 
 import { app, Menu, dialog } from "electron";
-import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 import {
@@ -222,9 +221,9 @@ async function startServices(): Promise<void> {
 
   // Ensure required directories exist
   await Promise.all([
-    mkdir(config.runtimeDir, { recursive: true }),
-    mkdir(config.extensionsDir, { recursive: true }),
-    mkdir(config.userDataDir, { recursive: true }),
+    fileSystemLayer.mkdir(config.runtimeDir),
+    fileSystemLayer.mkdir(config.extensionsDir),
+    fileSystemLayer.mkdir(config.userDataDir),
   ]);
 
   // Guard: processRunner must be initialized by bootstrap()
