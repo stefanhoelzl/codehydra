@@ -42,7 +42,7 @@
   }
 
   .checkmark {
-    color: var(--ch-success);
+    --vscode-icon-foreground: var(--ch-success);
     margin-bottom: 1rem;
   }
 

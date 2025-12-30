@@ -186,11 +186,11 @@
   }
 
   .status-done {
-    color: var(--ch-success);
+    --vscode-icon-foreground: var(--ch-success);
   }
 
   .status-error {
-    color: var(--ch-danger);
+    --vscode-icon-foreground: var(--ch-danger);
   }
 
   .spinner {
@@ -215,6 +215,7 @@
   }
 
   .error-icon {
+    --vscode-icon-foreground: var(--ch-error-fg);
     flex-shrink: 0;
   }
 

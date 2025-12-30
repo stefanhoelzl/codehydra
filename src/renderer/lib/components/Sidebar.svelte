@@ -572,7 +572,7 @@
   }
 
   .deletion-error {
-    color: var(--ch-danger);
+    --vscode-icon-foreground: var(--ch-danger);
     font-size: 14px;
     flex-shrink: 0;
   }

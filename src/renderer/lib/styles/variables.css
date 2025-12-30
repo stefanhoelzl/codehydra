@@ -40,6 +40,7 @@
   --vscode-settings-checkboxBackground: #3c3c3c;
   --vscode-settings-checkboxBorder: #3c3c3c;
   --vscode-settings-checkboxForeground: #f0f0f0;
+  --vscode-icon-foreground: #c5c5c5;
 
   /* Core colors */
   --ch-foreground: var(--vscode-foreground, #cccccc);
@@ -134,6 +135,7 @@
 
 /* Alert box icon container */
 .ch-alert-box-icon {
+  --vscode-icon-foreground: var(--ch-error-fg);
   flex-shrink: 0;
 }
 
@@ -200,6 +202,7 @@
     --vscode-settings-checkboxBackground: #ffffff;
     --vscode-settings-checkboxBorder: #919191;
     --vscode-settings-checkboxForeground: #616161;
+    --vscode-icon-foreground: #424242;
 
     /* Core colors */
     --ch-foreground: var(--vscode-foreground, #3c3c3c);
