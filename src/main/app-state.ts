@@ -273,6 +273,14 @@ export class AppState {
       this.viewManager.setActiveWorkspace(firstWorkspace.path.toString());
     }
 
+    // Preload remaining workspace URLs in parallel (fire-and-forget)
+    // This loads code-server in background so switching workspaces is instant.
+    // First workspace was loaded by setActiveWorkspace, so start from index 1.
+    for (let i = 1; i < workspaces.length; i++) {
+      const workspace = workspaces[i]!;
+      this.viewManager.preloadWorkspaceUrl(workspace.path.toString());
+    }
+
     // Persist to store
     await this.projectStore.saveProject(projectPathStr);
 

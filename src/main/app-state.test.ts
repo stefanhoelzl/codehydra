@@ -69,6 +69,7 @@ const { mockProjectStore, mockWorkspaceProvider, mockViewManager, mockCreateGitW
       setActiveWorkspace: ReturnType<typeof vi.fn>;
       focusActiveWorkspace: ReturnType<typeof vi.fn>;
       focusUI: ReturnType<typeof vi.fn>;
+      preloadWorkspaceUrl: ReturnType<typeof vi.fn>;
     } = {
       getUIView: vi.fn(),
       createWorkspaceView: vi.fn(),
@@ -78,6 +79,7 @@ const { mockProjectStore, mockWorkspaceProvider, mockViewManager, mockCreateGitW
       setActiveWorkspace: vi.fn(),
       focusActiveWorkspace: vi.fn(),
       focusUI: vi.fn(),
+      preloadWorkspaceUrl: vi.fn(),
     };
 
     return {
@@ -282,6 +284,122 @@ describe("AppState", () => {
       // Empty project should NOT call setActiveWorkspace
       // This preserves the currently active workspace from another project
       expect(mockViewManager.setActiveWorkspace).not.toHaveBeenCalled();
+    });
+
+    it("preloads remaining workspace URLs after activating first", async () => {
+      // Set up multiple workspaces
+      mockWorkspaceProvider.discover.mockResolvedValueOnce([
+        { name: "workspace-1", path: new Path("/project/.worktrees/workspace-1"), branch: "ws-1" },
+        { name: "workspace-2", path: new Path("/project/.worktrees/workspace-2"), branch: "ws-2" },
+        { name: "workspace-3", path: new Path("/project/.worktrees/workspace-3"), branch: "ws-3" },
+      ]);
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService
+      );
+
+      await appState.openProject("/project");
+
+      // First workspace should be set as active
+      expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith(
+        "/project/.worktrees/workspace-1"
+      );
+
+      // Remaining workspaces (2 and 3) should be preloaded
+      expect(mockViewManager.preloadWorkspaceUrl).toHaveBeenCalledTimes(2);
+      expect(mockViewManager.preloadWorkspaceUrl).toHaveBeenCalledWith(
+        "/project/.worktrees/workspace-2"
+      );
+      expect(mockViewManager.preloadWorkspaceUrl).toHaveBeenCalledWith(
+        "/project/.worktrees/workspace-3"
+      );
+    });
+
+    it("does not preload when only one workspace exists", async () => {
+      // Set up single workspace (default mock setup)
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService
+      );
+
+      await appState.openProject("/project");
+
+      // First workspace set as active
+      expect(mockViewManager.setActiveWorkspace).toHaveBeenCalled();
+
+      // No preload calls (only one workspace, nothing to preload)
+      expect(mockViewManager.preloadWorkspaceUrl).not.toHaveBeenCalled();
+    });
+
+    it("does not preload when zero workspaces exist", async () => {
+      mockWorkspaceProvider.discover.mockResolvedValueOnce([]);
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService
+      );
+
+      await appState.openProject("/project");
+
+      // No setActiveWorkspace or preload calls
+      expect(mockViewManager.setActiveWorkspace).not.toHaveBeenCalled();
+      expect(mockViewManager.preloadWorkspaceUrl).not.toHaveBeenCalled();
+    });
+
+    it("preloads remaining workspaces using fire-and-forget pattern", async () => {
+      // Set up multiple workspaces
+      mockWorkspaceProvider.discover.mockResolvedValueOnce([
+        { name: "workspace-1", path: new Path("/project/.worktrees/workspace-1"), branch: "ws-1" },
+        { name: "workspace-2", path: new Path("/project/.worktrees/workspace-2"), branch: "ws-2" },
+        { name: "workspace-3", path: new Path("/project/.worktrees/workspace-3"), branch: "ws-3" },
+      ]);
+
+      // Track call order to verify fire-and-forget pattern
+      const preloadCallOrder: string[] = [];
+      mockViewManager.preloadWorkspaceUrl.mockImplementation((path: string) => {
+        preloadCallOrder.push(path);
+        // Fire-and-forget: method returns void, no await, no errors propagate
+        // This simulates the real ViewManager behavior where loadURL Promise is ignored
+      });
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService
+      );
+
+      const project = await appState.openProject("/project");
+
+      // Project opens successfully
+      expect(project.workspaces).toHaveLength(3);
+
+      // First workspace is set as active (loads URL via setActiveWorkspace)
+      expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith(
+        "/project/.worktrees/workspace-1"
+      );
+
+      // Fire-and-forget pattern: all remaining workspaces are preloaded in sequence
+      // (not awaited, so project:open completes without waiting for URL loads)
+      expect(preloadCallOrder).toEqual([
+        "/project/.worktrees/workspace-2",
+        "/project/.worktrees/workspace-3",
+      ]);
     });
   });
 

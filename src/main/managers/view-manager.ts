@@ -853,6 +853,23 @@ export class ViewManager implements IViewManager {
   }
 
   /**
+   * Preloads a workspace's URL without attaching the view.
+   *
+   * Loads the code-server URL in the background so the workspace is ready
+   * when the user navigates to it. The view remains detached (no GPU usage)
+   * until setActiveWorkspace() is called.
+   *
+   * Idempotent: delegates to loadViewUrl() which checks loadedWorkspaces Set.
+   *
+   * @param workspacePath - Absolute path to the workspace directory
+   */
+  preloadWorkspaceUrl(workspacePath: string): void {
+    const workspaceName = basename(workspacePath);
+    this.logger.debug("Preloading URL", { workspace: workspaceName });
+    this.loadViewUrl(workspacePath);
+  }
+
+  /**
    * Updates the code-server port.
    * Used after setup completes to update the port for origin checking.
    *

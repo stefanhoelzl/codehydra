@@ -345,8 +345,8 @@ For GPU optimization, workspace views use **detachment** instead of zero-bounds 
 
 **Key behaviors:**
 
-- Views start **detached** (not in contentView) with **URL not loaded** (lazy loading)
-- On first activation: URL is loaded, view is attached to contentView
+- Views start **detached** (not in contentView) with **URL preloaded** in parallel during project open
+- On first activation: view is attached to contentView (URL already loaded)
 - On subsequent activations: view is attached (URL already loaded)
 - On deactivation: view is detached (removed from contentView)
 - **Attach-before-detach**: New view is attached BEFORE old view is detached for visual continuity

@@ -89,8 +89,8 @@ Discovery finds worktrees in ANY location; creation only in managed location.
 
 ### View Management
 
-- **Create**: When workspace added, create WebContentsView (detached, URL not loaded)
-- **Activate (first)**: Load URL, attach to contentView, set bounds
+- **Create**: When workspace added, create WebContentsView (detached, URL preloaded in parallel)
+- **Activate (first)**: Attach to contentView, set bounds (URL already loaded)
 - **Activate (subsequent)**: Attach to contentView, set bounds (URL already loaded)
 - **Hide**: Detach from contentView (not attached, no bounds needed)
 - **Destroy**: When workspace removed, destroy WebContentsView
@@ -101,16 +101,16 @@ Discovery finds worktrees in ANY location; creation only in managed location.
 ```
 [not created] ──createWorkspaceView()──► [created/detached/loading]
                                                │
-                                               │ URL not loaded, not in contentView
+                                               │ URL preloaded, not in contentView
                                                │ 10-second timeout started
                                                │
                                        setActiveWorkspace() [first time]
                                                │
                                                ▼
                                       ┌────────────────────┐
-                                      │  [loading/detached]│
-                                      │  URL loaded        │
-                                      │  not in contentView│
+                                      │  [loading/attached]│
+                                      │  URL already loaded│
+                                      │  in contentView    │
                                       │  loading overlay   │
                                       └────────┬───────────┘
                                                │
@@ -145,7 +145,7 @@ Discovery finds worktrees in ANY location; creation only in managed location.
 - **Loading state**: New workspaces show a loading overlay until first MCP request is received (indicating TUI attachment) or 10-second timeout. The view URL is loaded but the view remains detached (not attached to contentView).
 - **Detached views** retain their VS Code state (no reload when shown again)
 - **Detachment** (vs zero-bounds) reduces GPU usage when many workspaces are open
-- **Lazy URL loading** defers resource usage until workspace is first activated
+- **URL preloading**: All workspace URLs are loaded in parallel when a project opens. This eliminates loading delays when switching between workspaces.
 
 ### UI Layer State Machine
 

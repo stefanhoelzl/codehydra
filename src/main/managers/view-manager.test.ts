@@ -459,6 +459,112 @@ describe("ViewManager", () => {
     });
   });
 
+  describe("preloadWorkspaceUrl", () => {
+    it("preloadWorkspaceUrl-loads-url: loads URL without attaching view", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      // Clear calls from create (UI view)
+      mockWindowManager.getWindow().contentView.addChildView.mockClear();
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      workspaceView?.webContents.loadURL.mockClear();
+
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+
+      // URL should be loaded
+      expect(workspaceView?.webContents.loadURL).toHaveBeenCalledWith(
+        "http://localhost:8080/?folder=/path"
+      );
+      // View should NOT be attached (still detached)
+      expect(mockWindowManager.getWindow().contentView.addChildView).not.toHaveBeenCalled();
+    });
+
+    it("preloadWorkspaceUrl-idempotent: multiple calls only load URL once", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+      workspaceView?.webContents.loadURL.mockClear();
+
+      // Call preload multiple times
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+
+      // URL should only be loaded once (idempotent)
+      expect(workspaceView?.webContents.loadURL).toHaveBeenCalledTimes(1);
+    });
+
+    it("preloadWorkspaceUrl-then-activate: setActiveWorkspace after preload doesn't reload URL", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://localhost:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const workspaceView = MockWebContentsViewClass.mock.results[1]?.value;
+
+      // Preload first
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+      expect(workspaceView?.webContents.loadURL).toHaveBeenCalledTimes(1);
+
+      // Clear and activate
+      workspaceView?.webContents.loadURL.mockClear();
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // URL should NOT be reloaded (already loaded by preload)
+      expect(workspaceView?.webContents.loadURL).not.toHaveBeenCalled();
+    });
+
+    it("preloadWorkspaceUrl-nonexistent: does nothing for nonexistent workspace", () => {
+      const manager = ViewManager.create(
+        mockWindowManager as unknown as WindowManager,
+        {
+          uiPreloadPath: "/path/to/preload.js",
+          codeServerPort: 8080,
+        },
+        SILENT_LOGGER
+      );
+
+      // Should not throw
+      expect(() => manager.preloadWorkspaceUrl("/nonexistent/workspace")).not.toThrow();
+    });
+  });
+
   describe("destroyWorkspaceView", () => {
     it("destroyWorkspaceView-detached: destroying detached view doesn't throw", () => {
       const manager = ViewManager.create(

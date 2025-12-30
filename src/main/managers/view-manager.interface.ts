@@ -188,4 +188,19 @@ export interface IViewManager {
    * @returns Unsubscribe function
    */
   onLoadingChange(callback: LoadingChangeCallback): Unsubscribe;
+
+  /**
+   * Preloads a workspace's URL without attaching the view.
+   *
+   * Loads the code-server URL in the background so the workspace is ready
+   * when the user navigates to it. The view remains detached (no GPU usage)
+   * until setActiveWorkspace() is called.
+   *
+   * Idempotent: safe to call multiple times or for already-loaded workspaces.
+   *
+   * Precondition: workspace must exist (created via createWorkspaceView()).
+   *
+   * @param workspacePath - Absolute path to the workspace directory
+   */
+  preloadWorkspaceUrl(workspacePath: string): void;
 }
