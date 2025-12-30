@@ -2,8 +2,12 @@
  * Tests for extension directory name parsing utilities.
  */
 
-import { describe, it, expect } from "vitest";
-import { parseExtensionDir, listInstalledExtensions } from "./extension-utils";
+import { describe, it, expect, vi } from "vitest";
+import {
+  parseExtensionDir,
+  listInstalledExtensions,
+  removeFromExtensionsJson,
+} from "./extension-utils";
 import { createMockFileSystemLayer, createDirEntry } from "../platform/filesystem.test-utils";
 
 describe("parseExtensionDir", () => {
@@ -231,5 +235,141 @@ describe("listInstalledExtensions", () => {
 
     expect(result.size).toBe(1);
     expect(result.get("codehydra.codehydra")).toBe("0.0.1");
+  });
+});
+
+describe("removeFromExtensionsJson", () => {
+  const sampleExtensionsJson = JSON.stringify([
+    {
+      identifier: { id: "codehydra.sidekick" },
+      version: "0.0.3",
+      relativeLocation: "codehydra.sidekick-0.0.3",
+    },
+    {
+      identifier: { id: "sst-dev.opencode" },
+      version: "0.0.13",
+      relativeLocation: "sst-dev.opencode-0.0.13-universal",
+      metadata: { updated: true },
+    },
+  ]);
+
+  it("removes specified extension from extensions.json", async () => {
+    let writtenContent = "";
+    const mockFs = createMockFileSystemLayer({
+      readFile: { content: sampleExtensionsJson },
+      writeFile: {
+        implementation: async (_path, content) => {
+          writtenContent = content;
+        },
+      },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", ["sst-dev.opencode"]);
+
+    const result = JSON.parse(writtenContent);
+    expect(result).toHaveLength(1);
+    expect(result[0].identifier.id).toBe("codehydra.sidekick");
+  });
+
+  it("removes multiple extensions", async () => {
+    let writtenContent = "";
+    const mockFs = createMockFileSystemLayer({
+      readFile: { content: sampleExtensionsJson },
+      writeFile: {
+        implementation: async (_path, content) => {
+          writtenContent = content;
+        },
+      },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", [
+      "sst-dev.opencode",
+      "codehydra.sidekick",
+    ]);
+
+    const result = JSON.parse(writtenContent);
+    expect(result).toHaveLength(0);
+  });
+
+  it("does nothing when extensions.json does not exist", async () => {
+    const writeFile = vi.fn();
+    const mockFs = createMockFileSystemLayer({
+      readFile: {
+        implementation: async () => {
+          throw new Error("ENOENT");
+        },
+      },
+      writeFile: { implementation: writeFile },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", ["sst-dev.opencode"]);
+
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when extension ID not found", async () => {
+    const writeFile = vi.fn();
+    const mockFs = createMockFileSystemLayer({
+      readFile: { content: sampleExtensionsJson },
+      writeFile: { implementation: writeFile },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", ["nonexistent.extension"]);
+
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for empty extension IDs list", async () => {
+    const writeFile = vi.fn();
+    const mockFs = createMockFileSystemLayer({
+      readFile: { content: sampleExtensionsJson },
+      writeFile: { implementation: writeFile },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", []);
+
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("handles case-insensitive extension IDs", async () => {
+    let writtenContent = "";
+    const mockFs = createMockFileSystemLayer({
+      readFile: { content: sampleExtensionsJson },
+      writeFile: {
+        implementation: async (_path, content) => {
+          writtenContent = content;
+        },
+      },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", ["SST-DEV.OPENCODE"]);
+
+    const result = JSON.parse(writtenContent);
+    expect(result).toHaveLength(1);
+    expect(result[0].identifier.id).toBe("codehydra.sidekick");
+  });
+
+  it("handles invalid JSON gracefully", async () => {
+    const writeFile = vi.fn();
+    const mockFs = createMockFileSystemLayer({
+      readFile: { content: "not valid json" },
+      writeFile: { implementation: writeFile },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", ["sst-dev.opencode"]);
+
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("handles non-array JSON gracefully", async () => {
+    const writeFile = vi.fn();
+    const mockFs = createMockFileSystemLayer({
+      readFile: { content: '{"not": "an array"}' },
+      writeFile: { implementation: writeFile },
+    });
+
+    await removeFromExtensionsJson(mockFs, "/extensions", ["sst-dev.opencode"]);
+
+    expect(writeFile).not.toHaveBeenCalled();
   });
 });

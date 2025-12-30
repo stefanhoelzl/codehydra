@@ -8,6 +8,7 @@
  */
 
 import type { FileSystemLayer, PathLike } from "../platform/filesystem";
+import { Path } from "../platform/path";
 
 /**
  * Parsed extension info from a directory name.
@@ -116,4 +117,73 @@ export async function listInstalledExtensions(
   }
 
   return result;
+}
+
+/**
+ * Entry in VS Code's extensions.json file.
+ * Only includes fields we need for filtering.
+ */
+interface ExtensionsJsonEntry {
+  readonly identifier: { readonly id: string };
+  readonly version: string;
+  // Other fields exist but we preserve them as-is
+}
+
+/**
+ * Remove entries for specified extension IDs from VS Code's extensions.json.
+ *
+ * This is needed to clear stale state that can prevent reinstallation.
+ * VS Code may reject installing an extension if it's still registered
+ * in extensions.json even though the extension folder is missing.
+ *
+ * @param fs FileSystemLayer instance
+ * @param extensionsDir Path to the extensions directory containing extensions.json
+ * @param extensionIds Extension IDs to remove from the registry
+ *
+ * @example
+ * await removeFromExtensionsJson(fs, "/app/vscode/extensions", ["sst-dev.opencode"]);
+ */
+export async function removeFromExtensionsJson(
+  fs: FileSystemLayer,
+  extensionsDir: PathLike,
+  extensionIds: readonly string[]
+): Promise<void> {
+  if (extensionIds.length === 0) {
+    return;
+  }
+
+  const jsonPath = new Path(extensionsDir, "extensions.json");
+
+  let content: string;
+  try {
+    content = await fs.readFile(jsonPath);
+  } catch {
+    // File doesn't exist - nothing to clean
+    return;
+  }
+
+  let entries: ExtensionsJsonEntry[];
+  try {
+    entries = JSON.parse(content) as ExtensionsJsonEntry[];
+  } catch {
+    // Invalid JSON - don't modify
+    return;
+  }
+
+  if (!Array.isArray(entries)) {
+    return;
+  }
+
+  // Create a Set for O(1) lookup (case-insensitive)
+  const idsToRemove = new Set(extensionIds.map((id) => id.toLowerCase()));
+
+  // Filter out entries for the specified extension IDs
+  const filtered = entries.filter(
+    (entry) => !idsToRemove.has(entry.identifier?.id?.toLowerCase() ?? "")
+  );
+
+  // Only write if we actually removed something
+  if (filtered.length < entries.length) {
+    await fs.writeFile(jsonPath, JSON.stringify(filtered));
+  }
 }
