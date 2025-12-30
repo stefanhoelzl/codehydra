@@ -295,6 +295,9 @@ describe("Integration tests", () => {
       expect(closeButton).toBeInTheDocument();
       await fireEvent.click(closeButton);
 
+      // Click the close button
+      await fireEvent.click(closeButton);
+
       // Verify dialog opens (projects always show confirmation dialog)
       const dialog = await waitFor(() => {
         const d = screen.getByRole("dialog");
