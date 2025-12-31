@@ -55,11 +55,7 @@
   import WorkspaceLoadingOverlay from "./WorkspaceLoadingOverlay.svelte";
   import Logo from "./Logo.svelte";
 
-  import {
-    clearDeletion,
-    getDeletionState,
-    getDeletionStatus,
-  } from "$lib/stores/deletion.svelte.js";
+  import { clearDeletion, getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
   import { isWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import { getErrorMessage } from "@shared/error-utils";
@@ -87,8 +83,10 @@
   });
 
   // Derive deletion state for active workspace
+  // Read directly from deletionStates.value to ensure Svelte tracks the SvelteMap read
+  // (calling through getDeletionState() may not properly track reactivity in $derived)
   const activeDeletionState = $derived(
-    activeWorkspacePath.value ? getDeletionState(activeWorkspacePath.value) : undefined
+    activeWorkspacePath.value ? deletionStates.value.get(activeWorkspacePath.value) : undefined
   );
 
   // Derive loading state for active workspace
@@ -226,19 +224,27 @@
     );
   }
 
-  // Handle close anyway (force remove)
-  async function handleCloseAnyway(): Promise<void> {
+  // Handle close handles and retry (elevated operation to close file handles on Windows)
+  function handleCloseHandlesAndRetry(): void {
     if (!activeDeletionState) return;
-    logger.debug("Force removing workspace", { workspaceName: activeDeletionState.workspaceName });
-    try {
-      await api.workspaces.forceRemove(
-        activeDeletionState.projectId,
-        activeDeletionState.workspaceName
-      );
-      clearDeletion(activeDeletionState.workspacePath);
-    } catch (error) {
-      logger.warn("Force remove failed", { error: getErrorMessage(error) });
-    }
+    logger.debug("Closing handles and retrying deletion", {
+      workspaceName: activeDeletionState.workspaceName,
+    });
+    // Fire-and-forget - new progress events will update the state
+    void api.workspaces.remove(
+      activeDeletionState.projectId,
+      activeDeletionState.workspaceName,
+      activeDeletionState.keepBranch,
+      true, // skipSwitch - user explicitly selected this workspace to retry
+      "close" // unblock - close file handles before deletion
+    );
+  }
+
+  // Handle cancel (dismiss deletion progress dialog)
+  function handleCancel(): void {
+    if (!activeDeletionState) return;
+    logger.debug("Cancelling deletion", { workspaceName: activeDeletionState.workspaceName });
+    clearDeletion(activeDeletionState.workspacePath);
   }
 </script>
 
@@ -287,8 +293,9 @@
     <DeletionProgressView
       progress={activeDeletionState}
       onRetry={handleRetry}
-      onCloseAnyway={handleCloseAnyway}
+      onCancel={handleCancel}
       onKillAndRetry={handleKillAndRetry}
+      onCloseHandlesAndRetry={handleCloseHandlesAndRetry}
     />
   {:else if activeLoading}
     <WorkspaceLoadingOverlay />

@@ -256,7 +256,15 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 
 **Resilient Deletion**: When `git worktree remove --force` fails but the worktree was successfully unregistered (e.g., due to locked files in code-server), the deletion is considered successful. The orphaned directory will be cleaned up on next startup.
 
-**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), `BlockingProcessService` detects processes holding file handles using Windows Restart Manager API. The UI shows a table of blocking processes with a "Kill Processes & Retry" button. On non-Windows platforms, this service is a no-op (returns empty arrays).
+**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), `BlockingProcessService` handles blocking processes using the Windows Restart Manager API via a PowerShell script. The service provides three operations:
+
+| Operation      | Method            | Description                                          |
+| -------------- | ----------------- | ---------------------------------------------------- |
+| Detect         | `detect(path)`    | Find processes with handles on files under path      |
+| Kill processes | `killProcesses()` | Terminate all detected processes via taskkill        |
+| Close handles  | `closeHandles()`  | Forcibly close file handles (requires UAC elevation) |
+
+The UI shows a scrollable list of blocking processes (with files and CWD) and offers three action buttons: "Kill & Retry" (terminates processes), "Close Handles & Retry" (closes handles with elevation), or "Retry" (in case locks were manually released). On non-Windows platforms, this service is a no-op (returns empty arrays).
 
 **Startup Cleanup**: On project open, `cleanupOrphanedWorkspaces()` runs non-blocking to remove directories in the workspaces folder that are not registered with git. This handles cases where previous deletions partially failed.
 

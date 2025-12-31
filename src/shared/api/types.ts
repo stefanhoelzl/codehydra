@@ -247,6 +247,8 @@ export type UnblockOption = (typeof UNBLOCK_OPTIONS)[number];
  * Identifiers for deletion operations.
  */
 export type DeletionOperationId =
+  | "closing-handles"
+  | "killing-blockers"
   | "kill-terminals"
   | "stop-server"
   | "cleanup-vscode"

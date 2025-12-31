@@ -562,17 +562,17 @@ const unsubscribe = on("workspace:switched", (event) => {
 
 #### `workspaces` - Workspace Management
 
-| Method            | Signature                                                                                                                                        | Description                                                                                                                    |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `create`          | `(projectId: ProjectId, name: string, base: string) => Promise<Workspace>`                                                                       | Create a new workspace from a base branch                                                                                      |
-| `remove`          | `(projectId: ProjectId, workspaceName: WorkspaceName, options?: { keepBranch?: boolean; killBlocking?: boolean }) => Promise<{ started: true }>` | Start workspace removal (fire-and-forget). Set `killBlocking: true` to kill blocking processes before deletion (Windows only). |
-| `forceRemove`     | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<void>`                                                                          | Force remove (skip cleanup)                                                                                                    |
-| `get`             | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Workspace \| undefined>`                                                        | Get a workspace                                                                                                                |
-| `getStatus`       | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<WorkspaceStatus>`                                                               | Get workspace status                                                                                                           |
-| `getOpencodePort` | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<number \| null>`                                                                | Get OpenCode server port                                                                                                       |
-| `setMetadata`     | `(projectId: ProjectId, workspaceName: WorkspaceName, key: string, value: string \| null) => Promise<void>`                                      | Set/delete metadata                                                                                                            |
-| `getMetadata`     | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Record<string, string>>`                                                        | Get all metadata                                                                                                               |
-| `executeCommand`  | `(projectId: ProjectId, workspaceName: WorkspaceName, command: string, args?: readonly unknown[]) => Promise<unknown>`                           | Execute a VS Code command                                                                                                      |
+| Method            | Signature                                                                                                                                                      | Description                                                                                                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`          | `(projectId: ProjectId, name: string, base: string) => Promise<Workspace>`                                                                                     | Create a new workspace from a base branch                                                                                                                                       |
+| `remove`          | `(projectId: ProjectId, workspaceName: WorkspaceName, options?: { keepBranch?: boolean; unblock?: "kill" \| "close" \| false }) => Promise<{ started: true }>` | Start workspace removal (fire-and-forget). Set `unblock: "kill"` to kill blocking processes or `unblock: "close"` to close file handles (Windows only, requires UAC elevation). |
+| `forceRemove`     | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<void>`                                                                                        | Force remove (skip cleanup)                                                                                                                                                     |
+| `get`             | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Workspace \| undefined>`                                                                      | Get a workspace                                                                                                                                                                 |
+| `getStatus`       | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<WorkspaceStatus>`                                                                             | Get workspace status                                                                                                                                                            |
+| `getOpencodePort` | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<number \| null>`                                                                              | Get OpenCode server port                                                                                                                                                        |
+| `setMetadata`     | `(projectId: ProjectId, workspaceName: WorkspaceName, key: string, value: string \| null) => Promise<void>`                                                    | Set/delete metadata                                                                                                                                                             |
+| `getMetadata`     | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Record<string, string>>`                                                                      | Get all metadata                                                                                                                                                                |
+| `executeCommand`  | `(projectId: ProjectId, workspaceName: WorkspaceName, command: string, args?: readonly unknown[]) => Promise<unknown>`                                         | Execute a VS Code command                                                                                                                                                       |
 
 #### `ui` - UI State Management
 
@@ -755,8 +755,15 @@ interface BlockingProcess {
   readonly pid: number;
   readonly name: string; // Process name (e.g., "node.exe")
   readonly commandLine: string; // Full command line
+  readonly files: readonly string[]; // Paths relative to workspace (max 20)
+  readonly cwd: string | null; // Working directory relative to workspace, or null
 }
 ```
+
+**Field details:**
+
+- `files` - File handles held by this process, paths relative to workspace root (max 20 shown)
+- `cwd` - Process working directory if within workspace (blocks deletion), null otherwise
 
 **Note:** `blockingProcesses` is only populated on Windows when deletion fails due to locked files (EBUSY, EACCES, EPERM). On other platforms, it's always undefined.
 

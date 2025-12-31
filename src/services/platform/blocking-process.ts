@@ -86,31 +86,6 @@ interface CloseHandlesOutput extends DetectOutput {
 }
 
 // =============================================================================
-// NoOp Implementation (Linux/macOS)
-// =============================================================================
-
-/**
- * No-op implementation for non-Windows platforms.
- * Linux/macOS don't have the same file locking behavior as Windows.
- */
-export class NoOpBlockingProcessService implements BlockingProcessService {
-  async detect(path: Path): Promise<BlockingProcess[]> {
-    void path;
-    return [];
-  }
-
-  async killProcesses(pids: number[]): Promise<void> {
-    void pids;
-    // No-op on non-Windows platforms
-  }
-
-  async closeHandles(path: Path): Promise<void> {
-    void path;
-    // No-op on non-Windows platforms
-  }
-}
-
-// =============================================================================
 // Windows Implementation
 // =============================================================================
 
@@ -359,16 +334,16 @@ export class WindowsBlockingProcessService implements BlockingProcessService {
  * @param platformInfo - Platform information to determine implementation
  * @param logger - Logger for diagnostics
  * @param scriptPath - Path to blocking-processes.ps1 script (required on Windows)
- * @returns BlockingProcessService implementation for the current platform
+ * @returns BlockingProcessService implementation on Windows, undefined on other platforms
  */
 export function createBlockingProcessService(
   processRunner: ProcessRunner,
   platformInfo: PlatformInfo,
   logger: Logger,
   scriptPath?: string
-): BlockingProcessService {
+): BlockingProcessService | undefined {
   if (platformInfo.platform === "win32") {
     return new WindowsBlockingProcessService(processRunner, logger, scriptPath);
   }
-  return new NoOpBlockingProcessService();
+  return undefined;
 }
