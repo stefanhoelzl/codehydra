@@ -32,11 +32,13 @@ import type {
   DeletionProgress,
   DeletionOperation,
   DeletionOperationId,
+  BlockingProcess,
 } from "../../../shared/api/types";
 import type { WorkspacePath } from "../../../shared/ipc";
 import type { AppState } from "../../app-state";
 import type { IViewManager } from "../../managers/view-manager.interface";
 import type { Logger } from "../../../services/logging/index";
+import type { BlockingProcessService } from "../../../services/platform/blocking-process";
 import { ApiIpcChannels } from "../../../shared/ipc";
 import { SILENT_LOGGER } from "../../../services/logging";
 import { getErrorMessage } from "../../../shared/error-utils";
@@ -91,6 +93,8 @@ export interface CoreModuleDeps {
   readonly killTerminalsCallback?: KillTerminalsCallback;
   /** Plugin server for executing VS Code commands in workspaces */
   readonly pluginServer?: IPluginServer;
+  /** Service for detecting and killing blocking processes (Windows) */
+  readonly blockingProcessService?: BlockingProcessService;
   /** Optional logger */
   readonly logger?: Logger;
 }
@@ -300,12 +304,14 @@ export class CoreModule implements IApiModule {
 
     // Fire-and-forget: execute deletion asynchronously
     const keepBranch = payload.keepBranch ?? true;
+    const unblock = payload.unblock ?? false;
     void this.executeDeletion(
       payload.projectId,
       projectPath,
       workspace.path as WorkspacePath,
       payload.workspaceName,
-      keepBranch
+      keepBranch,
+      unblock
     );
 
     return { started: true };
@@ -558,7 +564,8 @@ export class CoreModule implements IApiModule {
     projectPath: string,
     workspacePath: WorkspacePath,
     workspaceName: WorkspaceName,
-    keepBranch: boolean
+    keepBranch: boolean,
+    unblock: "kill" | "close" | false
   ): Promise<void> {
     const operations: DeletionOperation[] = [
       { id: "kill-terminals", label: "Terminating processes", status: "pending" },
@@ -566,6 +573,9 @@ export class CoreModule implements IApiModule {
       { id: "cleanup-vscode", label: "Closing VS Code view", status: "pending" },
       { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
     ];
+
+    // Track blocking processes detected during failure (Windows only)
+    let blockingProcesses: readonly BlockingProcess[] | undefined;
 
     const emitProgress = (completed: boolean, hasErrors: boolean): void => {
       this.deps.emitDeletionProgress({
@@ -576,6 +586,7 @@ export class CoreModule implements IApiModule {
         operations: [...operations],
         completed,
         hasErrors,
+        ...(blockingProcesses !== undefined && { blockingProcesses }),
       });
     };
 
@@ -598,6 +609,24 @@ export class CoreModule implements IApiModule {
 
     try {
       emitProgress(false, false);
+
+      // Pre-step: Unblock by killing processes or closing handles (Windows only)
+      if (unblock && this.deps.blockingProcessService) {
+        if (unblock === "kill") {
+          // Need to detect first to get the PIDs
+          const detected = await this.deps.blockingProcessService.detect(new Path(workspacePath));
+          if (detected.length > 0) {
+            this.logger.info("Killing blocking processes before deletion", {
+              workspacePath,
+              pids: detected.map((p) => p.pid).join(","),
+            });
+            await this.deps.blockingProcessService.killProcesses(detected.map((p) => p.pid));
+          }
+        } else if (unblock === "close") {
+          this.logger.info("Closing handles before deletion", { workspacePath });
+          await this.deps.blockingProcessService.closeHandles(new Path(workspacePath));
+        }
+      }
 
       // Operation 1: Kill terminals
       updateOp("kill-terminals", "in-progress");
@@ -678,6 +707,37 @@ export class CoreModule implements IApiModule {
         }
         updateOp("cleanup-workspace", "done");
       } catch (error) {
+        const errorCode = (error as NodeJS.ErrnoException).code;
+
+        this.logger.debug("Workspace cleanup failed", {
+          workspacePath,
+          errorCode: errorCode ?? "none",
+          errorType: error?.constructor?.name ?? "unknown",
+          error: getErrorMessage(error),
+        });
+
+        // Detect blocking processes on Windows for ANY cleanup error.
+        // We can't rely on error codes because git errors (GitError) don't preserve
+        // the underlying filesystem error codes. The blocking process service
+        // returns an empty array if no processes are found.
+        if (this.deps.blockingProcessService) {
+          try {
+            const detected = await this.deps.blockingProcessService.detect(new Path(workspacePath));
+            if (detected.length > 0) {
+              blockingProcesses = detected;
+              this.logger.info("Detected blocking processes", {
+                workspacePath,
+                count: detected.length,
+              });
+            }
+          } catch (detectError) {
+            this.logger.warn("Failed to detect blocking processes", {
+              workspacePath,
+              error: getErrorMessage(detectError),
+            });
+          }
+        }
+
         updateOp("cleanup-workspace", "error", getErrorMessage(error));
       }
 

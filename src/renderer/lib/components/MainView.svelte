@@ -210,6 +210,22 @@
     );
   }
 
+  // Handle kill blocking processes and retry
+  function handleKillAndRetry(): void {
+    if (!activeDeletionState) return;
+    logger.debug("Killing blocking processes and retrying deletion", {
+      workspaceName: activeDeletionState.workspaceName,
+    });
+    // Fire-and-forget - new progress events will update the state
+    void api.workspaces.remove(
+      activeDeletionState.projectId,
+      activeDeletionState.workspaceName,
+      activeDeletionState.keepBranch,
+      true, // skipSwitch - user explicitly selected this workspace to retry
+      "kill" // unblock - kill blocking processes before deletion
+    );
+  }
+
   // Handle close anyway (force remove)
   async function handleCloseAnyway(): Promise<void> {
     if (!activeDeletionState) return;
@@ -272,6 +288,7 @@
       progress={activeDeletionState}
       onRetry={handleRetry}
       onCloseAnyway={handleCloseAnyway}
+      onKillAndRetry={handleKillAndRetry}
     />
   {:else if activeLoading}
     <WorkspaceLoadingOverlay />

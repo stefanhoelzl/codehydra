@@ -16,7 +16,10 @@ export default defineConfig({
     },
     plugins: [
       viteStaticCopy({
-        targets: [{ src: "dist/extensions/*", dest: "assets" }],
+        targets: [
+          { src: "dist/extensions/*", dest: "assets" },
+          { src: "resources/scripts/*", dest: "assets/scripts" },
+        ],
       }),
     ],
   },

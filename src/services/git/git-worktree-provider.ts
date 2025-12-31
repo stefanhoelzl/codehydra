@@ -124,9 +124,12 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       await this.fileSystemLayer.rm(workspacePath, { recursive: true, force: true });
     } catch (error) {
       // Deletion failed (e.g., files still locked on Windows, permission denied)
+      // Preserve the error code for file lock detection (EBUSY, EACCES, EPERM)
       const message =
         error instanceof Error ? error.message : "Failed to delete workspace directory";
-      throw new WorkspaceError(`Failed to delete workspace directory: ${message}`);
+      const errorCode =
+        error instanceof FileSystemError ? error.fsCode : (error as NodeJS.ErrnoException).code;
+      throw new WorkspaceError(`Failed to delete workspace directory: ${message}`, errorCode);
     }
   }
 
