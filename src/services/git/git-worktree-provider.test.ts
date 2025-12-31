@@ -1194,14 +1194,13 @@ describe("GitWorktreeProvider", () => {
       expect(mockClient.deleteBranch).toHaveBeenCalledTimes(1);
 
       // Second call - idempotent, returns success without operations
-      // Note: baseDeleted is false because we can't determine the branch name
-      // when the worktree is already removed (branchName comes from listWorktrees)
+      // Note: branchName is derived from path basename when worktree is not found
       const result2 = await provider.removeWorkspace(worktreePath, true);
       expect(result2.workspaceRemoved).toBe(true);
-      expect(result2.baseDeleted).toBe(false); // Can't verify - worktree already gone
+      expect(result2.baseDeleted).toBe(true); // Branch already deleted, treat as success
       // removeWorktree not called again
       expect(mockClient.removeWorktree).toHaveBeenCalledTimes(1);
-      // deleteBranch not called again (couldn't determine branch name)
+      // deleteBranch not called again (branch doesn't exist anymore)
       expect(mockClient.deleteBranch).toHaveBeenCalledTimes(1);
     });
   });
