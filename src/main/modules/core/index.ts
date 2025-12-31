@@ -176,6 +176,13 @@ export class CoreModule implements IApiModule {
     this.api.register("workspaces.getOpencodePort", this.workspaceGetOpencodePort.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET_OPENCODE_PORT,
     });
+    this.api.register(
+      "workspaces.restartOpencodeServer",
+      this.workspaceRestartOpencodeServer.bind(this),
+      {
+        ipc: ApiIpcChannels.WORKSPACE_RESTART_OPENCODE_SERVER,
+      }
+    );
     this.api.register("workspaces.setMetadata", this.workspaceSetMetadata.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_SET_METADATA,
     });
@@ -386,6 +393,22 @@ export class CoreModule implements IApiModule {
     const serverManager = this.deps.appState.getServerManager();
     const port = serverManager?.getPort(workspace.path);
     return port || null;
+  }
+
+  private async workspaceRestartOpencodeServer(payload: WorkspaceRefPayload): Promise<number> {
+    const { workspace } = await this.resolveWorkspace(payload);
+
+    const serverManager = this.deps.appState.getServerManager();
+    if (!serverManager) {
+      throw new Error("OpenCode server manager not available");
+    }
+
+    const result = await serverManager.restartServer(workspace.path);
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    return result.port;
   }
 
   private async workspaceSetMetadata(payload: WorkspaceSetMetadataPayload): Promise<void> {

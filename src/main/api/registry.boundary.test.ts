@@ -68,6 +68,7 @@ function registerAllMethodsWithOneOverride<P extends MethodPath>(
     "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" as const } }),
     "workspaces.getOpencodePort": async () => null,
+    "workspaces.restartOpencodeServer": async () => 12345,
     "workspaces.setMetadata": async () => {},
     "workspaces.getMetadata": async () => ({}),
     "workspaces.executeCommand": async () => undefined,

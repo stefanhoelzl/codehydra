@@ -114,6 +114,12 @@ export function wirePluginApi(
       );
     },
 
+    async restartOpencodeServer(workspacePath: string) {
+      return handleApiCall(workspacePath, "restartOpencodeServer", (projectId, workspaceName) =>
+        api.workspaces.restartOpencodeServer(projectId, workspaceName)
+      );
+    },
+
     async getMetadata(workspacePath: string) {
       return handleApiCall(workspacePath, "getMetadata", async (projectId, workspaceName) => {
         const metadata = await api.workspaces.getMetadata(projectId, workspaceName);

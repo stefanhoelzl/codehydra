@@ -250,6 +250,56 @@ describe("AgentStatusManager", () => {
       // Should not throw when called on unknown workspace
       expect(() => manager.setTuiAttached("/unknown/workspace" as WorkspacePath)).not.toThrow();
     });
+
+    it("restores TUI attached state after workspace is re-initialized", async () => {
+      // This tests the server restart scenario:
+      // 1. TUI attaches (setTuiAttached called when first MCP request received)
+      // 2. Server restarts (removeWorkspace + initWorkspace)
+      // 3. New provider should have tuiAttached = true restored
+      const path = "/test/workspace" as WorkspacePath;
+
+      await manager.initWorkspace(path, 14001);
+      manager.setTuiAttached(path);
+
+      // Verify TUI attached (should be "idle" status)
+      expect(manager.getStatus(path).status).toBe("idle");
+
+      // Simulate server restart: removeWorkspace then initWorkspace
+      manager.removeWorkspace(path);
+
+      // After removal, status should be "none"
+      expect(manager.getStatus(path).status).toBe("none");
+
+      // Re-initialize (simulates server restart with new provider)
+      await manager.initWorkspace(path, 14001);
+
+      // Key assertion: TUI attached state should be restored from tracking set
+      // So status should be "idle" (not "none" which would require waiting for new MCP request)
+      expect(manager.getStatus(path).status).toBe("idle");
+    });
+
+    it("clearTuiTracking removes workspace from tracking", async () => {
+      // This tests permanent deletion (vs restart):
+      // After clearTuiTracking, re-initializing should NOT restore TUI attached state
+      const path = "/test/workspace" as WorkspacePath;
+
+      await manager.initWorkspace(path, 14001);
+      manager.setTuiAttached(path);
+
+      // Verify TUI attached
+      expect(manager.getStatus(path).status).toBe("idle");
+
+      // Simulate permanent deletion: clearTuiTracking + removeWorkspace
+      manager.clearTuiTracking(path);
+      manager.removeWorkspace(path);
+
+      // Re-initialize (simulates recreating workspace)
+      await manager.initWorkspace(path, 14001);
+
+      // Key assertion: TUI attached state should NOT be restored
+      // Status should be "none" (waiting for new MCP request)
+      expect(manager.getStatus(path).status).toBe("none");
+    });
   });
 
   describe("dispose", () => {
@@ -259,6 +309,26 @@ describe("AgentStatusManager", () => {
       manager.dispose();
 
       expect(manager.getAllStatuses().size).toBe(0);
+    });
+
+    it("clears TUI tracking state", async () => {
+      const path = "/test/workspace" as WorkspacePath;
+      await manager.initWorkspace(path, 14001);
+      manager.setTuiAttached(path);
+
+      // Verify TUI was attached
+      expect(manager.getStatus(path).status).toBe("idle");
+
+      // Dispose clears everything including TUI tracking
+      manager.dispose();
+
+      // Re-initialize on the same manager (after dispose)
+      // This tests that tuiAttachedWorkspaces was cleared by dispose
+      await manager.initWorkspace(path, 14001);
+
+      // If tuiAttachedWorkspaces was properly cleared, status should be "none"
+      // (not "idle" which would indicate TUI tracking was restored)
+      expect(manager.getStatus(path).status).toBe("none");
     });
   });
 

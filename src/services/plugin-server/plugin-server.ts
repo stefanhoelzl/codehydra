@@ -77,6 +77,13 @@ export interface ApiCallHandlers {
   getOpencodePort(workspacePath: string): Promise<PluginResult<number | null>>;
 
   /**
+   * Handle restartOpencodeServer request.
+   * @param workspacePath - Normalized workspace path
+   * @returns Port number after restart or error
+   */
+  restartOpencodeServer(workspacePath: string): Promise<PluginResult<number>>;
+
+  /**
    * Handle getMetadata request.
    * @param workspacePath - Normalized workspace path
    * @returns Metadata record or error
@@ -582,6 +589,15 @@ export class PluginServer {
         "api:workspace:getOpencodePort",
         workspacePath,
         (h) => h.getOpencodePort
+      )
+    );
+
+    socket.on(
+      "api:workspace:restartOpencodeServer",
+      this.createNoArgHandler(
+        "api:workspace:restartOpencodeServer",
+        workspacePath,
+        (h) => h.restartOpencodeServer
       )
     );
 

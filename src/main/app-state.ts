@@ -121,6 +121,10 @@ export class AppState {
       if (this.agentStatusManager) {
         this.agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
       }
+      // Clear from MCP seen set so onFirstRequest fires again after restart
+      if (this.mcpServerManager) {
+        this.mcpServerManager.clearWorkspace(workspacePath);
+      }
     });
   }
 
@@ -502,6 +506,11 @@ export class AppState {
     // Clear workspace from MCP seen set (so onFirstRequest fires if workspace is recreated)
     if (this.mcpServerManager) {
       this.mcpServerManager.clearWorkspace(workspacePathStr);
+    }
+
+    // Clear TUI tracking for permanent deletion (not restart)
+    if (this.agentStatusManager) {
+      this.agentStatusManager.clearTuiTracking(workspacePathStr as WorkspacePath);
     }
 
     // Destroy the workspace view

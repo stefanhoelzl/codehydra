@@ -175,6 +175,25 @@ export interface WorkspaceApi {
   getOpencodePort(): Promise<number | null>;
 
   /**
+   * Restart the OpenCode server for this workspace, preserving the same port.
+   * Useful for reloading configuration changes without affecting other workspaces.
+   *
+   * @returns Port number of the restarted server
+   * @throws Error if not connected, server not running, or restart fails
+   *
+   * @example
+   * ```typescript
+   * try {
+   *   const port = await api.workspace.restartOpencodeServer();
+   *   console.log(`OpenCode server restarted on port ${port}`);
+   * } catch (error) {
+   *   console.error('Failed to restart server:', error);
+   * }
+   * ```
+   */
+  restartOpencodeServer(): Promise<number>;
+
+  /**
    * Get all metadata for this workspace.
    * Metadata is stored in git config and persists across sessions.
    *

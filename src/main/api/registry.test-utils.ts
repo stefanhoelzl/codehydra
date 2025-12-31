@@ -217,6 +217,8 @@ function createMockCodeHydraApi(
         get("workspaces.getStatus")({ projectId, workspaceName }),
       getOpencodePort: (projectId, workspaceName) =>
         get("workspaces.getOpencodePort")({ projectId, workspaceName }),
+      restartOpencodeServer: (projectId, workspaceName) =>
+        get("workspaces.restartOpencodeServer")({ projectId, workspaceName }),
       setMetadata: (projectId, workspaceName, key, value) =>
         get("workspaces.setMetadata")({ projectId, workspaceName, key, value }),
       getMetadata: (projectId, workspaceName) =>
@@ -273,6 +275,7 @@ export function registerAllMethodsWithStubs(
     "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" as const } }),
     "workspaces.getOpencodePort": async () => null,
+    "workspaces.restartOpencodeServer": async () => 12345,
     "workspaces.setMetadata": async () => {},
     "workspaces.getMetadata": async () => ({}),
     "workspaces.executeCommand": async () => undefined,

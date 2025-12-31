@@ -2,7 +2,7 @@
   "name": "sidekick",
   "displayName": "CodeHydra Sidekick",
   "description": "CodeHydra integration for VS Code",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "codehydra",
   "repository": {
     "type": "git",
@@ -26,6 +26,11 @@
   },
   "contributes": {
     "commands": [
+      {
+        "command": "codehydra.restartOpencodeServer",
+        "title": "Restart OpenCode Server",
+        "category": "CodeHydra"
+      },
       {
         "command": "codehydra.debug.getStatus",
         "title": "CodeHydra Debug: Get Workspace Status",

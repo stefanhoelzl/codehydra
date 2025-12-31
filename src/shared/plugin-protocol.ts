@@ -265,6 +265,13 @@ export interface ClientToServerEvents {
   "api:workspace:getOpencodePort": (ack: (result: PluginResult<number | null>) => void) => void;
 
   /**
+   * Restart the OpenCode server for the connected workspace, preserving the same port.
+   *
+   * @param ack - Acknowledgment callback with port number after restart
+   */
+  "api:workspace:restartOpencodeServer": (ack: (result: PluginResult<number>) => void) => void;
+
+  /**
    * Get all metadata for the connected workspace.
    *
    * @param ack - Acknowledgment callback with metadata record

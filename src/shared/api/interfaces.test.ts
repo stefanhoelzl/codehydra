@@ -125,6 +125,14 @@ describe("IWorkspaceApi Interface", () => {
         void workspaceName;
         return null;
       },
+      async restartOpencodeServer(
+        projectId: ProjectId,
+        workspaceName: WorkspaceName
+      ): Promise<number> {
+        void projectId;
+        void workspaceName;
+        return 14001;
+      },
       async executeCommand(
         projectId: ProjectId,
         workspaceName: WorkspaceName,
@@ -148,6 +156,7 @@ describe("IWorkspaceApi Interface", () => {
     expect(typeof api.setMetadata).toBe("function");
     expect(typeof api.getMetadata).toBe("function");
     expect(typeof api.getOpencodePort).toBe("function");
+    expect(typeof api.restartOpencodeServer).toBe("function");
     expect(typeof api.executeCommand).toBe("function");
   });
 });

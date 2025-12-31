@@ -29,6 +29,7 @@ function createMockCoreApi(overrides?: {
     get: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
     getOpencodePort: vi.fn().mockResolvedValue(14001),
+    restartOpencodeServer: vi.fn().mockResolvedValue(14001),
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
     executeCommand: vi.fn().mockResolvedValue(undefined),
@@ -153,10 +154,43 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_get_metadata");
       expect(toolNames).toContain("workspace_set_metadata");
       expect(toolNames).toContain("workspace_get_opencode_port");
+      expect(toolNames).toContain("workspace_restart_opencode_server");
       expect(toolNames).toContain("workspace_delete");
       expect(toolNames).toContain("workspace_execute_command");
       expect(toolNames).toContain("log");
-      expect(tools.length).toBe(7);
+      expect(tools.length).toBe(8);
+    });
+
+    it("workspace_restart_opencode_server tool calls API and returns port", async () => {
+      // Set up mock app state with a workspace
+      const workspacePath = "/project/workspaces/test-workspace";
+      const projectPath = "/project";
+      mockAppState = createMockAppState([{ projectPath, workspacePath }]);
+
+      // Create server with workspace-aware app state
+      const server = new McpServer(mockApi, mockAppState, mockFactory, mockLogger);
+
+      await server.start(0);
+      await server.stop();
+
+      // Find the registered tool handler
+      const tools = mockMcpSdk.getRegisteredTools();
+      const restartTool = tools.find((t) => t.name === "workspace_restart_opencode_server");
+      expect(restartTool).toBeDefined();
+
+      // Invoke the handler with workspace path in extra.authInfo.extra (matches real MCP flow)
+      const result = await restartTool!.handler(
+        {}, // empty input schema
+        { authInfo: { extra: { workspacePath } } }
+      );
+
+      // Verify API was called
+      expect(mockApi.workspaces.restartOpencodeServer).toHaveBeenCalled();
+
+      // Verify result contains the port number
+      expect(result).toEqual({
+        content: [{ type: "text", text: "14001" }],
+      });
     });
   });
 

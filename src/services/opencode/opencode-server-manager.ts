@@ -27,11 +27,17 @@ export type ServerStoppedCallback = (workspacePath: string) => void;
 
 /**
  * Server entry in the manager's internal map.
- * Uses a discriminated union to properly model starting vs running states.
+ * Uses a discriminated union to properly model starting, running, and restarting states.
  */
 type ServerEntry =
   | { readonly state: "starting"; readonly startPromise: Promise<number> }
-  | { readonly state: "running"; readonly port: number; readonly process: SpawnedProcess };
+  | { readonly state: "running"; readonly port: number; readonly process: SpawnedProcess }
+  | {
+      readonly state: "restarting";
+      readonly port: number;
+      readonly process: SpawnedProcess;
+      readonly restartPromise: Promise<RestartServerResult>;
+    };
 
 /**
  * Configuration options for OpenCodeServerManager.
@@ -60,6 +66,13 @@ export interface StopServerResult {
   success: boolean;
   error?: string;
 }
+
+/**
+ * Result of restarting an OpenCode server.
+ */
+export type RestartServerResult =
+  | { readonly success: true; readonly port: number }
+  | { readonly success: false; readonly error: string; readonly serverStopped: boolean };
 
 /**
  * Manages OpenCode server instances for workspaces.
@@ -139,6 +152,33 @@ export class OpenCodeServerManager implements IDisposable {
     // Allocate a free port
     const port = await this.portManager.findFreePort();
 
+    // Spawn server and wait for health check
+    const proc = await this.spawnServerOnPort(workspacePath, port);
+
+    // Update the server entry to running state
+    this.servers.set(workspacePath, { state: "running", port, process: proc });
+
+    // Fire callback
+    for (const callback of this.startedCallbacks) {
+      callback(workspacePath, port);
+    }
+
+    // pid is guaranteed to be defined since spawnServerOnPort validates it
+    this.logger.info("Server started", { workspacePath, port, pid: proc.pid! });
+
+    return port;
+  }
+
+  /**
+   * Spawn an OpenCode server and wait for it to be healthy.
+   * Common implementation used by both doStartServer and startServerOnPort.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @param port - Port number to use
+   * @returns The spawned process
+   * @throws Error if server fails to spawn or health check times out
+   */
+  private async spawnServerOnPort(workspacePath: string, port: number): Promise<SpawnedProcess> {
     // Build environment variables with MCP config if available
     let env: NodeJS.ProcessEnv | undefined;
     if (this.mcpConfig) {
@@ -176,17 +216,7 @@ export class OpenCodeServerManager implements IDisposable {
       throw error;
     }
 
-    // Update the server entry to running state
-    this.servers.set(workspacePath, { state: "running", port, process: proc });
-
-    // Fire callback
-    for (const callback of this.startedCallbacks) {
-      callback(workspacePath, port);
-    }
-
-    this.logger.info("Server started", { workspacePath, port, pid: proc.pid });
-
-    return port;
+    return proc;
   }
 
   /**
@@ -231,7 +261,8 @@ export class OpenCodeServerManager implements IDisposable {
     const currentEntry = this.servers.get(workspacePath);
     let stopResult: StopServerResult = { success: true };
 
-    if (currentEntry && currentEntry.state === "running") {
+    // Kill the process if we have a running or restarting server
+    if (currentEntry && (currentEntry.state === "running" || currentEntry.state === "restarting")) {
       // Kill the process with 1s timeouts
       const killResult = await currentEntry.process.kill(
         PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
@@ -247,8 +278,11 @@ export class OpenCodeServerManager implements IDisposable {
       }
     }
 
-    // Remove from map
-    this.servers.delete(workspacePath);
+    // Remove from map (but NOT if restarting - the restart will update the entry)
+    const finalEntry = this.servers.get(workspacePath);
+    if (finalEntry?.state !== "restarting") {
+      this.servers.delete(workspacePath);
+    }
 
     // Fire callback
     for (const callback of this.stoppedCallbacks) {
@@ -258,6 +292,118 @@ export class OpenCodeServerManager implements IDisposable {
     this.logger.info("Server stopped", { workspacePath });
 
     return stopResult;
+  }
+
+  /**
+   * Restart an OpenCode server for a workspace, preserving the same port.
+   *
+   * Note: This method is NOT async to ensure idempotency - when called multiple
+   * times concurrently, it returns the SAME promise object. If it were async,
+   * each call would create a new wrapper Promise.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @returns RestartServerResult with port on success, or error details on failure
+   */
+  restartServer(workspacePath: string): Promise<RestartServerResult> {
+    const entry = this.servers.get(workspacePath);
+
+    // If already restarting, return the in-progress promise (idempotent)
+    if (entry?.state === "restarting") {
+      return entry.restartPromise;
+    }
+
+    // If starting, wait for start to complete, then restart
+    if (entry?.state === "starting") {
+      return entry.startPromise
+        .then(() => this.restartServer(workspacePath))
+        .catch(() => ({
+          success: false as const,
+          error: "Server failed to start",
+          serverStopped: false,
+        }));
+    }
+
+    // If not running, can't restart
+    if (!entry || entry.state !== "running") {
+      return Promise.resolve({
+        success: false as const,
+        error: "Server not running",
+        serverStopped: false,
+      });
+    }
+
+    // Get the current port and process to preserve
+    const port = entry.port;
+    const process = entry.process;
+
+    // Use a deferred promise pattern to set state BEFORE any async work
+    // This prevents race conditions where concurrent calls both see "running" state
+    let resolveRestart!: (result: RestartServerResult) => void;
+    let rejectRestart!: (error: Error) => void;
+    const restartPromise = new Promise<RestartServerResult>((resolve, reject) => {
+      resolveRestart = resolve;
+      rejectRestart = reject;
+    });
+
+    // Store entry while restarting BEFORE calling doRestartServer
+    // (keep process reference so stopServer can kill it)
+    this.servers.set(workspacePath, { state: "restarting", port, process, restartPromise });
+
+    // Kick off the restart and resolve the deferred promise
+    this.doRestartServer(workspacePath, port).then(resolveRestart).catch(rejectRestart);
+
+    return restartPromise;
+  }
+
+  /**
+   * Internal method to perform the restart.
+   */
+  private async doRestartServer(workspacePath: string, port: number): Promise<RestartServerResult> {
+    // Stop the server first
+    const stopResult = await this.stopServer(workspacePath);
+    if (!stopResult.success) {
+      return {
+        success: false,
+        error: stopResult.error ?? "Failed to stop server",
+        serverStopped: true,
+      };
+    }
+
+    // Start the server on the same port
+    try {
+      const newPort = await this.startServerOnPort(workspacePath, port);
+      return { success: true, port: newPort };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message, serverStopped: true };
+    }
+  }
+
+  /**
+   * Start an OpenCode server for a workspace on a specific port.
+   * Used by restartServer to preserve the same port.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @param port - Port number to use
+   * @returns Allocated port number
+   * @throws Error if server fails to start or health check times out
+   */
+  private async startServerOnPort(workspacePath: string, port: number): Promise<number> {
+    // Spawn server and wait for health check
+    const proc = await this.spawnServerOnPort(workspacePath, port);
+
+    // Update the server entry to running state
+    this.servers.set(workspacePath, { state: "running", port, process: proc });
+
+    // Fire callback
+    for (const callback of this.startedCallbacks) {
+      callback(workspacePath, port);
+    }
+
+    // pid is guaranteed to be defined since spawnServerOnPort validates it
+    this.logger.info("Server started", { workspacePath, port, pid: proc.pid! });
+
+    return port;
   }
 
   /**
@@ -280,7 +426,7 @@ export class OpenCodeServerManager implements IDisposable {
    */
   getPort(workspacePath: string): number | undefined {
     const entry = this.servers.get(workspacePath);
-    if (entry?.state === "running") {
+    if (entry?.state === "running" || entry?.state === "restarting") {
       return entry.port;
     }
     return undefined;

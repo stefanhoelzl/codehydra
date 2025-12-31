@@ -41,6 +41,7 @@ function createMockApi(): ICodeHydraApi {
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
       getOpencodePort: vi.fn().mockResolvedValue(null),
+      restartOpencodeServer: vi.fn().mockResolvedValue(14001),
       setMetadata: vi.fn(),
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
       executeCommand: vi.fn().mockResolvedValue(undefined),
@@ -163,6 +164,65 @@ describe("wirePluginApi", () => {
       await handlers.getOpencodePort("/home/user/.codehydra/workspaces/my-feature");
 
       expect(api.workspaces.getOpencodePort).toHaveBeenCalledWith(
+        expect.any(String), // projectId (generated from path)
+        "my-feature" as WorkspaceName
+      );
+    });
+  });
+
+  describe("restartOpencodeServer handler", () => {
+    it("should return success result with port number", async () => {
+      vi.mocked(api.workspaces.restartOpencodeServer).mockResolvedValue(14001);
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      const result = await handlers.restartOpencodeServer(
+        "/home/user/.codehydra/workspaces/my-feature"
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(14001);
+      }
+    });
+
+    it("should return error result when workspace not found", async () => {
+      workspaceResolver = createMockWorkspaceResolver(undefined); // Not found
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      const result = await handlers.restartOpencodeServer("/unknown/workspace");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Workspace not found");
+      }
+    });
+
+    it("should return error result when API throws", async () => {
+      vi.mocked(api.workspaces.restartOpencodeServer).mockRejectedValue(
+        new Error("Server not running")
+      );
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      const result = await handlers.restartOpencodeServer(
+        "/home/user/.codehydra/workspaces/my-feature"
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Server not running");
+      }
+    });
+
+    it("should call API with correct projectId and workspaceName", async () => {
+      wirePluginApi(pluginServer, api, workspaceResolver, logger);
+      const handlers = pluginServer.registeredHandlers!;
+
+      await handlers.restartOpencodeServer("/home/user/.codehydra/workspaces/my-feature");
+
+      expect(api.workspaces.restartOpencodeServer).toHaveBeenCalledWith(
         expect.any(String), // projectId (generated from path)
         "my-feature" as WorkspaceName
       );

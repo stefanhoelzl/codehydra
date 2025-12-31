@@ -176,6 +176,8 @@ export class ApiRegistry implements IApiRegistry {
           get("workspaces.getStatus")({ projectId, workspaceName }),
         getOpencodePort: (projectId, workspaceName) =>
           get("workspaces.getOpencodePort")({ projectId, workspaceName }),
+        restartOpencodeServer: (projectId, workspaceName) =>
+          get("workspaces.restartOpencodeServer")({ projectId, workspaceName }),
         setMetadata: (projectId, workspaceName, key, value) =>
           get("workspaces.setMetadata")({ projectId, workspaceName, key, value }),
         getMetadata: (projectId, workspaceName) =>

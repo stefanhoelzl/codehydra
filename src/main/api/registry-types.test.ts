@@ -47,7 +47,7 @@ describe("registry-types.paths", () => {
   it("ALL_METHOD_PATHS contains all MethodRegistry keys", () => {
     // This test is compile-time verified by the `satisfies` constraint in registry-types.ts
     // At runtime, we verify the count matches
-    const registryKeyCount = 22; // Count of all methods in MethodRegistry
+    const registryKeyCount = 23; // Count of all methods in MethodRegistry
     expect(ALL_METHOD_PATHS.length).toBe(registryKeyCount);
   });
 

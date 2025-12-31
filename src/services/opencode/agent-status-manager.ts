@@ -254,6 +254,12 @@ export class AgentStatusManager implements IDisposable {
   private readonly listeners = new Set<StatusChangedCallback>();
   private readonly sdkFactory: SdkClientFactory | undefined;
   private readonly logger: Logger;
+  /**
+   * Track workspaces that have had TUI attached.
+   * Persists across provider recreations (e.g., server restart) so we can
+   * restore the attached state without waiting for a new MCP request.
+   */
+  private readonly tuiAttachedWorkspaces = new Set<WorkspacePath>();
 
   constructor(logger: Logger, sdkFactory: SdkClientFactory | undefined = undefined) {
     this.logger = logger;
@@ -279,6 +285,11 @@ export class AgentStatusManager implements IDisposable {
     // Fetch initial status from the client
     await provider.fetchStatus();
 
+    // Restore TUI attached state if workspace had TUI attached before (e.g., after restart)
+    if (this.tuiAttachedWorkspaces.has(path)) {
+      provider.setTuiAttached();
+    }
+
     this.providers.set(path, provider);
     this.updateStatus(path);
   }
@@ -302,6 +313,8 @@ export class AgentStatusManager implements IDisposable {
    * Called when the first MCP request is received.
    */
   setTuiAttached(path: WorkspacePath): void {
+    // Track that this workspace has had TUI attached (persists across restarts)
+    this.tuiAttachedWorkspaces.add(path);
     const provider = this.providers.get(path);
     if (provider) {
       provider.setTuiAttached();
@@ -330,6 +343,18 @@ export class AgentStatusManager implements IDisposable {
     return () => this.listeners.delete(callback);
   }
 
+  /**
+   * Clear TUI tracking for a workspace (for permanent deletion).
+   * This removes the workspace from the persistent tuiAttachedWorkspaces set,
+   * so if the workspace is recreated, it won't have TUI attached state restored.
+   *
+   * Note: This is separate from removeWorkspace which is also called during restart.
+   * During restart, we want to preserve the tuiAttachedWorkspaces tracking.
+   */
+  clearTuiTracking(path: WorkspacePath): void {
+    this.tuiAttachedWorkspaces.delete(path);
+  }
+
   dispose(): void {
     for (const provider of this.providers.values()) {
       provider.dispose();
@@ -337,6 +362,7 @@ export class AgentStatusManager implements IDisposable {
     this.providers.clear();
     this.statuses.clear();
     this.listeners.clear();
+    this.tuiAttachedWorkspaces.clear();
   }
 
   private updateStatus(path: WorkspacePath): void {

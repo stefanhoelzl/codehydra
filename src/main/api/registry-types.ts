@@ -122,6 +122,7 @@ export interface MethodRegistry {
   "workspaces.get": (payload: WorkspaceRefPayload) => Promise<Workspace | undefined>;
   "workspaces.getStatus": (payload: WorkspaceRefPayload) => Promise<WorkspaceStatus>;
   "workspaces.getOpencodePort": (payload: WorkspaceRefPayload) => Promise<number | null>;
+  "workspaces.restartOpencodeServer": (payload: WorkspaceRefPayload) => Promise<number>;
   "workspaces.setMetadata": (payload: WorkspaceSetMetadataPayload) => Promise<void>;
   "workspaces.getMetadata": (
     payload: WorkspaceRefPayload
@@ -169,6 +170,7 @@ export type WorkspacePath =
   | "workspaces.get"
   | "workspaces.getStatus"
   | "workspaces.getOpencodePort"
+  | "workspaces.restartOpencodeServer"
   | "workspaces.setMetadata"
   | "workspaces.getMetadata"
   | "workspaces.executeCommand";
@@ -214,6 +216,7 @@ export const ALL_METHOD_PATHS = [
   "workspaces.get",
   "workspaces.getStatus",
   "workspaces.getOpencodePort",
+  "workspaces.restartOpencodeServer",
   "workspaces.setMetadata",
   "workspaces.getMetadata",
   "workspaces.executeCommand",

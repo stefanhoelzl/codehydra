@@ -342,6 +342,21 @@ export class McpServer implements IMcpServer {
       )
     );
 
+    // workspace_restart_opencode_server
+    this.registeredTools.push(
+      this.mcpServer.registerTool(
+        "workspace_restart_opencode_server",
+        {
+          description:
+            "Restart the OpenCode server for the current workspace, preserving the same port",
+          inputSchema: z.object({}),
+        },
+        this.createWorkspaceHandler(async (resolved) =>
+          this.api.workspaces.restartOpencodeServer(resolved.projectId, resolved.workspaceName)
+        )
+      )
+    );
+
     // workspace_delete
     this.registeredTools.push(
       this.mcpServer.registerTool(

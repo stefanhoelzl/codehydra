@@ -112,6 +112,16 @@ export interface IWorkspaceApi {
     command: string,
     args?: readonly unknown[]
   ): Promise<unknown>;
+  /**
+   * Restart the OpenCode server for a workspace, preserving the same port.
+   * Useful for reloading configuration changes without affecting other workspaces.
+   *
+   * @param projectId Project containing the workspace
+   * @param workspaceName Name of the workspace
+   * @returns The port number of the restarted server
+   * @throws Error if project or workspace not found, or server not running
+   */
+  restartOpencodeServer(projectId: ProjectId, workspaceName: WorkspaceName): Promise<number>;
 }
 
 export interface IUiApi {

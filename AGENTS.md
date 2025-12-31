@@ -765,14 +765,15 @@ CodeHydra runs an MCP (Model Context Protocol) server that exposes workspace API
 
 ### Available Tools
 
-| Tool                          | Description                                     |
-| ----------------------------- | ----------------------------------------------- |
-| `workspace_get_status`        | Get workspace status (dirty flag, agent status) |
-| `workspace_get_metadata`      | Get all workspace metadata                      |
-| `workspace_set_metadata`      | Set or delete a metadata key                    |
-| `workspace_get_opencode_port` | Get OpenCode server port                        |
-| `workspace_execute_command`   | Execute a VS Code command                       |
-| `workspace_delete`            | Delete the workspace                            |
+| Tool                                | Description                                       |
+| ----------------------------------- | ------------------------------------------------- |
+| `workspace_get_status`              | Get workspace status (dirty flag, agent status)   |
+| `workspace_get_metadata`            | Get all workspace metadata                        |
+| `workspace_set_metadata`            | Set or delete a metadata key                      |
+| `workspace_get_opencode_port`       | Get OpenCode server port                          |
+| `workspace_restart_opencode_server` | Restart OpenCode server, preserving the same port |
+| `workspace_execute_command`         | Execute a VS Code command                         |
+| `workspace_delete`                  | Delete the workspace                              |
 
 **Note**: MCP tools mirror the Public API workspace methods. See `docs/API.md` for detailed documentation.
 

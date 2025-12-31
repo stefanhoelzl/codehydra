@@ -195,6 +195,124 @@ describe("OpenCodeServerManager integration", () => {
     });
   });
 
+  describe("restartServer", () => {
+    it("restartServer returns same port", async () => {
+      // Start server
+      const originalPort = await serverManager.startServer("/workspace/feature-a");
+      expect(originalPort).toBe(14001);
+
+      // Restart server
+      const result = await serverManager.restartServer("/workspace/feature-a");
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.port).toBe(14001);
+      }
+      expect(serverManager.getPort("/workspace/feature-a")).toBe(14001);
+    });
+
+    it("restartServer fails if server not running", async () => {
+      const result = await serverManager.restartServer("/workspace/feature-a");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("not running");
+        expect(result.serverStopped).toBe(false);
+      }
+    });
+
+    it("restartServer fires stop then start callbacks", async () => {
+      const startedCallback = vi.fn();
+      const stoppedCallback = vi.fn();
+      let callOrder: string[] = [];
+
+      serverManager.onServerStarted(() => {
+        callOrder.push("started");
+        startedCallback();
+      });
+      serverManager.onServerStopped(() => {
+        callOrder.push("stopped");
+        stoppedCallback();
+      });
+
+      // Start server (fires started)
+      await serverManager.startServer("/workspace/feature-a");
+      expect(startedCallback).toHaveBeenCalledTimes(1);
+      callOrder = []; // Reset for restart test
+
+      // Restart server (fires stopped then started)
+      await serverManager.restartServer("/workspace/feature-a");
+
+      expect(stoppedCallback).toHaveBeenCalledTimes(1);
+      expect(startedCallback).toHaveBeenCalledTimes(2); // 1 for start, 1 for restart
+      expect(callOrder).toEqual(["stopped", "started"]);
+    });
+
+    it("restartServer during starting state waits then restarts", async () => {
+      // Start a server that will resolve
+      const startPromise = serverManager.startServer("/workspace/feature-a");
+
+      // Immediately try to restart (while starting)
+      const restartPromise = serverManager.restartServer("/workspace/feature-a");
+
+      // Wait for both
+      await startPromise;
+      const result = await restartPromise;
+
+      // Should succeed
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.port).toBe(14001);
+      }
+    });
+
+    it("restartServer during restarting state returns in-progress promise", async () => {
+      // Start server
+      await serverManager.startServer("/workspace/feature-a");
+
+      // Start two restarts concurrently
+      const restartPromise1 = serverManager.restartServer("/workspace/feature-a");
+      const restartPromise2 = serverManager.restartServer("/workspace/feature-a");
+
+      // They should be the same promise
+      expect(restartPromise1).toBe(restartPromise2);
+
+      // Wait for completion
+      const result = await restartPromise1;
+      expect(result.success).toBe(true);
+    });
+
+    it("restartServer fails with port conflict", async () => {
+      // Create a new server manager with short timeout for this test
+      const shortTimeoutManager = new OpenCodeServerManager(
+        mockProcessRunner,
+        mockPortManager,
+        mockHttpClient,
+        mockPathProvider,
+        SILENT_LOGGER,
+        { healthCheckTimeoutMs: 100, healthCheckIntervalMs: 10 }
+      );
+
+      try {
+        // Start server
+        await shortTimeoutManager.startServer("/workspace/feature-a");
+
+        // Make health check fail (simulating port conflict)
+        mockHttpClient.fetch.mockRejectedValue(new Error("Connection refused"));
+
+        // Restart server - should fail because health check fails
+        const result = await shortTimeoutManager.restartServer("/workspace/feature-a");
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.serverStopped).toBe(true);
+        }
+      } finally {
+        await shortTimeoutManager.dispose();
+      }
+    });
+  });
+
   describe("rapid workspace add/remove cycles", () => {
     it("are stable", async () => {
       // Rapid add/remove cycles

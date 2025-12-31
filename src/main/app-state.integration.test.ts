@@ -110,6 +110,7 @@ function createMockAgentStatusManager(): AgentStatusManager {
   return {
     initWorkspace: vi.fn().mockResolvedValue(undefined),
     removeWorkspace: vi.fn(),
+    clearTuiTracking: vi.fn(),
     onStatusChanged: vi.fn().mockReturnValue(() => {}),
     dispose: vi.fn(),
   } as unknown as AgentStatusManager;

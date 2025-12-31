@@ -333,6 +333,7 @@ export function createMockWorkspaceApi(overrides?: Partial<IWorkspaceApi>): IWor
     get: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
     getOpencodePort: vi.fn().mockResolvedValue(null),
+    restartOpencodeServer: vi.fn().mockResolvedValue(14001),
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
     executeCommand: vi.fn().mockResolvedValue(undefined),

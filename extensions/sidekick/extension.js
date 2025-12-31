@@ -243,6 +243,21 @@ const codehydraApi = {
     },
 
     /**
+     * Restart the OpenCode server for this workspace, preserving the same port.
+     * Useful for reloading configuration changes.
+     *
+     * @returns {Promise<number>} Port number of the restarted server
+     * @example
+     * ```javascript
+     * const port = await api.workspace.restartOpencodeServer();
+     * console.log(`OpenCode server restarted on port ${port}`);
+     * ```
+     */
+    restartOpencodeServer() {
+      return emitApiCall("api:workspace:restartOpencodeServer");
+    },
+
+    /**
      * Get all metadata for this workspace.
      * @returns {Promise<Record<string, string>>} Metadata record (always includes 'base' key)
      */
@@ -603,6 +618,19 @@ function connectToPluginServer(port, workspacePath) {
 function activate(context) {
   // Store context for debug command registration
   extensionContext = context;
+
+  // Register user-facing commands (always available)
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.restartOpencodeServer", async () => {
+      try {
+        const port = await codehydraApi.workspace.restartOpencodeServer();
+        vscode.window.showInformationMessage(`OpenCode server restarted on port ${port}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(`Failed to restart OpenCode server: ${message}`);
+      }
+    })
+  );
 
   // NOTE: Startup commands (close sidebars, open terminal, etc.) are now handled
   // by CodeHydra main process via PluginServer.onConnect() callback when this
