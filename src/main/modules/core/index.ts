@@ -38,7 +38,7 @@ import type { WorkspacePath } from "../../../shared/ipc";
 import type { AppState } from "../../app-state";
 import type { IViewManager } from "../../managers/view-manager.interface";
 import type { Logger } from "../../../services/logging/index";
-import type { BlockingProcessService } from "../../../services/platform/blocking-process";
+import type { WorkspaceLockHandler } from "../../../services/platform/workspace-lock-handler";
 import { ApiIpcChannels } from "../../../shared/ipc";
 import { SILENT_LOGGER } from "../../../services/logging";
 import { getErrorMessage } from "../../../shared/error-utils";
@@ -93,8 +93,8 @@ export interface CoreModuleDeps {
   readonly killTerminalsCallback?: KillTerminalsCallback;
   /** Plugin server for executing VS Code commands in workspaces */
   readonly pluginServer?: IPluginServer;
-  /** Service for detecting and killing blocking processes (Windows only, undefined on other platforms) */
-  readonly blockingProcessService?: BlockingProcessService | undefined;
+  /** Handler for detecting and resolving processes blocking workspace deletion (Windows only, undefined on other platforms) */
+  readonly workspaceLockHandler?: WorkspaceLockHandler | undefined;
   /** Optional logger */
   readonly logger?: Logger;
 }
@@ -304,14 +304,16 @@ export class CoreModule implements IApiModule {
 
     // Fire-and-forget: execute deletion asynchronously
     const keepBranch = payload.keepBranch ?? true;
-    const unblock = payload.unblock ?? false;
+    const unblock = payload.unblock;
+    const isRetry = payload.isRetry ?? false;
     void this.executeDeletion(
       payload.projectId,
       projectPath,
       workspace.path as WorkspacePath,
       payload.workspaceName,
       keepBranch,
-      unblock
+      unblock,
+      isRetry
     );
 
     return { started: true };
@@ -565,9 +567,11 @@ export class CoreModule implements IApiModule {
     workspacePath: WorkspacePath,
     workspaceName: WorkspaceName,
     keepBranch: boolean,
-    unblock: "kill" | "close" | false
+    unblock: "kill" | "close" | "ignore" | undefined,
+    isRetry: boolean
   ): Promise<void> {
     // Build operations list - start with standard steps
+    // Note: detecting-blockers is added conditionally between cleanup-vscode and cleanup-workspace
     const operations: DeletionOperation[] = [
       { id: "kill-terminals", label: "Terminating processes", status: "pending" },
       { id: "stop-server", label: "Stopping OpenCode server", status: "pending" },
@@ -575,12 +579,27 @@ export class CoreModule implements IApiModule {
       { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
     ];
 
+    // Determine if we should run proactive detection
+    // Run detection on first attempt only (not retry, not ignore)
+    const shouldDetect = this.deps.workspaceLockHandler && !isRetry && unblock !== "ignore";
+
     // Track blocking processes detected during failure (Windows only)
     let blockingProcesses: readonly BlockingProcess[] | undefined;
 
     // Helper to prepend an operation at the start of the list
     const prependOp = (id: DeletionOperationId, label: string): void => {
       operations.unshift({ id, label, status: "pending" });
+    };
+
+    // Helper to add an operation at a specific index
+    const addOp = (id: DeletionOperationId, label: string, afterId: DeletionOperationId): void => {
+      const idx = operations.findIndex((op) => op.id === afterId);
+      if (idx !== -1) {
+        operations.splice(idx + 1, 0, { id, label, status: "pending" });
+      } else {
+        // Fallback: add at end
+        operations.push({ id, label, status: "pending" });
+      }
     };
 
     const emitProgress = (completed: boolean, hasErrors: boolean): void => {
@@ -614,8 +633,13 @@ export class CoreModule implements IApiModule {
     };
 
     try {
+      // Add detecting-blockers step if proactive detection is enabled
+      if (shouldDetect) {
+        addOp("detecting-blockers", "Detecting blocking processes...", "cleanup-vscode");
+      }
+
       // Pre-step: Unblock by killing processes or closing handles (Windows only)
-      if (unblock && this.deps.blockingProcessService) {
+      if ((unblock === "kill" || unblock === "close") && this.deps.workspaceLockHandler) {
         if (unblock === "kill") {
           // Add the operation step and show spinner BEFORE the operation
           prependOp("killing-blockers", "Killing blocking tasks...");
@@ -623,13 +647,13 @@ export class CoreModule implements IApiModule {
           emitProgress(false, false);
 
           // Need to detect first to get the PIDs
-          const detected = await this.deps.blockingProcessService.detect(new Path(workspacePath));
+          const detected = await this.deps.workspaceLockHandler.detect(new Path(workspacePath));
           if (detected.length > 0) {
             this.logger.info("Killing blocking processes before deletion", {
               workspacePath,
               pids: detected.map((p) => p.pid).join(","),
             });
-            await this.deps.blockingProcessService.killProcesses(detected.map((p) => p.pid));
+            await this.deps.workspaceLockHandler.killProcesses(detected.map((p) => p.pid));
           }
 
           updateOp("killing-blockers", "done");
@@ -641,7 +665,7 @@ export class CoreModule implements IApiModule {
           emitProgress(false, false);
 
           this.logger.info("Closing handles before deletion", { workspacePath });
-          await this.deps.blockingProcessService.closeHandles(new Path(workspacePath));
+          await this.deps.workspaceLockHandler.closeHandles(new Path(workspacePath));
 
           updateOp("closing-handles", "done");
           emitProgress(false, false);
@@ -714,6 +738,41 @@ export class CoreModule implements IApiModule {
         emitProgress(false, true);
       }
 
+      // Proactive detection: Run detection AFTER our cleanup to detect only EXTERNAL blockers
+      // Skip detection on retry (user claims they fixed it) or ignore (power user escape hatch)
+      if (shouldDetect) {
+        updateOp("detecting-blockers", "in-progress");
+        emitProgress(
+          false,
+          operations.some((op) => op.status === "error")
+        );
+
+        try {
+          const detected = await this.deps.workspaceLockHandler!.detect(new Path(workspacePath));
+          if (detected.length > 0) {
+            blockingProcesses = detected;
+            updateOp("detecting-blockers", "error", `Blocked by ${detected.length} process(es)`);
+            emitProgress(true, true); // hasErrors: true stops here
+            return; // Stop deletion, remaining steps stay pending
+          }
+          updateOp("detecting-blockers", "done");
+          emitProgress(
+            false,
+            operations.some((op) => op.status === "error")
+          );
+        } catch (detectError) {
+          // Detection error: show warning but continue with deletion (best-effort)
+          this.logger.warn("Detection failed, continuing with deletion", {
+            error: getErrorMessage(detectError),
+          });
+          updateOp("detecting-blockers", "done"); // Mark as done (not error)
+          emitProgress(
+            false,
+            operations.some((op) => op.status === "error")
+          );
+        }
+      }
+
       // Operation 4: Cleanup workspace (git worktree removal)
       updateOp("cleanup-workspace", "in-progress");
       emitProgress(
@@ -742,9 +801,9 @@ export class CoreModule implements IApiModule {
         // We can't rely on error codes because git errors (GitError) don't preserve
         // the underlying filesystem error codes. The blocking process service
         // returns an empty array if no processes are found.
-        if (this.deps.blockingProcessService) {
+        if (this.deps.workspaceLockHandler) {
           try {
-            const detected = await this.deps.blockingProcessService.detect(new Path(workspacePath));
+            const detected = await this.deps.workspaceLockHandler.detect(new Path(workspacePath));
             if (detected.length > 0) {
               blockingProcesses = detected;
               this.logger.info("Detected blocking processes", {

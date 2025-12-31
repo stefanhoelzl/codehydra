@@ -14,7 +14,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { WindowsBlockingProcessService } from "../src/services/platform/blocking-process";
+import { WindowsWorkspaceLockHandler } from "../src/services/platform/workspace-lock-handler";
 import { ExecaProcessRunner } from "../src/services/platform/process";
 import type { Logger } from "../src/services/logging";
 import { Path } from "../src/services/platform/path";
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   };
 
   const processRunner = new ExecaProcessRunner(logger);
-  const service = new WindowsBlockingProcessService(processRunner, logger, scriptPath);
+  const service = new WindowsWorkspaceLockHandler(processRunner, logger, scriptPath);
 
   // Spawn a process that locks the file WITH CWD inside the temp directory
   console.log("Spawning process to lock the file (with CWD inside workspace)...");

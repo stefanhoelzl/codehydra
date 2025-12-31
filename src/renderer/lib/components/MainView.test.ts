@@ -1156,7 +1156,9 @@ describe("MainView component", () => {
           "test-project-12345678",
           "feature",
           false, // keepBranch from the stored progress
-          true // skipSwitch - retry keeps user on this workspace
+          true, // skipSwitch - retry keeps user on this workspace
+          undefined, // unblock - no special action
+          true // isRetry - skip proactive detection
         );
       });
     });
@@ -1204,14 +1206,14 @@ describe("MainView component", () => {
         })
       );
 
-      // Find and click Cancel button
+      // Find and click Dismiss button
       await waitFor(() => {
-        expect(screen.getByText("Cancel")).toBeInTheDocument();
+        expect(screen.getByText("Dismiss")).toBeInTheDocument();
       });
 
-      const cancelButton = screen.getByText("Cancel").closest("vscode-button");
-      expect(cancelButton).not.toBeNull();
-      await fireEvent.click(cancelButton!);
+      const dismissButton = screen.getByText("Dismiss").closest("vscode-button");
+      expect(dismissButton).not.toBeNull();
+      await fireEvent.click(dismissButton!);
 
       // forceRemove should NOT be called - cancel just clears state
       expect(mockApi.workspaces.forceRemove).not.toHaveBeenCalled();

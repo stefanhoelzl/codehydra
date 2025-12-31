@@ -1,6 +1,6 @@
 /**
- * Blocking process detection and termination.
- * Used on Windows to identify and kill processes holding file handles.
+ * Workspace lock handler for detecting and resolving processes blocking workspace deletion.
+ * Used on Windows to identify and terminate processes holding file handles.
  */
 
 import type { Path } from "./path";
@@ -28,10 +28,10 @@ export class UACCancelledError extends Error {
 // =============================================================================
 
 /**
- * Service for detecting and killing processes that block file deletion.
+ * Handler for detecting and resolving processes that block workspace deletion.
  * Used during workspace deletion when files are locked by other processes.
  */
-export interface BlockingProcessService {
+export interface WorkspaceLockHandler {
   /**
    * Detect processes blocking access to files in the given path.
    * Returns empty array if no blocking processes found or on non-Windows platforms.
@@ -102,7 +102,7 @@ const CLOSE_HANDLES_TIMEOUT_MS = 60_000;
  * Windows implementation using unified blocking-processes.ps1 script.
  * Uses Restart Manager API, NtQuerySystemInformation, and taskkill.
  */
-export class WindowsBlockingProcessService implements BlockingProcessService {
+export class WindowsWorkspaceLockHandler implements WorkspaceLockHandler {
   constructor(
     private readonly processRunner: ProcessRunner,
     private readonly logger: Logger,
@@ -328,22 +328,22 @@ export class WindowsBlockingProcessService implements BlockingProcessService {
 // =============================================================================
 
 /**
- * Create appropriate BlockingProcessService based on platform.
+ * Create appropriate WorkspaceLockHandler based on platform.
  *
  * @param processRunner - Process runner for spawning PowerShell/taskkill
  * @param platformInfo - Platform information to determine implementation
  * @param logger - Logger for diagnostics
  * @param scriptPath - Path to blocking-processes.ps1 script (required on Windows)
- * @returns BlockingProcessService implementation on Windows, undefined on other platforms
+ * @returns WorkspaceLockHandler implementation on Windows, undefined on other platforms
  */
-export function createBlockingProcessService(
+export function createWorkspaceLockHandler(
   processRunner: ProcessRunner,
   platformInfo: PlatformInfo,
   logger: Logger,
   scriptPath?: string
-): BlockingProcessService | undefined {
+): WorkspaceLockHandler | undefined {
   if (platformInfo.platform === "win32") {
-    return new WindowsBlockingProcessService(processRunner, logger, scriptPath);
+    return new WindowsWorkspaceLockHandler(processRunner, logger, scriptPath);
   }
   return undefined;
 }

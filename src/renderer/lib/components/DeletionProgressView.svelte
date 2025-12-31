@@ -8,22 +8,46 @@
   import Logo from "./Logo.svelte";
   import Icon from "./Icon.svelte";
   import type { DeletionProgress, DeletionOperationStatus } from "@shared/api/types";
+  import type { VscodeContextMenu } from "@vscode-elements/elements";
 
   interface Props {
     progress: DeletionProgress;
     onRetry: () => void;
-    onCancel: () => void;
+    onDismiss: () => void;
     onKillAndRetry: () => void;
     onCloseHandlesAndRetry: () => void;
+    onIgnoreBlockers: () => void;
   }
 
-  const { progress, onRetry, onCancel, onKillAndRetry, onCloseHandlesAndRetry }: Props = $props();
+  const {
+    progress,
+    onRetry,
+    onDismiss,
+    onKillAndRetry,
+    onCloseHandlesAndRetry,
+    onIgnoreBlockers,
+  }: Props = $props();
 
   // Track which button was clicked for spinner
-  let activeButton = $state<"retry" | "kill" | "close" | "cancel" | null>(null);
+  let activeButton = $state<"retry" | "kill" | "close" | "ignore" | "dismiss" | null>(null);
 
   // Reference to Retry button for focus management
   let retryButtonRef = $state<HTMLElement | null>(null);
+
+  // Reference to context menu
+  let menuRef = $state<VscodeContextMenu | null>(null);
+
+  // Menu option type for type safety
+  interface RetryMenuOption {
+    readonly label: string;
+    readonly value: "kill" | "close" | "ignore";
+  }
+
+  const menuOptions: readonly RetryMenuOption[] = [
+    { label: "Kill Processes", value: "kill" },
+    { label: "Close Handles", value: "close" },
+    { label: "Ignore Blockers", value: "ignore" },
+  ];
 
   // Derived: is any operation in progress?
   const isOperating = $derived(activeButton !== null);
@@ -58,6 +82,19 @@
         retryButtonRef?.focus();
       });
     }
+  });
+
+  // Initialize menu data and event listener when ref is available
+  $effect(() => {
+    if (!menuRef) return;
+    const menu = menuRef;
+    menu.data = [...menuOptions];
+    // Add event listener for custom event (hyphenated names can't use onevent syntax)
+    const handler = handleMenuSelect as (e: Event) => void;
+    menu.addEventListener("vsc-context-menu-select", handler);
+    return () => {
+      menu.removeEventListener("vsc-context-menu-select", handler);
+    };
   });
 
   // Get status icon name for an operation
@@ -95,25 +132,39 @@
     return commandLine.slice(0, 30) + "..." + commandLine.slice(-20);
   }
 
+  function toggleMenu() {
+    if (menuRef) {
+      menuRef.show = !menuRef.show;
+    }
+  }
+
+  function handleMenuSelect(e: CustomEvent<{ value: string }>) {
+    if (menuRef) {
+      menuRef.show = false; // Close menu after selection
+    }
+
+    const value = e.detail.value;
+    if (value === "kill") {
+      activeButton = "kill";
+      onKillAndRetry();
+    } else if (value === "close") {
+      activeButton = "close";
+      onCloseHandlesAndRetry();
+    } else if (value === "ignore") {
+      activeButton = "ignore";
+      onIgnoreBlockers();
+    }
+  }
+
   // Handle button clicks
   function handleRetry() {
     activeButton = "retry";
     onRetry();
   }
 
-  function handleKillAndRetry() {
-    activeButton = "kill";
-    onKillAndRetry();
-  }
-
-  function handleCloseHandlesAndRetry() {
-    activeButton = "close";
-    onCloseHandlesAndRetry();
-  }
-
-  function handleCancel() {
-    activeButton = "cancel";
-    onCancel();
+  function handleDismiss() {
+    activeButton = "dismiss";
+    onDismiss();
   }
 </script>
 
@@ -196,49 +247,53 @@
 
     {#if progress.completed && progress.hasErrors}
       <div class="action-buttons">
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <vscode-button bind:this={retryButtonRef} disabled={isOperating} onclick={handleRetry}>
-          {#if activeButton === "retry"}
-            <Icon name="loading" spin /> Retrying...
-          {:else}
-            Retry
-          {/if}
-        </vscode-button>
         {#if hasBlockingProcesses}
+          <!-- Split button: Retry main action + dropdown for other options -->
+          <div class="button-with-menu">
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <vscode-button-group>
+              <vscode-button
+                bind:this={retryButtonRef}
+                disabled={isOperating}
+                onclick={handleRetry}
+              >
+                {#if activeButton === "retry"}
+                  <Icon name="loading" spin /> Retrying...
+                {:else}
+                  Retry
+                {/if}
+              </vscode-button>
+              <vscode-button
+                icon="chevron-down"
+                title="More retry options"
+                onclick={toggleMenu}
+                disabled={isOperating}
+              ></vscode-button>
+            </vscode-button-group>
+            <vscode-context-menu bind:this={menuRef} class="dropdown-menu"></vscode-context-menu>
+          </div>
+        {:else}
+          <!-- Simple Retry button when no blocking processes -->
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <vscode-button
-            class="warning-button"
-            appearance="secondary"
-            disabled={isOperating}
-            onclick={handleKillAndRetry}
-          >
-            {#if activeButton === "kill"}
-              <Icon name="loading" spin /> Killing...
+          <vscode-button bind:this={retryButtonRef} disabled={isOperating} onclick={handleRetry}>
+            {#if activeButton === "retry"}
+              <Icon name="loading" spin /> Retrying...
             {:else}
-              Kill & Retry
-            {/if}
-          </vscode-button>
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <vscode-button
-            class="danger-button"
-            appearance="secondary"
-            disabled={isOperating}
-            onclick={handleCloseHandlesAndRetry}
-          >
-            {#if activeButton === "close"}
-              <Icon name="loading" spin /> Closing...
-            {:else}
-              Close Handles & Retry
+              Retry
             {/if}
           </vscode-button>
         {/if}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <vscode-button appearance="secondary" disabled={isOperating} onclick={handleCancel}>
-          {#if activeButton === "cancel"}
-            <Icon name="loading" spin /> Cancelling...
-          {:else}
-            Cancel
+        <vscode-button
+          appearance="secondary"
+          disabled={isOperating}
+          onclick={handleDismiss}
+          title="Close dialog. Workspace will be removed from CodeHydra, but blocking processes and files may remain on disk."
+        >
+          {#if activeButton === "dismiss"}
+            <Icon name="loading" spin />
           {/if}
+          Dismiss
         </vscode-button>
       </div>
     {/if}
@@ -477,17 +532,17 @@
     margin-top: 4px;
   }
 
-  /* Warning button styling */
-  .warning-button {
-    --vscode-button-background: var(--ch-warning);
-    --vscode-button-hoverBackground: var(--ch-warning-hover, #c27d00);
-    --vscode-button-foreground: var(--ch-background);
+  /* Split button with dropdown menu */
+  .button-with-menu {
+    display: inline-block;
+    position: relative;
   }
 
-  /* Danger button styling */
-  .danger-button {
-    --vscode-button-background: var(--ch-danger);
-    --vscode-button-hoverBackground: var(--ch-danger-hover, #c42b1c);
-    --vscode-button-foreground: var(--ch-background);
+  /* Context menu positioning below the button group */
+  .dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 10;
   }
 </style>

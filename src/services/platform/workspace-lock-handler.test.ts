@@ -1,18 +1,18 @@
 /**
- * Tests for BlockingProcessService.
+ * Tests for WorkspaceLockHandler.
  *
  * This file contains:
- * - Integration tests for WindowsBlockingProcessService (with mocked ProcessRunner)
+ * - Integration tests for WindowsWorkspaceLockHandler (with mocked ProcessRunner)
  * - Integration tests for factory function
  */
 
 import { describe, it, expect, vi } from "vitest";
 import {
-  WindowsBlockingProcessService,
-  createBlockingProcessService,
+  WindowsWorkspaceLockHandler,
+  createWorkspaceLockHandler,
   UACCancelledError,
-} from "./blocking-process";
-import { createMockBlockingProcessService } from "./blocking-process.test-utils";
+} from "./workspace-lock-handler";
+import { createMockWorkspaceLockHandler } from "./workspace-lock-handler.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { createMockLogger } from "../logging";
 import { Path } from "./path";
@@ -66,11 +66,11 @@ function createCloseHandlesOutput(
 // Mock Factory Tests (Focused Tests)
 // =============================================================================
 
-describe("createMockBlockingProcessService", () => {
+describe("createMockWorkspaceLockHandler", () => {
   const testPath = new Path("/test/path");
 
   it("returns empty processes by default", async () => {
-    const mock = createMockBlockingProcessService();
+    const mock = createMockWorkspaceLockHandler();
     const result = await mock.detect(testPath);
     expect(result).toEqual([]);
   });
@@ -85,14 +85,14 @@ describe("createMockBlockingProcessService", () => {
         cwd: null,
       },
     ];
-    const mock = createMockBlockingProcessService({ processes });
+    const mock = createMockWorkspaceLockHandler({ processes });
 
     const result = await mock.detect(testPath);
     expect(result).toEqual(processes);
   });
 
   it("tracks detect calls", async () => {
-    const mock = createMockBlockingProcessService();
+    const mock = createMockWorkspaceLockHandler();
     expect(mock.detectCalls).toBe(0);
 
     await mock.detect(testPath);
@@ -103,7 +103,7 @@ describe("createMockBlockingProcessService", () => {
   });
 
   it("tracks killProcesses calls", async () => {
-    const mock = createMockBlockingProcessService();
+    const mock = createMockWorkspaceLockHandler();
     expect(mock.killProcessesCalls).toBe(0);
 
     await mock.killProcesses([1234]);
@@ -112,7 +112,7 @@ describe("createMockBlockingProcessService", () => {
   });
 
   it("tracks closeHandles calls", async () => {
-    const mock = createMockBlockingProcessService();
+    const mock = createMockWorkspaceLockHandler();
     expect(mock.closeHandlesCalls).toBe(0);
 
     await mock.closeHandles(testPath);
@@ -122,7 +122,7 @@ describe("createMockBlockingProcessService", () => {
 
   it("calls onDetect callback", async () => {
     const onDetect = vi.fn();
-    const mock = createMockBlockingProcessService({ onDetect });
+    const mock = createMockWorkspaceLockHandler({ onDetect });
 
     await mock.detect(testPath);
     expect(onDetect).toHaveBeenCalledWith(testPath);
@@ -130,7 +130,7 @@ describe("createMockBlockingProcessService", () => {
 
   it("calls onKillProcesses callback", async () => {
     const onKillProcesses = vi.fn();
-    const mock = createMockBlockingProcessService({ onKillProcesses });
+    const mock = createMockWorkspaceLockHandler({ onKillProcesses });
 
     await mock.killProcesses([1234, 5678]);
     expect(onKillProcesses).toHaveBeenCalledWith([1234, 5678]);
@@ -138,32 +138,32 @@ describe("createMockBlockingProcessService", () => {
 
   it("calls onCloseHandles callback", async () => {
     const onCloseHandles = vi.fn();
-    const mock = createMockBlockingProcessService({ onCloseHandles });
+    const mock = createMockWorkspaceLockHandler({ onCloseHandles });
 
     await mock.closeHandles(testPath);
     expect(onCloseHandles).toHaveBeenCalledWith(testPath);
   });
 
   it("can simulate kill failure", async () => {
-    const mock = createMockBlockingProcessService({ killFails: true });
+    const mock = createMockWorkspaceLockHandler({ killFails: true });
 
     await expect(mock.killProcesses([1234])).rejects.toThrow("Failed to kill processes");
   });
 
   it("can simulate UAC cancellation", async () => {
-    const mock = createMockBlockingProcessService({ closeHandlesUacCancelled: true });
+    const mock = createMockWorkspaceLockHandler({ closeHandlesUacCancelled: true });
 
     await expect(mock.closeHandles(testPath)).rejects.toThrow(UACCancelledError);
   });
 
   it("can simulate closeHandles failure", async () => {
-    const mock = createMockBlockingProcessService({ closeHandlesFails: true });
+    const mock = createMockWorkspaceLockHandler({ closeHandlesFails: true });
 
     await expect(mock.closeHandles(testPath)).rejects.toThrow("Failed to close handles");
   });
 
   it("can update processes via setProcesses", async () => {
-    const mock = createMockBlockingProcessService();
+    const mock = createMockWorkspaceLockHandler();
 
     const initialResult = await mock.detect(testPath);
     expect(initialResult).toEqual([]);
@@ -177,10 +177,10 @@ describe("createMockBlockingProcessService", () => {
 });
 
 // =============================================================================
-// WindowsBlockingProcessService (Integration Tests with Mocked ProcessRunner)
+// WindowsWorkspaceLockHandler (Integration Tests with Mocked ProcessRunner)
 // =============================================================================
 
-describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", () => {
+describe.skipIf(process.platform !== "win32")("WindowsWorkspaceLockHandler", () => {
   // These variables are only initialized on Windows to avoid Path validation errors
   // on non-Windows platforms (describe body runs at module load, before skipIf takes effect)
   let testPath: Path;
@@ -219,7 +219,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
     it("throws error when script path not configured", async () => {
       const processRunner = createMockProcessRunner({ stdout: "" });
       // Create service WITHOUT script path
-      const service = new WindowsBlockingProcessService(processRunner, createMockLogger());
+      const service = new WindowsWorkspaceLockHandler(processRunner, createMockLogger());
 
       await expect(service.detect(testPath)).rejects.toThrow("script path not configured");
     });
@@ -236,7 +236,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       ]);
 
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -267,7 +267,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       ]);
 
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -304,7 +304,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       ]);
 
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -317,7 +317,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
 
     it("returns empty array for empty blocking array", async () => {
       const processRunner = createMockProcessRunner({ stdout: createDetectOutput([]) });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -333,7 +333,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       ]);
 
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -353,7 +353,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       ]);
 
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -369,7 +369,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
     it("returns empty array on malformed JSON", async () => {
       const processRunner = createMockProcessRunner({ stdout: "not valid json" });
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger, mockScriptPath);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger, mockScriptPath);
 
       const result = await service.detect(testPath);
 
@@ -384,7 +384,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       const output = JSON.stringify({ error: "Some detection error" });
       const processRunner = createMockProcessRunner({ stdout: output });
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger, mockScriptPath);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger, mockScriptPath);
 
       const result = await service.detect(testPath);
 
@@ -401,7 +401,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
         stderr: "PowerShell error",
       });
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger, mockScriptPath);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger, mockScriptPath);
 
       const result = await service.detect(testPath);
 
@@ -420,7 +420,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       };
       const processRunner: ProcessRunner = { run: vi.fn().mockReturnValue(mockProcess) };
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger, mockScriptPath);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger, mockScriptPath);
 
       const result = await service.detect(testPath);
 
@@ -450,7 +450,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       });
 
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -477,7 +477,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       });
 
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -491,7 +491,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
     it("calls script with -Action Detect", async () => {
       const output = createDetectOutput([]);
       const processRunner = createMockProcessRunner({ stdout: output });
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -526,7 +526,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
         run: vi.fn().mockReturnValue(mockProcess),
       };
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger);
 
       await service.killProcesses([1234]);
 
@@ -544,7 +544,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       const processRunner: ProcessRunner = {
         run: vi.fn().mockReturnValue(mockProcess),
       };
-      const service = new WindowsBlockingProcessService(processRunner, createMockLogger());
+      const service = new WindowsWorkspaceLockHandler(processRunner, createMockLogger());
 
       await service.killProcesses([1234, 5678, 9012]);
 
@@ -562,7 +562,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
 
     it("does not call taskkill when no PIDs provided", async () => {
       const processRunner = createMockProcessRunner({ stdout: "" });
-      const service = new WindowsBlockingProcessService(processRunner, createMockLogger());
+      const service = new WindowsWorkspaceLockHandler(processRunner, createMockLogger());
 
       await service.killProcesses([]);
 
@@ -582,7 +582,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
         run: vi.fn().mockReturnValue(mockProcess),
       };
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger);
 
       await expect(service.killProcesses([1234])).rejects.toThrow("Failed to kill processes");
       expect(logger.warn).toHaveBeenCalledWith(
@@ -596,7 +596,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
     it("throws error when script path not configured", async () => {
       const processRunner = createMockProcessRunner({ stdout: "" });
       // Create service WITHOUT script path
-      const service = new WindowsBlockingProcessService(processRunner, createMockLogger());
+      const service = new WindowsWorkspaceLockHandler(processRunner, createMockLogger());
 
       await expect(service.closeHandles(testPath)).rejects.toThrow("script path not configured");
     });
@@ -617,7 +617,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       const processRunner: ProcessRunner = {
         run: vi.fn().mockReturnValue(mockProcess),
       };
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -646,7 +646,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
         run: vi.fn().mockReturnValue(mockProcess),
       };
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger, mockScriptPath);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger, mockScriptPath);
 
       await expect(service.closeHandles(testPath)).resolves.toBeUndefined();
       expect(logger.info).toHaveBeenCalledWith("Closed file handles", {
@@ -672,7 +672,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
         run: vi.fn().mockReturnValue(mockProcess),
       };
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger, mockScriptPath);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger, mockScriptPath);
 
       await expect(service.closeHandles(testPath)).resolves.toBeUndefined();
       expect(logger.info).toHaveBeenCalledWith("No file handles to close", {
@@ -696,7 +696,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       const processRunner: ProcessRunner = {
         run: vi.fn().mockReturnValue(mockProcess),
       };
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -721,7 +721,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
         run: vi.fn().mockReturnValue(mockProcess),
       };
       const logger = createMockLogger();
-      const service = new WindowsBlockingProcessService(processRunner, logger, mockScriptPath);
+      const service = new WindowsWorkspaceLockHandler(processRunner, logger, mockScriptPath);
 
       await expect(service.closeHandles(testPath)).rejects.toThrow(
         "Close handles operation timed out"
@@ -745,7 +745,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
       const processRunner: ProcessRunner = {
         run: vi.fn().mockReturnValue(mockProcess),
       };
-      const service = new WindowsBlockingProcessService(
+      const service = new WindowsWorkspaceLockHandler(
         processRunner,
         createMockLogger(),
         mockScriptPath
@@ -773,7 +773,7 @@ describe.skipIf(process.platform !== "win32")("WindowsBlockingProcessService", (
 // Factory Function (Integration Tests)
 // =============================================================================
 
-describe("createBlockingProcessService", () => {
+describe("createWorkspaceLockHandler", () => {
   const logger = createMockLogger();
 
   // Helper to create a mock ProcessRunner
@@ -793,19 +793,19 @@ describe("createBlockingProcessService", () => {
 
   const mockProcessRunner = createMockProcessRunner({ stdout: "{}" });
 
-  it("returns WindowsBlockingProcessService for win32 platform", () => {
+  it("returns WindowsWorkspaceLockHandler for win32 platform", () => {
     const platformInfo = createMockPlatformInfo({ platform: "win32" });
     const processRunner = createMockProcessRunner({ stdout: "{}" });
 
-    const service = createBlockingProcessService(processRunner, platformInfo, logger);
+    const service = createWorkspaceLockHandler(processRunner, platformInfo, logger);
 
-    expect(service).toBeInstanceOf(WindowsBlockingProcessService);
+    expect(service).toBeInstanceOf(WindowsWorkspaceLockHandler);
   });
 
   it("returns undefined for linux platform", () => {
     const platformInfo = createMockPlatformInfo({ platform: "linux" });
 
-    const service = createBlockingProcessService(mockProcessRunner, platformInfo, logger);
+    const service = createWorkspaceLockHandler(mockProcessRunner, platformInfo, logger);
 
     expect(service).toBeUndefined();
   });
@@ -813,19 +813,19 @@ describe("createBlockingProcessService", () => {
   it("returns undefined for darwin platform", () => {
     const platformInfo = createMockPlatformInfo({ platform: "darwin" });
 
-    const service = createBlockingProcessService(mockProcessRunner, platformInfo, logger);
+    const service = createWorkspaceLockHandler(mockProcessRunner, platformInfo, logger);
 
     expect(service).toBeUndefined();
   });
 
-  it("passes script path to WindowsBlockingProcessService", () => {
+  it("passes script path to WindowsWorkspaceLockHandler", () => {
     const platformInfo = createMockPlatformInfo({ platform: "win32" });
     const processRunner = createMockProcessRunner({ stdout: "{}" });
     const scriptPath = "C:\\path\\to\\script.ps1";
 
-    const service = createBlockingProcessService(processRunner, platformInfo, logger, scriptPath);
+    const service = createWorkspaceLockHandler(processRunner, platformInfo, logger, scriptPath);
 
-    expect(service).toBeInstanceOf(WindowsBlockingProcessService);
+    expect(service).toBeInstanceOf(WindowsWorkspaceLockHandler);
     // The script path is used internally, we can verify by testing detect/closeHandles behavior
   });
 });

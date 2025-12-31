@@ -8,7 +8,7 @@
 - [CSS Theming Patterns](#css-theming-patterns)
 - [Renderer Setup Functions](#renderer-setup-functions)
 - [Service Layer Patterns](#service-layer-patterns)
-  - [BlockingProcessService Pattern](#blockingprocessservice-pattern)
+  - [WorkspaceLockHandler Pattern](#workspacelockhandler-pattern)
   - [PowerShell Script Asset Pattern](#powershell-script-asset-pattern)
 - [Path Handling Patterns](#path-handling-patterns)
 - [OpenCode Integration](#opencode-integration)
@@ -924,18 +924,18 @@ class MyService {
 
 **Test utils location:**
 
-| Interface                | Mock Factory                         | Location                                  |
-| ------------------------ | ------------------------------------ | ----------------------------------------- |
-| `FileSystemLayer`        | `createMockFileSystemLayer()`        | `platform/filesystem.test-utils.ts`       |
-| `HttpClient`             | `createMockHttpClient()`             | `platform/network.test-utils.ts`          |
-| `PortManager`            | `createMockPortManager()`            | `platform/network.test-utils.ts`          |
-| `ProcessRunner`          | `createMockProcessRunner()`          | `platform/process.test-utils.ts`          |
-| `PathProvider`           | `createMockPathProvider()`           | `platform/path-provider.test-utils.ts`    |
-| `BlockingProcessService` | `createMockBlockingProcessService()` | `platform/blocking-process.test-utils.ts` |
+| Interface              | Mock Factory                       | Location                                        |
+| ---------------------- | ---------------------------------- | ----------------------------------------------- |
+| `FileSystemLayer`      | `createMockFileSystemLayer()`      | `platform/filesystem.test-utils.ts`             |
+| `HttpClient`           | `createMockHttpClient()`           | `platform/network.test-utils.ts`                |
+| `PortManager`          | `createMockPortManager()`          | `platform/network.test-utils.ts`                |
+| `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.test-utils.ts`                |
+| `PathProvider`         | `createMockPathProvider()`         | `platform/path-provider.test-utils.ts`          |
+| `WorkspaceLockHandler` | `createMockWorkspaceLockHandler()` | `platform/workspace-lock-handler.test-utils.ts` |
 
-### BlockingProcessService Pattern
+### WorkspaceLockHandler Pattern
 
-`BlockingProcessService` detects and manages processes that block file operations (Windows-only). It uses a three-operation model:
+`WorkspaceLockHandler` detects and manages processes that block file operations (Windows-only). It uses a three-operation model:
 
 | Method            | Description                                           |
 | ----------------- | ----------------------------------------------------- |
@@ -945,7 +945,7 @@ class MyService {
 
 ```typescript
 // Factory creates platform-specific implementation
-const blockingProcessService = createBlockingProcessService(
+const workspaceLockHandler = createWorkspaceLockHandler(
   processRunner,
   platformInfo,
   pathProvider,
@@ -953,7 +953,7 @@ const blockingProcessService = createBlockingProcessService(
 );
 
 // Windows: Uses Restart Manager API via PowerShell script
-// Other platforms: NoOp implementation (returns empty results)
+// Other platforms: Returns undefined (detection steps skipped)
 ```
 
 **Three-Operation Workflow:**
@@ -971,14 +971,16 @@ detect(path)         →  Returns DetectionResult with processes array
 ```typescript
 // In CoreModule.executeDeletion()
 if (unblock === "kill") {
-  await blockingProcessService.killProcesses();
+  await workspaceLockHandler.killProcesses();
 } else if (unblock === "close") {
-  await blockingProcessService.closeHandles();
+  await workspaceLockHandler.closeHandles();
 }
 
-// On EBUSY/EACCES/EPERM error, detect blocking processes
-const result = await blockingProcessService.detect(workspacePath);
-emitProgress({ step: "cleanup-workspace", blockingProcesses: result.processes, hasErrors: true });
+// Proactive detection runs after cleanup, before workspace removal
+const detected = await workspaceLockHandler.detect(workspacePath);
+if (detected.length > 0) {
+  emitProgress({ step: "detecting-blockers", blockingProcesses: detected, hasErrors: true });
+}
 ```
 
 **BlockingProcess Type:**
@@ -996,25 +998,23 @@ interface BlockingProcess {
 **Testing with Mocks:**
 
 ```typescript
-import { createMockBlockingProcessService } from "../platform/blocking-process.test-utils";
+import { createMockWorkspaceLockHandler } from "../platform/workspace-lock-handler.test-utils";
 
 // Return specific blocking processes
-const mockService = createMockBlockingProcessService({
-  detect: {
-    processes: [
-      {
-        pid: 1234,
-        name: "node.exe",
-        commandLine: "node server.js",
-        files: ["index.js"],
-        cwd: "/app",
-      },
-    ],
-  },
+const mockHandler = createMockWorkspaceLockHandler({
+  initialProcesses: [
+    {
+      pid: 1234,
+      name: "node.exe",
+      commandLine: "node server.js",
+      files: ["index.js"],
+      cwd: "/app",
+    },
+  ],
 });
 
 // Inject into CoreModule
-const module = new CoreModule(api, { ...deps, blockingProcessService: mockService });
+const module = new CoreModule(api, { ...deps, workspaceLockHandler: mockHandler });
 ```
 
 ### PowerShell Script Asset Pattern

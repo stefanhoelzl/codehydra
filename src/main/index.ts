@@ -13,7 +13,7 @@ import {
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
   ElectronLogService,
-  createBlockingProcessService,
+  createWorkspaceLockHandler,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -659,11 +659,11 @@ async function bootstrap(): Promise<void> {
         throw new Error("Core deps not ready - appState/viewManager/processRunner not initialized");
       }
 
-      // Create BlockingProcessService for Windows file handle detection
+      // Create WorkspaceLockHandler for Windows file handle detection
       // Uses "process" logger since blocking process detection is process management
       // Script path is resolved from pathProvider.scriptsDir
       // Returns undefined on non-Windows platforms (no file locking issues)
-      const blockingProcessService = createBlockingProcessService(
+      const workspaceLockHandler = createWorkspaceLockHandler(
         processRunner,
         platformInfo,
         loggingService.createLogger("process"),
@@ -673,7 +673,7 @@ async function bootstrap(): Promise<void> {
       const baseDeps = {
         appState,
         viewManager,
-        blockingProcessService,
+        workspaceLockHandler,
         emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => {
           try {
             viewManagerRef
