@@ -61,8 +61,12 @@ You verify that implementation matches the approved plan. You are invoked by the
 - Architectural decisions that contradict the plan
 - Security issues introduced
 - Files modified that could break unrelated features
-- Platform-specific code without abstractions (hardcoded '/' paths, Unix commands)
+- Platform-specific code without abstractions (hardcoded `/` or `\\` paths, Unix commands)
 - Missing platform handling for file operations or process spawning
+- Direct use of `execa` instead of `ProcessRunner` abstraction
+- Missing `.cmd` script variants for Windows CLI tools
+- Hardcoded temp paths (`/tmp`, `C:\Temp`) instead of `os.tmpdir()`
+- Line ending assumptions that will fail on Windows (`\n` without handling `\r\n`)
 - New code uses call-tracking mocks instead of behavioral mocks
 - Tests verify implementation calls instead of behavior outcomes
 - Tests are slow (artificial delays, excessive setup)
@@ -77,8 +81,11 @@ You verify that implementation matches the approved plan. You are invoked by the
 - Minor deviations from plan (different naming, slightly different approach)
 - Code quality issues (missing error handling, type safety concerns)
 - Unexpected files modified (but not breaking)
-- Tests using Unix-specific patterns without proper platform skipping
-- Missing .cmd/.exe extensions for Windows binary references
+- Tests using Unix-specific patterns without proper platform skipping (`it.skipIf(isWindows)`)
+- Missing `.cmd`/`.exe` extensions for Windows binary references
+- Case-sensitive path comparisons that may fail on Windows
+- Missing executable permission handling (`chmod +x`) for Unix scripts
+- Environment variable handling without platform consideration (`PATH` delimiter, `HOME` vs `USERPROFILE`)
 - Behavioral mock behavior doesn't match boundary test assertions
 - Wrong entry point used for integration tests
 - Unused imports or variables
@@ -138,9 +145,12 @@ You MUST use this EXACT format:
 - [x] Only planned files were modified
 - [x] Only approved dependencies were added
 - [x] No undocumented deviations from plan
-- [x] Platform-specific code uses PlatformInfo abstraction
-- [x] File paths use path.join()/path.normalize()
-- [x] Tests avoid Unix-specific commands or properly skip on Windows
+- [x] Platform-specific code uses `PlatformInfo` and `PathProvider` abstractions
+- [x] File paths use `Path` class (not raw string concatenation)
+- [x] Tests avoid Unix-specific commands or properly skip on Windows (`it.skipIf(isWindows)`)
+- [x] Process spawning uses `ProcessRunner` interface (not direct `execa`)
+- [x] Shell scripts have both `.sh` (Unix) and `.cmd` (Windows) variants where needed
+- [x] Line ending parsing handles both `\n` and `\r\n`
 - [x] New code uses behavioral mocks (not call-tracking)
 - [x] Tests verify behavior outcomes (not implementation calls)
 - [x] Correct entry points used for integration tests
