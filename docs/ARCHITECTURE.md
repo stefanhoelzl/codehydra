@@ -256,7 +256,7 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 
 **Resilient Deletion**: When `git worktree remove --force` fails but the worktree was successfully unregistered (e.g., due to locked files in code-server), the deletion is considered successful. The orphaned directory will be cleaned up on next startup.
 
-**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), `BlockingProcessService` handles blocking processes using the Windows Restart Manager API via a PowerShell script. The service provides three operations:
+**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), `WorkspaceLockHandler` handles blocking processes using the Windows Restart Manager API via a PowerShell script. The service provides three operations:
 
 | Operation      | Method            | Description                                          |
 | -------------- | ----------------- | ---------------------------------------------------- |
@@ -264,7 +264,7 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 | Kill processes | `killProcesses()` | Terminate all detected processes via taskkill        |
 | Close handles  | `closeHandles()`  | Forcibly close file handles (requires UAC elevation) |
 
-The UI shows a scrollable list of blocking processes (with files and CWD) and offers three action buttons: "Kill & Retry" (terminates processes), "Close Handles & Retry" (closes handles with elevation), or "Retry" (in case locks were manually released). On non-Windows platforms, this service is a no-op (returns empty arrays).
+The UI shows a scrollable list of blocking processes (with files and CWD) and offers a split button with "Retry" as the main action and a dropdown menu with "Kill Processes" (terminates processes), "Close Handles" (closes handles with elevation), or "Ignore Blockers" (skips detection). A "Dismiss" button closes the dialog. On non-Windows platforms, this service is undefined (detection steps are skipped).
 
 **Startup Cleanup**: On project open, `cleanupOrphanedWorkspaces()` runs non-blocking to remove directories in the workspaces folder that are not registered with git. This handles cases where previous deletions partially failed.
 
@@ -374,17 +374,17 @@ All external system access goes through abstraction interfaces defined in `src/s
 
 **CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
 
-| External System    | Interface                | Implementation                  | Test Mock Factory                    |
-| ------------------ | ------------------------ | ------------------------------- | ------------------------------------ |
-| Filesystem         | `FileSystemLayer`        | `DefaultFileSystemLayer`        | `createMockFileSystemLayer()`        |
-| HTTP requests      | `HttpClient`             | `DefaultNetworkLayer`           | `createMockHttpClient()`             |
-| Port operations    | `PortManager`            | `DefaultNetworkLayer`           | `createMockPortManager()`            |
-| Process spawning   | `ProcessRunner`          | `ExecaProcessRunner`            | `createMockProcessRunner()`          |
-| Build info         | `BuildInfo`              | `ElectronBuildInfo`             | `createMockBuildInfo()`              |
-| Platform info      | `PlatformInfo`           | `NodePlatformInfo`              | `createMockPlatformInfo()`           |
-| Path resolution    | `PathProvider`           | `DefaultPathProvider`           | `createMockPathProvider()`           |
-| Path normalization | `Path` (class)           | Self-normalizing object         | Use `Path` directly                  |
-| Blocking processes | `BlockingProcessService` | `WindowsBlockingProcessService` | `createMockBlockingProcessService()` |
+| External System    | Interface              | Implementation                | Test Mock Factory                  |
+| ------------------ | ---------------------- | ----------------------------- | ---------------------------------- |
+| Filesystem         | `FileSystemLayer`      | `DefaultFileSystemLayer`      | `createMockFileSystemLayer()`      |
+| HTTP requests      | `HttpClient`           | `DefaultNetworkLayer`         | `createMockHttpClient()`           |
+| Port operations    | `PortManager`          | `DefaultNetworkLayer`         | `createMockPortManager()`          |
+| Process spawning   | `ProcessRunner`        | `ExecaProcessRunner`          | `createMockProcessRunner()`        |
+| Build info         | `BuildInfo`            | `ElectronBuildInfo`           | `createMockBuildInfo()`            |
+| Platform info      | `PlatformInfo`         | `NodePlatformInfo`            | `createMockPlatformInfo()`         |
+| Path resolution    | `PathProvider`         | `DefaultPathProvider`         | `createMockPathProvider()`         |
+| Path normalization | `Path` (class)         | Self-normalizing object       | Use `Path` directly                |
+| Blocking processes | `WorkspaceLockHandler` | `WindowsWorkspaceLockHandler` | `createMockWorkspaceLockHandler()` |
 
 **Path Class:**
 
@@ -414,12 +414,12 @@ See [Path Handling Patterns](PATTERNS.md#path-handling-patterns) for detailed ex
 
 **Boundary test files:**
 
-| Abstraction                  | Boundary Test                       |
-| ---------------------------- | ----------------------------------- |
-| `FileSystemLayer`            | `filesystem.boundary.test.ts`       |
-| `HttpClient` + `PortManager` | `network.boundary.test.ts`          |
-| `ProcessRunner`              | `process.boundary.test.ts`          |
-| `BlockingProcessService`     | `blocking-process.boundary.test.ts` |
+| Abstraction                  | Boundary Test                             |
+| ---------------------------- | ----------------------------------------- |
+| `FileSystemLayer`            | `filesystem.boundary.test.ts`             |
+| `HttpClient` + `PortManager` | `network.boundary.test.ts`                |
+| `ProcessRunner`              | `process.boundary.test.ts`                |
+| `WorkspaceLockHandler`       | `workspace-lock-handler.boundary.test.ts` |
 
 ### NetworkLayer Pattern
 

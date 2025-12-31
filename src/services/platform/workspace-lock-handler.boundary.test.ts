@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Boundary tests for WindowsBlockingProcessService.
+ * Boundary tests for WindowsWorkspaceLockHandler.
  *
  * These tests verify actual interaction with Windows Restart Manager API,
  * NtQuerySystemInformation for file enumeration, and taskkill.
@@ -18,7 +18,7 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { WindowsBlockingProcessService, createBlockingProcessService } from "./blocking-process";
+import { WindowsWorkspaceLockHandler, createWorkspaceLockHandler } from "./workspace-lock-handler";
 import { ExecaProcessRunner, type ProcessRunner, type SpawnedProcess } from "./process";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../logging";
@@ -43,12 +43,12 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-describe.skipIf(!isWindows)("WindowsBlockingProcessService (boundary)", () => {
+describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
   let tempDir: string;
   let lockedFile: string;
   let lockingProcess: SpawnedProcess | null = null;
   let lockingPid: number | undefined;
-  let service: WindowsBlockingProcessService;
+  let service: WindowsWorkspaceLockHandler;
   let processRunner: ProcessRunner;
 
   beforeEach(async () => {
@@ -64,7 +64,7 @@ describe.skipIf(!isWindows)("WindowsBlockingProcessService (boundary)", () => {
     processRunner = new ExecaProcessRunner(SILENT_LOGGER);
     // Script path for boundary tests - relative to project root
     const scriptPath = path.join(process.cwd(), "resources", "scripts", "blocking-processes.ps1");
-    service = new WindowsBlockingProcessService(processRunner, createMockLogger(), scriptPath);
+    service = new WindowsWorkspaceLockHandler(processRunner, createMockLogger(), scriptPath);
   });
 
   afterEach(async () => {
@@ -260,23 +260,23 @@ describe.skipIf(!isWindows)("WindowsBlockingProcessService (boundary)", () => {
   // Manual testing is required for the UAC flow
 });
 
-describe.skipIf(!isWindows)("createBlockingProcessService (boundary)", () => {
+describe.skipIf(!isWindows)("createWorkspaceLockHandler (boundary)", () => {
   const processRunner = new ExecaProcessRunner(SILENT_LOGGER);
 
-  it("returns WindowsBlockingProcessService on Windows", () => {
+  it("returns WindowsWorkspaceLockHandler on Windows", () => {
     const platformInfo = createMockPlatformInfo({ platform: "win32" });
-    const service = createBlockingProcessService(processRunner, platformInfo, SILENT_LOGGER);
+    const service = createWorkspaceLockHandler(processRunner, platformInfo, SILENT_LOGGER);
 
-    expect(service).toBeInstanceOf(WindowsBlockingProcessService);
+    expect(service).toBeInstanceOf(WindowsWorkspaceLockHandler);
   });
 });
 
-describe.skipIf(isWindows)("createBlockingProcessService (non-Windows boundary)", () => {
+describe.skipIf(isWindows)("createWorkspaceLockHandler (non-Windows boundary)", () => {
   const processRunner = new ExecaProcessRunner(SILENT_LOGGER);
 
   it("returns undefined on non-Windows", () => {
     const platformInfo = createMockPlatformInfo({ platform: process.platform as "linux" });
-    const service = createBlockingProcessService(processRunner, platformInfo, SILENT_LOGGER);
+    const service = createWorkspaceLockHandler(processRunner, platformInfo, SILENT_LOGGER);
 
     expect(service).toBeUndefined();
   });

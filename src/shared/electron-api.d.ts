@@ -51,14 +51,16 @@ export interface Api {
      * @param workspaceName Name of the workspace to remove
      * @param keepBranch If true, keep the git branch after removing worktree (default: true)
      * @param skipSwitch If true, don't switch away from this workspace when active (for retry)
-     * @param unblock Unblock option: "kill" to kill processes, "close" to close handles (elevated), false for none
+     * @param unblock Unblock option: "kill" to kill processes, "close" to close handles (elevated), "ignore" to skip detection
+     * @param isRetry If true, skip proactive detection (user claims they fixed it)
      */
     remove(
       projectId: string,
       workspaceName: string,
       keepBranch?: boolean,
       skipSwitch?: boolean,
-      unblock?: "kill" | "close" | false
+      unblock?: "kill" | "close" | "ignore",
+      isRetry?: boolean
     ): Promise<{ started: true }>;
     /**
      * Force remove a workspace (skip cleanup operations).

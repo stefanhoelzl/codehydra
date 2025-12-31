@@ -1,18 +1,18 @@
 ---
-status: COMPLETED
+status: USER_TESTING
 last_updated: 2025-12-31
 reviewers: [review-ui, review-typescript, review-arch, review-testing, review-docs]
 ---
 
-> **Current State**: Implementation complete. User acceptance testing passed.
+> **Current State**: Phase 3 complete - Proactive blocking process detection implemented.
 
 # HANDLES_BLOCKING_DELETION
 
 ## Overview
 
 - **Problem**: Workspace deletion fails on Windows when processes hold file handles. Users see generic errors with no actionable info.
-- **Solution**: Detect blocking processes and their locked files via Windows APIs (Restart Manager + NtQuerySystemInformation), show detailed scrollable list, offer three resolution options: retry, kill processes, or close handles (elevated).
-- **Platform**: Windows only (Linux/macOS use NoOp implementation)
+- **Solution**: Detect blocking processes and their locked files via Windows APIs (Restart Manager + NtQuerySystemInformation), show detailed scrollable list, offer resolution options via split button dropdown.
+- **Platform**: Windows only (Linux/macOS skip detection steps)
 - **Risks**:
   - Restart Manager may miss some edge cases (kernel handles, services)
   - Elevated processes may resist taskkill
@@ -26,7 +26,7 @@ reviewers: [review-ui, review-typescript, review-arch, review-testing, review-do
 
 ### New Boundary Interface
 
-**Request**: Add `BlockingProcessService` as a new boundary interface.
+**Request**: Add `WorkspaceLockHandler` as a new boundary interface.
 
 - **External system**: Windows APIs via PowerShell + Add-Type (C# interop)
   - Restart Manager API (rstrtmgr.dll) for process detection
@@ -39,15 +39,17 @@ reviewers: [review-ui, review-typescript, review-arch, review-testing, review-do
 
 **Request**: Modify existing IPC interfaces.
 
-| Change                                                                    | Files Affected                                         |
-| ------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Add `BlockingProcess` type with `files` array                             | `src/shared/api/types.ts`                              |
-| Add `blockingProcesses?` to `DeletionProgress`                            | `src/shared/api/types.ts`                              |
-| Change `killBlocking?: boolean` to `unblock?: "kill" \| "close" \| false` | `src/shared/electron-api.d.ts`, `src/preload/index.ts` |
+| Change                                                                       | Files Affected                                         |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Add `BlockingProcess` type with `files` array                                | `src/shared/api/types.ts`                              |
+| Add `blockingProcesses?` to `DeletionProgress`                               | `src/shared/api/types.ts`                              |
+| Change `killBlocking?: boolean` to `unblock?: "kill" \| "close" \| "ignore"` | `src/shared/electron-api.d.ts`, `src/preload/index.ts` |
+| Add `detecting-blockers` to `DeletionOperationId`                            | `src/shared/api/types.ts`                              |
 
 **Files requiring atomic update for `unblock` change:**
 
 - `src/shared/electron-api.d.ts` - Type definition
+- `src/shared/api/types.ts` - DeletionOperationId type, UnblockOption type
 - `src/preload/index.ts` - IPC bridge
 - `src/main/api/workspace-api.ts` - IPC handler
 - `src/main/modules/core/index.ts` - CoreModule executeDeletion
@@ -59,7 +61,7 @@ reviewers: [review-ui, review-typescript, review-arch, review-testing, review-do
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              BlockingProcessService (interface)                  │
+│              WorkspaceLockHandler (interface)                    │
 │                                                                  │
 │  detect(path: Path): Promise<BlockingProcess[]>                  │
 │  killProcesses(pids: number[]): Promise<void>                    │
@@ -69,12 +71,12 @@ reviewers: [review-ui, review-typescript, review-arch, review-testing, review-do
           ┌───────────────────┴───────────────────┐
           ▼                                       ▼
 ┌─────────────────────────┐           ┌─────────────────────────┐
-│ WindowsBlockingProcess  │           │ NoOpBlockingProcess     │
-│ Service                 │           │ Service                 │
-│                         │           │                         │
-│ Uses single script:     │           │ detect: return []       │
-│ blocking-processes.ps1  │           │ killProcesses: no-op    │
-│   -Detect               │           │ closeHandles: no-op     │
+│ WindowsWorkspaceLock    │           │ (undefined on non-Win)  │
+│ Handler                 │           │                         │
+│                         │           │ Factory returns         │
+│ Uses single script:     │           │ undefined, detection    │
+│ blocking-processes.ps1  │           │ steps are skipped       │
+│   -Detect               │           │                         │
 │   -CloseHandles         │           │                         │
 └─────────────────────────┘           └─────────────────────────┘
             │
@@ -90,103 +92,71 @@ reviewers: [review-ui, review-typescript, review-arch, review-testing, review-do
 │ • JSON output to stdout                                         │
 └─────────────────────────────────────────────────────────────────┘
 
-createBlockingProcessService(processRunner, platformInfo, logger, scriptPath?)
-  → WindowsBlockingProcessService if platformInfo.isWindows
-  → NoOpBlockingProcessService otherwise
+createWorkspaceLockHandler(processRunner, platformInfo, logger, scriptPath?)
+  → WindowsWorkspaceLockHandler if platformInfo.isWindows
+  → undefined otherwise
 ```
 
-### Detection Flow (`-Detect`)
+### Deletion Flow Integration (Phase 3)
 
 ```
-blocking-processes.ps1 -BasePath "C:\workspace" -Detect
-    │
-    ├─► Restart Manager API (get blocking PIDs)
-    │     RmStartSession()
-    │     RmRegisterResources(files in workspace)
-    │     RmGetList() → process list with PID, Name, CommandLine
-    │     RmEndSession()
-    │
-    ├─► NtQuerySystemInformation (for blocking PIDs only - FAST)
-    │     SystemHandleInformation → all handles
-    │     Filter by blocking PIDs (HashSet lookup)
-    │     NtQueryObject → file path
-    │     Convert NT path → DOS path
-    │     Filter: under workspace?
-    │
-    └─► CWD Detection (for each blocking PID)
-          NtQueryInformationProcess(ProcessBasicInformation)
-            → PEB → ProcessParameters → CurrentDirectory.DosPath
-          Check if CWD is under workspace path
-    │
-    └─► Output JSON: {"blocking": [...]}  (includes files[] and cwd)
-```
-
-### Handle Closing Flow (`-CloseHandles`)
-
-```
-blocking-processes.ps1 -BasePath "C:\workspace" -CloseHandles
-    │
-    ├─► Detection phase (same as -Detect, ~1-2s)
-    │     Returns blocking PIDs
-    │
-    ├─► Check elevation
-    │     │
-    │     ├─► Not admin? Re-launch self elevated:
-    │     │     Start-Process -Verb RunAs -WindowStyle Hidden
-    │     │         └─► UAC Prompt
-    │     │               │
-    │     │               └─► Elevated instance continues below
-    │     │
-    │     └─► Already admin? Continue
-    │
-    └─► Close handles (for blocking PIDs only - FAST)
-          For each handle belonging to blocking PID:
-            OpenProcess(pid)
-            DuplicateHandle(DUPLICATE_CLOSE_SOURCE)
-    │
-    └─► Output JSON: {"blocking": [...], "closed": [...]}
-```
-
-### Deletion Flow Integration
-
-```
-remove(path, { keepBranch, unblock })
+remove(path, { keepBranch, unblock, isRetry })
         │
         ▼
-    if (unblock === "kill") killProcesses(pids)
-    else if (unblock === "close") closeHandles(path)
+    if (unblock === "kill" && workspaceLockHandler)
+        ├─► Step: killing-blockers
+        └─► killProcesses(pids from previous detect)
+    else if (unblock === "close" && workspaceLockHandler)
+        ├─► Step: closing-handles
+        └─► closeHandles(path)
         │
         ▼
-    proceed with deletion (kill-terminals → stop-server → cleanup-vscode → cleanup-workspace)
+    Step: kill-terminals
         │
         ▼
-    on cleanup-workspace failure:
-        Check error.code for EBUSY/EACCES/EPERM
-        detect(path) → BlockingProcess[]
-        emit DeletionProgress { blockingProcesses: [...], hasErrors: true }
+    Step: stop-server
+        │
+        ▼
+    Step: cleanup-vscode
+        │
+        ▼
+    if (workspaceLockHandler && !isRetry && unblock !== "ignore")
+        │   // First attempt OR kill/close: run detection
+        │   // Retry without action: skip detection
+        ├─► Step: detecting-blockers
+        ├─► detect(path) → BlockingProcess[]
+        └─► if (processes.length > 0)
+              ├─► Mark step as "error"
+              ├─► Set blockingProcesses
+              └─► Emit progress with hasErrors: true
+                  (remaining steps stay pending)
+        │
+        ▼
+    Step: cleanup-workspace
+        │
+        ▼
+    Success: emit completed
 ```
 
-### PowerShell Script Design
+**Flow by scenario:**
 
-Single script `resources/scripts/blocking-processes.ps1` handles both detection and handle closing:
+| Scenario                    | `unblock`   | `isRetry` | Steps                                                                                                             |
+| --------------------------- | ----------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| First attempt (Windows)     | `undefined` | `false`   | kill-terminals → stop-server → cleanup-vscode → **detecting-blockers** → cleanup-workspace                        |
+| First attempt (non-Windows) | `undefined` | `false`   | kill-terminals → stop-server → cleanup-vscode → cleanup-workspace                                                 |
+| Retry                       | `undefined` | `true`    | kill-terminals → stop-server → cleanup-vscode → cleanup-workspace                                                 |
+| Retry + Kill                | `"kill"`    | `false`   | **killing-blockers** → kill-terminals → stop-server → cleanup-vscode → **detecting-blockers** → cleanup-workspace |
+| Retry + Close               | `"close"`   | `false`   | **closing-handles** → kill-terminals → stop-server → cleanup-vscode → **detecting-blockers** → cleanup-workspace  |
+| Retry + Ignore              | `"ignore"`  | `false`   | kill-terminals → stop-server → cleanup-vscode → cleanup-workspace                                                 |
 
-```
-blocking-processes.ps1 -BasePath "C:\path" -Detect        # Detection only
-blocking-processes.ps1 -BasePath "C:\path" -CloseHandles  # Detect + elevate + close
-```
+**Key behaviors:**
 
-| Mode            | Elevation             | Window | Output         |
-| --------------- | --------------------- | ------ | -------------- |
-| `-Detect`       | None                  | Hidden | JSON to stdout |
-| `-CloseHandles` | Self-elevates via UAC | Hidden | JSON to stdout |
-
-**Self-elevation flow** (for `-CloseHandles`):
-
-1. Script starts non-elevated
-2. Detects blocking processes (fast, ~1-2s)
-3. Checks if admin, if not → re-launches self with `-Verb RunAs`
-4. Elevated instance closes handles for detected PIDs only
-5. Returns combined JSON result
+- Detection runs **after** our cleanup (terminals, server, vscode) to only detect **external** blockers
+- First attempt always runs detection (when `!isRetry && unblock === undefined`)
+- Retry button skips detection (`isRetry: true`)
+- Kill/Close retries **always detect after** to verify the operation worked
+- "Ignore" bypasses detection entirely (power user escape hatch)
+- **UX tradeoff**: First deletion takes ~3-5s on Windows (cleanup + detection) before showing blockers. This delay is acceptable for the benefit of detecting external blockers proactively.
 
 ### JSON Output Schema
 
@@ -213,56 +183,14 @@ blocking-processes.ps1 -BasePath "C:\path" -CloseHandles  # Detect + elevate + c
 }
 ```
 
-**`-CloseHandles` output:**
-
-```json
-{
-  "blocking": [
-    {
-      "pid": 1234,
-      "name": "Code.exe",
-      "commandLine": "...",
-      "files": ["src/index.ts"],
-      "cwd": null
-    },
-    {
-      "pid": 5678,
-      "name": "powershell.exe",
-      "commandLine": "powershell.exe",
-      "files": [],
-      "cwd": "subdir"
-    }
-  ],
-  "closed": ["C:\\workspace\\src\\index.ts"]
-}
-```
-
-**Error output:**
-
-```json
-{
-  "error": "UAC cancelled by user"
-}
-```
-
 **Schema notes:**
 
-- `blocking[].files` - paths **relative to workspace** (max 20 per process)
+- `blocking[].files` - paths **relative to workspace** (all files, no limit)
 - `blocking[].cwd` - path **relative to workspace** if process CWD is within workspace, `null` otherwise
 - `closed` - **absolute paths** of file handles closed (only present with `-CloseHandles`)
 - `error` - present on failure, other fields may be absent
 
-**Operation behavior:**
-
-| Field State              | `closeHandles`           | `killProcesses` |
-| ------------------------ | ------------------------ | --------------- |
-| `files` not empty        | Closes file handles      | Kills process   |
-| `files` empty, `cwd` set | No-op (can't close CWD)  | Kills process   |
-| Both `files` and `cwd`   | Closes file handles only | Kills process   |
-
-**Rationale:** Processes with CWD in workspace are typically leftover processes from workspace operations (terminals, build tools, dev servers). Windows prevents directory deletion when any process has CWD there, so these processes must be killed - handles cannot be "closed" for CWD.
-
-### UI Design
+### UI Design (Phase 3)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -272,34 +200,157 @@ blocking-processes.ps1 -BasePath "C:\path" -CloseHandles  # Detect + elevate + c
 │ ┌─────────────────────────────────────────────────────────────┐ │
 │ │ role="region" aria-label="Blocking processes and files"     │ │
 │ │                                          max-height: 300px  │ │
-│ │  Code.exe (PID 1234)                          overflow-y:   │ │
-│ │  C:\Program...\Code.exe --folder ...               auto     │ │
+│ │                                              overflow-y:    │ │
+│ │  Code.exe (PID 1234)                              auto      │ │
+│ │  C:\Program...\Code.exe --folder ...                        │ │
 │ │    • src/index.ts                                           │ │
 │ │    • package.json                                           │ │
-│ │                                                             │ │
-│ │  node.exe (PID 5678)                                        │ │
-│ │  node dist/server.js                                        │ │
-│ │    • node_modules/.cache/file.json                          │ │
+│ │    • src/components/App.svelte                              │ │
+│ │    • ...all files listed (no truncation)...                 │ │
 │ │                                                             │ │
 │ │  explorer.exe (PID 9012)                                    │ │
 │ │  C:\Windows\explorer.exe                                    │ │
-│ │    • (no files detected)                                    │ │
+│ │    Working directory: subfolder/                            │ │
+│ │                                                             │ │
+│ │  node.exe (PID 5678)                                        │ │
+│ │  node dist/server.js                                        │ │
+│ │    • node_modules/.cache/file1.json                         │ │
+│ │    • node_modules/.cache/file2.json                         │ │
+│ │    • ...more files...                                       │ │
 │ │                                                             │ │
 │ └─────────────────────────────────────────────────────────────┘ │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│ <vscode-button>Retry</vscode-button>                  primary   │
-│ <vscode-button appearance="secondary" class="warning">          │
-│   Kill & Retry</vscode-button>                                  │
-│ <vscode-button appearance="secondary" class="danger">           │
-│   Close Handles & Retry</vscode-button>                         │
+│  ┌──────────────────────────┐                                   │
+│  │ Retry                  ▼ │      <vscode-button secondary     │
+│  ├──────────────────────────┤        title="Close dialog.       │
+│  │ Kill Processes          │        Workspace will be removed   │
+│  │ Close Handles           │        from CodeHydra, but         │
+│  │ Ignore Blockers         │        blocking processes and      │
+│  └──────────────────────────┘        files may remain on disk.">│
+│                                      Dismiss                    │
+│                                    </vscode-button>             │
 │                                                                 │
-│                 <vscode-button appearance="secondary">          │
-│                   Cancel</vscode-button>               subtle   │
-│                                                                 │
-│ All buttons disabled during operation, clicked shows spinner    │
+│ Split button disabled during operation, spinner on main button  │
 │ List has opacity: 0.5 during operation                          │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+**Key UI points:**
+
+- **Single scrollable region** for all processes and their files (no nested scrollable areas)
+- `max-height: 300px` with `overflow-y: auto` on the entire blocking processes container
+- All files listed per process (no truncation) - scrolling handles long lists
+
+**Split Button Implementation:**
+
+Uses `<vscode-button-group>` + `<vscode-context-menu>` pattern from vscode-elements.
+
+```svelte
+<script lang="ts">
+  import Icon from "./Icon.svelte";
+  import type { VscContextMenu } from "@vscode-elements/elements";
+
+  interface Props {
+    progress: DeletionProgress;
+    onRetry: () => void;
+    onDismiss: () => void;
+    onKillAndRetry: () => void;
+    onCloseHandlesAndRetry: () => void;
+    onIgnoreBlockers: () => void;
+  }
+
+  const {
+    progress,
+    onRetry,
+    onDismiss,
+    onKillAndRetry,
+    onCloseHandlesAndRetry,
+    onIgnoreBlockers,
+  }: Props = $props();
+
+  let isOperating = $state(false);
+  let menuRef = $state<VscContextMenu | null>(null);
+
+  // Menu option type for type safety
+  interface RetryMenuOption {
+    readonly label: string;
+    readonly value: "kill" | "close" | "ignore";
+  }
+
+  const menuOptions: readonly RetryMenuOption[] = [
+    { label: "Kill Processes", value: "kill" },
+    { label: "Close Handles", value: "close" },
+    { label: "Ignore Blockers", value: "ignore" },
+  ];
+
+  // Initialize menu data when ref is available
+  $effect(() => {
+    if (menuRef) {
+      menuRef.data = [...menuOptions];
+    }
+  });
+
+  function toggleMenu() {
+    if (menuRef) {
+      menuRef.show = !menuRef.show;
+    }
+  }
+
+  function handleMenuSelect(e: CustomEvent<{ value: string }>) {
+    if (menuRef) {
+      menuRef.show = false; // Close menu after selection
+    }
+
+    const value = e.detail.value;
+    if (value === "kill") onKillAndRetry();
+    else if (value === "close") onCloseHandlesAndRetry();
+    else if (value === "ignore") onIgnoreBlockers();
+  }
+</script>
+
+<div class="button-with-menu">
+  <vscode-button-group>
+    <vscode-button onclick={onRetry} disabled={isOperating}>
+      {#if isOperating}<Icon name="loading" spin />{/if}
+      Retry
+    </vscode-button>
+    <vscode-button
+      icon="chevron-down"
+      title="More retry options"
+      onclick={toggleMenu}
+      disabled={isOperating}
+    ></vscode-button>
+  </vscode-button-group>
+  <vscode-context-menu bind:this={menuRef} class="dropdown-menu" on:vsc-select={handleMenuSelect}
+  ></vscode-context-menu>
+</div>
+
+<vscode-button
+  secondary
+  onclick={onDismiss}
+  disabled={isOperating}
+  title="Close dialog. Workspace will be removed from CodeHydra, but blocking processes and files may remain on disk."
+>
+  Dismiss
+</vscode-button>
+
+<style>
+  .button-with-menu {
+    display: inline-block;
+    position: relative;
+  }
+
+  /* Note: vscode-context-menu may have built-in positioning.
+     Test and adjust if needed. May need position: fixed with
+     getBoundingClientRect() coordinates if absolute doesn't work. */
+  .dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 10;
+  }
+</style>
 ```
 
 **Display per process:**
@@ -307,331 +358,256 @@ blocking-processes.ps1 -BasePath "C:\path" -CloseHandles  # Detect + elevate + c
 - Process name and PID: `Code.exe (PID 1234)`
 - Command line: Show first ~30 chars + `...` + last ~20 chars if truncated, full text in `title` tooltip
 - If `cwd` set: Show `Working directory: <cwd>/` (with trailing slash to indicate directory)
-- List of locked files (relative to workspace, bullet points)
+- List of locked files: All files shown (no truncation), entire region scrolls
 - If both `files` empty and `cwd` null: show `(no files detected)`
-- If files > 20: show first 20 + `(and N more files)`
-
-**Example display:**
-
-```
-powershell.exe (PID 1234)
-  powershell.exe -NoProfile ...
-  Working directory: src/components/
-
-Code.exe (PID 5678)
-  C:\Program Files\VS Code\Code.exe --folder ...
-  • src/index.ts
-  • package.json
-```
-
-**Button Implementation:**
-
-- All buttons use `<vscode-button>` component (per AGENTS.md)
-- **Retry**: Default appearance (primary)
-- **Kill & Retry**: `appearance="secondary"` with `.warning-button` class (background: `--ch-warning`)
-- **Close Handles & Retry**: `appearance="secondary"` with `.danger-button` class (background: `--ch-danger`)
-- **Cancel**: `appearance="secondary"` (subtle styling)
-
-**Accessibility:**
-
-- Scrollable region: `role="region"` with `aria-label="Blocking processes and locked files"`
-- Warning icon: `<Icon name="warning" label="Warning" />` (semantic)
-- Focus management: On error state, focus Retry button (safest action)
-
-**State Management (Svelte 5):**
-
-```typescript
-let activeOp = $state<"retry" | "kill" | "close" | null>(null);
-let isOperating = $derived(activeOp !== null);
-```
 
 **Button Behaviors:**
 
-- **Retry** (primary): Calls `remove(path, { unblock: false })` - just retry deletion
-- **Kill & Retry** (warning): Calls `remove(path, { unblock: "kill" })` - taskkill then retry
-- **Close Handles & Retry** (danger): Calls `remove(path, { unblock: "close" })` - elevated handle close then retry (UAC prompt serves as confirmation)
-- **Cancel** (subtle): Closes dialog without deleting
+| Action              | Calls                                 | Detection                   |
+| ------------------- | ------------------------------------- | --------------------------- |
+| Retry (main button) | `remove(path, { isRetry: true })`     | Skipped (user claims fixed) |
+| Kill Processes      | `remove(path, { unblock: "kill" })`   | After kill, verify          |
+| Close Handles       | `remove(path, { unblock: "close" })`  | After close, verify         |
+| Ignore Blockers     | `remove(path, { unblock: "ignore" })` | Skipped entirely            |
+| Dismiss             | Close dialog, no further deletion     | N/A                         |
 
 ## Implementation Steps
 
-### Phase 1: Boundary Service (implement first, user reviews before Phase 2)
+### Phase 1-2: Complete (see previous sections)
 
-- [x] **Step 1: Update types and interfaces**
-  - Added `files: readonly string[]` to `BlockingProcess` type
-  - Added `UnblockOption` type (`"kill" | "close" | false`)
-  - Changed `killBlocking` to `unblock` in electron-api.d.ts
-  - Updated preload/index.ts to pass `unblock` through IPC
-  - Update `BlockingProcess` to include files array and cwd:
+### Phase 3: Proactive Detection & UI Simplification
+
+- [x] **Step 12: Rename BlockingProcessService to WorkspaceLockHandler**
+  - Rename interface: `BlockingProcessService` → `WorkspaceLockHandler`
+  - Rename Windows implementation: `WindowsBlockingProcessService` → `WindowsWorkspaceLockHandler`
+  - Rename factory: `createBlockingProcessService` → `createWorkspaceLockHandler`
+  - Rename mock factory: `createMockBlockingProcessService` → `createMockWorkspaceLockHandler`
+  - Rename test utils file: `blocking-process.test-utils.ts` → `workspace-lock-handler.test-utils.ts`
+  - Rename main file: `blocking-process.ts` → `workspace-lock-handler.ts`
+  - Rename test file: `blocking-process.test.ts` → `workspace-lock-handler.test.ts`
+  - Rename boundary test file: `blocking-process.boundary.test.ts` → `workspace-lock-handler.boundary.test.ts`
+  - Update all imports across the codebase
+  - Update CoreModule dependency: `blockingProcessService` → `workspaceLockHandler`
+  - Files: Multiple files across `src/services/platform/`, `src/main/`, `src/services/index.ts`
+  - Test: Types compile, all tests pass
+
+- [x] **Step 13: Update types for Phase 3**
+  - Update `UNBLOCK_OPTIONS` const array (maintain existing pattern):
     ```typescript
-    interface BlockingProcess {
-      readonly pid: number;
-      readonly name: string;
-      readonly commandLine: string;
-      readonly files: readonly string[]; // paths relative to workspace, max 20
-      readonly cwd: string | null; // path relative to workspace, or null
-    }
+    export const UNBLOCK_OPTIONS = ["kill", "close", "ignore"] as const;
+    export type UnblockOption = (typeof UNBLOCK_OPTIONS)[number];
     ```
-  - Add const assertion for type safety:
+  - Add `detecting-blockers` to `DeletionOperationId`:
     ```typescript
-    const UNBLOCK_OPTIONS = ["kill", "close", false] as const;
-    type UnblockOption = (typeof UNBLOCK_OPTIONS)[number];
+    type DeletionOperationId =
+      | "killing-blockers"
+      | "closing-handles"
+      | "kill-terminals"
+      | "stop-server"
+      | "cleanup-vscode"
+      | "detecting-blockers" // NEW
+      | "cleanup-workspace";
     ```
-  - Change `remove()` signature in `electron-api.d.ts`:
+  - Update `electron-api.d.ts`:
     ```typescript
     remove(path: string, options: {
       keepBranch: boolean;
-      unblock?: "kill" | "close" | false
+      unblock?: "kill" | "close" | "ignore";
+      isRetry?: boolean;
     }): Promise<void>
     ```
-  - Update `src/preload/index.ts` to pass `unblock` through IPC
+  - Update `preload/index.ts` to pass `unblock` and `isRetry` through IPC
   - Files: `src/shared/api/types.ts`, `src/shared/electron-api.d.ts`, `src/preload/index.ts`
   - Test: Types compile
 
-- [x] **Step 2: Update BlockingProcessService interface**
-  - Change interface to new method signatures:
+- [x] **Step 14: Update CoreModule deletion flow for proactive detection**
+  - Add `isRetry` parameter to track retry vs first attempt:
     ```typescript
-    interface BlockingProcessService {
-      detect(path: Path): Promise<BlockingProcess[]>;
-      killProcesses(pids: number[]): Promise<void>;
-      closeHandles(path: Path): Promise<void>;
+    private async executeDeletion(
+      ...args,
+      unblock: UnblockOption | undefined,
+      isRetry: boolean  // NEW: true when user clicked Retry button
+    )
+    ```
+  - Reorder operations to run detection AFTER our cleanup:
+    1. `killing-blockers` / `closing-handles` (only if unblock is "kill" or "close")
+    2. `kill-terminals`
+    3. `stop-server`
+    4. `cleanup-vscode`
+    5. `detecting-blockers` (only if workspaceLockHandler exists AND !isRetry AND unblock !== "ignore")
+    6. `cleanup-workspace`
+  - Add `detecting-blockers` step logic (uses existing helper functions `addOp`, `updateOp`, `emitProgress`):
+
+    ```typescript
+    // Run detection on first attempt only (not retry, not ignore)
+    if (this.deps.workspaceLockHandler && !isRetry && unblock !== "ignore") {
+      addOp("detecting-blockers", "Detecting blocking processes...");
+      updateOp("detecting-blockers", "in-progress");
+      emitProgress(false, false);
+
+      try {
+        const detected = await this.deps.workspaceLockHandler.detect(new Path(workspacePath));
+        if (detected.length > 0) {
+          blockingProcesses = detected;
+          updateOp("detecting-blockers", "error", `Blocked by ${detected.length} process(es)`);
+          emitProgress(false, true); // hasErrors: true stops here
+          return;
+        }
+        updateOp("detecting-blockers", "done");
+        emitProgress(false, false);
+      } catch (error) {
+        // Detection error: show warning but continue with deletion
+        this.logger.warn("Detection failed, continuing with deletion", {
+          error: getErrorMessage(error),
+        });
+        updateOp("detecting-blockers", "done"); // Mark as done (not error) - detection is best-effort
+        emitProgress(false, false);
+      }
     }
     ```
-  - Update `NoOpBlockingProcessService` with new methods (all return [] or no-op)
-  - Update mock factory with behavioral callbacks:
-    ```typescript
-    interface MockBlockingProcessServiceOptions {
-      readonly processes?: readonly BlockingProcess[];
-      readonly onDetect?: (path: Path) => void;
-      readonly onKillProcesses?: (pids: number[]) => void;
-      readonly onCloseHandles?: (path: Path) => void;
-    }
-    ```
-  - Files: `src/services/platform/blocking-process.ts`, `src/services/platform/blocking-process.test-utils.ts`
-  - Test: Focused tests for NoOp
 
-- [x] **Step 3: Create unified PowerShell script asset**
-  - Single script: `resources/scripts/blocking-processes.ps1`
-  - Parameters: `-BasePath` (required), `-Detect` or `-CloseHandles` (mutually exclusive)
-  - Add-Type C# code for:
-    - Restart Manager API (RmStartSession, RmRegisterResources, RmGetList, RmEndSession)
-    - NtQuerySystemInformation for file enumeration (filtered by blocking PIDs only)
-    - NT path → DOS path conversion
-    - NtQueryInformationProcess for CWD detection (PEB → ProcessParameters → CurrentDirectory)
-    - DuplicateHandle for closing (with `-CloseHandles`)
-  - CWD detection: For each blocking PID, read process CWD and check if under workspace
-  - Self-elevation: Script checks if admin, re-launches with `-Verb RunAs -WindowStyle Hidden` if needed
-  - JSON output to stdout (see JSON Output Schema above)
-  - Hidden window: `-WindowStyle Hidden` for both non-elevated and elevated instances
-  - Files: `resources/scripts/blocking-processes.ps1`
-  - Test: Manual testing with test script
+  - Update `workspaceRemove` to pass `isRetry: false` for initial call
+  - Files: `src/main/modules/core/index.ts`
+  - Test: Integration tests verify detection runs at correct point in flow
 
-- [x] **Step 4: Update WindowsBlockingProcessService - killProcesses()**
-  - Change signature to accept `pids: number[]`
-  - Batch PIDs in single taskkill call: `taskkill /pid X /pid Y /t /f`
-  - Log stderr as warnings
-  - Throw error if taskkill exits non-zero, include failed PIDs in error message
-  - Files: `src/services/platform/blocking-process.ts`
-  - Test: Integration tests with mocked ProcessRunner
-
-- [x] **Step 5: Implement WindowsBlockingProcessService using script asset**
-  - Constructor accepts single `scriptPath?: string` for `blocking-processes.ps1`
-  - `detect()`: Runs script with `-Detect`, parses JSON output
-  - `closeHandles()`: Runs script with `-CloseHandles`, parses JSON output
-  - Logging: Log stdout/stderr only (no temp files)
-  - JSON output parsing with type guard validation
-  - Timeout: 30s for `-Detect`, 60s for `-CloseHandles` (includes UAC wait)
-  - Handle UAC cancellation: `{"error": "UAC cancelled..."}` → throw `UACCancelledError`
-  - Files: `src/services/platform/blocking-process.ts`
-  - Test: Integration tests with mocked ProcessRunner
-
-- [x] **Step 6: Update exports**
-  - Ensure all exports in `src/services/index.ts` are up to date
-  - Files: `src/services/index.ts`
-  - Test: Types compile
-
-- [x] **Step 7: Add boundary tests for Windows implementation**
-  - Use `describe.skipIf(process.platform !== "win32")`
-  - Create test helper to spawn blocking process:
-    ```typescript
-    async function withLockedFile(
-      filePath: string,
-      fn: (pid: number) => Promise<void>
-    ): Promise<void>;
-    ```
-  - Test detect(): spawn helper process that locks a file, verify JSON output with file paths
-  - Test killProcesses(): verify process terminated
-  - Test closeHandles(): verify file deletable after (attempts `fs.unlinkSync()`, succeeds without EBUSY)
-  - Test script: `scripts/test-close-handles.ts` for manual UAC testing
-  - Files: `src/services/platform/blocking-process.boundary.test.ts`, `scripts/test-close-handles.ts`
-  - Test: Boundary tests pass on Windows
-
-**>>> USER REVIEW CHECKPOINT: Review boundary implementation before Phase 2 <<<**
-
-### Phase 2: Integration (after user approves Phase 1)
-
-- [x] **Step 8: Update IPC handler and CoreModule deletion flow**
-  - Update IPC handler in `src/main/api/workspace-api.ts` to receive and validate `unblock` parameter
-  - Change `killBlocking` handling to `unblock` handling in CoreModule:
-    - `unblock: "kill"` → call `killProcesses(pids from previous detect)`
-    - `unblock: "close"` → call `closeHandles(path)`
-  - Store detected processes: Add `blockingProcesses: BlockingProcess[] | null` to workspace deletion state
-  - If closeHandles() completes but deletion still fails, re-run detect() and show updated blockers
-  - Files: `src/main/api/workspace-api.ts`, `src/main/modules/core/index.ts`
-  - Test: Integration tests verify outcomes (deletion succeeds, not implementation calls)
-
-- [x] **Step 9: Update DeletionProgressView UI**
-  - Replace table with scrollable list:
-    - Process name and PID as header
-    - Command line (truncated: first 30 + ... + last 20 chars)
-    - Files as `<ul>` with `<li>` per file
-  - Scrollable container: `max-height: 300px`, `overflow-y: auto`, `role="region"`, `aria-label`
-  - Show "Detecting blocking processes..." while detection runs
-  - Four buttons using `<vscode-button>`:
-    - Retry (default), Kill & Retry (`.warning-button`), Close Handles & Retry (`.danger-button`), Cancel (secondary)
-  - CSS: Use `--ch-warning`, `--ch-danger`, `--ch-foreground` variables
-  - Button states: disabled during operation, spinner on clicked button
-  - List opacity: 0.5 during operation
-  - Focus: Move to Retry button when blocking processes appear
+- [x] **Step 15: Update DeletionProgressView with split button UI**
+  - Replace four buttons with split button + Dismiss (see "UI Design (Phase 3)" section for complete code)
+  - Key implementation details:
+    - Initialize menu data in `$effect` when `menuRef` is available
+    - Implement `handleMenuSelect` to close menu and call appropriate handler
+    - Use `<Icon name="loading" spin />` for spinner (not `<vscode-icon>`)
+    - Add CSS for dropdown positioning (test if absolute works, fall back to fixed + getBoundingClientRect if needed)
+  - Single scrollable container for all blocking processes and files (no nested scrolling)
+  - Remove old `.warning-button` and `.danger-button` CSS styles (no longer needed)
+  - Rename callback: `onCancel` → `onDismiss`
   - Files: `src/renderer/lib/components/DeletionProgressView.svelte`
-  - Test: Component tests verify UI states and outcomes
+  - Test: UI tests verify split button and menu behavior
 
-- [x] **Step 10: Update MainView handlers**
-  - Update `handleWorkspaceRemove()` to accept `unblock` parameter
-  - Pass `unblock` value from clicked button ('kill', 'close', or false)
+- [x] **Step 16: Update MainView handlers for new unblock options**
+  - Update `handleRetry()` to pass `isRetry: true`
+  - Add `handleIgnoreBlockers()` handler that calls `remove(path, { unblock: "ignore" })`
+  - Rename `handleCancel` → `handleDismiss`
   - Files: `src/renderer/lib/components/MainView.svelte`
-  - Test: Integration tests verify dialog closes on success
+  - Test: Integration tests verify all unblock options work
 
-- [x] **Step 11: Documentation updates**
-  - `docs/ARCHITECTURE.md`: Updated BlockingProcessService section with three-operation model table
-  - `docs/PATTERNS.md`: Added "PowerShell Script Asset Pattern" section with:
-    - Script location, parameter-based modes, self-elevation pattern, JSON output schema
-  - `docs/API.md`: Changed `killBlocking` to `unblock` option; documented `files` and `cwd` in `BlockingProcess`
-  - `docs/USER_INTERFACE.md`: Updated deletion UI with four-button layout, scrollable list, accessibility notes
-  - Note: AGENTS.md update skipped - PowerShell pattern already documented in PATTERNS.md
+- [x] **Step 17: Update documentation for Phase 3**
+  - `docs/API.md`: Rename to WorkspaceLockHandler, update unblock options, document isRetry
+  - `docs/USER_INTERFACE.md`: Replace four-button mockup with split button, document Dismiss tooltip
+  - `docs/ARCHITECTURE.md`: Update deletion flow diagram with new step order
+  - `docs/PATTERNS.md`: Rename BlockingProcessService to WorkspaceLockHandler
+  - Files: `docs/API.md`, `docs/USER_INTERFACE.md`, `docs/ARCHITECTURE.md`, `docs/PATTERNS.md`
 
 ## Testing Strategy
 
 ### Integration Tests
 
-| #   | Test Case                                | Entry Point                     | Boundary Mocks                             | Behavior Verified                                         |
-| --- | ---------------------------------------- | ------------------------------- | ------------------------------------------ | --------------------------------------------------------- |
-| 1   | detect() parses valid output with files  | `WindowsBlockingProcessService` | ProcessRunner (behavioral)                 | Returns BlockingProcess[] with correct structure          |
-| 2   | detect() returns empty on malformed JSON | `WindowsBlockingProcessService` | ProcessRunner                              | Returns [], warning logged                                |
-| 3   | detect() returns empty on timeout        | `WindowsBlockingProcessService` | ProcessRunner (instant timeout)            | Returns [] immediately (mock doesn't wait 10s)            |
-| 4   | killProcesses() terminates processes     | `WindowsBlockingProcessService` | ProcessRunner                              | Second detect() returns empty (outcome verification)      |
-| 5   | closeHandles() releases locks            | `WindowsBlockingProcessService` | ProcessRunner                              | FileSystem deletion succeeds after (outcome verification) |
-| 6   | closeHandles() handles UAC cancel        | `WindowsBlockingProcessService` | ProcessRunner (exit 1)                     | Throws UACCancelledError                                  |
-| 7   | Factory returns correct impl             | `createBlockingProcessService`  | PlatformInfo                               | Windows→Windows, other→NoOp                               |
-| 8   | NoOp detect() returns empty array        | `NoOpBlockingProcessService`    | None                                       | Returns [] on all platforms                               |
-| 9   | deletion with unblock:"kill" succeeds    | `workspace.remove()`            | BlockingProcessService, FileSystem         | Deletion completes, dialog closes                         |
-| 10  | deletion with unblock:"close" succeeds   | `workspace.remove()`            | BlockingProcessService, FileSystem         | Deletion completes, dialog closes                         |
-| 11  | deletion failure shows blockingProcesses | `workspace.remove()`            | FileSystem (EBUSY), BlockingProcessService | UI shows process list with files                          |
+| #   | Test Case                                     | Entry Point                          | Boundary Mocks                                                         | Behavior Verified                                                                                                   |
+| --- | --------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1   | detect() parses valid output with files       | `WindowsWorkspaceLockHandler`        | ProcessRunner (behavioral)                                             | Returns BlockingProcess[] with correct structure                                                                    |
+| 2   | detect() returns empty on malformed JSON      | `WindowsWorkspaceLockHandler`        | ProcessRunner                                                          | Returns [], warning logged                                                                                          |
+| 3   | detect() returns empty on timeout             | `WindowsWorkspaceLockHandler`        | ProcessRunner (instant timeout)                                        | Returns [] immediately (mock doesn't wait 10s)                                                                      |
+| 4   | killProcesses() terminates processes          | `WindowsWorkspaceLockHandler`        | ProcessRunner                                                          | Second detect() returns empty (outcome verification)                                                                |
+| 5   | closeHandles() releases locks                 | `WindowsWorkspaceLockHandler`        | ProcessRunner                                                          | FileSystem deletion succeeds after (outcome verification)                                                           |
+| 6   | closeHandles() handles UAC cancel             | `WindowsWorkspaceLockHandler`        | ProcessRunner (exit 1)                                                 | Throws UACCancelledError                                                                                            |
+| 7   | Factory returns correct impl                  | `createWorkspaceLockHandler`         | PlatformInfo                                                           | Windows→Windows, other→undefined                                                                                    |
+| 8   | deletion with unblock:"kill" succeeds         | `workspace.remove()`                 | WorkspaceLockHandler, FileSystem                                       | Deletion completes, dialog closes                                                                                   |
+| 9   | deletion with unblock:"close" succeeds        | `workspace.remove()`                 | WorkspaceLockHandler, FileSystem                                       | Deletion completes, dialog closes                                                                                   |
+| 10  | deletion failure shows blockingProcesses      | `workspace.remove()`                 | FileSystem (EBUSY), WorkspaceLockHandler                               | UI shows process list with files                                                                                    |
+| 11  | first attempt runs proactive detection        | `workspace.remove()`                 | WorkspaceLockHandler (returns processes)                               | Operations: kill-terminals, stop-server, cleanup-vscode, detecting-blockers in order; errors; blockingProcesses set |
+| 12  | retry skips detection                         | `workspace.remove(isRetry:true)`     | WorkspaceLockHandler                                                   | detecting-blockers NOT in operations, cleanup-workspace completes, deletion succeeds                                |
+| 13  | kill then detects to verify                   | `workspace.remove(unblock:"kill")`   | WorkspaceLockHandler (behavioral)                                      | killing-blockers completes, detecting-blockers returns empty (mock removes killed PIDs), deletion succeeds          |
+| 14  | ignore skips detection                        | `workspace.remove(unblock:"ignore")` | WorkspaceLockHandler                                                   | detecting-blockers NOT in operations, cleanup-workspace completes, deletion succeeds                                |
+| 15  | non-Windows skips all detection steps         | `workspace.remove()`                 | workspaceLockHandler: undefined                                        | Operations: [kill-terminals, stop-server, cleanup-vscode, cleanup-workspace] only                                   |
+| 16  | proactive detection error allows retry        | `workspace.remove()`                 | WorkspaceLockHandler (detect throws)                                   | detecting-blockers completes (not error), deletion continues, no blockingProcesses shown                            |
+| 17  | close handles partial success shows remaining | `workspace.remove(unblock:"close")`  | WorkspaceLockHandler (closeHandles succeeds, detect returns remaining) | closing-handles completes, detecting-blockers finds remaining, error state with updated blocking list               |
 
 **Behavioral Mock Pattern:**
 
-Mocks use factory pattern with configurable responses and state tracking:
+Mocks use factory pattern with configurable responses and **state tracking**:
 
 ```typescript
-createMockProcessRunner({
-  detectResult: [...],
-  killSucceeds: true,
-  simulateTimeout: false  // Returns immediately, doesn't actually wait
-})
+interface MockWorkspaceLockHandlerState {
+  readonly initialProcesses: readonly BlockingProcess[];
+  killedPids: Set<number>;
+  handlesClosed: boolean;
+}
+
+createMockWorkspaceLockHandler(options?: {
+  initialProcesses?: readonly BlockingProcess[];
+  detectThrows?: Error;
+  killThrows?: Error;
+  closeThrows?: Error;
+}): WorkspaceLockHandler & { _getState(): MockWorkspaceLockHandlerState }
 ```
+
+This ensures `detect()` returns different results after `killProcesses()` or `closeHandles()` (behavioral simulation).
+
+**Performance requirement**: All mocks return immediately (no actual waits). All Phase 3 integration tests complete in <50ms.
 
 Tests verify **outcomes** (deletion succeeded, processes removed) not implementation calls.
 
-### Boundary Tests
+**Test file locations:**
 
-| #   | Test Case                                   | Interface       | External System           | Behavior Verified                     |
-| --- | ------------------------------------------- | --------------- | ------------------------- | ------------------------------------- |
-| 1   | Restart Manager detects blocking process    | detect()        | PowerShell + rstrtmgr.dll | Returns process info                  |
-| 2   | NtQuerySystemInformation returns file paths | detect()        | PowerShell + ntdll.dll    | Files array populated                 |
-| 3   | NtQueryInformationProcess detects CWD       | detect()        | PowerShell + ntdll.dll    | CWD field populated when in workspace |
-| 4   | taskkill terminates process                 | killProcesses() | taskkill.exe              | Process no longer running             |
-| 5   | Detection completes < 5s                    | detect()        | PowerShell                | Performance acceptable                |
-
-Note: Boundary tests use `describe.skipIf(process.platform !== "win32")`.
-
-**Manual testing only (requires UAC elevation):**
-
-- `closeHandles()` - tested via `scripts/test-blocking-processes.ts`
-
-**Test Files:**
-
-- `src/services/platform/blocking-process.test.ts` - Tests #1-11
-- `src/services/platform/blocking-process.boundary.test.ts` - Windows only, tests #1-5
-- `src/renderer/lib/components/DeletionProgressView.test.ts` - UI tests
+- Tests #1-17: `src/main/modules/core/index.integration.test.ts`
+- UI tests: `src/renderer/lib/components/DeletionProgressView.test.ts`
 
 ### UI Integration Tests
 
-| #   | Test Case                             | Category | Component            | Behavior Verified                 |
-| --- | ------------------------------------- | -------- | -------------------- | --------------------------------- |
-| 1   | Process list renders with files       | UI-state | DeletionProgressView | Scrollable list visible with ARIA |
-| 2   | List hidden when no processes         | UI-state | DeletionProgressView | No list rendered                  |
-| 3   | Retry succeeds and closes dialog      | API-call | DeletionProgressView | Dialog not visible after          |
-| 4   | Kill & Retry succeeds and closes      | API-call | DeletionProgressView | Dialog not visible after          |
-| 5   | Close Handles succeeds and closes     | API-call | DeletionProgressView | Dialog not visible after          |
-| 6   | Cancel closes dialog                  | API-call | DeletionProgressView | Dialog not visible                |
-| 7   | Buttons disabled during operation     | UI-state | DeletionProgressView | disabled attribute set            |
-| 8   | Focus moves to Retry on error         | a11y     | DeletionProgressView | Retry button focused              |
-| 9   | Screen reader announces process count | a11y     | DeletionProgressView | Live region updated               |
+| #   | Test Case                           | Category | Component            | Behavior Verified                                                    |
+| --- | ----------------------------------- | -------- | -------------------- | -------------------------------------------------------------------- |
+| 1   | Process list renders with files     | UI-state | DeletionProgressView | Single scrollable list visible with ARIA                             |
+| 2   | List hidden when no processes       | UI-state | DeletionProgressView | No list rendered                                                     |
+| 3   | Retry button triggers retry         | API-call | DeletionProgressView | Calls onRetry                                                        |
+| 4   | Kill menu item triggers kill        | API-call | DeletionProgressView | Calls onKillAndRetry                                                 |
+| 5   | Close menu item triggers close      | API-call | DeletionProgressView | Calls onCloseHandlesAndRetry                                         |
+| 6   | Ignore menu item triggers ignore    | API-call | DeletionProgressView | Calls onIgnoreBlockers                                               |
+| 7   | Dismiss button closes dialog        | API-call | DeletionProgressView | Calls onDismiss                                                      |
+| 8   | Split button disabled during op     | UI-state | DeletionProgressView | disabled attribute set                                               |
+| 9   | Focus moves to Retry on error       | a11y     | DeletionProgressView | Retry button focused                                                 |
+| 10  | Menu opens on chevron click         | UI-state | DeletionProgressView | Context menu visible with 3 items: Kill, Close, Ignore               |
+| 11  | Menu closes after selection         | UI-state | DeletionProgressView | Context menu hidden, action triggered                                |
+| 12  | Dismiss button has tooltip          | a11y     | DeletionProgressView | title attribute present                                              |
+| 13  | detecting-blockers shows progress   | UI-state | DeletionProgressView | "Detecting blocking processes..." visible during in-progress         |
+| 14  | CWD-only process shows working dir  | UI-state | DeletionProgressView | Process with empty files and non-null cwd shows "Working directory:" |
+| 15  | Command line truncated with tooltip | UI-state | DeletionProgressView | Long command shows first 30 + "..." + last 20, title has full text   |
+| 16  | Empty files and null cwd            | UI-state | DeletionProgressView | Process shows "(no files detected)"                                  |
 
 ### Manual Testing Checklist
 
-- [ ] Open file in workspace with another editor, try to delete
-- [ ] Open terminal with CWD in workspace, try to delete
-- [ ] Verify "Detecting blocking processes..." shown during detection
-- [ ] Verify process list appears with file paths and/or CWD
-- [ ] Verify CWD shows as "Working directory: path/"
-- [ ] Verify scrolling works when many files
-- [ ] Verify command line truncation shows first+last chars
-- [ ] Click "Retry" - verify retry without killing
-- [ ] Click "Kill & Retry" - verify processes killed (including CWD-only), deletion completes
-- [ ] Click "Close Handles & Retry" - verify UAC prompt, file handles closed, CWD processes remain
-- [ ] After "Close Handles & Retry", if CWD processes remain, verify they're shown and "Kill & Retry" works
-- [ ] Cancel UAC prompt - verify graceful handling (shows error, can retry)
-- [ ] Click "Cancel" - verify dialog closes without deleting
-- [ ] Test with multiple blocking processes (mix of file handles and CWD)
-- [ ] Test button disabled states and spinners
-- [ ] Test list opacity during operation
-- [ ] Test on Linux/macOS - verify no blocking processes shown
+**Phase 3 (new):**
 
-## Dependencies
-
-| Package | Purpose                                              | Approved |
-| ------- | ---------------------------------------------------- | -------- |
-| (none)  | Uses built-in Windows APIs via PowerShell + Add-Type | N/A      |
-
-## Documentation Updates
-
-### Files to Update
-
-| File                     | Changes Required                                                               |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| `docs/ARCHITECTURE.md`   | Add "Three-Operation Model" subsection with detect/kill/close workflow diagram |
-| `docs/PATTERNS.md`       | Add "PowerShell + Add-Type Pattern" section with C# API interop example        |
-| `docs/API.md`            | Change `killBlocking` to `unblock`; document `files` in `BlockingProcess`      |
-| `docs/USER_INTERFACE.md` | Update deletion UI: four buttons, scrollable file list, accessibility          |
-| `AGENTS.md`              | Add "Windows API Integration Pattern" section                                  |
-
-### New Documentation Required
-
-None.
+- [ ] First deletion attempt shows "Detecting blocking processes..." step
+- [ ] Detection finds external process → fails early with blocking UI
+- [ ] Click "Retry" → skips detection, attempts deletion
+- [ ] Click dropdown → "Kill Processes" → kills then detects then deletes
+- [ ] Click dropdown → "Close Handles" → UAC prompt, closes then detects then deletes
+- [ ] Click dropdown → "Ignore Blockers" → skips detection entirely
+- [ ] Click "Dismiss" → closes dialog, workspace removed from sidebar
+- [ ] Verify Dismiss button has tooltip explaining leftovers
+- [ ] Verify split button disabled during operation
+- [ ] Verify spinner on main button during operation
+- [ ] Test dropdown positioning (should appear below button)
+- [ ] Test keyboard navigation in dropdown menu (↑↓ arrows, Enter, Escape)
+- [ ] Non-Windows: verify no "Detecting..." step appears
+- [ ] Detection timeout: verify deletion continues with warning
 
 ## Definition of Done
 
-- [x] Phase 1 complete (boundary service + tests)
-- [x] User review of Phase 1 passed
-- [x] Phase 2 complete (integration + UI)
-- [x] `npm run validate:fix` passes
-- [x] Blocking processes and files shown in deletion UI on Windows
-- [x] All four buttons work (Retry, Kill & Retry, Close Handles & Retry, Cancel)
-- [x] UAC elevation works for Close Handles
-- [x] NoOp works correctly on Linux/macOS
-- [x] Boundary tests pass on Windows
-- [x] Integration tests complete in <50ms each
-- [x] Documentation updated
+**Phase 3:**
+
+- [ ] BlockingProcessService renamed to WorkspaceLockHandler
+- [ ] Proactive detection runs on first attempt (Windows only)
+- [ ] Detection runs AFTER our cleanup (terminals, server, vscode)
+- [ ] Retry skips detection (isRetry: true)
+- [ ] Kill/Close runs operation then detects to verify
+- [ ] Ignore Blockers skips detection entirely
+- [ ] Split button UI with dropdown menu
+- [ ] Dismiss button with tooltip explaining leftovers
+- [ ] Single scrollable container for all processes/files
+- [ ] All menu options work correctly
+- [ ] Non-Windows skips all detection steps
+- [ ] `npm run validate:fix` passes
+- [ ] Documentation updated
 - [ ] User acceptance testing passed
 - [ ] Changes committed
 
@@ -641,45 +617,11 @@ None.
 
 1. **File path display**: Relative to workspace (calculated using `Path` class)
 2. **Empty files array**: Show `(no files detected)` under process info
-3. **Handle close partial failure**: Re-run detect() and show updated blocking processes. User can retry or choose different action.
-
-## Proposed Improvements
-
-1. **Retry count/circuit breaker**: Track retry count, show "Attempt 2 of 3". After 3 retries, show "Manual intervention required"
-2. **Show detection progress**: Display "Detecting blocking processes..." while PowerShell runs ✓ (included in plan)
-3. **Selective process kill**: Let user choose which processes to kill instead of all
-
-## Critiques
-
-1. **PowerShell startup time**: ~200-500ms overhead per operation (acceptable for error path)
-2. **Restart Manager limitations**: May not detect kernel-level handles or some services
-3. **Handle closing danger**: Closing handles can corrupt application state - user accepts risk (UAC serves as confirmation)
-4. **UAC friction**: Elevation prompt is disruptive but necessary for handle closing
-5. **Complexity**: Three operations (detect, kill, close) adds complexity vs simpler kill-only approach
-6. **NtQuerySystemInformation risks**: Can hang on certain handle types, may need timeout per handle query
-
-## Implementation Notes (Phase 1)
-
-### Key Fixes Made During Development
-
-1. **PIDs > 65535 support**: Changed from `SYSTEM_HANDLE_INFORMATION` (class 16) to `SYSTEM_HANDLE_INFORMATION_EX` (class 64) which uses pointer-sized `UniqueProcessId` instead of `USHORT`
-
-2. **Admin privilege check**: Changed from string `'Administrator'` to enum `[Security.Principal.WindowsBuiltInRole]::Administrator` for reliability
-
-3. **Handle timeout**: Added 100ms timeout to `GetObjectNameWithTimeout()` to prevent hanging on pipes/mailslots
-
-4. **Self-elevation**: Script correctly self-elevates via UAC using `Start-Process -Verb RunAs -WindowStyle Hidden`
-
-5. **Parameter syntax**: Plan showed `-Detect` and `-CloseHandles` as bare switches, but implementation uses `-Action Detect` and `-Action CloseHandles` with ValidateSet for cleaner validation
-
-### Test Results
-
-```
-Detected 1 blocking process(es):
-  - Windows PowerShell (PID 87628)
-    CWD: subdir
-    Files: subdir\locked-file.txt, subdir
-
-closeHandles() completed successfully!
-Closed file handles { closedCount: 2 }
-```
+3. **Handle close partial failure**: Re-run detect() and show updated blocking processes
+4. **Proactive detection timing**: Run AFTER our cleanup (terminals, server, vscode) to only detect EXTERNAL blockers
+5. **Retry behavior**: Skip detection on retry (`isRetry: true`)
+6. **Ignore option**: Skip detection entirely as escape hatch for false positives
+7. **Service naming**: `WorkspaceLockHandler` - describes what it handles (workspace locks)
+8. **Dismiss button**: Replaces "Cancel" with tooltip explaining workspace removal and potential leftovers
+9. **File list display**: Single scrollable container for all processes and files (no nested scrolling, no truncation)
+10. **unblock type**: Simplified to `"kill" | "close" | "ignore" | undefined`; use `isRetry` flag for retry distinction

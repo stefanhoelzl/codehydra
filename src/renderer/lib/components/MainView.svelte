@@ -194,17 +194,20 @@
     openRemoveDialog(workspaceRef);
   }
 
-  // Handle retry deletion
+  // Handle retry deletion (user claims they fixed it manually)
   function handleRetry(): void {
     if (!activeDeletionState) return;
     logger.debug("Retrying deletion", { workspaceName: activeDeletionState.workspaceName });
     // Fire-and-forget - new progress events will update the state
     // Pass skipSwitch: true to prevent switching away from this workspace on retry
+    // Pass isRetry: true to skip proactive detection (user claims they fixed it)
     void api.workspaces.remove(
       activeDeletionState.projectId,
       activeDeletionState.workspaceName,
       activeDeletionState.keepBranch,
-      true // skipSwitch - user explicitly selected this workspace to retry
+      true, // skipSwitch - user explicitly selected this workspace to retry
+      undefined, // unblock - no special unblock action
+      true // isRetry - skip proactive detection
     );
   }
 
@@ -240,10 +243,26 @@
     );
   }
 
-  // Handle cancel (dismiss deletion progress dialog)
-  function handleCancel(): void {
+  // Handle ignore blockers (skip detection entirely - power user escape hatch)
+  function handleIgnoreBlockers(): void {
     if (!activeDeletionState) return;
-    logger.debug("Cancelling deletion", { workspaceName: activeDeletionState.workspaceName });
+    logger.debug("Ignoring blockers and retrying deletion", {
+      workspaceName: activeDeletionState.workspaceName,
+    });
+    // Fire-and-forget - new progress events will update the state
+    void api.workspaces.remove(
+      activeDeletionState.projectId,
+      activeDeletionState.workspaceName,
+      activeDeletionState.keepBranch,
+      true, // skipSwitch - user explicitly selected this workspace to retry
+      "ignore" // unblock - skip detection entirely
+    );
+  }
+
+  // Handle dismiss (close deletion progress dialog, workspace removed from UI but files may remain)
+  function handleDismiss(): void {
+    if (!activeDeletionState) return;
+    logger.debug("Dismissing deletion", { workspaceName: activeDeletionState.workspaceName });
     clearDeletion(activeDeletionState.workspacePath);
   }
 </script>
@@ -293,9 +312,10 @@
     <DeletionProgressView
       progress={activeDeletionState}
       onRetry={handleRetry}
-      onCancel={handleCancel}
+      onDismiss={handleDismiss}
       onKillAndRetry={handleKillAndRetry}
       onCloseHandlesAndRetry={handleCloseHandlesAndRetry}
+      onIgnoreBlockers={handleIgnoreBlockers}
     />
   {:else if activeLoading}
     <WorkspaceLoadingOverlay />

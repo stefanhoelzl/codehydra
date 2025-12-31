@@ -51,18 +51,18 @@ export { createMockBuildInfo } from "./platform/build-info.test-utils";
 export type { PlatformInfo } from "./platform/platform-info";
 export { createMockPlatformInfo } from "./platform/platform-info.test-utils";
 
-// Blocking process service
-export type { BlockingProcessService } from "./platform/blocking-process";
+// Workspace lock handler service
+export type { WorkspaceLockHandler } from "./platform/workspace-lock-handler";
 export {
-  WindowsBlockingProcessService,
-  createBlockingProcessService,
+  WindowsWorkspaceLockHandler,
+  createWorkspaceLockHandler,
   UACCancelledError,
-} from "./platform/blocking-process";
-export { createMockBlockingProcessService } from "./platform/blocking-process.test-utils";
+} from "./platform/workspace-lock-handler";
+export { createMockWorkspaceLockHandler } from "./platform/workspace-lock-handler.test-utils";
 export type {
-  MockBlockingProcessService,
-  MockBlockingProcessServiceOptions,
-} from "./platform/blocking-process.test-utils";
+  MockWorkspaceLockHandler,
+  MockWorkspaceLockHandlerOptions,
+} from "./platform/workspace-lock-handler.test-utils";
 
 // Path provider abstraction
 export type { PathProvider } from "./platform/path-provider";

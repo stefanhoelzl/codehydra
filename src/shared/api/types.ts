@@ -235,8 +235,11 @@ export interface BlockingProcess {
 
 /**
  * Unblock options for workspace removal.
+ * - "kill": Kill blocking processes before deletion
+ * - "close": Close file handles (elevated, requires UAC) before deletion
+ * - "ignore": Skip detection entirely (power user escape hatch)
  */
-export const UNBLOCK_OPTIONS = ["kill", "close", false] as const;
+export const UNBLOCK_OPTIONS = ["kill", "close", "ignore"] as const;
 export type UnblockOption = (typeof UNBLOCK_OPTIONS)[number];
 
 // =============================================================================
@@ -252,6 +255,7 @@ export type DeletionOperationId =
   | "kill-terminals"
   | "stop-server"
   | "cleanup-vscode"
+  | "detecting-blockers"
   | "cleanup-workspace";
 
 /**

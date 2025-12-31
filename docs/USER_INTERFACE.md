@@ -581,42 +581,53 @@ When deletion fails because files are locked by other processes, a scrollable li
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│  ⚠ Error: Directory in use by other processes                         │
+│  ⚠ Deletion blocked by 2 process(es) holding 3 file(s)                │
 │                                                                        │
-│  Blocking Processes (2 files detected):                                │
 │ ┌────────────────────────────────────────────────────────────────────┐ │
 │ │ node.exe (PID: 1234)                                               │ │
-│ │   CWD: C:\projects\my-app                                          │ │
-│ │   Files: server.js, dist\index.js                                  │ │
+│ │   C:\...\node.exe server.js                                        │ │
+│ │   Working directory: subdir/                                       │ │
+│ │   • server.js                                                      │ │
+│ │   • dist/index.js                                                  │ │
 │ │                                                                    │ │
 │ │ Code.exe (PID: 5678)                                               │ │
-│ │   Files: (no files detected)                                       │ │
+│ │   C:\Program Files\...\Code.exe --folder ...                       │ │
+│ │   (no files detected)                                              │ │
 │ └────────────────────────────────────────────────────────────────────┘ │
-│       ↑ scrollable region (role="region", aria-label)                  │
+│       ↑ scrollable region (max-height: 300px, role="region")           │
 │                                                                        │
-│ [Retry]  [Kill & Retry]  [Close Handles & Retry]  [Cancel]            │
-│    ↑          ↑                  ↑                    ↑                │
-│ primary   warning(orange)   danger(red)          secondary            │
+│  ┌───────────────────┐                                                 │
+│  │ Retry           ▼ │      [Dismiss]                                  │
+│  ├───────────────────┤         ↑                                       │
+│  │ Kill Processes    │      secondary                                  │
+│  │ Close Handles     │      (has tooltip)                              │
+│  │ Ignore Blockers   │                                                 │
+│  └───────────────────┘                                                 │
+│    ↑ split button with dropdown                                        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Button behavior:**
 
-| Button                | Action                                                            |
-| --------------------- | ----------------------------------------------------------------- |
-| Retry                 | Retries deletion without any action (in case locks were released) |
-| Kill & Retry          | Kills listed processes via taskkill, then retries deletion        |
-| Close Handles & Retry | Closes file handles (requires elevation), then retries deletion   |
-| Cancel                | Closes the deletion dialog, leaving workspace in failed state     |
+| Button          | Action                                                          |
+| --------------- | --------------------------------------------------------------- |
+| Retry (main)    | Retries deletion, skips detection (user claims locks released)  |
+| Kill Processes  | Kills listed processes via taskkill, then detects to verify     |
+| Close Handles   | Closes file handles (requires UAC elevation), then detects      |
+| Ignore Blockers | Skips detection entirely (escape hatch for false positives)     |
+| Dismiss         | Closes dialog; workspace removed from sidebar, files may remain |
 
 **Button rationale:**
 
-- **Retry** is primary because locks may have been released manually
-- **Kill & Retry** (warning) terminates processes - destructive but restartable
-- **Close Handles & Retry** (danger) forcibly closes handles - may corrupt process state
-- **Cancel** allows investigating the issue before taking action
+- **Retry** is the main action because locks may have been released manually
+- **Kill Processes** terminates processes - destructive but restartable
+- **Close Handles** forcibly closes handles - may corrupt process state, requires elevation
+- **Ignore Blockers** skips detection for power users who know the locks are safe
+- **Dismiss** closes the dialog with a tooltip explaining that the workspace will be removed from CodeHydra but blocking processes and files may remain on disk
 
-All buttons are disabled during operation. The clicked button shows a spinner.
+All buttons are disabled during operation. The main Retry button shows a spinner.
+
+**Dismiss button tooltip:** "Close dialog. Workspace will be removed from CodeHydra, but blocking processes and files may remain on disk."
 
 **Accessibility:** The blocking processes list uses `role="region"` and `aria-label="Blocking processes"` for screen reader navigation.
 
