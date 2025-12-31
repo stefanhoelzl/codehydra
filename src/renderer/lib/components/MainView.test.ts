@@ -1161,7 +1161,7 @@ describe("MainView component", () => {
       });
     });
 
-    it("calls workspaces.forceRemove and clears state on close anyway", async () => {
+    it("clears state on cancel without calling forceRemove", async () => {
       const projectWithWorkspace = {
         id: asProjectId("test-project-12345678"),
         path: "/test/project",
@@ -1204,22 +1204,17 @@ describe("MainView component", () => {
         })
       );
 
-      // Find and click Close Anyway button
+      // Find and click Cancel button
       await waitFor(() => {
-        expect(screen.getByText("Close Anyway")).toBeInTheDocument();
+        expect(screen.getByText("Cancel")).toBeInTheDocument();
       });
 
-      const closeAnywayButton = screen.getByText("Close Anyway").closest("vscode-button");
-      expect(closeAnywayButton).not.toBeNull();
-      await fireEvent.click(closeAnywayButton!);
+      const cancelButton = screen.getByText("Cancel").closest("vscode-button");
+      expect(cancelButton).not.toBeNull();
+      await fireEvent.click(cancelButton!);
 
-      // Should have called workspaces.forceRemove
-      await waitFor(() => {
-        expect(mockApi.workspaces.forceRemove).toHaveBeenCalledWith(
-          "test-project-12345678",
-          "feature"
-        );
-      });
+      // forceRemove should NOT be called - cancel just clears state
+      expect(mockApi.workspaces.forceRemove).not.toHaveBeenCalled();
 
       // State should be cleared
       await waitFor(() => {

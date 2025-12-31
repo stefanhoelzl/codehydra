@@ -379,6 +379,218 @@ describe("core.workspaces.remove.blockingProcessService", () => {
     expect(mockBlockingService.lastKillPids).toEqual([1234]);
   });
 
+  it("emits killing-blockers step before and after kill operation", async () => {
+    const workspacePath = `${TEST_PROJECT_PATH}/workspaces/feature`;
+    const workspaceName = "feature" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+    const mockBlockingService = createMockBlockingProcessService({
+      processes: [{ pid: 1234, name: "node.exe", commandLine: "node", files: [], cwd: null }],
+    });
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+      }),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = createMockViewManager();
+
+    const deps = createMockDeps({
+      appState,
+      viewManager,
+      emitDeletionProgress,
+      blockingProcessService: mockBlockingService,
+    });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+      unblock: "kill",
+    });
+
+    // Wait for async deletion to complete
+    await vi.waitFor(() => {
+      const calls = emitDeletionProgress.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toBeDefined();
+      const progress = lastCall![0] as DeletionProgress;
+      expect(progress.completed).toBe(true);
+    });
+
+    // Find the first progress event - should include killing-blockers as in-progress
+    const firstCall = emitDeletionProgress.mock.calls[0];
+    const firstProgress = firstCall![0] as DeletionProgress;
+    const killingOp = firstProgress.operations.find((op) => op.id === "killing-blockers");
+    expect(killingOp).toBeDefined();
+    expect(killingOp!.label).toBe("Killing blocking tasks...");
+    expect(killingOp!.status).toBe("in-progress");
+
+    // Find final progress - killing-blockers should be done
+    const finalCall = emitDeletionProgress.mock.calls[emitDeletionProgress.mock.calls.length - 1];
+    const finalProgress = finalCall![0] as DeletionProgress;
+    const finalKillingOp = finalProgress.operations.find((op) => op.id === "killing-blockers");
+    expect(finalKillingOp).toBeDefined();
+    expect(finalKillingOp!.status).toBe("done");
+  });
+
+  it("calls closeHandles before deletion when unblock is 'close'", async () => {
+    const workspacePath = `${TEST_PROJECT_PATH}/workspaces/feature`;
+    const workspaceName = "feature" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+    const mockBlockingService = createMockBlockingProcessService({
+      processes: [
+        { pid: 1234, name: "node.exe", commandLine: "node", files: ["file.txt"], cwd: null },
+      ],
+    });
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+      }),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = createMockViewManager();
+
+    const deps = createMockDeps({
+      appState,
+      viewManager,
+      emitDeletionProgress,
+      blockingProcessService: mockBlockingService,
+    });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+      unblock: "close",
+    });
+
+    // Wait for async deletion to complete
+    await vi.waitFor(() => {
+      const calls = emitDeletionProgress.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toBeDefined();
+      const progress = lastCall![0] as DeletionProgress;
+      expect(progress.completed).toBe(true);
+    });
+
+    // Verify closeHandles was called (not killProcesses)
+    expect(mockBlockingService.closeHandlesCalls).toBe(1);
+    expect(mockBlockingService.killProcessesCalls).toBe(0);
+  });
+
+  it("emits closing-handles step before and after close operation", async () => {
+    const workspacePath = `${TEST_PROJECT_PATH}/workspaces/feature`;
+    const workspaceName = "feature" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+    const mockBlockingService = createMockBlockingProcessService({
+      processes: [
+        { pid: 1234, name: "node.exe", commandLine: "node", files: ["file.txt"], cwd: null },
+      ],
+    });
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+      }),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = createMockViewManager();
+
+    const deps = createMockDeps({
+      appState,
+      viewManager,
+      emitDeletionProgress,
+      blockingProcessService: mockBlockingService,
+    });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+      unblock: "close",
+    });
+
+    // Wait for async deletion to complete
+    await vi.waitFor(() => {
+      const calls = emitDeletionProgress.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toBeDefined();
+      const progress = lastCall![0] as DeletionProgress;
+      expect(progress.completed).toBe(true);
+    });
+
+    // Find the first progress event - should include closing-handles as in-progress
+    const firstCall = emitDeletionProgress.mock.calls[0];
+    const firstProgress = firstCall![0] as DeletionProgress;
+    const closingOp = firstProgress.operations.find((op) => op.id === "closing-handles");
+    expect(closingOp).toBeDefined();
+    expect(closingOp!.label).toBe("Closing blocking handles...");
+    expect(closingOp!.status).toBe("in-progress");
+
+    // Find final progress - closing-handles should be done
+    const finalCall = emitDeletionProgress.mock.calls[emitDeletionProgress.mock.calls.length - 1];
+    const finalProgress = finalCall![0] as DeletionProgress;
+    const finalClosingOp = finalProgress.operations.find((op) => op.id === "closing-handles");
+    expect(finalClosingOp).toBeDefined();
+    expect(finalClosingOp!.status).toBe("done");
+  });
+
   it("does not call killProcesses when unblock is false", async () => {
     const workspacePath = `${TEST_PROJECT_PATH}/workspaces/feature`;
     const workspaceName = "feature" as import("../../../shared/api/types").WorkspaceName;
@@ -436,6 +648,71 @@ describe("core.workspaces.remove.blockingProcessService", () => {
 
     // Verify killProcesses was NOT called (no pre-detection either for unblock)
     expect(mockBlockingService.killProcessesCalls).toBe(0);
+  });
+
+  it("does not include unblock steps when unblock is false", async () => {
+    const workspacePath = `${TEST_PROJECT_PATH}/workspaces/feature`;
+    const workspaceName = "feature" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+    const mockBlockingService = createMockBlockingProcessService();
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [{ path: workspacePath, branch: "feature", metadata: { base: "main" } }],
+      }),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = createMockViewManager();
+
+    const deps = createMockDeps({
+      appState,
+      viewManager,
+      emitDeletionProgress,
+      blockingProcessService: mockBlockingService,
+    });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+      unblock: false,
+    });
+
+    // Wait for async deletion to complete
+    await vi.waitFor(() => {
+      const calls = emitDeletionProgress.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toBeDefined();
+      const progress = lastCall![0] as DeletionProgress;
+      expect(progress.completed).toBe(true);
+    });
+
+    // Verify no unblock steps are present in any progress event
+    for (const call of emitDeletionProgress.mock.calls) {
+      const progress = call[0] as DeletionProgress;
+      const hasClosingHandles = progress.operations.some((op) => op.id === "closing-handles");
+      const hasKillingBlockers = progress.operations.some((op) => op.id === "killing-blockers");
+      expect(hasClosingHandles).toBe(false);
+      expect(hasKillingBlockers).toBe(false);
+    }
   });
 
   it("includes blocking processes in DeletionProgress when cleanup-workspace fails with EBUSY", async () => {

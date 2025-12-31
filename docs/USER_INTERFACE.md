@@ -577,35 +577,48 @@ If deletion fails, a warning icon appears. The [×] button remains hidden. Click
 
 **Deletion failed with blocking processes (Windows only):**
 
-When deletion fails because files are locked by other processes, a table shows the blocking processes:
+When deletion fails because files are locked by other processes, a scrollable list shows blocking processes with their locked files:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │  ⚠ Error: Directory in use by other processes                         │
 │                                                                        │
-│ ┌───────┬────────────┬────────────────────────────────────────────────┐│
-│ │ PID   │ Process    │ Command                                        ││
-│ ├───────┼────────────┼────────────────────────────────────────────────┤│
-│ │ 1234  │ node.exe   │ node dist/server.js                            ││
-│ │ 5678  │ Code.exe   │ "C:\Program Files\VS Code\Code.exe" .          ││
-│ └───────┴────────────┴────────────────────────────────────────────────┘│
+│  Blocking Processes (2 files detected):                                │
+│ ┌────────────────────────────────────────────────────────────────────┐ │
+│ │ node.exe (PID: 1234)                                               │ │
+│ │   CWD: C:\projects\my-app                                          │ │
+│ │   Files: server.js, dist\index.js                                  │ │
+│ │                                                                    │ │
+│ │ Code.exe (PID: 5678)                                               │ │
+│ │   Files: (no files detected)                                       │ │
+│ └────────────────────────────────────────────────────────────────────┘ │
+│       ↑ scrollable region (role="region", aria-label)                  │
 │                                                                        │
-│ [Kill Processes & Retry]  [Retry]  [Close Anyway]                     │
-│         ↑                                                              │
-│   danger button                                                        │
-│   (red background)                                                     │
+│ [Retry]  [Kill & Retry]  [Close Handles & Retry]  [Cancel]            │
+│    ↑          ↑                  ↑                    ↑                │
+│ primary   warning(orange)   danger(red)          secondary            │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Button behavior:**
 
-| Button                 | Action                                                           |
-| ---------------------- | ---------------------------------------------------------------- |
-| Kill Processes & Retry | Kills listed processes via taskkill, then retries deletion       |
-| Retry                  | Retries deletion without killing processes (in case they exited) |
-| Close Anyway           | Closes the deletion dialog, leaving workspace in failed state    |
+| Button                | Action                                                            |
+| --------------------- | ----------------------------------------------------------------- |
+| Retry                 | Retries deletion without any action (in case locks were released) |
+| Kill & Retry          | Kills listed processes via taskkill, then retries deletion        |
+| Close Handles & Retry | Closes file handles (requires elevation), then retries deletion   |
+| Cancel                | Closes the deletion dialog, leaving workspace in failed state     |
+
+**Button rationale:**
+
+- **Retry** is primary because locks may have been released manually
+- **Kill & Retry** (warning) terminates processes - destructive but restartable
+- **Close Handles & Retry** (danger) forcibly closes handles - may corrupt process state
+- **Cancel** allows investigating the issue before taking action
 
 All buttons are disabled during operation. The clicked button shows a spinner.
+
+**Accessibility:** The blocking processes list uses `role="region"` and `aria-label="Blocking processes"` for screen reader navigation.
 
 **Note:** This feature is Windows-only. On Linux/macOS, file locking works differently and blocking processes are not detected.
 

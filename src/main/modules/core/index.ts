@@ -93,8 +93,8 @@ export interface CoreModuleDeps {
   readonly killTerminalsCallback?: KillTerminalsCallback;
   /** Plugin server for executing VS Code commands in workspaces */
   readonly pluginServer?: IPluginServer;
-  /** Service for detecting and killing blocking processes (Windows) */
-  readonly blockingProcessService?: BlockingProcessService;
+  /** Service for detecting and killing blocking processes (Windows only, undefined on other platforms) */
+  readonly blockingProcessService?: BlockingProcessService | undefined;
   /** Optional logger */
   readonly logger?: Logger;
 }
@@ -567,6 +567,7 @@ export class CoreModule implements IApiModule {
     keepBranch: boolean,
     unblock: "kill" | "close" | false
   ): Promise<void> {
+    // Build operations list - start with standard steps
     const operations: DeletionOperation[] = [
       { id: "kill-terminals", label: "Terminating processes", status: "pending" },
       { id: "stop-server", label: "Stopping OpenCode server", status: "pending" },
@@ -576,6 +577,11 @@ export class CoreModule implements IApiModule {
 
     // Track blocking processes detected during failure (Windows only)
     let blockingProcesses: readonly BlockingProcess[] | undefined;
+
+    // Helper to prepend an operation at the start of the list
+    const prependOp = (id: DeletionOperationId, label: string): void => {
+      operations.unshift({ id, label, status: "pending" });
+    };
 
     const emitProgress = (completed: boolean, hasErrors: boolean): void => {
       this.deps.emitDeletionProgress({
@@ -608,11 +614,14 @@ export class CoreModule implements IApiModule {
     };
 
     try {
-      emitProgress(false, false);
-
       // Pre-step: Unblock by killing processes or closing handles (Windows only)
       if (unblock && this.deps.blockingProcessService) {
         if (unblock === "kill") {
+          // Add the operation step and show spinner BEFORE the operation
+          prependOp("killing-blockers", "Killing blocking tasks...");
+          updateOp("killing-blockers", "in-progress");
+          emitProgress(false, false);
+
           // Need to detect first to get the PIDs
           const detected = await this.deps.blockingProcessService.detect(new Path(workspacePath));
           if (detected.length > 0) {
@@ -622,10 +631,23 @@ export class CoreModule implements IApiModule {
             });
             await this.deps.blockingProcessService.killProcesses(detected.map((p) => p.pid));
           }
+
+          updateOp("killing-blockers", "done");
+          emitProgress(false, false);
         } else if (unblock === "close") {
+          // Add the operation step and show spinner BEFORE the operation
+          prependOp("closing-handles", "Closing blocking handles...");
+          updateOp("closing-handles", "in-progress");
+          emitProgress(false, false);
+
           this.logger.info("Closing handles before deletion", { workspacePath });
           await this.deps.blockingProcessService.closeHandles(new Path(workspacePath));
+
+          updateOp("closing-handles", "done");
+          emitProgress(false, false);
         }
+      } else {
+        emitProgress(false, false);
       }
 
       // Operation 1: Kill terminals

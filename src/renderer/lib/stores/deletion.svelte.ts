@@ -37,6 +37,12 @@ export type DeletionStatus = "none" | "in-progress" | "error";
 /**
  * Get the deletion status for a workspace.
  * Returns a discriminated status for cleaner UI conditionals.
+ *
+ * WARNING: Do not use this function inside $derived() expressions.
+ * Svelte 5 may not properly track reactivity when reading from a SvelteMap
+ * through a function call. Instead, read directly from
+ * deletionStates.value.get(path) in $derived().
+ *
  * @param workspacePath - Path to the workspace
  * @returns "none" if not deleting, "in-progress" if deletion is ongoing, "error" if deletion failed
  */
@@ -54,6 +60,12 @@ export function getDeletionStatus(workspacePath: string): DeletionStatus {
 
 /**
  * Get the deletion state for a workspace.
+ *
+ * WARNING: Do not use this function inside $derived() expressions.
+ * Svelte 5 may not properly track reactivity when reading from a SvelteMap
+ * through a function call. Instead, read directly from
+ * deletionStates.value.get(path) in $derived().
+ *
  * @param workspacePath - Path to the workspace
  * @returns Deletion progress or undefined if not deleting
  */

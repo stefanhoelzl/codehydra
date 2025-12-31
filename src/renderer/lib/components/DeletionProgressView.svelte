@@ -12,14 +12,15 @@
   interface Props {
     progress: DeletionProgress;
     onRetry: () => void;
-    onCloseAnyway: () => void;
+    onCancel: () => void;
     onKillAndRetry: () => void;
+    onCloseHandlesAndRetry: () => void;
   }
 
-  const { progress, onRetry, onCloseAnyway, onKillAndRetry }: Props = $props();
+  const { progress, onRetry, onCancel, onKillAndRetry, onCloseHandlesAndRetry }: Props = $props();
 
   // Track which button was clicked for spinner
-  let activeButton = $state<"retry" | "kill" | "close" | null>(null);
+  let activeButton = $state<"retry" | "kill" | "close" | "cancel" | null>(null);
 
   // Reference to Retry button for focus management
   let retryButtonRef = $state<HTMLElement | null>(null);
@@ -33,6 +34,12 @@
   // Check if we have blocking processes to show
   const hasBlockingProcesses = $derived(
     progress.blockingProcesses && progress.blockingProcesses.length > 0
+  );
+
+  // Count total processes and files for header
+  const processCount = $derived(progress.blockingProcesses?.length ?? 0);
+  const fileCount = $derived(
+    progress.blockingProcesses?.reduce((sum, proc) => sum + proc.files.length, 0) ?? 0
   );
 
   // Reset activeButton when a new deletion cycle starts (progress.completed becomes false)
@@ -81,6 +88,13 @@
     }
   }
 
+  // Truncate command line for display: first 30 + ... + last 20 chars
+  function truncateCommandLine(commandLine: string): string {
+    const maxLength = 60;
+    if (commandLine.length <= maxLength) return commandLine;
+    return commandLine.slice(0, 30) + "..." + commandLine.slice(-20);
+  }
+
   // Handle button clicks
   function handleRetry() {
     activeButton = "retry";
@@ -92,9 +106,14 @@
     onKillAndRetry();
   }
 
-  function handleCloseAnyway() {
+  function handleCloseHandlesAndRetry() {
     activeButton = "close";
-    onCloseAnyway();
+    onCloseHandlesAndRetry();
+  }
+
+  function handleCancel() {
+    activeButton = "cancel";
+    onCancel();
   }
 </script>
 
@@ -136,60 +155,89 @@
     {/if}
 
     {#if hasBlockingProcesses}
-      <div class="blocking-processes">
-        <table class="process-table">
-          <caption class="ch-visually-hidden">Processes blocking workspace deletion</caption>
-          <thead>
-            <tr>
-              <th scope="col">PID</th>
-              <th scope="col">Process</th>
-              <th scope="col">Command</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each progress.blockingProcesses ?? [] as proc (proc.pid)}
-              <tr>
-                <td class="pid-cell">{proc.pid}</td>
-                <td class="name-cell">{proc.name}</td>
-                <td class="command-cell" title={proc.commandLine}>{proc.commandLine}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+      <div class="blocking-processes-header">
+        <Icon name="warning" label="Warning" />
+        <span>Deletion blocked by {processCount} process(es) holding {fileCount} file(s)</span>
+      </div>
+      <div
+        class="blocking-processes"
+        class:dimmed={isOperating}
+        role="region"
+        aria-label="Blocking processes and files"
+      >
+        {#each progress.blockingProcesses ?? [] as proc (proc.pid)}
+          <div class="process-item">
+            <div class="process-header">
+              <span class="process-name">{proc.name}</span>
+              <span class="process-pid">(PID {proc.pid})</span>
+            </div>
+            <div class="process-command" title={proc.commandLine}>
+              {truncateCommandLine(proc.commandLine)}
+            </div>
+            {#if proc.cwd !== null}
+              <div class="process-cwd">Working directory: {proc.cwd}/</div>
+            {/if}
+            {#if proc.files.length > 0}
+              <ul class="process-files">
+                {#each proc.files.slice(0, 20) as file (file)}
+                  <li>{file}</li>
+                {/each}
+                {#if proc.files.length > 20}
+                  <li class="files-more">(and {proc.files.length - 20} more files)</li>
+                {/if}
+              </ul>
+            {:else if proc.cwd === null}
+              <div class="no-files">(no files detected)</div>
+            {/if}
+          </div>
+        {/each}
       </div>
     {/if}
 
     {#if progress.completed && progress.hasErrors}
       <div class="action-buttons">
-        {#if hasBlockingProcesses}
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <vscode-button class="danger-button" disabled={isOperating} onclick={handleKillAndRetry}>
-            {#if activeButton === "kill"}
-              <Icon name="loading" spin /> Killing...
-            {:else}
-              Kill Processes & Retry
-            {/if}
-          </vscode-button>
-        {/if}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <vscode-button
-          bind:this={retryButtonRef}
-          secondary={true}
-          disabled={isOperating}
-          onclick={handleRetry}
-        >
+        <vscode-button bind:this={retryButtonRef} disabled={isOperating} onclick={handleRetry}>
           {#if activeButton === "retry"}
             <Icon name="loading" spin /> Retrying...
           {:else}
             Retry
           {/if}
         </vscode-button>
+        {#if hasBlockingProcesses}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <vscode-button
+            class="warning-button"
+            appearance="secondary"
+            disabled={isOperating}
+            onclick={handleKillAndRetry}
+          >
+            {#if activeButton === "kill"}
+              <Icon name="loading" spin /> Killing...
+            {:else}
+              Kill & Retry
+            {/if}
+          </vscode-button>
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <vscode-button
+            class="danger-button"
+            appearance="secondary"
+            disabled={isOperating}
+            onclick={handleCloseHandlesAndRetry}
+          >
+            {#if activeButton === "close"}
+              <Icon name="loading" spin /> Closing...
+            {:else}
+              Close Handles & Retry
+            {/if}
+          </vscode-button>
+        {/if}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <vscode-button secondary={true} disabled={isOperating} onclick={handleCloseAnyway}>
-          {#if activeButton === "close"}
-            <Icon name="loading" spin /> Closing...
+        <vscode-button appearance="secondary" disabled={isOperating} onclick={handleCancel}>
+          {#if activeButton === "cancel"}
+            <Icon name="loading" spin /> Cancelling...
           {:else}
-            Close Anyway
+            Cancel
           {/if}
         </vscode-button>
       </div>
@@ -327,60 +375,113 @@
     display: flex;
     gap: 12px;
     justify-content: center;
+    flex-wrap: wrap;
     margin-top: 20px;
   }
 
-  .blocking-processes {
+  .blocking-processes-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-top: 16px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--ch-warning);
+  }
+
+  .blocking-processes {
+    max-height: 300px;
+    overflow-y: auto;
     border: 1px solid var(--ch-border);
     border-radius: 4px;
-    overflow: hidden;
+    padding: 8px;
   }
 
-  .process-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
+  .blocking-processes.dimmed {
+    opacity: 0.5;
   }
 
-  .process-table th,
-  .process-table td {
-    padding: 6px 10px;
-    text-align: left;
-    border-bottom: 1px solid var(--ch-border);
+  .process-item {
+    margin-bottom: 12px;
   }
 
-  .process-table th {
-    background: var(--ch-header-bg, rgba(255, 255, 255, 0.04));
+  .process-item:last-child {
+    margin-bottom: 0;
+  }
+
+  .process-header {
+    font-size: 13px;
     font-weight: 500;
     color: var(--ch-foreground);
   }
 
-  .process-table tbody tr:last-child td {
-    border-bottom: none;
+  .process-name {
+    color: var(--ch-foreground);
   }
 
-  .pid-cell {
-    width: 60px;
+  .process-pid {
+    color: var(--ch-foreground);
+    opacity: 0.6;
     font-family: var(--vscode-editor-font-family, monospace);
-    color: var(--ch-foreground);
-    opacity: 0.8;
+    font-size: 12px;
+    margin-left: 4px;
   }
 
-  .name-cell {
-    width: 100px;
-    color: var(--ch-foreground);
-  }
-
-  .command-cell {
-    max-width: 50ch;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--ch-foreground);
-    opacity: 0.8;
-    font-family: var(--vscode-editor-font-family, monospace);
+  .process-command {
     font-size: 11px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--ch-foreground);
+    opacity: 0.7;
+    margin-top: 2px;
+    word-break: break-all;
+  }
+
+  .process-cwd {
+    font-size: 12px;
+    color: var(--ch-foreground);
+    opacity: 0.8;
+    margin-top: 4px;
+    font-style: italic;
+  }
+
+  .process-files {
+    list-style: none;
+    margin: 4px 0 0 0;
+    padding: 0;
+    font-size: 12px;
+  }
+
+  .process-files li {
+    color: var(--ch-foreground);
+    opacity: 0.8;
+    padding-left: 16px;
+    position: relative;
+  }
+
+  .process-files li::before {
+    content: "•";
+    position: absolute;
+    left: 4px;
+  }
+
+  .process-files .files-more {
+    opacity: 0.6;
+    font-style: italic;
+  }
+
+  .no-files {
+    font-size: 12px;
+    color: var(--ch-foreground);
+    opacity: 0.5;
+    font-style: italic;
+    margin-top: 4px;
+  }
+
+  /* Warning button styling */
+  .warning-button {
+    --vscode-button-background: var(--ch-warning);
+    --vscode-button-hoverBackground: var(--ch-warning-hover, #c27d00);
+    --vscode-button-foreground: var(--ch-background);
   }
 
   /* Danger button styling */

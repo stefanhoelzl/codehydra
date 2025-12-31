@@ -2,14 +2,12 @@
  * Tests for BlockingProcessService.
  *
  * This file contains:
- * - Focused tests for NoOpBlockingProcessService (no mocks needed)
  * - Integration tests for WindowsBlockingProcessService (with mocked ProcessRunner)
  * - Integration tests for factory function
  */
 
 import { describe, it, expect, vi } from "vitest";
 import {
-  NoOpBlockingProcessService,
   WindowsBlockingProcessService,
   createBlockingProcessService,
   UACCancelledError,
@@ -63,44 +61,6 @@ function createCloseHandlesOutput(
     closed,
   });
 }
-
-// =============================================================================
-// NoOpBlockingProcessService (Focused Tests)
-// =============================================================================
-
-describe("NoOpBlockingProcessService", () => {
-  const service = new NoOpBlockingProcessService();
-  const testPath = new Path("/some/workspace/path");
-
-  describe("detect", () => {
-    it("returns empty array", async () => {
-      const result = await service.detect(testPath);
-      expect(result).toEqual([]);
-    });
-
-    it("returns empty array for any path", async () => {
-      const otherPath = new Path("/different/path");
-      const result = await service.detect(otherPath);
-      expect(result).toEqual([]);
-    });
-  });
-
-  describe("killProcesses", () => {
-    it("completes without error", async () => {
-      await expect(service.killProcesses([1234, 5678])).resolves.toBeUndefined();
-    });
-
-    it("completes without error with empty array", async () => {
-      await expect(service.killProcesses([])).resolves.toBeUndefined();
-    });
-  });
-
-  describe("closeHandles", () => {
-    it("completes without error", async () => {
-      await expect(service.closeHandles(testPath)).resolves.toBeUndefined();
-    });
-  });
-});
 
 // =============================================================================
 // Mock Factory Tests (Focused Tests)
@@ -842,20 +802,20 @@ describe("createBlockingProcessService", () => {
     expect(service).toBeInstanceOf(WindowsBlockingProcessService);
   });
 
-  it("returns NoOpBlockingProcessService for linux platform", () => {
+  it("returns undefined for linux platform", () => {
     const platformInfo = createMockPlatformInfo({ platform: "linux" });
 
     const service = createBlockingProcessService(mockProcessRunner, platformInfo, logger);
 
-    expect(service).toBeInstanceOf(NoOpBlockingProcessService);
+    expect(service).toBeUndefined();
   });
 
-  it("returns NoOpBlockingProcessService for darwin platform", () => {
+  it("returns undefined for darwin platform", () => {
     const platformInfo = createMockPlatformInfo({ platform: "darwin" });
 
     const service = createBlockingProcessService(mockProcessRunner, platformInfo, logger);
 
-    expect(service).toBeInstanceOf(NoOpBlockingProcessService);
+    expect(service).toBeUndefined();
   });
 
   it("passes script path to WindowsBlockingProcessService", () => {

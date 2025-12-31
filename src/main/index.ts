@@ -14,7 +14,6 @@ import {
   DefaultFileSystemLayer,
   ElectronLogService,
   createBlockingProcessService,
-  type BlockingProcessService,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -663,7 +662,8 @@ async function bootstrap(): Promise<void> {
       // Create BlockingProcessService for Windows file handle detection
       // Uses "process" logger since blocking process detection is process management
       // Script path is resolved from pathProvider.scriptsDir
-      const blockingProcessService: BlockingProcessService = createBlockingProcessService(
+      // Returns undefined on non-Windows platforms (no file locking issues)
+      const blockingProcessService = createBlockingProcessService(
         processRunner,
         platformInfo,
         loggingService.createLogger("process"),

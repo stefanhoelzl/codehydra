@@ -8,6 +8,8 @@
 - [CSS Theming Patterns](#css-theming-patterns)
 - [Renderer Setup Functions](#renderer-setup-functions)
 - [Service Layer Patterns](#service-layer-patterns)
+  - [BlockingProcessService Pattern](#blockingprocessservice-pattern)
+  - [PowerShell Script Asset Pattern](#powershell-script-asset-pattern)
 - [Path Handling Patterns](#path-handling-patterns)
 - [OpenCode Integration](#opencode-integration)
 - [Plugin Interface](#plugin-interface)
@@ -933,32 +935,62 @@ class MyService {
 
 ### BlockingProcessService Pattern
 
-`BlockingProcessService` detects and kills processes that block file operations (Windows-only):
+`BlockingProcessService` detects and manages processes that block file operations (Windows-only). It uses a three-operation model:
 
-| Method                  | Description                              |
-| ----------------------- | ---------------------------------------- |
-| `getBlockingProcesses`  | Detect processes with handles on path    |
-| `killBlockingProcesses` | Kill all blocking processes via taskkill |
+| Method            | Description                                           |
+| ----------------- | ----------------------------------------------------- |
+| `detect(path)`    | Detect processes with handles on files under path     |
+| `killProcesses()` | Kill all detected processes via taskkill              |
+| `closeHandles()`  | Close file handles (requires UAC elevation on Win 10) |
 
 ```typescript
 // Factory creates platform-specific implementation
-const blockingProcessService = createBlockingProcessService(processRunner, platformInfo, logger);
+const blockingProcessService = createBlockingProcessService(
+  processRunner,
+  platformInfo,
+  pathProvider,
+  logger
+);
 
-// Windows: Uses Restart Manager API via PowerShell + taskkill
-// Other platforms: NoOp implementation (returns empty arrays)
+// Windows: Uses Restart Manager API via PowerShell script
+// Other platforms: NoOp implementation (returns empty results)
+```
+
+**Three-Operation Workflow:**
+
+```
+detect(path)         →  Returns DetectionResult with processes array
+    │
+    ├─ killProcesses()   →  Terminates all detected processes
+    │
+    └─ closeHandles()    →  Closes file handles (may require elevation)
 ```
 
 **Usage in Deletion Flow:**
 
 ```typescript
 // In CoreModule.executeDeletion()
-if (killBlocking && platformInfo.isWindows) {
-  await blockingProcessService.killBlockingProcesses(workspacePath);
+if (unblock === "kill") {
+  await blockingProcessService.killProcesses();
+} else if (unblock === "close") {
+  await blockingProcessService.closeHandles();
 }
 
-// On EBUSY/EACCES/EPERM error
-const blockingProcesses = await blockingProcessService.getBlockingProcesses(workspacePath);
-emitProgress({ step: "cleanup-workspace", blockingProcesses, hasErrors: true });
+// On EBUSY/EACCES/EPERM error, detect blocking processes
+const result = await blockingProcessService.detect(workspacePath);
+emitProgress({ step: "cleanup-workspace", blockingProcesses: result.processes, hasErrors: true });
+```
+
+**BlockingProcess Type:**
+
+```typescript
+interface BlockingProcess {
+  readonly pid: number;
+  readonly name: string;
+  readonly commandLine: string;
+  readonly files: readonly string[]; // Locked files (relative to detected path)
+  readonly cwd: string | null; // Process working directory
+}
 ```
 
 **Testing with Mocks:**
@@ -968,11 +1000,115 @@ import { createMockBlockingProcessService } from "../platform/blocking-process.t
 
 // Return specific blocking processes
 const mockService = createMockBlockingProcessService({
-  getBlockingProcesses: [{ pid: 1234, name: "node.exe", commandLine: "node server.js" }],
+  detect: {
+    processes: [
+      {
+        pid: 1234,
+        name: "node.exe",
+        commandLine: "node server.js",
+        files: ["index.js"],
+        cwd: "/app",
+      },
+    ],
+  },
 });
 
 // Inject into CoreModule
 const module = new CoreModule(api, { ...deps, blockingProcessService: mockService });
+```
+
+### PowerShell Script Asset Pattern
+
+For Windows-specific functionality requiring .NET/COM APIs, use PowerShell scripts bundled as assets:
+
+**Asset Location:**
+
+```
+resources/scripts/          → Source scripts
+out/main/assets/scripts/    → Bundled (via vite-plugin-static-copy)
+```
+
+**Script Structure (parameter-based modes):**
+
+```powershell
+# blocking-processes.ps1
+param(
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("Detect", "CloseHandles")]
+    [string]$Action,
+
+    [Parameter(Mandatory=$true)]
+    [string]$Path
+)
+
+# Output JSON to stdout for parsing
+$result = @{ processes = @(); ... }
+$result | ConvertTo-Json -Depth 10
+```
+
+**Service Integration:**
+
+```typescript
+// Get script path from PathProvider
+const scriptPath = this.pathProvider.scriptsDir.join("blocking-processes.ps1");
+
+// Run with ProcessRunner
+const proc = this.runner.run("powershell", [
+  "-NoProfile",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-File",
+  scriptPath.toNative(),
+  "-Action",
+  "Detect",
+  "-Path",
+  targetPath.toNative(),
+]);
+
+const result = await proc.wait();
+const data = JSON.parse(result.stdout);
+```
+
+**Self-Elevation Pattern:**
+
+For operations requiring admin privileges, scripts can self-elevate:
+
+```powershell
+# Check if elevated
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    # Re-launch elevated, capture output via temp file
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    Start-Process powershell -Verb RunAs -Wait -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-Action", $Action, "-Path", $Path,
+        "-OutputFile", $tempFile
+    )
+    Get-Content $tempFile
+    Remove-Item $tempFile
+    exit
+}
+```
+
+**JSON Output Schema:**
+
+Scripts should return structured JSON for parsing:
+
+```json
+{
+  "processes": [
+    {
+      "pid": 1234,
+      "name": "node.exe",
+      "commandLine": "node server.js",
+      "files": ["index.js", "lib/util.js"],
+      "cwd": "C:\\projects\\app"
+    }
+  ],
+  "error": null
+}
 ```
 
 ---

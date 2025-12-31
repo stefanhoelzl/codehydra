@@ -54,7 +54,6 @@ export { createMockPlatformInfo } from "./platform/platform-info.test-utils";
 // Blocking process service
 export type { BlockingProcessService } from "./platform/blocking-process";
 export {
-  NoOpBlockingProcessService,
   WindowsBlockingProcessService,
   createBlockingProcessService,
   UACCancelledError,

@@ -414,6 +414,37 @@ public class BlockingProcessDetector {
         public string Cwd;
     }
 
+    // Scan all running processes for those with CWD under basePath
+    // Used when directory is empty (no files for Restart Manager to detect)
+    public static List<ProcessInfo> GetProcessesWithCwdUnder(string basePath) {
+        var result = new List<ProcessInfo>();
+        var seenPids = new HashSet<int>();
+        
+        foreach (var proc in System.Diagnostics.Process.GetProcesses()) {
+            try {
+                int pid = proc.Id;
+                if (seenPids.Contains(pid)) continue;
+                
+                string cwd = GetProcessCwd(pid);
+                if (cwd == null) continue;
+                
+                if (IsPathUnder(cwd, basePath)) {
+                    seenPids.Add(pid);
+                    result.Add(new ProcessInfo {
+                        Pid = pid,
+                        Name = proc.ProcessName
+                    });
+                }
+            } catch {
+                // Skip processes we can't access
+            } finally {
+                proc.Dispose();
+            }
+        }
+        
+        return result;
+    }
+
     public static List<ProcessInfo> GetBlockingProcesses(string basePath) {
         var result = new List<ProcessInfo>();
         uint sessionHandle = 0;
@@ -435,7 +466,12 @@ public class BlockingProcessDetector {
                 return result;
             }
 
-            if (files.Length == 0) return result;
+            // If directory is empty, Restart Manager can't detect blocking processes
+            // Fall back to scanning all processes for CWD in workspace
+            if (files.Length == 0) {
+                RmEndSession(sessionHandle);
+                return GetProcessesWithCwdUnder(basePath);
+            }
 
             rmResult = RmRegisterResources(sessionHandle, (uint)files.Length, files, 0, null, 0, null);
             if (rmResult != 0) return result;

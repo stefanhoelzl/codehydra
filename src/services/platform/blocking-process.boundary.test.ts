@@ -18,11 +18,7 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-  WindowsBlockingProcessService,
-  NoOpBlockingProcessService,
-  createBlockingProcessService,
-} from "./blocking-process";
+import { WindowsBlockingProcessService, createBlockingProcessService } from "./blocking-process";
 import { ExecaProcessRunner, type ProcessRunner, type SpawnedProcess } from "./process";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../logging";
@@ -278,10 +274,10 @@ describe.skipIf(!isWindows)("createBlockingProcessService (boundary)", () => {
 describe.skipIf(isWindows)("createBlockingProcessService (non-Windows boundary)", () => {
   const processRunner = new ExecaProcessRunner(SILENT_LOGGER);
 
-  it("returns NoOpBlockingProcessService on non-Windows", () => {
+  it("returns undefined on non-Windows", () => {
     const platformInfo = createMockPlatformInfo({ platform: process.platform as "linux" });
     const service = createBlockingProcessService(processRunner, platformInfo, SILENT_LOGGER);
 
-    expect(service).toBeInstanceOf(NoOpBlockingProcessService);
+    expect(service).toBeUndefined();
   });
 });
