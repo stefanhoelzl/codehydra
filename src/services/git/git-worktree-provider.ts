@@ -347,7 +347,10 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     // Get the branch name before removal (also checks if worktree exists)
     const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
     const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
-    const branchName = worktree?.branch;
+    // If worktree not found (retry after partial failure), extract branch from path
+    // For git worktrees, the last path segment is the branch name
+    // Note: Use ternary (not ??) to preserve null for detached HEAD workspaces
+    const branchName = worktree ? worktree.branch : workspacePath.basename;
 
     // Idempotent: skip worktree removal if not registered
     if (worktree) {

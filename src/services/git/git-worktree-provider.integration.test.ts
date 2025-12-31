@@ -428,6 +428,53 @@ describe("GitWorktreeProvider with KeepFilesService (integration)", () => {
     });
   });
 
+  describe("removeWorkspace retry scenario", () => {
+    it("deletes branch on retry when worktree already unregistered", async () => {
+      // Create workspace normally
+      const gitClient = new SimpleGitClient(SILENT_LOGGER);
+      const provider = await GitWorktreeProvider.create(
+        projectRoot,
+        gitClient,
+        workspacesDir,
+        fs,
+        worktreeLogger
+      );
+      const workspace = await provider.createWorkspace("feature-retry", "main");
+
+      // Verify branch exists
+      const git = simpleGit(projectRoot.toNative());
+      const branchesBeforeUnregister = await git.branchLocal();
+      expect(branchesBeforeUnregister.all).toContain("feature-retry");
+
+      // Simulate partial failure: unregister worktree but keep directory
+      // This is what happens when `git worktree remove` succeeds in unregistering
+      // but directory deletion fails (e.g., due to file locks on Windows)
+      await git.raw(["worktree", "remove", "--force", workspace.path.toNative()]);
+
+      // Re-create the directory to simulate leftover directory after partial failure
+      await nodeMkdir(workspace.path.toNative());
+
+      // Verify worktree is no longer registered
+      const worktrees = await git.raw(["worktree", "list", "--porcelain"]);
+      expect(worktrees).not.toContain(workspace.path.toNative());
+
+      // Verify branch still exists (wasn't deleted yet)
+      const branchesAfterUnregister = await git.branchLocal();
+      expect(branchesAfterUnregister.all).toContain("feature-retry");
+
+      // Now call removeWorkspace (retry scenario)
+      // The worktree is unregistered, but we should still delete the branch
+      const result = await provider.removeWorkspace(workspace.path, true);
+
+      expect(result.workspaceRemoved).toBe(true);
+      expect(result.baseDeleted).toBe(true);
+
+      // Verify branch was actually deleted
+      const branchesAfterRemove = await git.branchLocal();
+      expect(branchesAfterRemove.all).not.toContain("feature-retry");
+    });
+  });
+
   describe("timing verification", () => {
     it("keep files copied after worktree creation succeeds", async () => {
       await nodeWriteFile(join(projectRoot.toNative(), ".keepfiles"), ".env\n", "utf-8");
