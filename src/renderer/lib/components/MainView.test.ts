@@ -578,9 +578,11 @@ describe("MainView component", () => {
 
       render(MainView);
 
-      // Wait for mount
+      // Wait for mount and auto-open-project to complete
+      // (handleOpenProject is called when no projects exist, and it calls selectFolder)
       await waitFor(() => {
         expect(mockApi.projects.list).toHaveBeenCalled();
+        expect(mockApi.ui.selectFolder).toHaveBeenCalled();
       });
 
       // Open a dialog (need a project for create dialog)

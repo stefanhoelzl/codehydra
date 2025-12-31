@@ -129,33 +129,45 @@
 
   // Handle opening a project
   async function handleOpenProject(): Promise<void> {
-    const path = await api.ui.selectFolder();
-    if (!path) return;
-
+    // Prevent sidebar collapse while native dialog is open (Windows focus issue)
+    setDialogOpen(true);
     try {
-      await api.projects.open(path);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("Failed to open project", { path, error: message });
-      openProjectError = message;
+      const path = await api.ui.selectFolder();
+      if (!path) return;
+
+      try {
+        await api.projects.open(path);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        logger.warn("Failed to open project", { path, error: message });
+        openProjectError = message;
+      }
+    } finally {
+      setDialogOpen(false);
     }
   }
 
   // Handle retry from open project error dialog
   async function handleOpenProjectRetry(): Promise<void> {
-    const path = await api.ui.selectFolder();
-    if (!path) {
-      // User cancelled folder picker - keep dialog open with original error
-      return;
-    }
-    // Clear error and try opening the new path
-    openProjectError = null;
+    // Prevent sidebar collapse while native dialog is open (Windows focus issue)
+    setDialogOpen(true);
     try {
-      await api.projects.open(path);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("Failed to open project", { path, error: message });
-      openProjectError = message;
+      const path = await api.ui.selectFolder();
+      if (!path) {
+        // User cancelled folder picker - keep dialog open with original error
+        return;
+      }
+      // Clear error and try opening the new path
+      openProjectError = null;
+      try {
+        await api.projects.open(path);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        logger.warn("Failed to open project", { path, error: message });
+        openProjectError = message;
+      }
+    } finally {
+      setDialogOpen(false);
     }
   }
 
