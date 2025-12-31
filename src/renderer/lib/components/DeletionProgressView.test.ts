@@ -27,10 +27,12 @@ describe("DeletionProgressView", () => {
   // Mock functions with explicit type to satisfy component props
   let onRetry: ReturnType<typeof vi.fn> & (() => void);
   let onCloseAnyway: ReturnType<typeof vi.fn> & (() => void);
+  let onKillAndRetry: ReturnType<typeof vi.fn> & (() => void);
 
   beforeEach(() => {
     onRetry = vi.fn() as ReturnType<typeof vi.fn> & (() => void);
     onCloseAnyway = vi.fn() as ReturnType<typeof vi.fn> & (() => void);
+    onKillAndRetry = vi.fn() as ReturnType<typeof vi.fn> & (() => void);
   });
 
   it("should render workspace name", () => {
@@ -39,6 +41,7 @@ describe("DeletionProgressView", () => {
         progress: defaultProgress,
         onRetry,
         onCloseAnyway,
+        onKillAndRetry,
       },
     });
 
@@ -51,6 +54,7 @@ describe("DeletionProgressView", () => {
         progress: defaultProgress,
         onRetry,
         onCloseAnyway,
+        onKillAndRetry,
       },
     });
 
@@ -65,6 +69,7 @@ describe("DeletionProgressView", () => {
           progress: defaultProgress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -95,6 +100,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -121,6 +127,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -156,6 +163,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -187,6 +195,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -222,6 +231,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -248,6 +258,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -272,6 +283,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -301,6 +313,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -330,6 +343,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -363,6 +377,7 @@ describe("DeletionProgressView", () => {
           progress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -382,6 +397,7 @@ describe("DeletionProgressView", () => {
           progress: defaultProgress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -395,6 +411,7 @@ describe("DeletionProgressView", () => {
           progress: defaultProgress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -410,6 +427,7 @@ describe("DeletionProgressView", () => {
           progress: defaultProgress,
           onRetry,
           onCloseAnyway,
+          onKillAndRetry,
         },
       });
 
@@ -418,6 +436,179 @@ describe("DeletionProgressView", () => {
       expect(items[0]).toHaveTextContent("Terminating processes");
       expect(items[1]).toHaveTextContent("Closing VS Code view");
       expect(items[2]).toHaveTextContent("Removing workspace");
+    });
+  });
+
+  describe("blocking processes", () => {
+    const progressWithBlocking: DeletionProgress = {
+      ...defaultProgress,
+      operations: [
+        { id: "kill-terminals", label: "Terminating processes", status: "done" },
+        { id: "stop-server", label: "Stopping OpenCode server", status: "done" },
+        { id: "cleanup-vscode", label: "Closing VS Code view", status: "done" },
+        {
+          id: "cleanup-workspace",
+          label: "Removing workspace",
+          status: "error",
+          error: "EBUSY: resource busy or locked",
+        },
+      ],
+      completed: true,
+      hasErrors: true,
+      blockingProcesses: [
+        { pid: 1234, name: "node.exe", commandLine: "node dist/server.js", files: [], cwd: null },
+        {
+          pid: 5678,
+          name: "Code.exe",
+          commandLine: '"C:\\Program Files\\VS Code\\Code.exe" .',
+          files: [],
+          cwd: null,
+        },
+      ],
+    };
+
+    it("should show blocking processes table when blockingProcesses is non-empty", () => {
+      const { container } = render(DeletionProgressView, {
+        props: {
+          progress: progressWithBlocking,
+          onRetry,
+          onCloseAnyway,
+          onKillAndRetry,
+        },
+      });
+
+      // Check table exists
+      const table = container.querySelector("table.process-table");
+      expect(table).toBeInTheDocument();
+
+      // Check processes are rendered
+      expect(screen.getByText("1234")).toBeInTheDocument();
+      expect(screen.getByText("node.exe")).toBeInTheDocument();
+      expect(screen.getByText("5678")).toBeInTheDocument();
+      expect(screen.getByText("Code.exe")).toBeInTheDocument();
+    });
+
+    it("should have accessible caption for process table", () => {
+      const { container } = render(DeletionProgressView, {
+        props: {
+          progress: progressWithBlocking,
+          onRetry,
+          onCloseAnyway,
+          onKillAndRetry,
+        },
+      });
+
+      const caption = container.querySelector("caption");
+      expect(caption).toBeInTheDocument();
+      expect(caption).toHaveTextContent("Processes blocking workspace deletion");
+      expect(caption).toHaveClass("ch-visually-hidden");
+    });
+
+    it("should not show table when blockingProcesses is empty", () => {
+      const progressEmpty: DeletionProgress = {
+        ...progressWithBlocking,
+        blockingProcesses: [],
+      };
+
+      const { container } = render(DeletionProgressView, {
+        props: {
+          progress: progressEmpty,
+          onRetry,
+          onCloseAnyway,
+          onKillAndRetry,
+        },
+      });
+
+      expect(container.querySelector("table.process-table")).not.toBeInTheDocument();
+    });
+
+    it("should not show table when blockingProcesses is undefined", () => {
+      const progressUndefined: DeletionProgress = {
+        ...defaultProgress,
+        operations: [
+          { id: "kill-terminals", label: "Terminating processes", status: "done" },
+          { id: "cleanup-vscode", label: "Closing VS Code view", status: "done" },
+          {
+            id: "cleanup-workspace",
+            label: "Removing workspace",
+            status: "error",
+            error: "Failed",
+          },
+        ],
+        completed: true,
+        hasErrors: true,
+      };
+
+      const { container } = render(DeletionProgressView, {
+        props: {
+          progress: progressUndefined,
+          onRetry,
+          onCloseAnyway,
+          onKillAndRetry,
+        },
+      });
+
+      expect(container.querySelector("table.process-table")).not.toBeInTheDocument();
+    });
+
+    it("should show Kill Processes & Retry button when blocking processes exist", () => {
+      render(DeletionProgressView, {
+        props: {
+          progress: progressWithBlocking,
+          onRetry,
+          onCloseAnyway,
+          onKillAndRetry,
+        },
+      });
+
+      expect(screen.getByText("Kill Processes & Retry")).toBeInTheDocument();
+    });
+
+    it("should call onKillAndRetry when Kill Processes & Retry button is clicked", async () => {
+      render(DeletionProgressView, {
+        props: {
+          progress: progressWithBlocking,
+          onRetry,
+          onCloseAnyway,
+          onKillAndRetry,
+        },
+      });
+
+      const killButton = screen.getByText("Kill Processes & Retry").closest("vscode-button");
+      expect(killButton).toBeInTheDocument();
+
+      await userEvent.click(killButton!);
+
+      expect(onKillAndRetry).toHaveBeenCalledOnce();
+    });
+
+    it("should not show Kill Processes & Retry button when no blocking processes", () => {
+      const progressNoBlocking: DeletionProgress = {
+        ...defaultProgress,
+        operations: [
+          { id: "kill-terminals", label: "Terminating processes", status: "done" },
+          { id: "cleanup-vscode", label: "Closing VS Code view", status: "done" },
+          {
+            id: "cleanup-workspace",
+            label: "Removing workspace",
+            status: "error",
+            error: "git worktree remove failed",
+          },
+        ],
+        completed: true,
+        hasErrors: true,
+      };
+
+      render(DeletionProgressView, {
+        props: {
+          progress: progressNoBlocking,
+          onRetry,
+          onCloseAnyway,
+          onKillAndRetry,
+        },
+      });
+
+      expect(screen.queryByText("Kill Processes & Retry")).not.toBeInTheDocument();
     });
   });
 });

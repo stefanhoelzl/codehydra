@@ -13,6 +13,8 @@ import {
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
   ElectronLogService,
+  createBlockingProcessService,
+  type BlockingProcessService,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -654,12 +656,24 @@ async function bootstrap(): Promise<void> {
     // Core module deps - factory that captures module-level appState
     // Called when bootstrapResult.startServices() runs in startServices()
     coreDepsFn: (): CoreModuleDeps => {
-      if (!appState || !viewManager) {
-        throw new Error("Core deps not ready - appState/viewManager not initialized");
+      if (!appState || !viewManager || !processRunner) {
+        throw new Error("Core deps not ready - appState/viewManager/processRunner not initialized");
       }
+
+      // Create BlockingProcessService for Windows file handle detection
+      // Uses "process" logger since blocking process detection is process management
+      // Script path is resolved from pathProvider.scriptsDir
+      const blockingProcessService: BlockingProcessService = createBlockingProcessService(
+        processRunner,
+        platformInfo,
+        loggingService.createLogger("process"),
+        nodePath.join(pathProvider.scriptsDir.toNative(), "blocking-processes.ps1")
+      );
+
       const baseDeps = {
         appState,
         viewManager,
+        blockingProcessService,
         emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => {
           try {
             viewManagerRef

@@ -20,6 +20,7 @@ export interface MockPathProviderOptions {
   setupMarkerPath?: Path | string;
   electronDataDir?: Path | string;
   vscodeAssetsDir?: Path | string;
+  scriptsDir?: Path | string;
   appIconPath?: Path | string;
   binDir?: Path | string;
   codeServerDir?: Path | string;
@@ -79,6 +80,7 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     setupMarkerPath: ensurePath(overrides?.setupMarkerPath, "/test/app-data/.setup-completed"),
     electronDataDir: ensurePath(overrides?.electronDataDir, "/test/app-data/electron"),
     vscodeAssetsDir: ensurePath(overrides?.vscodeAssetsDir, "/mock/assets"),
+    scriptsDir: ensurePath(overrides?.scriptsDir, "/mock/assets/scripts"),
     appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
     binDir: ensurePath(overrides?.binDir, "/test/app-data/bin"),
     codeServerDir,

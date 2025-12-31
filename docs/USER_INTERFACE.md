@@ -575,6 +575,40 @@ If deletion fails, a warning icon appears. The [×] button remains hidden. Click
 │ └─ 🌿 feature    ⚠     │ ← Warning icon (red), [×] hidden
 ```
 
+**Deletion failed with blocking processes (Windows only):**
+
+When deletion fails because files are locked by other processes, a table shows the blocking processes:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  ⚠ Error: Directory in use by other processes                         │
+│                                                                        │
+│ ┌───────┬────────────┬────────────────────────────────────────────────┐│
+│ │ PID   │ Process    │ Command                                        ││
+│ ├───────┼────────────┼────────────────────────────────────────────────┤│
+│ │ 1234  │ node.exe   │ node dist/server.js                            ││
+│ │ 5678  │ Code.exe   │ "C:\Program Files\VS Code\Code.exe" .          ││
+│ └───────┴────────────┴────────────────────────────────────────────────┘│
+│                                                                        │
+│ [Kill Processes & Retry]  [Retry]  [Close Anyway]                     │
+│         ↑                                                              │
+│   danger button                                                        │
+│   (red background)                                                     │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**Button behavior:**
+
+| Button                 | Action                                                           |
+| ---------------------- | ---------------------------------------------------------------- |
+| Kill Processes & Retry | Kills listed processes via taskkill, then retries deletion       |
+| Retry                  | Retries deletion without killing processes (in case they exited) |
+| Close Anyway           | Closes the deletion dialog, leaving workspace in failed state    |
+
+All buttons are disabled during operation. The clicked button shows a spinner.
+
+**Note:** This feature is Windows-only. On Linux/macOS, file locking works differently and blocking processes are not detected.
+
 **Shortcut overlay during deletion:**
 
 When the active workspace is being deleted, the Del shortcut hint is hidden in the overlay, and Alt+X+Del does nothing.

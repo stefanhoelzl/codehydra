@@ -24,6 +24,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.setupMarkerPath.toString()).toBe("/test/app-data/.setup-completed");
     expect(pathProvider.electronDataDir.toString()).toBe("/test/app-data/electron");
     expect(pathProvider.vscodeAssetsDir.toString()).toBe("/mock/assets");
+    expect(pathProvider.scriptsDir.toString()).toBe("/mock/assets/scripts");
     expect(pathProvider.appIconPath.toString()).toBe("/test/resources/icon.png");
     expect(pathProvider.binDir.toString()).toBe("/test/app-data/bin");
     expect(pathProvider.codeServerDir.toString()).toBe(
@@ -73,6 +74,7 @@ describe("createMockPathProvider", () => {
       setupMarkerPath: "/f",
       electronDataDir: "/g",
       vscodeAssetsDir: "/h",
+      scriptsDir: "/h/scripts",
       appIconPath: "/h/icon.png",
       binDir: "/i",
       codeServerDir: "/j",
@@ -90,6 +92,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.setupMarkerPath.toString()).toBe("/f");
     expect(pathProvider.electronDataDir.toString()).toBe("/g");
     expect(pathProvider.vscodeAssetsDir.toString()).toBe("/h");
+    expect(pathProvider.scriptsDir.toString()).toBe("/h/scripts");
     expect(pathProvider.appIconPath.toString()).toBe("/h/icon.png");
     expect(pathProvider.binDir.toString()).toBe("/i");
     expect(pathProvider.codeServerDir.toString()).toBe("/j");
@@ -134,6 +137,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.setupMarkerPath).toBeInstanceOf(Path);
     expect(pathProvider.electronDataDir).toBeInstanceOf(Path);
     expect(pathProvider.vscodeAssetsDir).toBeInstanceOf(Path);
+    expect(pathProvider.scriptsDir).toBeInstanceOf(Path);
     expect(pathProvider.appIconPath).toBeInstanceOf(Path);
     expect(pathProvider.binDir).toBeInstanceOf(Path);
     expect(pathProvider.codeServerDir).toBeInstanceOf(Path);
@@ -200,13 +204,14 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.bundledNodePath.toString()).not.toMatch(/\.exe$/);
     });
 
-    it("returns vscodeAssetsDir based on appPath", () => {
+    it("returns vscodeAssetsDir and scriptsDir based on appPath", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/dev/project" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       // Path normalizes to POSIX format
       expect(pathProvider.vscodeAssetsDir.toString()).toBe("/dev/project/out/main/assets");
+      expect(pathProvider.scriptsDir.toString()).toBe("/dev/project/out/main/assets/scripts");
     });
 
     it("ignores platform in development mode", () => {

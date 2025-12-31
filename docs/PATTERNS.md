@@ -922,13 +922,58 @@ class MyService {
 
 **Test utils location:**
 
-| Interface         | Mock Factory                  | Location                               |
-| ----------------- | ----------------------------- | -------------------------------------- |
-| `FileSystemLayer` | `createMockFileSystemLayer()` | `platform/filesystem.test-utils.ts`    |
-| `HttpClient`      | `createMockHttpClient()`      | `platform/network.test-utils.ts`       |
-| `PortManager`     | `createMockPortManager()`     | `platform/network.test-utils.ts`       |
-| `ProcessRunner`   | `createMockProcessRunner()`   | `platform/process.test-utils.ts`       |
-| `PathProvider`    | `createMockPathProvider()`    | `platform/path-provider.test-utils.ts` |
+| Interface                | Mock Factory                         | Location                                  |
+| ------------------------ | ------------------------------------ | ----------------------------------------- |
+| `FileSystemLayer`        | `createMockFileSystemLayer()`        | `platform/filesystem.test-utils.ts`       |
+| `HttpClient`             | `createMockHttpClient()`             | `platform/network.test-utils.ts`          |
+| `PortManager`            | `createMockPortManager()`            | `platform/network.test-utils.ts`          |
+| `ProcessRunner`          | `createMockProcessRunner()`          | `platform/process.test-utils.ts`          |
+| `PathProvider`           | `createMockPathProvider()`           | `platform/path-provider.test-utils.ts`    |
+| `BlockingProcessService` | `createMockBlockingProcessService()` | `platform/blocking-process.test-utils.ts` |
+
+### BlockingProcessService Pattern
+
+`BlockingProcessService` detects and kills processes that block file operations (Windows-only):
+
+| Method                  | Description                              |
+| ----------------------- | ---------------------------------------- |
+| `getBlockingProcesses`  | Detect processes with handles on path    |
+| `killBlockingProcesses` | Kill all blocking processes via taskkill |
+
+```typescript
+// Factory creates platform-specific implementation
+const blockingProcessService = createBlockingProcessService(processRunner, platformInfo, logger);
+
+// Windows: Uses Restart Manager API via PowerShell + taskkill
+// Other platforms: NoOp implementation (returns empty arrays)
+```
+
+**Usage in Deletion Flow:**
+
+```typescript
+// In CoreModule.executeDeletion()
+if (killBlocking && platformInfo.isWindows) {
+  await blockingProcessService.killBlockingProcesses(workspacePath);
+}
+
+// On EBUSY/EACCES/EPERM error
+const blockingProcesses = await blockingProcessService.getBlockingProcesses(workspacePath);
+emitProgress({ step: "cleanup-workspace", blockingProcesses, hasErrors: true });
+```
+
+**Testing with Mocks:**
+
+```typescript
+import { createMockBlockingProcessService } from "../platform/blocking-process.test-utils";
+
+// Return specific blocking processes
+const mockService = createMockBlockingProcessService({
+  getBlockingProcesses: [{ pid: 1234, name: "node.exe", commandLine: "node server.js" }],
+});
+
+// Inject into CoreModule
+const module = new CoreModule(api, { ...deps, blockingProcessService: mockService });
+```
 
 ---
 

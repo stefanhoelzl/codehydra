@@ -38,6 +38,9 @@ export interface PathProvider {
   /** Directory for VS Code assets bundled with the app: `<appPath>/out/main/assets/` */
   readonly vscodeAssetsDir: Path;
 
+  /** Directory for script assets: `<appPath>/out/main/assets/scripts/` */
+  readonly scriptsDir: Path;
+
   /** Path to the application icon: `resources/icon.png` */
   readonly appIconPath: Path;
 
@@ -90,6 +93,7 @@ export class DefaultPathProvider implements PathProvider {
   readonly setupMarkerPath: Path;
   readonly electronDataDir: Path;
   readonly vscodeAssetsDir: Path;
+  readonly scriptsDir: Path;
   readonly appIconPath: Path;
   readonly binDir: Path;
   readonly codeServerDir: Path;
@@ -110,6 +114,7 @@ export class DefaultPathProvider implements PathProvider {
     this.electronDataDir = new Path(this.dataRootDir, "electron");
     // Assets are bundled at out/main/assets/ (same path in dev and prod)
     this.vscodeAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets");
+    this.scriptsDir = new Path(buildInfo.appPath, "out", "main", "assets", "scripts");
     this.appIconPath = this.computeAppIconPath(buildInfo);
     this.binDir = new Path(this.dataRootDir, "bin");
 

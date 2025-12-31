@@ -13,12 +13,45 @@
     progress: DeletionProgress;
     onRetry: () => void;
     onCloseAnyway: () => void;
+    onKillAndRetry: () => void;
   }
 
-  const { progress, onRetry, onCloseAnyway }: Props = $props();
+  const { progress, onRetry, onCloseAnyway, onKillAndRetry }: Props = $props();
+
+  // Track which button was clicked for spinner
+  let activeButton = $state<"retry" | "kill" | "close" | null>(null);
+
+  // Reference to Retry button for focus management
+  let retryButtonRef = $state<HTMLElement | null>(null);
+
+  // Derived: is any operation in progress?
+  const isOperating = $derived(activeButton !== null);
 
   // Find the first error message from operations
   const firstError = $derived(progress.operations.find((op) => op.error)?.error ?? null);
+
+  // Check if we have blocking processes to show
+  const hasBlockingProcesses = $derived(
+    progress.blockingProcesses && progress.blockingProcesses.length > 0
+  );
+
+  // Reset activeButton when a new deletion cycle starts (progress.completed becomes false)
+  // This allows buttons to be re-enabled when the user clicks retry and new progress arrives
+  $effect(() => {
+    if (!progress.completed && activeButton !== null) {
+      activeButton = null;
+    }
+  });
+
+  // Focus Retry button when blocking processes error state appears (for accessibility)
+  $effect(() => {
+    if (progress.completed && progress.hasErrors && hasBlockingProcesses && retryButtonRef) {
+      // Use requestAnimationFrame to ensure button is rendered before focusing
+      requestAnimationFrame(() => {
+        retryButtonRef?.focus();
+      });
+    }
+  });
 
   // Get status icon name for an operation
   function getStatusIconName(status: DeletionOperationStatus): string | null {
@@ -46,6 +79,22 @@
       case "error":
         return "Error";
     }
+  }
+
+  // Handle button clicks
+  function handleRetry() {
+    activeButton = "retry";
+    onRetry();
+  }
+
+  function handleKillAndRetry() {
+    activeButton = "kill";
+    onKillAndRetry();
+  }
+
+  function handleCloseAnyway() {
+    activeButton = "close";
+    onCloseAnyway();
   }
 </script>
 
@@ -86,12 +135,63 @@
       </div>
     {/if}
 
+    {#if hasBlockingProcesses}
+      <div class="blocking-processes">
+        <table class="process-table">
+          <caption class="ch-visually-hidden">Processes blocking workspace deletion</caption>
+          <thead>
+            <tr>
+              <th scope="col">PID</th>
+              <th scope="col">Process</th>
+              <th scope="col">Command</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each progress.blockingProcesses ?? [] as proc (proc.pid)}
+              <tr>
+                <td class="pid-cell">{proc.pid}</td>
+                <td class="name-cell">{proc.name}</td>
+                <td class="command-cell" title={proc.commandLine}>{proc.commandLine}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+
     {#if progress.completed && progress.hasErrors}
       <div class="action-buttons">
+        {#if hasBlockingProcesses}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <vscode-button class="danger-button" disabled={isOperating} onclick={handleKillAndRetry}>
+            {#if activeButton === "kill"}
+              <Icon name="loading" spin /> Killing...
+            {:else}
+              Kill Processes & Retry
+            {/if}
+          </vscode-button>
+        {/if}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <vscode-button onclick={onRetry}>Retry</vscode-button>
+        <vscode-button
+          bind:this={retryButtonRef}
+          secondary={true}
+          disabled={isOperating}
+          onclick={handleRetry}
+        >
+          {#if activeButton === "retry"}
+            <Icon name="loading" spin /> Retrying...
+          {:else}
+            Retry
+          {/if}
+        </vscode-button>
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <vscode-button secondary={true} onclick={onCloseAnyway}>Close Anyway</vscode-button>
+        <vscode-button secondary={true} disabled={isOperating} onclick={handleCloseAnyway}>
+          {#if activeButton === "close"}
+            <Icon name="loading" spin /> Closing...
+          {:else}
+            Close Anyway
+          {/if}
+        </vscode-button>
       </div>
     {/if}
   </div>
@@ -228,5 +328,65 @@
     gap: 12px;
     justify-content: center;
     margin-top: 20px;
+  }
+
+  .blocking-processes {
+    margin-top: 16px;
+    border: 1px solid var(--ch-border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .process-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+
+  .process-table th,
+  .process-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--ch-border);
+  }
+
+  .process-table th {
+    background: var(--ch-header-bg, rgba(255, 255, 255, 0.04));
+    font-weight: 500;
+    color: var(--ch-foreground);
+  }
+
+  .process-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .pid-cell {
+    width: 60px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--ch-foreground);
+    opacity: 0.8;
+  }
+
+  .name-cell {
+    width: 100px;
+    color: var(--ch-foreground);
+  }
+
+  .command-cell {
+    max-width: 50ch;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ch-foreground);
+    opacity: 0.8;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+  }
+
+  /* Danger button styling */
+  .danger-button {
+    --vscode-button-background: var(--ch-danger);
+    --vscode-button-hoverBackground: var(--ch-danger-hover, #c42b1c);
+    --vscode-button-foreground: var(--ch-background);
   }
 </style>

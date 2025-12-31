@@ -213,6 +213,33 @@ export type SetupResult =
 export type AppState = "setup" | "ready";
 
 // =============================================================================
+// Blocking Process Types
+// =============================================================================
+
+/**
+ * Information about a process blocking workspace deletion.
+ * Used on Windows to identify processes holding file handles.
+ */
+export interface BlockingProcess {
+  /** Process ID */
+  readonly pid: number;
+  /** Process name (e.g., "node.exe", "Code.exe") */
+  readonly name: string;
+  /** Full command line that started the process */
+  readonly commandLine: string;
+  /** Files locked by this process, relative to workspace (max 20) */
+  readonly files: readonly string[];
+  /** Current working directory relative to workspace, or null if CWD is outside workspace */
+  readonly cwd: string | null;
+}
+
+/**
+ * Unblock options for workspace removal.
+ */
+export const UNBLOCK_OPTIONS = ["kill", "close", false] as const;
+export type UnblockOption = (typeof UNBLOCK_OPTIONS)[number];
+
+// =============================================================================
 // Deletion Progress Types
 // =============================================================================
 
@@ -252,4 +279,9 @@ export interface DeletionProgress {
   readonly operations: readonly DeletionOperation[];
   readonly completed: boolean;
   readonly hasErrors: boolean;
+  /**
+   * Processes blocking workspace deletion (Windows only).
+   * Present when cleanup-workspace fails with EBUSY/EACCES/EPERM.
+   */
+  readonly blockingProcesses?: readonly BlockingProcess[];
 }

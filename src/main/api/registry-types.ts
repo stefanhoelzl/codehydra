@@ -48,6 +48,8 @@ export interface WorkspaceRemovePayload {
   readonly keepBranch?: boolean;
   /** If true, don't switch away from this workspace when it's active. Used for retry. */
   readonly skipSwitch?: boolean;
+  /** Unblock option: "kill" to kill processes, "close" to close handles (elevated), false for none. */
+  readonly unblock?: "kill" | "close" | false;
 }
 
 /** workspaces.forceRemove, workspaces.get, workspaces.getStatus,

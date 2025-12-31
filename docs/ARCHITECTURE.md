@@ -256,6 +256,8 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 
 **Resilient Deletion**: When `git worktree remove --force` fails but the worktree was successfully unregistered (e.g., due to locked files in code-server), the deletion is considered successful. The orphaned directory will be cleaned up on next startup.
 
+**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), `BlockingProcessService` detects processes holding file handles using Windows Restart Manager API. The UI shows a table of blocking processes with a "Kill Processes & Retry" button. On non-Windows platforms, this service is a no-op (returns empty arrays).
+
 **Startup Cleanup**: On project open, `cleanupOrphanedWorkspaces()` runs non-blocking to remove directories in the workspaces folder that are not registered with git. This handles cases where previous deletions partially failed.
 
 **Security Measures**:
@@ -364,16 +366,17 @@ All external system access goes through abstraction interfaces defined in `src/s
 
 **CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
 
-| External System    | Interface         | Implementation           | Test Mock Factory             |
-| ------------------ | ----------------- | ------------------------ | ----------------------------- |
-| Filesystem         | `FileSystemLayer` | `DefaultFileSystemLayer` | `createMockFileSystemLayer()` |
-| HTTP requests      | `HttpClient`      | `DefaultNetworkLayer`    | `createMockHttpClient()`      |
-| Port operations    | `PortManager`     | `DefaultNetworkLayer`    | `createMockPortManager()`     |
-| Process spawning   | `ProcessRunner`   | `ExecaProcessRunner`     | `createMockProcessRunner()`   |
-| Build info         | `BuildInfo`       | `ElectronBuildInfo`      | `createMockBuildInfo()`       |
-| Platform info      | `PlatformInfo`    | `NodePlatformInfo`       | `createMockPlatformInfo()`    |
-| Path resolution    | `PathProvider`    | `DefaultPathProvider`    | `createMockPathProvider()`    |
-| Path normalization | `Path` (class)    | Self-normalizing object  | Use `Path` directly           |
+| External System    | Interface                | Implementation                  | Test Mock Factory                    |
+| ------------------ | ------------------------ | ------------------------------- | ------------------------------------ |
+| Filesystem         | `FileSystemLayer`        | `DefaultFileSystemLayer`        | `createMockFileSystemLayer()`        |
+| HTTP requests      | `HttpClient`             | `DefaultNetworkLayer`           | `createMockHttpClient()`             |
+| Port operations    | `PortManager`            | `DefaultNetworkLayer`           | `createMockPortManager()`            |
+| Process spawning   | `ProcessRunner`          | `ExecaProcessRunner`            | `createMockProcessRunner()`          |
+| Build info         | `BuildInfo`              | `ElectronBuildInfo`             | `createMockBuildInfo()`              |
+| Platform info      | `PlatformInfo`           | `NodePlatformInfo`              | `createMockPlatformInfo()`           |
+| Path resolution    | `PathProvider`           | `DefaultPathProvider`           | `createMockPathProvider()`           |
+| Path normalization | `Path` (class)           | Self-normalizing object         | Use `Path` directly                  |
+| Blocking processes | `BlockingProcessService` | `WindowsBlockingProcessService` | `createMockBlockingProcessService()` |
 
 **Path Class:**
 
@@ -403,11 +406,12 @@ See [Path Handling Patterns](PATTERNS.md#path-handling-patterns) for detailed ex
 
 **Boundary test files:**
 
-| Abstraction                  | Boundary Test                 |
-| ---------------------------- | ----------------------------- |
-| `FileSystemLayer`            | `filesystem.boundary.test.ts` |
-| `HttpClient` + `PortManager` | `network.boundary.test.ts`    |
-| `ProcessRunner`              | `process.boundary.test.ts`    |
+| Abstraction                  | Boundary Test                       |
+| ---------------------------- | ----------------------------------- |
+| `FileSystemLayer`            | `filesystem.boundary.test.ts`       |
+| `HttpClient` + `PortManager` | `network.boundary.test.ts`          |
+| `ProcessRunner`              | `process.boundary.test.ts`          |
+| `BlockingProcessService`     | `blocking-process.boundary.test.ts` |
 
 ### NetworkLayer Pattern
 
