@@ -7,6 +7,11 @@ This directory contains the source code for VS Code extensions used by CodeHydra
 ```
 extensions/
 ├── external.json             # External extensions (marketplace IDs)
+├── dictation/                # Voice-to-text dictation extension
+│   ├── src/                  # TypeScript source
+│   ├── package.json          # Extension manifest
+│   ├── tsconfig.json         # TypeScript configuration
+│   └── esbuild.config.js     # Build configuration
 ├── sidekick/                 # Custom sidekick extension source
 │   ├── package.json          # Extension manifest
 │   ├── extension.js          # Extension entry point

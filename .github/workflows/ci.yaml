@@ -33,6 +33,14 @@ jobs:
 
       - run: npm ci --force
 
+      - name: Install extension dependencies
+        shell: bash
+        run: |
+          for dir in extensions/*/; do
+            echo "Installing $dir"
+            (cd "$dir" && npm ci --force)
+          done
+
       - run: npm run validate
       - run: npm run test:boundary
 

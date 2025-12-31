@@ -12,8 +12,8 @@ const gitignorePath = path.resolve(__dirname, ".gitignore");
 
 export default tseslint.config(
   includeIgnoreFile(gitignorePath),
-  // Ignore VS Code extensions - processed by vsce, not our build
-  { ignores: ["extensions/"] },
+  // Ignore VS Code extensions node_modules and dist, but lint source
+  { ignores: ["extensions/**/node_modules/", "extensions/**/dist/"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...svelte.configs.recommended,
@@ -45,6 +45,23 @@ export default tseslint.config(
     files: ["**/*.cjs"],
     rules: {
       "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+  // VS Code extensions use CommonJS for compatibility
+  {
+    files: ["extensions/**/*.js"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+  // VS Code extensions - allow underscore-prefixed unused vars (interface implementations)
+  {
+    files: ["extensions/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
     },
   }
 );

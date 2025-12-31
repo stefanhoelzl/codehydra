@@ -1,0 +1,107 @@
+{
+  "name": "codehydra-dictation",
+  "displayName": "CodeHydra Dictation",
+  "description": "Voice-to-text dictation for VS Code",
+  "version": "0.1.0",
+  "publisher": "codehydra",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stefanhoelzl/codehydra"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "node esbuild.config.js"
+  },
+  "dependencies": {
+    "assemblyai": "^4.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.0.0"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "codehydra-dictation",
+          "title": "Dictation",
+          "icon": "$(mic)"
+        }
+      ]
+    },
+    "views": {
+      "codehydra-dictation": [
+        {
+          "type": "webview",
+          "id": "codehydra.dictation.audioCapture",
+          "name": "Audio Capture",
+          "visibility": "hidden"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codehydra.dictation.toggle",
+        "title": "Dictation: Toggle Recording"
+      },
+      {
+        "command": "codehydra.dictation.start",
+        "title": "Dictation: Start Recording"
+      },
+      {
+        "command": "codehydra.dictation.stop",
+        "title": "Dictation: Stop Recording"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "codehydra.dictation.toggle",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d"
+      },
+      {
+        "command": "codehydra.dictation.stop",
+        "key": "escape",
+        "when": "codehydra.dictation.isRecording"
+      }
+    ],
+    "configuration": {
+      "title": "Dictation",
+      "properties": {
+        "codehydra.dictation.provider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "assemblyai"
+          ],
+          "default": "auto",
+          "description": "Speech-to-text provider. 'auto' selects the first provider with a configured API key."
+        },
+        "codehydra.dictation.assemblyai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "AssemblyAI API key for speech-to-text. Get one at https://www.assemblyai.com/"
+        },
+        "codehydra.dictation.maxDuration": {
+          "type": "number",
+          "default": 60,
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Maximum recording duration in seconds. Recording auto-stops when reached to limit costs."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "terminal.integrated.commandsToSkipShell": [
+        "codehydra.dictation.toggle"
+      ]
+    }
+  }
+}

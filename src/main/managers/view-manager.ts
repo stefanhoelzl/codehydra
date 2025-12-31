@@ -289,8 +289,13 @@ export class ViewManager implements IViewManager {
 
     // Configure permission handler
     view.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
-      // Allow clipboard access, deny everything else
-      if (permission === "clipboard-read" || permission === "clipboard-sanitized-write") {
+      // Allow clipboard and microphone access, deny everything else
+      // Note: "media" permission covers both microphone and camera via getUserMedia()
+      if (
+        permission === "clipboard-read" ||
+        permission === "clipboard-sanitized-write" ||
+        permission === "media"
+      ) {
         callback(true);
       } else {
         callback(false);

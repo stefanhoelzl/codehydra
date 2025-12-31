@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Audio Capture</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 8px;
+        font-family: var(--vscode-font-family, sans-serif);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="log"
+      style="display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto"
+    ></div>
+    <div id="status" role="status" aria-live="polite" style="display: none"></div>
+
+    <script>
+      // Audio capture state
+      let audioContext = null;
+      let mediaStream = null;
+      let workletNode = null;
+      let isRecording = false;
+
+      // VS Code API
+      const vscode = acquireVsCodeApi();
+
+      // Log colors
+      const logColors = {
+        loading: "#e2c08d", // yellow/warning
+        started: "#89d185", // green/success
+        stopped: "#888888", // gray
+        error: "#f48771", // red/error
+      };
+
+      /**
+       * Add entry to log
+       */
+      function addLogEntry(level, message) {
+        const log = document.getElementById("log");
+        const entry = document.createElement("div");
+        entry.style.display = "flex";
+        entry.style.alignItems = "center";
+        entry.style.gap = "8px";
+
+        const dot = document.createElement("span");
+        dot.textContent = "●";
+        dot.style.color = logColors[level] || "#888";
+
+        const time = document.createElement("span");
+        time.style.color = "#888";
+        time.style.fontSize = "11px";
+        const now = new Date();
+        time.textContent = now.toLocaleTimeString();
+
+        const msg = document.createElement("span");
+        msg.textContent = message;
+        msg.style.color = level === "error" ? logColors.error : "var(--vscode-foreground, #ccc)";
+
+        entry.appendChild(dot);
+        entry.appendChild(time);
+        entry.appendChild(msg);
+        log.appendChild(entry);
+
+        // Keep only last 10 entries
+        while (log.children.length > 10) {
+          log.removeChild(log.firstChild);
+        }
+
+        // Scroll to bottom
+        log.scrollTop = log.scrollHeight;
+      }
+
+      /**
+       * Send message to extension
+       */
+      function sendMessage(message) {
+        vscode.postMessage(message);
+      }
+
+      /**
+       * Map MediaDevices error to error code
+       */
+      function mapMediaError(error) {
+        if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+          return { code: "PERMISSION_DENIED", message: "Microphone access denied" };
+        }
+        if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+          return { code: "NOT_FOUND", message: "No microphone found" };
+        }
+        if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+          return { code: "NOT_READABLE", message: "Microphone is not readable" };
+        }
+        return { code: "UNKNOWN", message: error.message || "Unknown error" };
+      }
+
+      /**
+       * Start audio capture
+       */
+      async function startCapture() {
+        if (isRecording) {
+          return;
+        }
+
+        try {
+          // Request microphone access
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+
+          // Create audio context
+          audioContext = new AudioContext();
+
+          // Create source node from microphone stream
+          const sourceNode = audioContext.createMediaStreamSource(mediaStream);
+
+          // Create AudioWorklet for processing
+          // Load processor from data URL (works in VS Code webviews)
+          const processorCode = `{{processorCode}}`;
+          const dataUrl = "data:application/javascript," + encodeURIComponent(processorCode);
+          await audioContext.audioWorklet.addModule(dataUrl);
+
+          workletNode = new AudioWorkletNode(audioContext, "audio-processor");
+
+          // Handle audio data from worklet
+          workletNode.port.onmessage = (event) => {
+            if (event.data.type === "audio") {
+              sendMessage({ type: "audio", data: event.data.data });
+            }
+          };
+
+          // Connect nodes
+          sourceNode.connect(workletNode);
+          // Don't connect to destination (we don't want to hear ourselves)
+
+          isRecording = true;
+          sendMessage({ type: "started" });
+        } catch (error) {
+          const mapped = mapMediaError(error);
+          sendMessage({ type: "error", code: mapped.code, message: mapped.message });
+          stopCapture();
+        }
+      }
+
+      /**
+       * Stop audio capture
+       */
+      function stopCapture() {
+        isRecording = false;
+
+        // Disconnect and cleanup worklet
+        if (workletNode) {
+          workletNode.disconnect();
+          workletNode = null;
+        }
+
+        // Stop all tracks in the media stream
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((track) => track.stop());
+          mediaStream = null;
+        }
+
+        // Close audio context
+        if (audioContext) {
+          audioContext.close().catch(() => {
+            // Ignore close errors
+          });
+          audioContext = null;
+        }
+
+        sendMessage({ type: "stopped" });
+      }
+
+      // Listen for messages from extension
+      window.addEventListener("message", (event) => {
+        const message = event.data;
+        switch (message.type) {
+          case "start":
+            startCapture();
+            break;
+          case "stop":
+            stopCapture();
+            break;
+          case "log":
+            addLogEntry(message.level, message.message);
+            break;
+        }
+      });
+    </script>
+  </body>
+</html>

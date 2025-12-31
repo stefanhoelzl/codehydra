@@ -58,6 +58,17 @@ export default defineConfig({
           pool: "forks",
         },
       },
+      {
+        // Extension tests: VS Code extensions (mocked vscode module)
+        extends: true,
+        test: {
+          name: "extensions",
+          environment: "node",
+          include: ["extensions/**/*.{test,spec}.{js,ts}"],
+          setupFiles: ["./src/test/setup.ts"],
+          pool: "forks",
+        },
+      },
     ],
   },
   resolve: {
