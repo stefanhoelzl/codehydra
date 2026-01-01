@@ -113,6 +113,18 @@ path1 === path2;                     // ❌ Fails for "C:\foo" vs "C:/foo"
 
 **Full details**: See [Path Handling Patterns](docs/PATTERNS.md#path-handling-patterns) for code examples.
 
+### Ask When Uncertain
+
+**NEVER make decisions based on assumptions without proof.**
+
+When debugging or analyzing root causes:
+
+1. If multiple plausible causes exist, ask the user before proceeding
+2. If you cannot reproduce or verify the issue, explain what you found and ask for guidance
+3. State your hypothesis clearly and ask for confirmation before making changes
+
+This also applies to other situations where you're uncertain - ask rather than guess.
+
 ---
 
 ## Quick Start
