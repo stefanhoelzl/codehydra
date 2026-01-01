@@ -345,11 +345,14 @@ Single @general invocation that handles commit, push, CI, merge, and cleanup. On
 ```
 Task(subagent_type="general",
      description="Commit, push, CI, merge, cleanup",
-     prompt="Complete the feature: commit, push to CI, merge to main, cleanup.
+     prompt="Execute the CI/merge workflow. You are a BUILD AUTOMATION agent, NOT a problem solver.
+
+**CRITICAL CONSTRAINT**: If CI fails or times out, you MUST return immediately with a report. 
+Do NOT attempt to fix, diagnose, or analyze failures - that is the feature agent's job.
 
 Plan file: planning/<FEATURE_NAME>.md
 
-Execute these steps in order, only stopping on CI_TIMEOUT or CI_FAILED.
+Execute these steps in order, stopping IMMEDIATELY on CI_TIMEOUT or CI_FAILED.
 
 ## 0. Detect target branch
 - Get default branch: git symbolic-ref refs/remotes/origin/HEAD | sed 's|refs/remotes/origin/||'
@@ -400,9 +403,15 @@ Execute these steps in order, only stopping on CI_TIMEOUT or CI_FAILED.
   - If status == "completed" AND conclusion == "success": CI_PASSED
   - If status == "completed" AND conclusion != "success": CI_FAILED
 
-If TIMEOUT (10 min elapsed, no completed run for HEAD): Report CI_TIMEOUT and stop
-If FAILED: Report CI_FAILED with error details and stop
+If TIMEOUT (10 min elapsed, no completed run for HEAD): Report CI_TIMEOUT and RETURN IMMEDIATELY
+If FAILED: Report CI_FAILED and RETURN IMMEDIATELY
 If PASSED: Continue to merge
+
+## CRITICAL: On TIMEOUT or FAILED
+- You MUST stop and return to the feature agent IMMEDIATELY
+- Do NOT attempt to diagnose, analyze, or fix anything
+- Do NOT investigate root causes
+- Just report the failure details using the format below and end your session
 
 ## 4. Merge to target
 - git fetch origin <target>
@@ -431,7 +440,7 @@ If PASSED: Continue to merge
   (If pull fails due to local changes, report warning but continue)
 - Update plan status to COMPLETED
 
-## Report Formats
+## Report Formats (RETURN IMMEDIATELY after reporting)
 
 CI_TIMEOUT
 **Branch**: <branch>
@@ -442,7 +451,7 @@ CI_FAILED
 **Branch**: <branch>
 **Run URL**: <url>
 **Failed jobs**: <list>
-**Error**: <relevant logs from gh run view --log-failed>
+**Logs**: <raw output from gh run view --log-failed, do NOT analyze or interpret>
 
 COMPLETED
 **Commit**: <hash> merged to <target>
