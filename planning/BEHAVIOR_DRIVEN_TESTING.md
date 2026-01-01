@@ -1,7 +1,8 @@
 ---
 status: COMPLETED
-last_updated: 2025-12-27
-reviewers: [review-testing, review-docs, review-arch]
+last_updated: 2026-01-04
+reviewers: [review-testing, review-docs, review-arch, review-typescript]
+migration_status: IN_PROGRESS
 ---
 
 # BEHAVIOR_DRIVEN_TESTING
@@ -10,6 +11,7 @@ reviewers: [review-testing, review-docs, review-arch]
 
 - **Problem**: Current unit tests don't catch real bugs. They heavily mock dependencies and verify implementation calls methods, not that behavior is correct. When code changes, AI agents update mocks to match - tests pass but bugs slip through.
 - **Solution**: Replace unit tests with behavior-driven integration tests. Test through high-level entry points (CodeHydraApi, LifecycleApi, UI components). Mock only boundary interfaces with behavioral simulators that have in-memory state.
+- **Scope**: This plan establishes the testing strategy through documentation updates only (Steps 1-6). Actual behavioral mock creation (Phase 1) and test migration (Phases 2-6) happen in separate per-module plans requiring user approval.
 - **Risks**:
   - Integration tests may be slower (mitigated by fast in-memory behavioral mocks, target <2s per module)
   - Harder to pinpoint failures (mitigated by descriptive test names and small focused tests)
@@ -64,9 +66,9 @@ reviewers: [review-testing, review-docs, review-arch]
 │  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘      │ │
 │  │                                                                        │ │
 │  │  Behavioral Mocks: In-memory state, realistic behavior simulation      │ │
-│  │  - createBehavioralGitClient()                                         │ │
-│  │  - createBehavioralFileSystem()                                        │ │
-│  │  - createBehavioralProcessRunner()                                     │ │
+│  │  - createGitClientMock()                                         │ │
+│  │  - createFileSystemMock()                                        │ │
+│  │  - createProcessRunnerMock()                                     │ │
 │  │  - etc. (created during module migration)                              │ │
 │  └───────────────────────────────────────────────────────────────────────┘ │
 │                                                                             │
@@ -130,17 +132,26 @@ The boundary interfaces (like `IGitClient`, `FileSystemLayer`, etc.) are **contr
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Boundary Test Verification Process
+
+When modifying a behavioral mock:
+
+1. **Check boundary tests first** - Ensure the behavior you're adding is tested in the boundary test suite
+2. **Run boundary tests** - Verify the real interface behaves as you expect
+3. **Match mock to tests** - Implement mock behavior to match boundary test assertions
+4. **Document the relationship** - Add comments in mock code referencing relevant boundary tests
+
 ### What Do They Test?
 
-| Boundary Interface             | External System        | What's Tested                                               |
-| ------------------------------ | ---------------------- | ----------------------------------------------------------- |
-| `IGitClient` (SimpleGitClient) | Git CLI via simple-git | Creating worktrees, listing branches, detecting dirty state |
-| `FileSystemLayer`              | Node.js fs module      | Reading, writing, directory operations, error handling      |
-| `ProcessRunner`                | execa process spawning | Spawning processes, capturing output, killing processes     |
-| `HttpClient`                   | fetch API              | HTTP requests, status codes, error responses                |
-| `PortManager`                  | Node.js net module     | Port availability checking                                  |
-| `ArchiveExtractor`             | tar/unzipper libraries | Extracting zip and tar.gz archives                          |
-| `SdkClientFactory`             | @opencode-ai/sdk       | SSE connections, event parsing                              |
+| Boundary Interface             | External System        | What's Tested                                               | Boundary Test File                   |
+| ------------------------------ | ---------------------- | ----------------------------------------------------------- | ------------------------------------ |
+| `IGitClient` (SimpleGitClient) | Git CLI via simple-git | Creating worktrees, listing branches, detecting dirty state | `simple-git-client.boundary.test.ts` |
+| `FileSystemLayer`              | Node.js fs module      | Reading, writing, directory operations, error handling      | `filesystem.boundary.test.ts`        |
+| `ProcessRunner`                | execa process spawning | Spawning processes, capturing output, killing processes     | `process.boundary.test.ts`           |
+| `HttpClient`                   | fetch API              | HTTP requests, status codes, error responses                | `network.boundary.test.ts`           |
+| `PortManager`                  | Node.js net module     | Port availability checking                                  | `network.boundary.test.ts`           |
+| `ArchiveExtractor`             | tar/unzipper libraries | Extracting zip and tar.gz archives                          | `archive-extractor.boundary.test.ts` |
+| `SdkClientFactory`             | @opencode-ai/sdk       | SSE connections, event parsing                              | `opencode-client.boundary.test.ts`   |
 
 ### How Are They Written?
 
@@ -224,13 +235,13 @@ Integration tests solve this by:
 
 **ONLY boundary interfaces** - the same ones tested by boundary tests:
 
-| Mock                              | Replaces          | Why Mocked                        |
-| --------------------------------- | ----------------- | --------------------------------- |
-| `createBehavioralGitClient()`     | `IGitClient`      | Can't run real Git in fast tests  |
-| `createBehavioralFileSystem()`    | `FileSystemLayer` | Need controlled file state        |
-| `createBehavioralProcessRunner()` | `ProcessRunner`   | Can't spawn real processes        |
-| `createBehavioralHttpClient()`    | `HttpClient`      | Can't hit real servers            |
-| `createBehavioralPortManager()`   | `PortManager`     | Need controlled port availability |
+| Mock                        | Replaces          | Why Mocked                        |
+| --------------------------- | ----------------- | --------------------------------- |
+| `createGitClientMock()`     | `IGitClient`      | Can't run real Git in fast tests  |
+| `createFileSystemMock()`    | `FileSystemLayer` | Need controlled file state        |
+| `createProcessRunnerMock()` | `ProcessRunner`   | Can't spawn real processes        |
+| `createHttpClientMock()`    | `HttpClient`      | Can't hit real servers            |
+| `createPortManagerMock()`   | `PortManager`     | Need controlled port availability |
 
 **NOT mocked** - everything else:
 
@@ -279,7 +290,7 @@ expect(mockGit.createWorktree).toHaveBeenCalledWith("/project", "feat-1", "main"
 
 ```typescript
 // This tests actual behavior
-const mockGit = createBehavioralGitClient({
+const mockGit = createGitClientMock({
   repositories: new Map([["/project", { branches: ["main", "develop"], worktrees: [] }]]),
 });
 
@@ -321,7 +332,7 @@ describe("AppState.createWorkspace", () => {
 // codehydra-api.integration.test.ts - NEW PATTERN
 describe("CodeHydraApi - workspace creation", () => {
   it("creates workspace and adds it to project", async () => {
-    const gitClient = createBehavioralGitClient({
+    const gitClient = createGitClientMock({
       repositories: new Map([["/project", { branches: ["main"], worktrees: [] }]]),
     });
     const api = createCodeHydraApi({ gitClient, ...otherMocks });
@@ -343,84 +354,404 @@ describe("CodeHydraApi - workspace creation", () => {
 - Doesn't break if implementation changes internally
 - Catches real bugs (e.g., workspace added to wrong project)
 
+### Cross-Platform Testing Requirements
+
+Integration tests must handle platform differences correctly:
+
+1. **Use `new Path()` for internal paths** - Matches service layer path handling
+2. **Use `path.join()` for OS-specific paths** - When constructing paths for comparison
+3. **Platform-specific tests** - Use `it.skipIf(isWindows)` or equivalent
+4. **Temp directories** - Use proper temp directory utilities, not hardcoded "/tmp"
+
+```typescript
+// CORRECT: Cross-platform path handling
+import { Path } from "../services/platform/path";
+
+const projectPath = new Path("/projects/my-app");
+expect(result.path).toBe(projectPath.toString());
+
+// CORRECT: Platform-specific skip
+it.skipIf(process.platform === "win32")("handles Unix symlinks", async () => { ... });
+
+// WRONG: Hardcoded paths
+const tempDir = "/tmp/test"; // Fails on Windows
+```
+
 ### Cross-Platform Behavioral Mock Requirements
 
 Behavioral mocks must handle platform differences:
-
-```typescript
-function createBehavioralFileSystem(options?: {
-  files?: Map<string, string | Buffer>;
-  directories?: Set<string>;
-}): FileSystemLayer {
-  const files = new Map(options?.files ?? []);
-  const dirs = new Set(options?.directories ?? []);
-
-  // Normalize paths for cross-platform compatibility
-  const normalizePath = (p: string) => path.normalize(p);
-
-  return {
-    async readFile(filePath, encoding) {
-      const normalized = normalizePath(filePath);
-      const content = files.get(normalized);
-      if (!content) {
-        const error = new Error(`ENOENT: no such file: ${filePath}`);
-        (error as NodeJS.ErrnoException).code = "ENOENT";
-        throw error;
-      }
-      return encoding ? content.toString() : content;
-    },
-
-    async writeFile(filePath, content) {
-      const normalized = normalizePath(filePath);
-      files.set(normalized, typeof content === "string" ? content : Buffer.from(content));
-    },
-
-    async mkdir(dirPath, options) {
-      const normalized = normalizePath(dirPath);
-      if (options?.recursive) {
-        // Add all parent directories
-        let current = normalized;
-        while (current !== path.dirname(current)) {
-          dirs.add(current);
-          current = path.dirname(current);
-        }
-      }
-      dirs.add(normalized);
-    },
-
-    // State inspection for assertions
-    _getState: () => ({ files: new Map(files), dirs: new Set(dirs) }),
-  };
-}
-```
-
-**Key requirements**:
 
 - Use `path.join()` for path construction
 - Use `path.normalize()` for path comparison
 - Support both `/` and `\` separators in assertions
 - Throw errors with correct `code` property (ENOENT, EEXIST, etc.)
 
-### Behavioral Mock State Inspection
+### Behavioral Mock Base Interface
 
-For cleaner test assertions, behavioral mocks should expose state inspection utilities:
+All mock states must implement the `MockState` interface:
 
 ```typescript
-// Mock provides state inspection
-const mockFs = createBehavioralFileSystem({ files: new Map() });
-await mockFs.writeFile("/data/config.json", '{"key": "value"}');
+// src/test/mock-state.ts
+import path from "path";
 
-// Direct state inspection
-expect(mockFs._getState().files.has("/data/config.json")).toBe(true);
-
-// Or use helper functions for readability
-function expectFileExists(mockFs: BehavioralFileSystem, path: string) {
-  const state = mockFs._getState();
-  expect(state.files.has(path) || state.dirs.has(path)).toBe(true);
+/**
+ * Base interface for all behavioral mock state classes.
+ * Provides reset capability and debugging support.
+ */
+export interface MockState {
+  /** Restore mock to initial state (called in afterEach) */
+  reset(): void;
+  /** Format state for error messages and debugging (called by custom matchers) */
+  toString(): string;
 }
 
-expectFileExists(mockFs, "/data/config.json");
+/** Normalize path for cross-platform map keys */
+export const normalizePath = (p: string): string => path.normalize(p);
+
+/** Valid filesystem error codes for type-safe error simulation */
+export type FileSystemErrorCode =
+  | "ENOENT"
+  | "EACCES"
+  | "EEXIST"
+  | "ENOTDIR"
+  | "EISDIR"
+  | "ENOTEMPTY"
+  | "EIO";
 ```
+
+Each mock extends this with specific setup methods only when the public API isn't sufficient.
+
+### Public API vs $ Accessor Guidance
+
+**Prefer public API for normal setup. Use $ only for scenarios impossible through the public API:**
+
+```typescript
+// GOOD: Use public API for normal setup
+await mock.writeFile("/config.json", "{}"); // Creates file naturally
+await mock.mkdir("/data"); // Creates directory naturally
+
+// GOOD: Use $ for scenarios that can't happen through public API
+mock.$.injectFile("/readonly/system.conf", "..."); // No public way to create read-only files
+mock.$.simulateError("/broken", "EIO"); // Can't trigger I/O errors naturally
+mock.$.emitOutput(pid, "stdout data"); // Trigger callback synchronously
+
+// BAD: Using $ for normal operations (defeats behavioral testing)
+mock.$.files.set("/config.json", "{}"); // Should use public writeFile()
+```
+
+### Async Operations in Behavioral Mocks
+
+**State updates should be synchronous. Only use async when the interface requires it:**
+
+```typescript
+// GOOD: Synchronous state update, immediate Promise resolution
+async writeFile(path: string, content: string): Promise<void> {
+  this.$.files.set(normalizePath(path), content);  // Synchronous
+  return Promise.resolve();                         // Immediate resolution
+}
+
+// GOOD: Synchronous error check
+async readFile(path: string): Promise<string> {
+  const error = this.$.errorMap.get(normalizePath(path));
+  if (error) return Promise.reject(createError(path, error));  // Immediate
+  const content = this.$.files.get(normalizePath(path));
+  if (!content) return Promise.reject(createError(path, "ENOENT"));
+  return Promise.resolve(content.toString());
+}
+
+// BAD: Unnecessary delays
+async writeFile(path: string, content: string): Promise<void> {
+  await sleep(10);  // Never do this - slows tests
+  this.$.files.set(path, content);
+}
+```
+
+### Behavioral Mock Return Pattern
+
+Behavioral mocks return the mock directly. State is accessible via the `$` property:
+
+```typescript
+// Types for mock factory
+interface FileSystemMockOptions {
+  files?: Map<string, string | Buffer>;
+  dirs?: Set<string>;
+}
+
+// Factory returns the mock with $ accessor
+export type FileSystemMock = FileSystemLayer & { readonly $: FileSystemState };
+
+export function createFileSystemMock(options?: FileSystemMockOptions): FileSystemMock {
+  const state = new FileSystemState(options);
+
+  return {
+    $: state,
+    async readFile(filePath, encoding) {
+      /* uses state */
+    },
+    async writeFile(filePath, content) {
+      /* mutates state */
+    },
+    // ... other FileSystemLayer methods
+  };
+}
+```
+
+| Property | Type               | Purpose                                                |
+| -------- | ------------------ | ------------------------------------------------------ |
+| `mock`   | The interface type | Drop-in replacement, exact interface match             |
+| `mock.$` | State class        | Test utilities: `reset()`, `toString()`, setup methods |
+
+### Behavioral Mock State Class
+
+```typescript
+class FileSystemState implements MockState {
+  files = new Map<string, string | Buffer>();
+  dirs = new Set<string>();
+  private readonly initialFiles: Map<string, string | Buffer>;
+  private readonly initialDirs: Set<string>;
+  private errorMap = new Map<string, FileSystemErrorCode>();
+
+  constructor(options?: FileSystemMockOptions) {
+    this.initialFiles = new Map(options?.files);
+    this.initialDirs = new Set(options?.dirs);
+    this.files = new Map(this.initialFiles);
+    this.dirs = new Set(this.initialDirs);
+  }
+
+  reset(): void {
+    this.files = new Map(this.initialFiles);
+    this.dirs = new Set(this.initialDirs);
+    this.errorMap.clear();
+  }
+
+  toString(): string {
+    const fileList = [...this.files.keys()];
+    const dirList = [...this.dirs];
+    return [
+      "=== FileSystem Mock ===",
+      `Files (${fileList.length}): ${fileList.slice(0, 10).join(", ") || "(none)"}${fileList.length > 10 ? "..." : ""}`,
+      `Dirs (${dirList.length}): ${dirList.slice(0, 10).join(", ") || "(none)"}${dirList.length > 10 ? "..." : ""}`,
+      this.errorMap.size > 0
+        ? `Errors: ${[...this.errorMap.entries()].map(([p, c]) => `${p}:${c}`).join(", ")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  // Setup methods - only when public API isn't sufficient
+  injectFile(path: string, content: string): void {
+    this.files.set(normalizePath(path), content);
+  }
+
+  simulateError(path: string, code: FileSystemErrorCode): void {
+    this.errorMap.set(normalizePath(path), code);
+  }
+
+  clearError(path: string): void {
+    this.errorMap.delete(normalizePath(path));
+  }
+}
+```
+
+**toString() Format Specification:**
+
+- Line 1: Mock type as header
+- Lines 2+: Key state summaries with counts
+- Truncate large collections (show first 10, add "...")
+- Include error state if any
+- Keep output under 50 lines for typical state
+
+### Event and Callback Mocking
+
+For interfaces with event emitters or callbacks:
+
+```typescript
+class ProcessRunnerState implements MockState {
+  private outputCallbacks = new Map<number, (data: string) => void>();
+  private exitCallbacks = new Map<number, (code: number) => void>();
+
+  // Store callbacks when registered
+  onOutput(pid: number, callback: (data: string) => void): void {
+    this.outputCallbacks.set(pid, callback);
+  }
+
+  onExit(pid: number, callback: (code: number) => void): void {
+    this.exitCallbacks.set(pid, callback);
+  }
+
+  // Setup methods to trigger callbacks synchronously
+  emitOutput(pid: number, data: string): void {
+    this.outputCallbacks.get(pid)?.(data);
+  }
+
+  emitExit(pid: number, code: number): void {
+    this.exitCallbacks.get(pid)?.(code);
+  }
+
+  reset(): void {
+    this.outputCallbacks.clear();
+    this.exitCallbacks.clear();
+  }
+}
+```
+
+### State Access and Setup
+
+```typescript
+const mock = createFileSystemMock();
+
+// Setup via public methods (preferred)
+await mock.writeFile("/config.json", "{}");
+await mock.mkdir("/data", { recursive: true });
+
+// Setup via $ when public API isn't sufficient
+mock.$.injectFile("/readonly/system.conf", "root config");
+mock.$.simulateError("/broken", "EIO");
+
+// Debug - uses toString()
+console.log(mock.$); // Prints formatted state
+
+// Reset between tests
+mock.$.reset();
+```
+
+### Cross-Mock State Coordination
+
+**Behavioral mocks are independent by default.** Each mock maintains its own state. If tests need multiple mocks to agree on state (e.g., FileSystem and Git both know about `/project`), handle coordination in the test fixture helper:
+
+```typescript
+// createTestFixture handles coordination between mocks
+export function createTestFixture(options?: TestFixtureOptions): TestFixture {
+  const projects = options?.projects ?? [];
+
+  // Create git repositories
+  const gitClient = createGitClientMock({
+    repositories: new Map(projects.map((p) => [p.path, { branches: p.branches, worktrees: [] }])),
+  });
+
+  // Create corresponding filesystem structure
+  const fileSystem = createFileSystemMock({
+    dirs: new Set(projects.map((p) => p.path)),
+    files: new Map(projects.flatMap((p) => [[`${p.path}/.git/config`, "[core]..."]])),
+  });
+
+  // ... rest of fixture
+}
+```
+
+### Type-Safe Custom Matchers
+
+Assertions use vitest custom matchers with conditional types for full type safety:
+
+```typescript
+// src/test/matchers.d.ts
+type FileSystemMatchers<T> = T extends FileSystemMock
+  ? {
+      toHaveFile(path: string): void;
+      toHaveFileContaining(path: string, content: string): void;
+      toHaveDirectory(path: string): void;
+    }
+  : {};
+
+type GitClientMatchers<T> = T extends GitClientMock
+  ? {
+      toHaveWorktree(name: string): void;
+      toHaveBranch(name: string): void;
+      toBeDirty(): void;
+    }
+  : {};
+
+declare module "vitest" {
+  interface Matchers<T> extends FileSystemMatchers<T>, GitClientMatchers<T> {}
+}
+```
+
+**Type safety in action:**
+
+```typescript
+const fsMock = createFileSystemMock();
+const gitMock = createGitClientMock();
+
+expect(fsMock).toHaveFile("/config.json"); // ✅ Works
+expect(fsMock).toHaveWorktree("feature"); // ❌ TypeScript error
+expect(gitMock).toHaveWorktree("feature"); // ✅ Works
+expect(gitMock).toHaveFile("/config.json"); // ❌ TypeScript error
+expect("string").toHaveFile("/config.json"); // ❌ TypeScript error
+```
+
+### Matcher Complexity Limits
+
+**Matchers should verify single aspects of state.** Chain multiple simple matchers instead of creating complex ones:
+
+```typescript
+// GOOD: Simple, focused matchers
+expect(fsMock).toHaveFile("/config.json");
+expect(fsMock).toHaveFileContaining("/config.json", '"version"');
+expect(fsMock).toHaveDirectory("/data");
+
+// BAD: Complex matcher that does too much
+expect(fsMock).toHaveCompleteProjectStructure(); // Don't do this
+```
+
+### Matcher Implementations
+
+Each mock file exports its matcher implementations:
+
+```typescript
+// filesystem.test-utils.ts
+import type { MatcherState } from "vitest";
+
+export const fileSystemMatchers = {
+  toHaveFile(this: MatcherState & { actual: unknown }, expectedPath: string) {
+    // Runtime validation for clear errors
+    if (!isFileSystemMock(this.actual)) {
+      throw new TypeError("toHaveFile matcher can only be used with FileSystemMock");
+    }
+    const state = this.actual.$;
+    const normalized = normalizePath(expectedPath);
+    const exists = state.files.has(normalized);
+    return {
+      pass: exists,
+      message: () =>
+        exists
+          ? `Expected no file at "${expectedPath}"`
+          : `Expected file at "${expectedPath}"\n\nExisting files:\n${state}`,
+    };
+  },
+  // ... other matchers
+} satisfies Record<string, (...args: unknown[]) => { pass: boolean; message: () => string }>;
+
+function isFileSystemMock(value: unknown): value is FileSystemMock {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "$" in value &&
+    value.$ instanceof FileSystemState
+  );
+}
+```
+
+### Specialized Mocks (Optional)
+
+When a single mock becomes too complex, consider splitting into specialized variants.
+
+**Split into specialized mocks when:**
+
+1. **>8 setup methods** - Mock is trying to do too much
+2. **Two distinct modes that can't coexist** - e.g., read-only vs read-write filesystem
+3. **Setup methods conflict** - Setting X invalidates Y
+
+```typescript
+// Default mock - covers common cases
+createFileSystemMock();
+
+// Specialized mocks - only when complexity warrants
+createFileSystemMockWithErrors(); // Complex error simulation (all ops fail)
+createFileSystemMockReadonly(); // All writes throw EROFS
+```
+
+**Guidance**: Start with a single mock. Split only when the default becomes hard to understand or maintain.
 
 ### Test Naming Conventions
 
@@ -459,14 +790,41 @@ Integration tests replace unit tests as the primary feedback mechanism during de
 - Integration tests with in-memory behavioral mocks should be **nearly as fast as unit tests**
 - If a test is slow, the behavioral mock is doing too much work
 
-**Speed optimization techniques**:
+### Performance Guidelines
 
-- Create mocks once per test file, reset state in `beforeEach`
-- Use shallow copies, not deep clones in mock state
-- **Never add artificial delays** (`await sleep()`) in mocks
-- Keep initial state minimal - only what the specific test needs
-- Avoid unnecessary async operations in mocks
-- Reuse mock instances when possible, just reset state
+**Concrete rules for fast tests:**
+
+1. **No artificial delays** - Never use `await sleep()`, `setTimeout`, or `waitFor` in integration tests
+2. **Minimal initial state** - Only create what each specific test needs, not a full application state
+3. **Efficient mock setup** - Create mock instances once in `beforeEach`, reset state between tests
+4. **No unnecessary async** - Behavioral mocks should be synchronous where possible
+5. **Shallow copies** - Use shallow copies in mock state, not deep clones
+6. **Profile slow tests** - Any test >50ms should be profiled and optimized
+
+**Minimal state example:**
+
+```typescript
+// GOOD: Only what this test needs
+const mock = createFileSystemMock({
+  files: new Map([["/config.json", "{}"]]), // Just one file
+});
+
+// BAD: Creating everything for every test
+const mock = createFileSystemMock({
+  files: new Map([
+    ["/config.json", "{}"],
+    ["/data/file1", "..."],
+    ["/data/file2", "..."],
+    // ... 100 more files - slows down all tests
+  ]),
+});
+```
+
+**Performance profiling:**
+
+1. Use `vitest --reporter=verbose` to see individual test times
+2. Add `console.time('setup')` / `console.timeEnd('setup')` around beforeEach
+3. If a test is >50ms, profile the mock setup
 
 **If tests are slow, it's a bug** - fix the mock or the test, don't accept slowness.
 
@@ -488,6 +846,19 @@ Integration tests go through specific entry points, not arbitrary internal modul
 | `BadgeManager`       | Direct (mocked Electron) | Just BadgeManager                                                                                        |
 | `ShortcutController` | Direct (mocked Electron) | Just ShortcutController                                                                                  |
 
+#### Electron Manager Mock Strategy
+
+Electron managers (ViewManager, WindowManager, BadgeManager, ShortcutController) require mocked Electron APIs. These are tested directly (not through CodeHydraApi) because they're Electron-specific infrastructure.
+
+**Required Electron behavioral mocks:**
+
+| Electron API      | Mock State                                    | Example Usage            |
+| ----------------- | --------------------------------------------- | ------------------------ |
+| `BaseWindow`      | In-memory bounds, visibility, focus state     | WindowManager tests      |
+| `WebContentsView` | In-memory URL, attached state, partition      | ViewManager tests        |
+| `app`             | In-memory badge count, dock visibility        | BadgeManager tests       |
+| `globalShortcut`  | In-memory registered shortcuts, enabled state | ShortcutController tests |
+
 #### Why Entry Points Matter
 
 Testing through `CodeHydraApi` means:
@@ -499,17 +870,59 @@ Testing through `CodeHydraApi` means:
 
 Testing individual modules in isolation (old unit test approach) misses these interactions.
 
-### Common Test Fixture Helper
+---
 
-For reducing boilerplate, use a shared fixture helper:
+## Mock Factory Organization
+
+### Two-Level Pattern
+
+Behavioral mocks are organized at two levels:
+
+#### 1. Co-located Individual Mocks
+
+Each boundary interface has its mock factory co-located with the interface:
+
+```
+src/services/platform/
+├── filesystem.ts              # Interface
+├── filesystem.test-utils.ts   # createFileSystemMock() + fileSystemMatchers
+├── network.ts                 # Interface
+├── network.test-utils.ts      # createHttpClientMock(), createPortManagerMock() + matchers
+├── process.ts                 # Interface
+└── process.test-utils.ts      # createProcessRunnerMock() + processRunnerMatchers
+
+src/services/git/
+├── git-client.interface.ts    # Interface
+└── git-client.test-utils.ts   # createGitClientMock() + gitClientMatchers
+```
+
+**Use for**: Service-level tests that only need 1-2 behavioral mocks.
+
+#### 2. Central Test Fixture Helper
+
+For API-level tests that need multiple mocks composed together:
 
 ```typescript
-// test-fixtures.ts
-export function createTestFixture(options?: {
+// src/test/fixtures.ts
+
+interface TestFixtureOptions {
   projects?: Array<{ path: string; branches: string[]; worktrees?: string[] }>;
   files?: Map<string, string>;
-}) {
-  const gitClient = createBehavioralGitClient({
+}
+
+interface TestFixture {
+  api: ICodeHydraApi;
+  mocks: {
+    gitClient: GitClientMock;
+    fileSystem: FileSystemMock;
+    processRunner: ProcessRunnerMock;
+    httpClient: HttpClientMock;
+    portManager: PortManagerMock;
+  };
+}
+
+export function createTestFixture(options?: TestFixtureOptions): TestFixture {
+  const gitClient = createGitClientMock({
     repositories: new Map(
       (options?.projects ?? []).map((p) => [
         p.path,
@@ -526,26 +939,41 @@ export function createTestFixture(options?: {
     ),
   });
 
-  const fileSystem = createBehavioralFileSystem({
+  const fileSystem = createFileSystemMock({
     files: options?.files ?? new Map(),
   });
+
+  const processRunner = createProcessRunnerMock();
+  const httpClient = createHttpClientMock();
+  const portManager = createPortManagerMock();
 
   const api = createCodeHydraApi({
     gitClient,
     fileSystem,
-    processRunner: createBehavioralProcessRunner(),
-    httpClient: createBehavioralHttpClient(),
-    portManager: createBehavioralPortManager(),
+    processRunner,
+    httpClient,
+    portManager,
   });
 
-  return { api, gitClient, fileSystem };
+  return {
+    api,
+    mocks: { gitClient, fileSystem, processRunner, httpClient, portManager },
+  };
 }
 
 // Usage in tests
-const { api } = createTestFixture({
+const { api, mocks } = createTestFixture({
   projects: [{ path: "/my-app", branches: ["main", "develop"] }],
 });
+
+// Type-safe assertions
+expect(mocks.gitClient).toHaveRepository("/my-app");
+
+// Reset all mocks
+Object.values(mocks).forEach((mock) => mock.$.reset());
 ```
+
+**Use for**: API-level tests (CodeHydraApi, LifecycleApi) that exercise multiple modules.
 
 ### Integration Test Example
 
@@ -554,18 +982,18 @@ const { api } = createTestFixture({
 
 describe("CodeHydraApi - Workspace Management", () => {
   let api: ICodeHydraApi;
-  let gitClient: IGitClient;
-  let fileSystem: FileSystemLayer;
+  let gitMock: GitClientMock;
+  let fsMock: FileSystemMock;
 
   beforeEach(() => {
     // Create behavioral mocks with initial state
-    gitClient = createBehavioralGitClient({
+    gitMock = createGitClientMock({
       repositories: new Map([
         ["/projects/my-app", { branches: ["main", "develop", "feature/old"], worktrees: [] }],
       ]),
     });
 
-    fileSystem = createBehavioralFileSystem({
+    fsMock = createFileSystemMock({
       files: new Map([
         ["/projects/my-app/.git/config", "[core]\n..."],
         ["/data/projects.json", "[]"],
@@ -575,12 +1003,17 @@ describe("CodeHydraApi - Workspace Management", () => {
 
     // Create real API with behavioral mocks injected
     api = createCodeHydraApi({
-      gitClient,
-      fileSystem,
-      processRunner: createBehavioralProcessRunner(),
-      httpClient: createBehavioralHttpClient(),
-      portManager: createBehavioralPortManager(),
+      gitClient: gitMock,
+      fileSystem: fsMock,
+      processRunner: createProcessRunnerMock(),
+      httpClient: createHttpClientMock(),
+      portManager: createPortManagerMock(),
     });
+  });
+
+  afterEach(() => {
+    gitMock.$.reset();
+    fsMock.$.reset();
   });
 
   describe("workspace creation", () => {
@@ -591,6 +1024,9 @@ describe("CodeHydraApi - Workspace Management", () => {
       expect(workspace.name).toBe("feature-login");
       expect(workspace.branch).toBe("feature-login");
       expect(workspace.baseBranch).toBe("main");
+
+      // Type-safe mock assertions
+      expect(gitMock).toHaveWorktree("feature-login");
 
       const project = await api.projects.get("/projects/my-app");
       expect(project.workspaces).toHaveLength(1);
@@ -617,6 +1053,9 @@ describe("CodeHydraApi - Workspace Management", () => {
       await expect(
         api.workspaces.create("/projects/my-app", "feature-x", "nonexistent")
       ).rejects.toThrow(GitError);
+
+      // Verify no worktree was created
+      expect(gitMock).not.toHaveWorktree("feature-x");
 
       const project = await api.projects.get("/projects/my-app");
       expect(project.workspaces).toHaveLength(0);
@@ -725,7 +1164,7 @@ describe("BranchDropdown - keyboard navigation", () => {
 
 ## Module Migration Process
 
-Each module migration requires a **separate plan** with **user review**.
+Each module migration requires a **separate plan** with **user review**. The migration is a comprehensive audit of all tests for that module.
 
 ### Migration Plan Template
 
@@ -734,271 +1173,687 @@ Each module migration requires a **separate plan** with **user review**.
 
 ## Module Overview
 
-**Current State**:
+**Scope**: [Brief description of what this module does]
 
-- Unit test file(s): `module.test.ts` (X tests)
-- Integration test file(s): `module.integration.test.ts` (if exists - also needs migration!)
-- What it tests: [description]
-- Entry point for integration: [CodeHydraApi / LifecycleApi / Direct / Component]
+**Entry Point**: [CodeHydraApi / LifecycleApi / Direct Service / UI Component]
 
-## Proposed Integration Tests
+**Files Covered**:
 
-| #   | Test Case | Entry Point                        | Boundary Mocks        | Behavior Verified                  |
-| --- | --------- | ---------------------------------- | --------------------- | ---------------------------------- |
-| 1   | ...       | `CodeHydraApi.workspaces.create()` | GitClient, FileSystem | `project.workspaces.contains(...)` |
-| 2   | ...       | ...                                | ...                   | ...                                |
+- `src/path/to/module.ts`
+- `src/path/to/related-file.ts`
 
-## Boundary Mock Requirements
+---
 
-| Interface       | Exists? | Changes Needed               |
-| --------------- | ------- | ---------------------------- |
-| IGitClient      | Yes     | Add `setDirtyState()` method |
-| FileSystemLayer | Yes     | None                         |
+## 1. Legacy Test Inventory
 
-## Unit Tests to Delete
+### Legacy Unit Tests (\*.test.ts)
 
-| File                | Test Count | Coverage Moved To       |
-| ------------------- | ---------- | ----------------------- |
-| `app-state.test.ts` | 25         | Integration tests #1-10 |
+| File              | Test Count | Description     |
+| ----------------- | ---------- | --------------- |
+| `module.test.ts`  | X          | [what it tests] |
+| `related.test.ts` | Y          | [what it tests] |
 
-## Questions for User Review
+### Legacy Integration Tests (\*.integration.test.ts)
 
-1. Are these integration tests sufficient to cover the module behavior?
-2. Any edge cases or error scenarios missing?
-3. Do any boundary mocks need refactoring?
+| File                         | Test Count | Description     | Uses Behavioral Mocks? |
+| ---------------------------- | ---------- | --------------- | ---------------------- |
+| `module.integration.test.ts` | X          | [what it tests] | No (call-tracking)     |
 
-⚠️ **USER APPROVAL REQUIRED BEFORE IMPLEMENTATION**
+---
+
+## 2. Legacy Test Analysis
+
+### Tests to TRANSFER to Integration Tests
+
+These tests verify valuable behavior and should be migrated:
+
+| Legacy Test                             | Behavior Verified          | Target Integration Test |
+| --------------------------------------- | -------------------------- | ----------------------- |
+| `module.test.ts: "creates workspace"`   | Workspace added to project | `#1 below`              |
+| `module.test.ts: "throws on duplicate"` | Duplicate prevention       | `#2 below`              |
+
+### Tests to DELETE (No Migration)
+
+These tests don't provide value (test implementation, not behavior):
+
+| Legacy Test                                          | Reason for Deletion                          |
+| ---------------------------------------------------- | -------------------------------------------- |
+| `module.test.ts: "calls gitProvider.createWorktree"` | Tests implementation call, not outcome       |
+| `module.test.ts: "sets internal state"`              | Tests private state, not observable behavior |
+
+---
+
+## 3. Existing Integration/Boundary Test Review
+
+### Existing Tests to KEEP (Already Follow Pattern)
+
+| File                                              | Test                          | Reason |
+| ------------------------------------------------- | ----------------------------- | ------ |
+| `module.boundary.test.ts: "connects to real git"` | Valid boundary test, no mocks | ✓ Keep |
+
+### Existing Tests to MODIFY
+
+| File                                              | Test                    | Issue                                  | Required Change |
+| ------------------------------------------------- | ----------------------- | -------------------------------------- | --------------- |
+| `module.integration.test.ts: "creates workspace"` | Uses call-tracking mock | Convert to `{ mock, control }` pattern |
+
+### Existing Tests to DELETE
+
+| File                                           | Test                                       | Reason for Deletion |
+| ---------------------------------------------- | ------------------------------------------ | ------------------- |
+| `module.integration.test.ts: "calls provider"` | Duplicates unit test, tests implementation |
+
+### Tests to ADD (Missing Coverage)
+
+| #   | Test Case                          | Entry Point               | Boundary Mocks | Behavior Verified                    |
+| --- | ---------------------------------- | ------------------------- | -------------- | ------------------------------------ |
+| 1   | error handling on network failure  | `api.workspaces.create()` | HttpClient     | throws NetworkError, state unchanged |
+| 2   | concurrent creation race condition | `api.workspaces.create()` | GitClient      | only one workspace created           |
+
+---
+
+## 4. Proposed Final Test Suite
+
+### Integration Tests (\*.integration.test.ts)
+
+| #   | Test Case                             | Entry Point               | Boundary Mocks        | Behavior Verified                  |
+| --- | ------------------------------------- | ------------------------- | --------------------- | ---------------------------------- |
+| 1   | creates workspace and adds to project | `api.workspaces.create()` | GitClient, FileSystem | `project.workspaces.contains(...)` |
+| 2   | prevents duplicate workspace names    | `api.workspaces.create()` | GitClient             | throws error, no workspace added   |
+| 3   | ...                                   | ...                       | ...                   | ...                                |
+
+### Boundary Tests (\*.boundary.test.ts) - Only if Module Owns Boundary
+
+| #   | Test Case | Interface | External System | Behavior Verified |
+| --- | --------- | --------- | --------------- | ----------------- |
+| 1   | ...       | ...       | ...             | ...               |
+
+---
+
+## 5. Mock Interface Review
+
+Review all mocks used by this module's tests.
+
+**⚠️ IMPORTANT: Mock interface changes require explicit user approval before implementation.**
+
+**Requires approval:**
+
+- Adding new setup methods to state classes
+- Adding new custom matchers
+- Changing matcher pass/fail logic
+- Creating specialized mock variants
+
+**Does NOT require approval:**
+
+- Improving error messages
+- Adding optional parameters to existing methods with defaults
+- Internal refactoring that doesn't change mock API
+
+### Existing Mocks to KEEP
+
+| Mock                     | Interface         | State Class       | Status                     |
+| ------------------------ | ----------------- | ----------------- | -------------------------- |
+| `createFileSystemMock()` | `FileSystemLayer` | `FileSystemState` | ✓ Follows `mock.$` pattern |
+
+### Existing Mocks to MODIFY
+
+| Mock                        | Interface       | Issue                           | Required Change                         |
+| --------------------------- | --------------- | ------------------------------- | --------------------------------------- |
+| `createGitClientMock()`     | `IGitClient`    | Missing worktree count in state | Add `worktreeCount` to `GitClientState` |
+| `createProcessRunnerMock()` | `ProcessRunner` | Uses old pattern                | Convert to `mock.$` pattern             |
+
+### New Mocks to CREATE
+
+| Mock                    | Interface          | State Class      | Reason                          |
+| ----------------------- | ------------------ | ---------------- | ------------------------------- |
+| `createSdkClientMock()` | `SdkClientFactory` | `SdkClientState` | No mock exists for OpenCode SDK |
+
+### Mock State Class Requirements
+
+For each mock, verify the state class includes:
+
+| Mock                     | Required Setup Methods                  | Required Matchers                                       |
+| ------------------------ | --------------------------------------- | ------------------------------------------------------- |
+| `createGitClientMock()`  | `setDirty()`, `simulateMergeConflict()` | `toHaveWorktree`, `toHaveBranch`, `toBeDirty`           |
+| `createFileSystemMock()` | `injectFile()`, `simulateError()`       | `toHaveFile`, `toHaveFileContaining`, `toHaveDirectory` |
+
+### Custom Matchers to ADD
+
+| Matcher                | Mock Type        | Purpose                                   |
+| ---------------------- | ---------------- | ----------------------------------------- |
+| `toHaveFile`           | `FileSystemMock` | Assert file exists                        |
+| `toHaveFileContaining` | `FileSystemMock` | Assert file contains content              |
+| `toHaveWorktree`       | `GitClientMock`  | Assert worktree was created               |
+| `toBeDirty`            | `GitClientMock`  | Assert repository has uncommitted changes |
+
+---
+
+## 6. Summary
+
+| Category                 | Count | Action                        |
+| ------------------------ | ----- | ----------------------------- |
+| Legacy unit tests        | X     | Delete after migration        |
+| Legacy integration tests | Y     | Migrate to behavioral pattern |
+| New integration tests    | Z     | Create                        |
+| Existing tests to keep   | W     | No change                     |
+| Existing tests to modify | V     | Update mocks                  |
+| Existing tests to delete | U     | Remove                        |
+
+---
+
+## 7. Test Timing Review
+
+All tests must adhere to `docs/TESTING.md`. This section reviews timing-related violations.
+
+### Custom Timeouts
+
+Tests should not have custom timeout configurations. Review all occurrences:
+
+| Test                       | Current Timeout | Reason              | Action                       |
+| -------------------------- | --------------- | ------------------- | ---------------------------- |
+| `"long running operation"` | 10000ms         | Waits for real HTTP | REMOVE - use behavioral mock |
+| `"complex calculation"`    | 5000ms          | [reason]            | ⚠️ NEEDS USER APPROVAL       |
+
+**Rule**: Custom timeouts indicate the test is too slow. Fix the test, don't increase the timeout.
+
+### Delays and Sleeps
+
+Tests must not contain `sleep()`, `setTimeout`, `waitFor`, or artificial delays. Review all occurrences:
+
+| Test                    | Delay Type   | Duration | Reason         | Action                            |
+| ----------------------- | ------------ | -------- | -------------- | --------------------------------- |
+| `"waits for debounce"`  | `sleep(100)` | 100ms    | Tests debounce | REMOVE - use `vi.useFakeTimers()` |
+| `"waits for animation"` | `waitFor()`  | variable | [reason]       | ⚠️ NEEDS USER APPROVAL            |
+
+**Rule**: Behavioral mocks respond instantly. Any delay indicates incorrect test structure.
+
+**Allowed exception**: `vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync()` for testing timeout _logic_ (not waiting for real time).
+
+### Compliance Check
+
+- [ ] All tests reviewed for custom timeouts
+- [ ] All tests reviewed for delays/sleeps
+- [ ] Violations either fixed or flagged for user approval
+- [ ] Any approved exceptions documented with justification
+
+---
+
+## Questions for User Approval
+
+The following questions must be answered and approved by the user before implementation begins:
+
+### Test Coverage
+
+1. Are any valuable behaviors missing from the proposed test suite?
+2. Are any proposed deletions actually testing important behavior that should be kept?
+3. Are the proposed entry points at the right level of abstraction?
+
+### Mock Interface Changes (Require Explicit Approval)
+
+4. Are the proposed state class changes correct? (setup methods, `reset()`, `toString()`)
+5. Are the proposed custom matchers appropriate? (type-safe, meaningful assertions)
+6. Are any specialized mock variants needed? (complexity warrants splitting)
+7. Will mock changes break other modules' tests? (List affected modules)
+
+### Risk Assessment
+
+8. Is there any coverage that will be temporarily lost during migration?
+9. Are there any tests that are difficult to migrate and need special handling?
+
+### Test Timing Exceptions
+
+10. Are any custom timeouts justified? (List each with reason)
+11. Are any delays/sleeps approved? (List each with reason)
+
+**Note**: Exceptions require explicit user approval. All tests must adhere to `docs/TESTING.md` - no timeouts or delays in integration tests.
+
+---
+
+⚠️ **USER MUST EXPLICITLY APPROVE BEFORE IMPLEMENTATION BEGINS**
+
+User approval means:
+
+- User has reviewed all sections of this plan
+- User has answered the questions above
+- User has explicitly said "approved" or equivalent
+
+Do NOT proceed with implementation until user approval is received.
 ```
 
-### Important: Existing Integration Tests Also Need Migration
+### Migration Review Checklist (For Agent Use)
 
-Current `*.integration.test.ts` files use **call-tracking mocks**, not **behavioral mocks**. They must also be migrated to the new pattern during module migration.
+Before presenting a migration plan to the user for approval, verify:
+
+**Legacy Test Analysis**:
+
+- [ ] All legacy tests inventoried (unit + integration)
+- [ ] Each legacy test categorized: transfer, delete, or already covered
+- [ ] Deletion rationale provided for each removed test
+- [ ] No valuable behavior lost in deletions
+
+**Existing Test Review**:
+
+- [ ] All existing integration/boundary tests reviewed
+- [ ] Tests using call-tracking mocks identified for modification
+- [ ] Redundant/low-value tests identified for deletion
+- [ ] Missing coverage identified for new tests
+
+**Proposed Suite**:
+
+- [ ] All transferred behaviors have corresponding integration tests
+- [ ] Entry points are appropriate (not too low-level)
+- [ ] Behavioral mocks specified (not call-tracking)
+- [ ] Behavior verified as outcomes, not implementation calls
+
+**Mock Interface Review**:
+
+- [ ] All mocks used by this module inventoried
+- [ ] Each mock categorized: keep, modify, or create new
+- [ ] Mocks using old patterns identified for conversion to `mock.$` pattern
+- [ ] State classes implement `MockState` interface (`reset()`, `toString()`)
+- [ ] Setup methods defined only when public API isn't sufficient
+- [ ] Custom matchers defined for all assertion needs
+- [ ] Cross-module impact of mock changes documented
+- [ ] **Mock interface changes flagged for user approval**
+
+**Test Timing Compliance** (must adhere to `docs/TESTING.md`):
+
+- [ ] All custom timeouts inventoried
+- [ ] All delays/sleeps (`sleep()`, `setTimeout`, `waitFor`) inventoried
+- [ ] Each violation marked: REMOVE or NEEDS USER APPROVAL
+- [ ] Tests verified to have no artificial waiting
+
+### File Deletion Timing
+
+To avoid losing test coverage during migration:
+
+1. Create the new integration test with behavioral mocks
+2. Verify all scenarios from legacy test are covered
+3. Run both old and new tests in parallel for one CI run
+4. If both pass, delete legacy test **in the same commit**
+
+This ensures no coverage gap during the transition.
+
+### Test File Size Guidance
+
+To maintain fast, focused test files:
+
+- **Split if >30 tests** - Large test files become slow and hard to navigate
+- **Split if >1000 lines** - Consider splitting by feature area
+- **One entry point per file** - Don't mix CodeHydraApi and LifecycleApi tests
 
 ### Migration Priority
 
-| Phase | Module                                     | Priority | Reason                  |
-| ----- | ------------------------------------------ | -------- | ----------------------- |
-| 2     | CodeHydraApi + AppState                    | High     | Core business logic     |
-| 3     | LifecycleApi + VscodeSetupService          | High     | User-facing setup flow  |
-| 4     | ViewManager, WindowManager, BadgeManager   | Medium   | Electron integration    |
-| 5     | UI Components (Sidebar, Dialogs, etc.)     | Medium   | User interactions       |
-| 6     | CodeServerManager, PluginServer, McpServer | Low      | Internal infrastructure |
+| Phase | Module                                     | Priority | Reason                              | Status                                   |
+| ----- | ------------------------------------------ | -------- | ----------------------------------- | ---------------------------------------- |
+| 1     | Behavioral Mock Factories                  | Critical | Required before any test migration  | `[x]` Complete                           |
+| 1b    | Shell/Platform Layer Tests                 | Critical | Validate layer abstractions work    | `[x]` Complete - tests exist             |
+| 2     | CodeHydraApi + AppState                    | High     | Core business logic, high churn     | `[x]` Complete - integration tests exist |
+| 3     | LifecycleApi + VscodeSetupService          | High     | User-facing setup flow              | `[x]` Complete - integration tests exist |
+| 4     | ViewManager, WindowManager, BadgeManager   | Medium   | Electron integration                | `[x]` Complete - integration tests exist |
+| 5     | UI Components (Sidebar, Dialogs, etc.)     | Medium   | User interactions                   | `[~]` Partial - some tests exist         |
+| 6     | CodeServerManager, PluginServer, McpServer | Low      | Internal infrastructure, less churn | `[x]` Complete - integration tests exist |
 
-## Module Migration Checklist
+**Progressive migration guidance**: Start with high-churn or known-brittle modules to get early feedback on whether the behavioral mock approach is working well.
 
-All modules with unit tests that need migration. Mark checkbox when that module's separate migration plan is completed.
+**Note**: Phase 1b (Shell/Platform Layer Tests) was added after the original plan. These tests validate the Electron abstraction layers that weren't anticipated in the original architecture.
 
-**Phase 1: Infrastructure (Complete)**
+**Phase 1: Infrastructure ✅ Complete**
 
 - [x] Mock Infrastructure - `planning/MOCK_INFRASTRUCTURE.md` (state-mock.ts, setup-matchers.ts, toBeUnchanged matcher)
+- [x] All service boundary mocks (`*.state-mock.ts` files)
+- [x] All Electron layer mocks (shell + platform)
 
-**Phase 2: CodeHydraApi + AppState (High Priority)**
+**Phase 2-6: Integration Tests ✅ Mostly Complete**
 
-- [ ] AppState (`src/main/app-state.test.ts`)
-- [ ] CodeHydraApi (`src/main/api/codehydra-api.test.ts`)
-- [ ] ProjectStore (`src/services/project/project-store.test.ts`)
-- [ ] GitWorktreeProvider (`src/services/git/git-worktree-provider.test.ts`)
-- [ ] KeepFilesService (`src/services/keepfiles/*.test.ts`)
+28 integration test files exist covering most modules. See "Target Test Structure" section for details.
 
-**Phase 3: LifecycleApi + Setup (High Priority)**
+---
 
-- [ ] LifecycleApi (`src/main/api/lifecycle-api.test.ts`)
-- [ ] VscodeSetupService (`src/services/vscode-setup/vscode-setup-service.test.ts`)
-- [ ] BinaryDownloadService (`src/services/binary-download/*.test.ts`)
-- [ ] extension-utils (`src/services/vscode-setup/extension-utils.test.ts`)
-- [ ] bin-scripts (`src/services/vscode-setup/bin-scripts.test.ts`)
-- [ ] wrapper-script-generation-service (`src/services/vscode-setup/wrapper-script-generation-service.test.ts`)
+## Phase 1: Behavioral Mock Factory Creation
 
-**Phase 4: Electron Managers (Medium Priority)**
+**This phase must complete before any test migration begins.**
 
-- [ ] ViewManager (`src/main/managers/view-manager.test.ts`)
-- [ ] WindowManager (`src/main/managers/window-manager.test.ts`)
-- [ ] BadgeManager (`src/main/managers/badge-manager.test.ts`)
-- [ ] ShortcutController (`src/main/shortcut-controller.test.ts`)
-- [ ] ElectronAppApi (`src/main/managers/electron-app-api.test.ts`)
+Before migrating tests, we need behavioral mock factories for all boundary interfaces. Each mock factory requires a separate implementation plan.
 
-**Phase 5: UI Components (Medium Priority)**
+### Status Markers
 
-- [ ] App.svelte (`src/renderer/App.test.ts`)
-- [ ] MainView (`src/renderer/lib/components/MainView.test.ts`)
-- [ ] Sidebar (`src/renderer/lib/components/Sidebar.test.ts`)
-- [ ] BranchDropdown (`src/renderer/lib/components/BranchDropdown.test.ts`)
-- [ ] CreateWorkspaceDialog (`src/renderer/lib/components/CreateWorkspaceDialog.test.ts`)
-- [ ] CloseProjectDialog (`src/renderer/lib/components/CloseProjectDialog.test.ts`)
-- [ ] ProjectDropdown (`src/renderer/lib/components/ProjectDropdown.test.ts`)
-- [ ] Dialog (`src/renderer/lib/components/Dialog.test.ts`)
-- [ ] ShortcutOverlay (`src/renderer/lib/components/ShortcutOverlay.test.ts`)
-- [ ] SetupScreen, SetupComplete, SetupError (`src/renderer/lib/components/Setup*.test.ts`)
-- [ ] DeletionProgressView (`src/renderer/lib/components/DeletionProgressView.test.ts`)
-- [ ] AgentStatusIndicator (`src/renderer/lib/components/AgentStatusIndicator.test.ts`)
-- [ ] Stores (projects, agent-status, shortcuts, dialogs, setup, deletion, ui-mode)
+- `[ ]` = Not started
+- `[~]` = Partial (call-tracking mock exists, needs migration to `mock.$` pattern)
+- `[?]` = Review (behavioral mock exists, needs verification it follows `mock.$` pattern)
+- `[x]` = Complete (verified: `mock.$` accessor, `MockState` interface, type-safe matchers)
 
-**Phase 6: Internal Services (Low Priority)**
+### Step 0: Infrastructure ✅ COMPLETE
 
-- [ ] CodeServerManager (`src/services/code-server/code-server-manager.test.ts`)
-- [ ] OpenCodeServerManager (`src/services/opencode/opencode-server-manager.test.ts`)
-- [ ] OpenCodeClient (`src/services/opencode/opencode-client.test.ts`)
-- [ ] AgentStatusManager (`src/services/opencode/agent-status-manager.test.ts`)
-- [ ] PluginServer (`src/services/plugin-server/plugin-server.test.ts`)
-- [ ] startup-commands, shutdown-commands (`src/services/plugin-server/*.test.ts`)
-- [ ] McpServerManager (`src/services/mcp-server/mcp-server-manager.test.ts`)
-- [ ] McpServer, tools, config-generator, workspace-resolver (`src/services/mcp-server/*.test.ts`)
+Shared infrastructure is set up and working:
 
-**Phase 7: IPC Handlers (Low Priority)**
+| Order | File                         | Purpose                                                 | Status |
+| ----- | ---------------------------- | ------------------------------------------------------- | ------ |
+| 1     | `src/test/state-mock.ts`     | Base `MockState` interface (`snapshot()`, `toString()`) | `[x]`  |
+| 2     | Individual mock files        | State classes implementing MockState                    | `[x]`  |
+| 3     | (embedded in state-mock.ts)  | Conditional type declarations for type-safe matchers    | `[x]`  |
+| 4     | `src/test/setup-matchers.ts` | Imports and registers all matcher implementations       | `[x]`  |
+| 5     | `vitest.config.ts`           | `setupFiles` configured for all test projects           | `[x]`  |
 
-- [ ] api-handlers (`src/main/ipc/api-handlers.test.ts`)
-- [ ] lifecycle-handlers (`src/main/ipc/lifecycle-handlers.test.ts`)
-- [ ] log-handlers (`src/main/ipc/log-handlers.test.ts`)
+**Note:** The original plan called for `mock-state.ts` but implementation uses `state-mock.ts`. Type declarations are embedded in `state-mock.ts` rather than a separate `matchers.d.ts` file.
 
-**Phase 8: Platform & Utilities (Keep as Focused Tests)**
+### Architecture Evolution: Layer Abstraction Pattern
 
-- [ ] Review: paths, PathProvider, PlatformInfo, BuildInfo (may remain as focused tests for pure functions)
-- [ ] Review: id-utils, errors (may remain as focused tests)
-- [ ] Review: shared/ipc, shortcuts, plugin-protocol (may remain as focused tests)
+The codebase evolved to use a **two-layer abstraction** for Electron that wasn't in the original plan:
+
+```
+Shell Layers (visual containers)     Platform Layers (OS/runtime)
+├── ViewLayer                        ├── AppLayer
+├── WindowLayer                      ├── ImageLayer
+└── SessionLayer                     ├── DialogLayer
+                                     ├── IpcLayer
+                                     └── MenuLayer
+```
+
+These layers provide better testability than mocking raw Electron APIs. Behavioral mocks for these layers exist and can serve as examples for the service boundary mocks that still need migration.
+
+### Required Behavioral Mocks
+
+#### Service Boundary Mocks ✅ ALL COMPLETE
+
+| Mock Factory                   | Interface          | Location                                                       | Status |
+| ------------------------------ | ------------------ | -------------------------------------------------------------- | ------ |
+| `createMockGitClient()`        | `IGitClient`       | `src/services/git/git-client.state-mock.ts`                    | `[x]`  |
+| `createFileSystemMock()`       | `FileSystemLayer`  | `src/services/platform/filesystem.state-mock.ts`               | `[x]`  |
+| `createMockProcessRunner()`    | `ProcessRunner`    | `src/services/platform/process.state-mock.ts`                  | `[x]`  |
+| `createMockHttpClient()`       | `HttpClient`       | `src/services/platform/http-client.state-mock.ts`              | `[x]`  |
+| `createPortManagerMock()`      | `PortManager`      | `src/services/platform/port-manager.state-mock.ts`             | `[x]`  |
+| `createMockArchiveExtractor()` | `ArchiveExtractor` | `src/services/binary-download/archive-extractor.state-mock.ts` | `[x]`  |
+| `createMockSdkClientFactory()` | `SdkClientFactory` | `src/services/opencode/sdk-client.state-mock.ts`               | `[x]`  |
+
+**Note:** File naming convention changed from `*.test-utils.ts` to `*.state-mock.ts` for behavioral mocks. Legacy `*.test-utils.ts` files contain deprecated call-tracking mocks with `@deprecated` annotations pointing to the new state mocks.
+
+#### Central Test Fixture (Deferred)
+
+| Mock Factory          | Interface     | Location               | Status                    |
+| --------------------- | ------------- | ---------------------- | ------------------------- |
+| `createTestFixture()` | (composition) | `src/test/fixtures.ts` | `[ ]` Deferred - see note |
+
+**Deferred:** The central test fixture helper is deferred until patterns emerge from actual usage. As more integration tests are written, we'll identify common mock composition patterns that would benefit from a shared fixture. Design the fixture based on observed needs rather than speculating upfront.
+
+#### Electron Layer Mocks (Shell + Platform) ✅ ALL COMPLETE
+
+These mocks abstract Electron APIs and were added as part of the layer abstraction pattern.
+
+| Mock Factory               | Interface      | Location                                    | Status |
+| -------------------------- | -------------- | ------------------------------------------- | ------ |
+| `createAppLayerMock()`     | `AppLayer`     | `src/services/platform/app.state-mock.ts`   | `[x]`  |
+| `createImageLayerMock()`   | `ImageLayer`   | `src/services/platform/image.state-mock.ts` | `[x]`  |
+| `createViewLayerMock()`    | `ViewLayer`    | `src/services/shell/view.state-mock.ts`     | `[x]`  |
+| `createWindowLayerMock()`  | `WindowLayer`  | `src/services/shell/window.state-mock.ts`   | `[x]`  |
+| `createSessionLayerMock()` | `SessionLayer` | `src/services/shell/session.state-mock.ts`  | `[x]`  |
+
+### Mock Factory Implementation Plan Template
+
+Each mock factory needs a separate plan specifying:
+
+1. **State class** implementing `MockState` (`reset()`, `toString()`)
+2. **Setup methods** (only when public API isn't sufficient)
+3. **Custom matchers** with type declarations and runtime validation
+4. **Error behaviors** (e.g., "GitError for non-existent branch")
+5. **Reference to boundary tests** that define the expected behavior
+
+**⚠️ Mock interface changes require explicit user approval before implementation.**
+
+Detailed specs are deferred to individual mock factory implementation plans.
+
+---
+
+## Target Test Structure
+
+**This section tracks the migration status of integration tests.** The checkboxes reflect which integration tests exist and follow the behavioral mock pattern.
+
+**Status Legend:**
+
+- `[x]` = Migrated (integration test exists with behavioral mocks)
+- `[?]` = Review (integration test exists, needs verification it follows behavioral pattern)
+- `[ ]` = Pending (needs migration or creation)
+
+_Last updated: 2026-01-04_
+
+---
+
+### Entry Point: CodeHydraApi ✅ COMPLETE
+
+**`src/main/app-state.integration.test.ts`** - Core app state with projects/workspaces
+
+| Status | Integration Test                                             |
+| ------ | ------------------------------------------------------------ |
+| `[x]`  | `src/main/app-state.integration.test.ts`                     |
+| `[x]`  | `src/services/project/project-store.integration.test.ts`     |
+| `[x]`  | `src/main/modules/core/index.integration.test.ts`            |
+| `[x]`  | `src/services/git/git-worktree-provider.integration.test.ts` |
+
+---
+
+### Entry Point: LifecycleApi ✅ COMPLETE
+
+**`src/services/vscode-setup/vscode-setup-service.integration.test.ts`**
+
+| Status | Integration Test                                                           |
+| ------ | -------------------------------------------------------------------------- |
+| `[x]`  | `src/services/vscode-setup/vscode-setup-service.integration.test.ts`       |
+| `[x]`  | `src/services/binary-download/binary-download-service.integration.test.ts` |
+
+---
+
+### Entry Point: Direct Services ✅ COMPLETE
+
+| Status | Integration Test                                                    |
+| ------ | ------------------------------------------------------------------- |
+| `[x]`  | `src/services/code-server/code-server-manager.integration.test.ts`  |
+| `[x]`  | `src/services/plugin-server/plugin-server.integration.test.ts`      |
+| `[x]`  | `src/services/opencode/opencode-server-manager.integration.test.ts` |
+| `[x]`  | `src/services/mcp-server/mcp-server-manager.integration.test.ts`    |
+| `[x]`  | `src/services/services.integration.test.ts`                         |
+
+---
+
+### Entry Point: Electron Managers (Direct with Mocked Layers) ✅ COMPLETE
+
+| Status | Integration Test                                       |
+| ------ | ------------------------------------------------------ |
+| `[x]`  | `src/main/managers/view-manager.integration.test.ts`   |
+| `[x]`  | `src/main/managers/window-manager.integration.test.ts` |
+| `[x]`  | `src/main/managers/badge-manager.integration.test.ts`  |
+| `[x]`  | `src/main/shortcut-controller.integration.test.ts`     |
+
+---
+
+### Entry Point: Shell/Platform Layers ✅ COMPLETE
+
+| Status | Integration Test                                   |
+| ------ | -------------------------------------------------- |
+| `[x]`  | `src/services/shell/view.integration.test.ts`      |
+| `[x]`  | `src/services/shell/window.integration.test.ts`    |
+| `[x]`  | `src/services/shell/session.integration.test.ts`   |
+| `[x]`  | `src/services/platform/image.integration.test.ts`  |
+| `[x]`  | `src/services/platform/ipc.integration.test.ts`    |
+| `[x]`  | `src/services/platform/dialog.integration.test.ts` |
+| `[x]`  | `src/services/platform/menu.integration.test.ts`   |
+
+---
+
+### Entry Point: Bootstrap/API ✅ COMPLETE
+
+| Status | Integration Test                                |
+| ------ | ----------------------------------------------- |
+| `[x]`  | `src/main/bootstrap.integration.test.ts`        |
+| `[x]`  | `src/main/api/registry.integration.test.ts`     |
+| `[x]`  | `src/main/ipc/api-handlers.integration.test.ts` |
+
+---
+
+### Entry Point: UI Components 🔄 PARTIAL
+
+| Status | Integration Test                                                         |
+| ------ | ------------------------------------------------------------------------ |
+| `[x]`  | `src/renderer/lib/components/MainView.integration.test.ts`               |
+| `[x]`  | `src/renderer/lib/components/OpenProjectErrorDialog.integration.test.ts` |
+| `[ ]`  | `src/renderer/lib/components/Sidebar.integration.test.ts`                |
+| `[ ]`  | `src/renderer/lib/components/CreateWorkspaceDialog.integration.test.ts`  |
+| `[ ]`  | `src/renderer/lib/components/BranchDropdown.integration.test.ts`         |
+
+---
+
+### Entry Point: Extensions ✅ COMPLETE
+
+| Status | Integration Test                                                   |
+| ------ | ------------------------------------------------------------------ |
+| `[x]`  | `extensions/dictation/src/DictationController.integration.test.ts` |
+
+---
+
+### Focused Tests (Pure Functions - No Migration Needed) ✅
+
+These tests are already correct - they test pure functions with no external dependencies:
+
+| Status | Test          | Path                                 |
+| ------ | ------------- | ------------------------------------ |
+| `[x]`  | path-utils    | `src/services/platform/path.test.ts` |
+| `[x]`  | id-generation | `src/shared/id-generation.test.ts`   |
+| `[x]`  | error-utils   | `src/shared/error-utils.test.ts`     |
+
+---
+
+### Boundary Tests (No Migration - Keep As Is) ✅
+
+These tests verify real external system behavior and should not be modified:
+
+| Status | Test                       | Path                                                              |
+| ------ | -------------------------- | ----------------------------------------------------------------- |
+| `[x]`  | simple-git-client.boundary | `src/services/git/simple-git-client.boundary.test.ts`             |
+| `[x]`  | filesystem.boundary        | `src/services/platform/filesystem.boundary.test.ts`               |
+| `[x]`  | process.boundary           | `src/services/platform/process.boundary.test.ts`                  |
+| `[x]`  | network.boundary           | `src/services/platform/network.boundary.test.ts`                  |
+| `[x]`  | archive-extractor.boundary | `src/services/binary-download/archive-extractor.boundary.test.ts` |
+| `[x]`  | opencode-client.boundary   | `src/services/opencode/opencode-client.boundary.test.ts`          |
 
 ---
 
 ## Implementation Steps
 
-- [x] **Step 1: Rewrite docs/TESTING.md**
-  - **Source material**: Use the detailed explanation sections from this plan as the basis
-  - **Structure**: Overview, Test Types (Boundary/Integration/UI/Focused), Decision Guide, Behavioral Mock Pattern, Test Entry Points, Cross-Platform Requirements, Test Performance, Module Migration Process, Examples, Test Helpers
-  - Document boundary tests: purpose, relationship to behavioral mocks, examples
-  - Document integration tests: purpose, entry points, behavioral mock pattern, side-by-side migration example
-  - Document UI test categories: API-call, UI-state, Pure-UI with examples
-  - Document focused tests: when pure functions can keep simple tests
-  - Document behavioral mock verification strategy (mocks must match boundary test assertions)
-  - Document cross-platform requirements (path.join, path.normalize)
-  - Document test entry point selection guide
-  - Document test naming conventions (behavior, not implementation)
-  - **Document test performance requirements** (tests MUST be fast, targets, optimization techniques)
-  - Document common test fixture helper pattern
-  - Mark unit tests as **deprecated** (not deleted) - they remain until migrated
-  - Update test commands (keep `test:legacy` for deprecated unit tests)
-  - Update decision guide for test types
-  - Files affected: `docs/TESTING.md`
+**Scope**: This plan updates documentation only. Behavioral mock creation and test migration happen in separate plans.
 
-- [x] **Step 2: Update AGENTS.md testing section**
-  - Update "Testing Requirements" quick reference - mark unit tests as deprecated
-  - Update test commands table:
-    - Keep `npm run test:legacy` for deprecated unit tests
-    - `npm run validate` runs integration tests only (excluding boundary for speed)
-  - Update "When to Run Tests" guidance for test types
-  - Update code change → test type mapping table
-  - Mark unit test examples as deprecated with migration note
-  - **Emphasize that integration tests must be fast** for development feedback
-  - Files affected: `AGENTS.md`
+- [x] **Step 1: Update docs/TESTING.md - Test Types Section**
+  - Add "Behavioral Mock Pattern" as primary test type
+  - Document `mock.$` accessor pattern
+  - Document `MockState` interface requirement
 
-- [x] **Step 3: Update feature agent plan template**
-  - Replace Testing Strategy section with new format
-  - Add Integration Tests table with columns: #, Test Case, Entry Point, Boundary Mocks, Behavior Verified
-  - Add UI Integration Tests table with columns: #, Test Case, Category, Entry Point, Behavior Verified
-  - Update Boundary Tests section (only for new external interfaces)
-  - Add Focused Tests section (only for pure utility functions)
-  - Remove Unit Tests section (mark as deprecated in guidance)
-  - Add guidance on specifying behavior verified as pseudo-assertions
-  - Files affected: `.opencode/agent/feature.md`
+- [x] **Step 2: Update docs/TESTING.md - Mock Factories Section**
+  - Add mock factory organization (co-located + central fixture)
+  - Document type-safe matcher pattern
+  - Add matcher registration instructions
 
-- [x] **Step 4: Rewrite review-testing agent**
-  - Remove unit test review criteria (mark as deprecated)
-  - Add integration test review criteria:
-    - Appropriate entry point used? (see Entry Point Selection Guide)
-    - Behavioral mocks specified (not call-tracking)?
-    - Behavior verified as outcomes (not implementation calls)?
-    - All scenarios covered (happy path, errors, edge cases)?
-    - Cross-platform considerations addressed?
-    - **Tests are fast?** (no artificial delays, minimal mock state, efficient setup)
-  - Add UI test review criteria:
-    - Correct category (API-call, UI-state, Pure-UI)?
-    - Entry point includes component + action?
-  - Add boundary test review criteria:
-    - Only for new/modified external interfaces?
-    - No mocks in boundary tests?
-    - Do behavioral mocks match boundary test assertions?
-  - Add focused test review criteria:
-    - Only for pure functions with no external dependencies?
-  - Update severity definitions for new criteria
-  - **Add "slow tests" as a Critical issue** - tests must be fast for development workflow
-  - Files affected: `.opencode/agent/review-testing.md`
+- [x] **Step 3: Update docs/TESTING.md - Migration Section**
+  - Add migration plan template reference
+  - Document file deletion timing rules
+  - Add test file size guidance
 
-- [x] **Step 5: Update implementation-review agent**
-  - Update verification checklist:
-    - New code uses `*.integration.test.ts` or `*.boundary.test.ts` (not `*.test.ts`)
-    - Behavioral mocks used (not call-tracking)
-    - Tests verify outcomes (not implementation calls)
-    - Correct entry points used
-    - Cross-platform paths use path.join/path.normalize
-    - Behavioral mock behavior matches boundary test assertions
-    - **Tests run fast** (no delays, efficient mocks)
-  - Remove unit test file naming checks for new code
-  - Add check for behavioral mock usage
-  - Files affected: `.opencode/agent/implementation-review.md`
+- [x] **Step 4: Update docs/TESTING.md - Performance Section**
+  - Add integration test performance targets
+  - Document <50ms per test requirement
+  - Add profiling guidance
 
-- [x] **Step 6: Update package.json test scripts**
-  - Rename `test:unit` to `test:legacy` with deprecation comment
-  - Update `npm run validate` to run integration tests only (excluding boundary)
-  - Ensure `npm test` still runs all tests (legacy + integration + boundary)
-  - Add script comments explaining the transition
-  - Files affected: `package.json`
-  - **Note**: Final cleanup (removing `test:legacy` from `validate`, removing deprecated scripts) will happen AFTER all modules in the Module Migration Checklist have been migrated. Keep scripts as-is during transition to maintain CI stability.
+- [x] **Step 5: Update AGENTS.md - Testing Requirements**
+  - Add behavioral mock pattern summary
+  - Reference docs/TESTING.md for details
+  - Update test command table
 
-## Testing Strategy
+- [x] **Step 6: Create TODO tracking section**
+  - Document all changes made to docs/TESTING.md
+  - Create checklist for future reviewers
 
-_No new tests in Phase 1 - this plan updates documentation and agent prompts only._
+---
 
-### Manual Testing Checklist
+## TODO: docs/TESTING.md Updates
 
-- [ ] docs/TESTING.md has correct structure (Overview, Test Types, Decision Guide, etc.)
-- [ ] docs/TESTING.md accurately describes boundary test purpose and relationship to behavioral mocks
-- [ ] docs/TESTING.md accurately describes integration test purpose, entry points, behavioral mocks
-- [ ] docs/TESTING.md includes side-by-side migration example
-- [ ] docs/TESTING.md documents cross-platform requirements
-- [ ] docs/TESTING.md documents test entry point selection guide
-- [ ] docs/TESTING.md includes test naming conventions
-- [ ] docs/TESTING.md includes test performance requirements and optimization techniques
-- [ ] docs/TESTING.md accurately describes UI test categories with examples
-- [ ] AGENTS.md marks unit tests as deprecated, keeps test:legacy command
-- [ ] AGENTS.md emphasizes fast integration tests
-- [ ] Feature agent plan template uses new Testing Strategy format with # column
-- [ ] review-testing agent reviews for behavioral mocks, outcome assertions, and test speed
-- [ ] implementation-review agent checklist matches new strategy including speed check
-- [ ] `npm test` runs without errors (includes legacy tests)
-- [ ] `npm run validate:fix` works correctly (integration only)
-- [ ] `npm run test:legacy` runs deprecated unit tests
+The following changes have been made to `docs/TESTING.md`:
 
-## Dependencies
+### New Sections Added
 
-| Package | Purpose             | Approved |
-| ------- | ------------------- | -------- |
-| (none)  | No new dependencies | N/A      |
+- [x] **Behavioral Mock Base Interface** - `MockState` interface with `reset()`, `toString()`
+- [x] **Mock Return Pattern** - `mock.$` accessor pattern explanation
+- [x] **Type-Safe Custom Matchers** - Conditional type pattern for type-safe assertions
+- [x] **Matcher Registration** - Setup file and vitest config instructions (deferred to Phase 1 infrastructure)
+- [x] **Mock Factory Organization** - Co-located vs central fixture pattern
+- [x] **Cross-Mock State Coordination** - Guidance for tests needing multiple mocks
+- [x] **Event and Callback Mocking** - Pattern for interfaces with callbacks
+- [x] **Error Simulation Pattern** - `simulateError()`/`clearError()` methods
+- [x] **Public API vs $ Accessor** - Guidance on when to use each
+- [x] **Async Operations** - Synchronous state updates guidance
+
+### Existing Sections Updated
+
+- [x] **Test Types** - Integration tests emphasized as primary, unit tests marked deprecated
+- [x] **Test Naming** - Behavioral naming convention already documented
+- [x] **Performance Targets** - <50ms per integration test already documented
+- [x] **Integration Test Example** - Updated to use `mock.$` pattern
+
+### AGENTS.md Updates
+
+- [x] **Behavioral Mock Pattern** - Added new section with `mock.$` example
+- [x] **Quick Reference** - Already emphasizes integration tests
+- [x] **Test Commands** - Already shows `test:integration` as primary
+
+---
 
 ## Documentation Updates
 
 ### Files to Update
 
-| File                                       | Changes Required                                                             |
-| ------------------------------------------ | ---------------------------------------------------------------------------- |
-| `docs/TESTING.md`                          | Complete rewrite - use this plan's sections as source material               |
-| `AGENTS.md`                                | Mark unit tests as deprecated, update test commands, emphasize speed         |
-| `.opencode/agent/feature.md`               | New Testing Strategy section with # column, entry points, behavior verified  |
-| `.opencode/agent/review-testing.md`        | Complete rewrite - behavioral mock criteria, outcome assertions, speed check |
-| `.opencode/agent/implementation-review.md` | Update verification checklist for integration-only new code, speed check     |
-| `package.json`                             | Rename `test:unit` to `test:legacy`, update `validate` to integration only   |
+| File              | Changes Required                                                    |
+| ----------------- | ------------------------------------------------------------------- |
+| `docs/TESTING.md` | Major update - add behavioral mock patterns, type-safe matchers     |
+| `AGENTS.md`       | Minor update - reference new patterns, update test command guidance |
 
 ### New Documentation Required
 
-| File | Purpose                       |
-| ---- | ----------------------------- |
-| None | All updates to existing files |
+None - all content goes in existing files.
+
+---
 
 ## Definition of Done
 
-- [ ] All implementation steps complete
-- [ ] `npm run validate:fix` passes
-- [ ] `npm test` passes (including legacy tests)
-- [ ] Documentation accurately reflects new testing strategy
-- [ ] Agent prompts updated with new review criteria including speed requirements
-- [ ] Examples in TESTING.md are syntactically correct
-- [ ] All module migration plans in Module Migration Checklist completed (prerequisite for final package.json cleanup)
-- [ ] User acceptance testing passed
-- [ ] Changes committed
+- [x] All implementation steps complete (documentation updates)
+- [x] Plan approved by reviewers
+- [x] `docs/TESTING.md` updated with behavioral mock patterns
+- [x] `AGENTS.md` testing section updated
+- [x] `pnpm validate:fix` passes
+- [x] User acceptance testing passed
+
+---
+
+## Notes
+
+This plan establishes the **strategy and documentation** for behavior-driven testing.
+
+### Implementation Summary (as of 2026-01-04)
+
+**Phase 1: Infrastructure ✅ COMPLETE**
+
+- All behavioral mock factories implemented in `*.state-mock.ts` files
+- Mock infrastructure: `src/test/state-mock.ts`, `src/test/setup-matchers.ts`
+- Vitest configuration with proper `setupFiles` for all test projects
+
+**Phase 2-6: Integration Tests ✅ MOSTLY COMPLETE**
+
+- 28 integration test files exist covering most modules
+- Remaining work: UI component integration tests (Sidebar, CreateWorkspaceDialog, BranchDropdown)
+
+**Naming Convention Evolution:**
+
+- Original plan: `*.test-utils.ts` for mocks
+- Actual implementation: `*.state-mock.ts` for behavioral mocks
+- Legacy `*.test-utils.ts` files contain deprecated call-tracking mocks with `@deprecated` annotations
+
+**Central Fixture (`src/test/fixtures.ts`):**
+
+- Deferred until patterns emerge from actual usage
+- As more integration tests are written, common mock composition patterns will be identified
+- Design based on observed needs rather than speculating upfront

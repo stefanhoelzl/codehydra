@@ -934,6 +934,27 @@ See `docs/TESTING.md` for the complete testing strategy.
 
 **Note**: Unit tests are **deprecated**. New code uses integration tests with behavioral mocks. Existing unit tests remain until migrated per-module.
 
+### Behavioral Mock Pattern
+
+Mocks simulate behavior with in-memory state via the `mock.$` accessor:
+
+```typescript
+const mock = createFileSystemMock();
+
+// Public API for normal setup (preferred)
+await mock.writeFile("/config.json", "{}");
+
+// $ accessor for test utilities
+mock.$.simulateError("/broken", "EIO"); // Error simulation
+mock.$.reset(); // Restore initial state
+console.log(mock.$.toString()); // Debug output
+
+// Type-safe matchers
+expect(mock).toHaveFile("/config.json");
+```
+
+See [Behavioral Mock Pattern](docs/TESTING.md#behavioral-mock-pattern) for full documentation.
+
 ### Efficient Coverage Workflow
 
 For features and new code:
