@@ -14,7 +14,6 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { ipcMain } from "electron";
 import { ApiRegistry } from "./registry";
 import type { MethodPath, MethodHandler } from "./registry-types";
 import { ALL_METHOD_PATHS } from "./registry-types";
@@ -56,6 +55,7 @@ function registerAllMethodsWithOneOverride<P extends MethodPath>(
   const defaultHandlers: { [K in MethodPath]: MethodHandler<K> } = {
     "lifecycle.getState": async () => "ready",
     "lifecycle.setup": async () => ({ success: true as const }),
+    "lifecycle.startServices": async () => ({ success: true as const }),
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},
@@ -168,90 +168,5 @@ describe.skipIf(!isElectronContext)("registry.ipc.no-conflict", () => {
     // Both registries should have their handlers registered without conflict
     // In a real Electron context, we would invoke each and verify different results
     expect(true).toBe(true); // Placeholder for actual Electron test
-  });
-});
-
-// =============================================================================
-// Node.js Environment Tests (run with mocked ipcMain)
-// =============================================================================
-
-// Mock electron ipcMain for Node.js environment tests
-vi.mock("electron", () => ({
-  ipcMain: {
-    handle: vi.fn(),
-    removeHandler: vi.fn(),
-  },
-}));
-
-describe("registry.ipc boundary tests (mocked environment)", () => {
-  let registry: ApiRegistry;
-  let capturedHandler: ((event: unknown, payload: unknown) => Promise<unknown>) | undefined;
-
-  beforeEach(() => {
-    registry = new ApiRegistry();
-    vi.clearAllMocks();
-    capturedHandler = undefined;
-    vi.mocked(ipcMain.handle).mockImplementation((_channel, handler) => {
-      capturedHandler = handler as (event: unknown, payload: unknown) => Promise<unknown>;
-    });
-  });
-
-  afterEach(async () => {
-    await registry.dispose();
-  });
-
-  it("IPC handler is registered with correct channel", () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
-    registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
-
-    expect(ipcMain.handle).toHaveBeenCalledWith("api:lifecycle:get-state", expect.any(Function));
-  });
-
-  it("IPC handler invokes registered method handler", async () => {
-    const receivedPayload = vi.fn();
-    const handler: MethodHandler<"projects.open"> = async (payload) => {
-      receivedPayload(payload);
-      return createMockProject();
-    };
-    registry.register("projects.open", handler, { ipc: "api:project:open" });
-
-    // Simulate IPC invocation
-    expect(capturedHandler).toBeDefined();
-    await capturedHandler!({}, { path: "/test/path" });
-
-    expect(receivedPayload).toHaveBeenCalledWith({ path: "/test/path" });
-  });
-
-  it("IPC handler returns method result", async () => {
-    const mockProject = createMockProject();
-    const handler: MethodHandler<"projects.open"> = async () => mockProject;
-    registry.register("projects.open", handler, { ipc: "api:project:open" });
-
-    expect(capturedHandler).toBeDefined();
-    const result = await capturedHandler!({}, { path: "/test/path" });
-
-    expect(result).toBe(mockProject);
-  });
-
-  it("IPC cleanup removes handler", async () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
-    registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
-
-    await registry.dispose();
-
-    expect(ipcMain.removeHandler).toHaveBeenCalledWith("api:lifecycle:get-state");
-  });
-
-  it("Multiple IPC handlers are all cleaned up", async () => {
-    const handler1: MethodHandler<"lifecycle.getState"> = async () => "ready";
-    const handler2: MethodHandler<"lifecycle.quit"> = async () => {};
-
-    registry.register("lifecycle.getState", handler1, { ipc: "api:lifecycle:get-state" });
-    registry.register("lifecycle.quit", handler2, { ipc: "api:lifecycle:quit" });
-
-    await registry.dispose();
-
-    expect(ipcMain.removeHandler).toHaveBeenCalledWith("api:lifecycle:get-state");
-    expect(ipcMain.removeHandler).toHaveBeenCalledWith("api:lifecycle:quit");
   });
 });

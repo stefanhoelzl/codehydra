@@ -1,29 +1,25 @@
 /**
  * Unit tests for ApiRegistry.
+ *
+ * Uses behavioral IpcLayer mock instead of vi.mock("electron").
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ipcMain } from "electron";
 import { ApiRegistry } from "./registry";
 import type { MethodPath, MethodHandler } from "./registry-types";
 import { ALL_METHOD_PATHS } from "./registry-types";
 import { createMockLogger } from "../../services/logging";
+import {
+  createBehavioralIpcLayer,
+  type BehavioralIpcLayer,
+} from "../../services/platform/ipc.test-utils";
 import type { ProjectId, WorkspaceName, Project, Workspace } from "../../shared/api/types";
-
-// Mock electron ipcMain
-vi.mock("electron", () => ({
-  ipcMain: {
-    handle: vi.fn(),
-    removeHandler: vi.fn(),
-  },
-}));
 
 describe("registry.register", () => {
   let registry: ApiRegistry;
 
   beforeEach(() => {
     registry = new ApiRegistry();
-    vi.clearAllMocks();
   });
 
   afterEach(async () => {
@@ -69,10 +65,11 @@ describe("registry.register", () => {
 
 describe("registry.register.ipc", () => {
   let registry: ApiRegistry;
+  let ipcLayer: BehavioralIpcLayer;
 
   beforeEach(() => {
-    registry = new ApiRegistry();
-    vi.clearAllMocks();
+    ipcLayer = createBehavioralIpcLayer();
+    registry = new ApiRegistry({ ipcLayer });
   });
 
   afterEach(async () => {
@@ -83,28 +80,36 @@ describe("registry.register.ipc", () => {
     const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
     registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
 
-    expect(ipcMain.handle).toHaveBeenCalledWith("api:lifecycle:get-state", expect.any(Function));
+    const state = ipcLayer._getState();
+    expect(state.handlers.has("api:lifecycle:get-state")).toBe(true);
   });
 
   it("does not create IPC handler when ipc option not provided", () => {
     const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
     registry.register("lifecycle.getState", handler);
 
-    expect(ipcMain.handle).not.toHaveBeenCalled();
+    const state = ipcLayer._getState();
+    expect(state.handlers.size).toBe(0);
+  });
+
+  it("does not create IPC handler when no ipcLayer provided", () => {
+    const noIpcRegistry = new ApiRegistry();
+    const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
+    noIpcRegistry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
+
+    // Should not throw, just skip IPC registration
+    const state = ipcLayer._getState();
+    expect(state.handlers.size).toBe(0);
   });
 });
 
 describe("registry.ipc.payload", () => {
   let registry: ApiRegistry;
-  let capturedHandler: ((event: unknown, payload: unknown) => Promise<unknown>) | undefined;
+  let ipcLayer: BehavioralIpcLayer;
 
   beforeEach(() => {
-    registry = new ApiRegistry();
-    vi.clearAllMocks();
-    capturedHandler = undefined;
-    vi.mocked(ipcMain.handle).mockImplementation((_channel, handler) => {
-      capturedHandler = handler as (event: unknown, payload: unknown) => Promise<unknown>;
-    });
+    ipcLayer = createBehavioralIpcLayer();
+    registry = new ApiRegistry({ ipcLayer });
   });
 
   afterEach(async () => {
@@ -119,8 +124,7 @@ describe("registry.ipc.payload", () => {
     };
     registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
 
-    expect(capturedHandler).toBeDefined();
-    await capturedHandler!({}, undefined);
+    await ipcLayer._invoke("api:lifecycle:get-state", undefined);
 
     expect(receivedPayload).toHaveBeenCalledWith({});
   });
@@ -133,8 +137,7 @@ describe("registry.ipc.payload", () => {
     };
     registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
 
-    expect(capturedHandler).toBeDefined();
-    await capturedHandler!({}, null);
+    await ipcLayer._invoke("api:lifecycle:get-state", null);
 
     expect(receivedPayload).toHaveBeenCalledWith({});
   });
@@ -148,8 +151,7 @@ describe("registry.ipc.payload", () => {
     registry.register("projects.open", handler, { ipc: "api:project:open" });
 
     const testPayload = { path: "/test/path" };
-    expect(capturedHandler).toBeDefined();
-    await capturedHandler!({}, testPayload);
+    await ipcLayer._invoke("api:project:open", testPayload);
 
     expect(receivedPayload).toHaveBeenCalledWith(testPayload);
   });
@@ -160,7 +162,6 @@ describe("registry.emit", () => {
 
   beforeEach(() => {
     registry = new ApiRegistry();
-    vi.clearAllMocks();
   });
 
   afterEach(async () => {
@@ -195,8 +196,7 @@ describe("registry.emit.error", () => {
 
   beforeEach(() => {
     mockLogger = createMockLogger();
-    registry = new ApiRegistry(mockLogger);
-    vi.clearAllMocks();
+    registry = new ApiRegistry({ logger: mockLogger });
   });
 
   afterEach(async () => {
@@ -242,7 +242,6 @@ describe("registry.on", () => {
 
   beforeEach(() => {
     registry = new ApiRegistry();
-    vi.clearAllMocks();
   });
 
   afterEach(async () => {
@@ -268,7 +267,6 @@ describe("registry.getInterface", () => {
 
   beforeEach(() => {
     registry = new ApiRegistry();
-    vi.clearAllMocks();
   });
 
   afterEach(async () => {
@@ -301,7 +299,6 @@ describe("registry.getInterface.partial", () => {
 
   beforeEach(() => {
     registry = new ApiRegistry();
-    vi.clearAllMocks();
   });
 
   afterEach(async () => {
@@ -331,10 +328,11 @@ describe("registry.getInterface.partial", () => {
 
 describe("registry.dispose", () => {
   let registry: ApiRegistry;
+  let ipcLayer: BehavioralIpcLayer;
 
   beforeEach(() => {
-    registry = new ApiRegistry();
-    vi.clearAllMocks();
+    ipcLayer = createBehavioralIpcLayer();
+    registry = new ApiRegistry({ ipcLayer });
   });
 
   it("cleans up IPC handlers and subscriptions", async () => {
@@ -345,10 +343,13 @@ describe("registry.dispose", () => {
     const handler = vi.fn();
     registry.on("project:opened", handler);
 
+    // Verify handler is registered
+    expect(ipcLayer._getState().handlers.has("api:lifecycle:get-state")).toBe(true);
+
     await registry.dispose();
 
     // IPC handler should be removed
-    expect(ipcMain.removeHandler).toHaveBeenCalledWith("api:lifecycle:get-state");
+    expect(ipcLayer._getState().handlers.has("api:lifecycle:get-state")).toBe(false);
 
     // Event should not be delivered after dispose
     registry.emit("project:opened", { project: createMockProject() });
@@ -358,10 +359,11 @@ describe("registry.dispose", () => {
 
 describe("registry.dispose.twice", () => {
   let registry: ApiRegistry;
+  let ipcLayer: BehavioralIpcLayer;
 
   beforeEach(() => {
-    registry = new ApiRegistry();
-    vi.clearAllMocks();
+    ipcLayer = createBehavioralIpcLayer();
+    registry = new ApiRegistry({ ipcLayer });
   });
 
   it("second dispose is no-op (idempotent)", async () => {
@@ -370,11 +372,10 @@ describe("registry.dispose.twice", () => {
     });
 
     await registry.dispose();
-    const removeHandlerCallCount = vi.mocked(ipcMain.removeHandler).mock.calls.length;
+    expect(ipcLayer._getState().handlers.size).toBe(0);
 
-    // Second dispose should be no-op
-    await registry.dispose();
-    expect(vi.mocked(ipcMain.removeHandler).mock.calls.length).toBe(removeHandlerCallCount);
+    // Second dispose should be no-op (no error because handler already removed)
+    await expect(registry.dispose()).resolves.toBeUndefined();
   });
 });
 
@@ -383,7 +384,6 @@ describe("registry.dispose.during.emit", () => {
 
   beforeEach(() => {
     registry = new ApiRegistry();
-    vi.clearAllMocks();
   });
 
   it("handles dispose during event emission", async () => {
@@ -409,7 +409,6 @@ describe("registry.emit.many.handlers", () => {
 
   beforeEach(() => {
     registry = new ApiRegistry();
-    vi.clearAllMocks();
   });
 
   afterEach(async () => {
@@ -441,7 +440,6 @@ describe("registry.getInterface.perf", () => {
   beforeEach(() => {
     registry = new ApiRegistry();
     registerAllMethodsWithStubs(registry);
-    vi.clearAllMocks();
   });
 
   afterEach(async () => {
@@ -493,6 +491,7 @@ function registerAllMethodsWithStubs(
   const defaultHandlers: { [P in MethodPath]: MethodHandler<P> } = {
     "lifecycle.getState": async () => "ready",
     "lifecycle.setup": async () => ({ success: true }),
+    "lifecycle.startServices": async () => ({ success: true }),
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},

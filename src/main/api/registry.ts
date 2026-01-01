@@ -3,7 +3,7 @@
  * Provides method registration, event emission, and IPC handler auto-generation.
  */
 
-import { ipcMain, type IpcMainInvokeEvent } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
 import type {
   IApiRegistry,
   MethodPath,
@@ -13,12 +13,23 @@ import type {
 import { ALL_METHOD_PATHS } from "./registry-types";
 import type { ICodeHydraApi, ApiEvents, Unsubscribe } from "../../shared/api/interfaces";
 import { SILENT_LOGGER, type Logger } from "../../services/logging";
+import type { IpcLayer } from "../../services/platform/ipc";
 
 // Generic handler type to avoid complex variance issues
 type AnyHandler = (payload: unknown) => Promise<unknown>;
 
 // Event handler set type
 type EventHandlerSet<E extends keyof ApiEvents> = Set<ApiEvents[E]>;
+
+/**
+ * Options for creating an ApiRegistry.
+ */
+export interface ApiRegistryOptions {
+  /** Logger for registry operations */
+  readonly logger?: Logger;
+  /** IPC layer for handler registration (optional - if not provided, IPC registration is disabled) */
+  readonly ipcLayer?: IpcLayer;
+}
 
 /**
  * API Registry implementation.
@@ -31,17 +42,21 @@ export class ApiRegistry implements IApiRegistry {
   // Type-safe event listeners - each event key maps to a set of handlers
   private readonly listeners = new Map<keyof ApiEvents, Set<unknown>>();
 
-  // Cleanup functions for registered IPC handlers
-  private readonly ipcCleanup: Array<() => void> = [];
+  // Registered IPC channels for cleanup
+  private readonly registeredChannels: string[] = [];
 
   // Logger for registry operations
   private readonly logger: Logger;
 
+  // IPC layer for handler registration
+  private readonly ipcLayer: IpcLayer | undefined;
+
   // Track disposed state for idempotent cleanup
   private disposed = false;
 
-  constructor(logger?: Logger) {
-    this.logger = logger ?? SILENT_LOGGER;
+  constructor(options?: ApiRegistryOptions) {
+    this.logger = options?.logger ?? SILENT_LOGGER;
+    this.ipcLayer = options?.ipcLayer;
   }
 
   /**
@@ -69,8 +84,8 @@ export class ApiRegistry implements IApiRegistry {
     // The type system ensures at registration time that handler matches the expected signature for path P.
     this.methods.set(path, handler as AnyHandler);
 
-    // Auto-register IPC handler if channel provided
-    if (options?.ipc) {
+    // Auto-register IPC handler if channel provided and IPC layer is available
+    if (options?.ipc && this.ipcLayer) {
       const channel = options.ipc;
       const ipcHandler = async (_event: IpcMainInvokeEvent, payload: unknown): Promise<unknown> => {
         // Convert undefined/null to empty object for handlers expecting EmptyPayload.
@@ -78,8 +93,8 @@ export class ApiRegistry implements IApiRegistry {
         // and the IPC handler receives the payload from the renderer which matches the expected type.
         return (handler as AnyHandler)(payload ?? {});
       };
-      ipcMain.handle(channel, ipcHandler);
-      this.ipcCleanup.push(() => ipcMain.removeHandler(channel));
+      this.ipcLayer.handle(channel, ipcHandler);
+      this.registeredChannels.push(channel);
       this.logger.debug("Registered IPC handler", { path, channel });
     }
   }
@@ -204,6 +219,7 @@ export class ApiRegistry implements IApiRegistry {
       lifecycle: {
         getState: () => get("lifecycle.getState")({}),
         setup: () => get("lifecycle.setup")({}),
+        startServices: () => get("lifecycle.startServices")({}),
         quit: () => get("lifecycle.quit")({}),
       },
       on: this.on.bind(this),
@@ -232,14 +248,16 @@ export class ApiRegistry implements IApiRegistry {
     this.disposed = true;
 
     // Clean up IPC handlers (continue even if one fails)
-    for (const cleanup of this.ipcCleanup) {
-      try {
-        cleanup();
-      } catch (error) {
-        this.logger.error("IPC cleanup error", {}, error instanceof Error ? error : undefined);
+    if (this.ipcLayer) {
+      for (const channel of this.registeredChannels) {
+        try {
+          this.ipcLayer.removeHandler(channel);
+        } catch (error) {
+          this.logger.error("IPC cleanup error", {}, error instanceof Error ? error : undefined);
+        }
       }
     }
-    this.ipcCleanup.length = 0;
+    this.registeredChannels.length = 0;
 
     // Clear listeners
     this.listeners.clear();
