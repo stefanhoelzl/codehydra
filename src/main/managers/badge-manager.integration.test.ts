@@ -1,38 +1,40 @@
 // @vitest-environment node
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// Mock Electron nativeImage
-const mockNativeImage = vi.hoisted(() => {
-  const createFromBitmap = vi.fn((buffer: Buffer, options: { width: number; height: number }) => ({
-    isEmpty: () => false,
-    getSize: () => ({ width: options.width, height: options.height }),
-    toPNG: () => Buffer.from("mock-png"),
-    _buffer: buffer,
-    _options: options,
-  }));
-
-  return {
-    createFromBitmap,
-    getCalls: () =>
-      createFromBitmap.mock.calls as Array<[Buffer, { width: number; height: number }]>,
-  };
-});
-
-vi.mock("electron", () => ({
-  nativeImage: mockNativeImage,
-}));
+import { describe, it, expect, beforeEach } from "vitest";
 
 import { BadgeManager } from "./badge-manager";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
 import { SILENT_LOGGER } from "../../services/logging";
 import {
-  createMockElectronAppApi,
-  createMockWindowManagerForBadge as createMockWindowManager,
-} from "./badge-manager.test-utils";
+  createBehavioralAppLayer,
+  type BehavioralAppLayer,
+} from "../../services/platform/app.test-utils";
+import {
+  createBehavioralImageLayer,
+  type BehavioralImageLayer,
+} from "../../services/platform/image.test-utils";
 import type { WindowManager } from "./window-manager";
+import type { NativeImage } from "electron";
 import type { AgentStatusManager, StatusChangedCallback } from "../../services/opencode";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
+
+/**
+ * Mock WindowManager for BadgeManager testing.
+ */
+interface MockWindowManager {
+  setOverlayIcon: (image: NativeImage | null, description: string) => void;
+  setOverlayIconCalls: Array<{ image: NativeImage | null; description: string }>;
+}
+
+function createMockWindowManager(): MockWindowManager {
+  const setOverlayIconCalls: Array<{ image: NativeImage | null; description: string }> = [];
+  return {
+    setOverlayIcon: (image: NativeImage | null, description: string) => {
+      setOverlayIconCalls.push({ image, description });
+    },
+    setOverlayIconCalls,
+  };
+}
 
 /**
  * Creates a mock AgentStatusManager for integration testing.
@@ -66,20 +68,25 @@ function createMockAgentStatusManager(): Pick<
 }
 
 describe("BadgeManager Integration", () => {
+  let appLayer: BehavioralAppLayer;
+  let imageLayer: BehavioralImageLayer;
+  let windowManager: MockWindowManager;
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    appLayer = createBehavioralAppLayer({ platform: "darwin" });
+    imageLayer = createBehavioralImageLayer();
+    windowManager = createMockWindowManager();
   });
 
   describe("Badge state aggregation", () => {
     it("shows no badge when all workspaces are idle", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -95,18 +102,17 @@ describe("BadgeManager Integration", () => {
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
       // Badge should be empty (all ready = no badge)
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("");
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("");
     });
 
     it("shows red badge when all workspaces are busy", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -122,18 +128,17 @@ describe("BadgeManager Integration", () => {
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
       // Badge should show filled circle (all working)
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("●");
     });
 
     it("shows mixed badge when some workspaces are idle and some busy", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -149,18 +154,17 @@ describe("BadgeManager Integration", () => {
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
       // Badge should show half circle (mixed)
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("◐");
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("◐");
     });
 
     it("treats workspace with mixed status as working", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -176,18 +180,17 @@ describe("BadgeManager Integration", () => {
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
       // Badge should show half circle (mixed, because "mixed" workspace counts as working)
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("◐");
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("◐");
     });
 
     it("ignores workspaces with none status", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -203,27 +206,27 @@ describe("BadgeManager Integration", () => {
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
       // Badge should be empty (no workspaces with agents)
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("");
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("");
     });
   });
 
   describe("Badge updates on status change", () => {
     it("updates badge when workspace status changes", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
 
       // Connect to status manager
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      appApi.dockSetBadgeCalls.length = 0;
+      // Clear initial calls
+      const initialCalls = appLayer._getState().dockSetBadgeCalls.length;
 
       // Change from empty to all busy
       statusManager.setStatuses(
@@ -233,18 +236,18 @@ describe("BadgeManager Integration", () => {
       );
       statusManager.triggerStatusChange();
 
-      expect(appApi.dockSetBadgeCalls).toEqual(["●"]);
+      const newCalls = appLayer._getState().dockSetBadgeCalls.slice(initialCalls);
+      expect(newCalls).toEqual(["●"]);
     });
 
     it("transitions from all-working to mixed when workspace becomes idle", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -258,8 +261,8 @@ describe("BadgeManager Integration", () => {
       );
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
-      appApi.dockSetBadgeCalls.length = 0;
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("●");
+      const initialCalls = appLayer._getState().dockSetBadgeCalls.length;
 
       // One workspace becomes idle
       statusManager.setStatuses(
@@ -270,18 +273,18 @@ describe("BadgeManager Integration", () => {
       );
       statusManager.triggerStatusChange();
 
-      expect(appApi.dockSetBadgeCalls).toEqual(["◐"]);
+      const newCalls = appLayer._getState().dockSetBadgeCalls.slice(initialCalls);
+      expect(newCalls).toEqual(["◐"]);
     });
 
     it("transitions from mixed to none when all workspaces become idle", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -295,8 +298,8 @@ describe("BadgeManager Integration", () => {
       );
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("◐");
-      appApi.dockSetBadgeCalls.length = 0;
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("◐");
+      const initialCalls = appLayer._getState().dockSetBadgeCalls.length;
 
       // All workspaces become idle
       statusManager.setStatuses(
@@ -307,20 +310,20 @@ describe("BadgeManager Integration", () => {
       );
       statusManager.triggerStatusChange();
 
-      expect(appApi.dockSetBadgeCalls).toEqual([""]);
+      const newCalls = appLayer._getState().dockSetBadgeCalls.slice(initialCalls);
+      expect(newCalls).toEqual([""]);
     });
   });
 
   describe("Badge clears on last workspace removed", () => {
     it("clears badge when all workspaces are removed", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -333,28 +336,29 @@ describe("BadgeManager Integration", () => {
       );
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
-      appApi.dockSetBadgeCalls.length = 0;
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("●");
+      const initialCalls = appLayer._getState().dockSetBadgeCalls.length;
 
       // Remove all workspaces
       statusManager.setStatuses(new Map());
       statusManager.triggerStatusChange();
 
       // Badge should be cleared
-      expect(appApi.dockSetBadgeCalls).toEqual([""]);
+      const newCalls = appLayer._getState().dockSetBadgeCalls.slice(initialCalls);
+      expect(newCalls).toEqual([""]);
     });
   });
 
   describe("Windows overlay icon", () => {
-    it("generates split circle for mixed state", () => {
+    it("generates image for mixed state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
+      appLayer = createBehavioralAppLayer({ platform: "win32" });
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -369,20 +373,20 @@ describe("BadgeManager Integration", () => {
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
-      expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
+      expect(imageLayer._getState().images.size).toBe(1);
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("Some workspaces ready");
     });
 
-    it("generates red circle for all-working state", () => {
+    it("generates image for all-working state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
+      appLayer = createBehavioralAppLayer({ platform: "win32" });
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -397,7 +401,7 @@ describe("BadgeManager Integration", () => {
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
-      expect(mockNativeImage.createFromBitmap).toHaveBeenCalled();
+      expect(imageLayer._getState().images.size).toBe(1);
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("All workspaces working");
     });
@@ -406,13 +410,12 @@ describe("BadgeManager Integration", () => {
   describe("disconnect", () => {
     it("clears badge and stops updates on disconnect", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const appApi = createMockElectronAppApi();
-      const windowManager = createMockWindowManager();
       const statusManager = createMockAgentStatusManager();
 
       const badgeManager = new BadgeManager(
         platformInfo,
-        appApi,
+        appLayer,
+        imageLayer,
         windowManager as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -425,15 +428,16 @@ describe("BadgeManager Integration", () => {
       );
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
-      expect(appApi.dockSetBadgeCalls.at(-1)).toEqual("●");
-      appApi.dockSetBadgeCalls.length = 0;
+      expect(appLayer._getState().dockSetBadgeCalls.at(-1)).toEqual("●");
+      const initialCalls = appLayer._getState().dockSetBadgeCalls.length;
 
       // Disconnect
       badgeManager.disconnect();
 
       // Badge should be cleared
-      expect(appApi.dockSetBadgeCalls).toEqual([""]);
-      appApi.dockSetBadgeCalls.length = 0;
+      const disconnectCalls = appLayer._getState().dockSetBadgeCalls.slice(initialCalls);
+      expect(disconnectCalls).toEqual([""]);
+      const afterDisconnectCalls = appLayer._getState().dockSetBadgeCalls.length;
 
       // Further status changes should not update badge
       statusManager.setStatuses(
@@ -443,7 +447,8 @@ describe("BadgeManager Integration", () => {
       );
       statusManager.triggerStatusChange();
 
-      expect(appApi.dockSetBadgeCalls).toHaveLength(0);
+      // No new calls should have been made
+      expect(appLayer._getState().dockSetBadgeCalls.length).toBe(afterDisconnectCalls);
     });
   });
 });

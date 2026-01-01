@@ -21,6 +21,9 @@ import {
 } from "../services";
 import { VscodeSetupService, WrapperScriptGenerationService } from "../services/vscode-setup";
 import { ExecaProcessRunner } from "../services/platform/process";
+import { DefaultIpcLayer } from "../services/platform/ipc";
+import { DefaultAppLayer } from "../services/platform/app";
+import { DefaultImageLayer } from "../services/platform/image";
 import {
   DefaultBinaryDownloadService,
   DefaultArchiveExtractor,
@@ -33,7 +36,6 @@ import { wirePluginApi } from "./api/wire-plugin-api";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
-import { DefaultElectronAppApi } from "./managers/electron-app-api";
 import { AppState } from "./app-state";
 import { wireApiEvents, formatWindowTitle, registerLogHandlers } from "./ipc";
 import { initializeBootstrap, type BootstrapResult } from "./bootstrap";
@@ -327,10 +329,12 @@ async function startServices(): Promise<void> {
   agentStatusManager = new AgentStatusManager(loggingService.createLogger("opencode"));
 
   // Create and connect BadgeManager
-  const electronAppApi = new DefaultElectronAppApi();
+  const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
+  const imageLayer = new DefaultImageLayer(loggingService.createLogger("badge"));
   badgeManager = new BadgeManager(
     platformInfo,
-    electronAppApi,
+    appLayer,
+    imageLayer,
     windowManager,
     loggingService.createLogger("badge")
   );
@@ -639,8 +643,10 @@ async function bootstrap(): Promise<void> {
   // 8. Initialize bootstrap with API registry and modules
   // LifecycleModule is created immediately (handles lifecycle.* IPC)
   // CoreModule and UiModule are created when startServices() calls bootstrapResult.startServices()
+  const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
   bootstrapResult = initializeBootstrap({
     logger: loggingService.createLogger("api"),
+    ipcLayer,
     // Lifecycle module deps - available now
     lifecycleDeps: {
       vscodeSetup: vscodeSetupService ?? undefined,

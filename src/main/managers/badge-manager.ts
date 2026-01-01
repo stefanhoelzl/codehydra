@@ -6,9 +6,10 @@
  * - Half red/half green: Mixed state (some ready, some working)
  */
 
-import { nativeImage, type NativeImage } from "electron";
 import type { PlatformInfo } from "../../services/platform/platform-info";
-import type { ElectronAppApi } from "./electron-app-api";
+import type { AppLayer } from "../../services/platform/app";
+import type { ImageLayer } from "../../services/platform/image";
+import type { ImageHandle } from "../../services/platform/types";
 import type { WindowManager } from "./window-manager";
 import type { Logger } from "../../services/logging";
 import type { AgentStatusManager } from "../../services/opencode/agent-status-manager";
@@ -37,15 +38,16 @@ export type BadgeState = "none" | "all-working" | "mixed";
  */
 export class BadgeManager {
   private readonly platformInfo: PlatformInfo;
-  private readonly appApi: ElectronAppApi;
+  private readonly appLayer: AppLayer;
+  private readonly imageLayer: ImageLayer;
   private readonly windowManager: WindowManager;
   private readonly logger: Logger;
 
   /**
    * Cache for generated badge images (Windows only).
-   * Key is the badge state, value is the generated NativeImage.
+   * Key is the badge state, value is the ImageHandle.
    */
-  private readonly imageCache = new Map<BadgeState, NativeImage>();
+  private readonly imageCache = new Map<BadgeState, ImageHandle>();
 
   /**
    * Unsubscribe function for status manager subscription.
@@ -54,12 +56,14 @@ export class BadgeManager {
 
   constructor(
     platformInfo: PlatformInfo,
-    appApi: ElectronAppApi,
+    appLayer: AppLayer,
+    imageLayer: ImageLayer,
     windowManager: WindowManager,
     logger: Logger
   ) {
     this.platformInfo = platformInfo;
-    this.appApi = appApi;
+    this.appLayer = appLayer;
+    this.imageLayer = imageLayer;
     this.windowManager = windowManager;
     this.logger = logger;
   }
@@ -103,7 +107,7 @@ export class BadgeManager {
       default:
         badge = ""; // Clear badge
     }
-    this.appApi.dock?.setBadge(badge);
+    this.appLayer.dock?.setBadge(badge);
     this.logger.debug("Updated macOS dock badge", { state, badge });
   }
 
@@ -118,7 +122,8 @@ export class BadgeManager {
       return;
     }
 
-    const image = this.getOrCreateBadgeImage(state);
+    const handle = this.getOrCreateBadgeImage(state);
+    const image = this.imageLayer.getNativeImage(handle);
     const description =
       state === "all-working" ? "All workspaces working" : "Some workspaces ready";
     this.windowManager.setOverlayIcon(image, description);
@@ -132,22 +137,22 @@ export class BadgeManager {
   private updateLinuxBadge(state: BadgeState): void {
     // Linux badge only supports counts, so use 1 for any visible state
     const count = state === "none" ? 0 : 1;
-    const success = this.appApi.setBadgeCount(count);
+    const success = this.appLayer.setBadgeCount(count);
     this.logger.debug("Updated Linux badge count", { state, count, success });
   }
 
   /**
    * Gets a cached badge image or creates a new one.
    */
-  private getOrCreateBadgeImage(state: BadgeState): NativeImage {
+  private getOrCreateBadgeImage(state: BadgeState): ImageHandle {
     const cached = this.imageCache.get(state);
     if (cached) {
       return cached;
     }
 
-    const image = this.generateBadgeImage(state);
-    this.imageCache.set(state, image);
-    return image;
+    const handle = this.generateBadgeImage(state);
+    this.imageCache.set(state, handle);
+    return handle;
   }
 
   /**
@@ -159,9 +164,9 @@ export class BadgeManager {
    * We use createFromBitmap with raw BGRA pixel data instead.
    *
    * @param state - The badge state (must not be "none")
-   * @returns NativeImage suitable for overlay icon
+   * @returns ImageHandle to the generated image
    */
-  private generateBadgeImage(state: BadgeState): NativeImage {
+  private generateBadgeImage(state: BadgeState): ImageHandle {
     const size = 16;
     const buffer = Buffer.alloc(size * size * 4);
 
@@ -204,7 +209,7 @@ export class BadgeManager {
       );
     }
 
-    return nativeImage.createFromBitmap(buffer, { width: size, height: size });
+    return this.imageLayer.createFromBitmap(buffer, size, size);
   }
 
   /**
@@ -343,6 +348,22 @@ export class BadgeManager {
       this.updateBadge("none");
       this.logger.debug("Disconnected from AgentStatusManager");
     }
+  }
+
+  /**
+   * Disposes of the BadgeManager, releasing all resources.
+   * This includes disconnecting from status manager and releasing cached images.
+   */
+  dispose(): void {
+    // Disconnect from status manager first
+    this.disconnect();
+
+    // Release all cached badge images
+    for (const handle of this.imageCache.values()) {
+      this.imageLayer.release(handle);
+    }
+    this.imageCache.clear();
+    this.logger.debug("BadgeManager disposed, released cached images");
   }
 
   /**

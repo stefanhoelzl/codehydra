@@ -1,26 +1,17 @@
 /**
  * Unit tests for bootstrap.
+ *
+ * Uses behavioral IpcLayer mock instead of vi.mock("electron").
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// Mock Electron before importing modules that use it
-const mockHandle = vi.fn();
-const mockRemoveHandler = vi.fn();
-
-vi.mock("electron", () => ({
-  ipcMain: {
-    handle: (...args: unknown[]) => mockHandle(...args),
-    removeHandler: (...args: unknown[]) => mockRemoveHandler(...args),
-  },
-}));
-
 import { initializeBootstrap } from "./bootstrap";
 import type { BootstrapDeps } from "./bootstrap";
 import type { LifecycleModuleDeps } from "./modules/lifecycle";
 import type { CoreModuleDeps } from "./modules/core";
 import type { UiModuleDeps } from "./modules/ui";
 import { createMockLogger } from "../services/logging";
+import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import type { AppState } from "./app-state";
 import type { IViewManager } from "./managers/view-manager.interface";
 
@@ -32,7 +23,7 @@ function createMockLifecycleDeps(): LifecycleModuleDeps {
   return {
     vscodeSetup: undefined,
     app: { quit: vi.fn() },
-    onSetupComplete: vi.fn().mockResolvedValue(undefined),
+    doStartServices: vi.fn().mockResolvedValue(undefined),
     logger: createMockLogger(),
   };
 }
@@ -123,6 +114,7 @@ function createMockUiDeps(): UiModuleDeps {
 function createMockDeps(): BootstrapDeps {
   return {
     logger: createMockLogger(),
+    ipcLayer: createBehavioralIpcLayer(),
     lifecycleDeps: createMockLifecycleDeps(),
     coreDepsFn: () => createMockCoreDeps(),
     uiDepsFn: () => createMockUiDeps(),

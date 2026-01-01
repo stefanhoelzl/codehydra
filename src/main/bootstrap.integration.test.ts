@@ -2,24 +2,17 @@
  * Integration tests for bootstrap.
  *
  * These tests verify the full bootstrap flow with modules wired correctly.
+ * Uses behavioral IpcLayer mock instead of vi.mock("electron").
  */
 
 import { describe, it, expect, vi } from "vitest";
-
-// Mock Electron's ipcMain before importing modules that use it
-vi.mock("electron", () => ({
-  ipcMain: {
-    handle: vi.fn(),
-    removeHandler: vi.fn(),
-  },
-}));
-
 import { initializeBootstrap } from "./bootstrap";
 import type { BootstrapDeps } from "./bootstrap";
 import type { LifecycleModuleDeps } from "./modules/lifecycle";
 import type { CoreModuleDeps } from "./modules/core";
 import type { UiModuleDeps } from "./modules/ui";
 import { createMockLogger } from "../services/logging";
+import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import type { AppState } from "./app-state";
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspaceName } from "../shared/api/types";
@@ -42,7 +35,7 @@ function createMockLifecycleDeps(overrides?: Partial<LifecycleModuleDeps>): Life
   return {
     vscodeSetup: undefined,
     app: { quit: vi.fn() },
-    onSetupComplete: vi.fn().mockResolvedValue(undefined),
+    doStartServices: vi.fn().mockResolvedValue(undefined),
     logger: createMockLogger(),
     ...overrides,
   };
@@ -160,6 +153,7 @@ function createMockUiDeps(): UiModuleDeps {
 function createMockDeps(): BootstrapDeps {
   return {
     logger: createMockLogger(),
+    ipcLayer: createBehavioralIpcLayer(),
     lifecycleDeps: createMockLifecycleDeps(),
     coreDepsFn: () => createMockCoreDeps(),
     uiDepsFn: () => createMockUiDeps(),
@@ -235,13 +229,14 @@ describe("bootstrap.module.order", () => {
     expect(() => result.getInterface()).not.toThrow();
   });
 
-  it("onSetupComplete callback is provided to lifecycle module", () => {
-    const onSetupCompleteMock = vi.fn().mockResolvedValue(undefined);
+  it("doStartServices callback is provided to lifecycle module", () => {
+    const doStartServicesMock = vi.fn().mockResolvedValue(undefined);
 
     const deps: BootstrapDeps = {
       logger: createMockLogger(),
+      ipcLayer: createBehavioralIpcLayer(),
       lifecycleDeps: createMockLifecycleDeps({
-        onSetupComplete: onSetupCompleteMock,
+        doStartServices: doStartServicesMock,
       }),
       coreDepsFn: () => createMockCoreDeps(),
       uiDepsFn: () => createMockUiDeps(),
@@ -252,10 +247,10 @@ describe("bootstrap.module.order", () => {
     // Verify the registry was created and lifecycle module is registered
     expect(result.registry).toBeDefined();
 
-    // The onSetupComplete callback is wired through to the lifecycle module
+    // The doStartServices callback is wired through to the lifecycle module
     // When setup completes successfully, it will call this callback
     // which in turn calls startServices()
-    expect(onSetupCompleteMock).not.toHaveBeenCalled(); // Not called until setup runs
+    expect(doStartServicesMock).not.toHaveBeenCalled(); // Not called until setup runs
   });
 });
 

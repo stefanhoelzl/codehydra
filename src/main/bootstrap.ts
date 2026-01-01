@@ -16,6 +16,7 @@ import { UiModule, type UiModuleDeps } from "./modules/ui";
 import type { IApiRegistry, IApiModule } from "./api/registry-types";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { Logger } from "../services/logging";
+import type { IpcLayer } from "../services/platform/ipc";
 
 // =============================================================================
 // Types
@@ -27,6 +28,8 @@ import type { Logger } from "../services/logging";
 export interface BootstrapDeps {
   /** Logger for the registry */
   readonly logger: Logger;
+  /** IPC layer for handler registration */
+  readonly ipcLayer: IpcLayer;
   /** Lifecycle module dependencies */
   readonly lifecycleDeps: LifecycleModuleDeps;
   /** Core module dependencies (provided after setup completes) */
@@ -63,7 +66,10 @@ export interface BootstrapResult {
  */
 export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // 1. Create registry FIRST (before any modules)
-  const registry = new ApiRegistry(deps.logger);
+  const registry = new ApiRegistry({
+    logger: deps.logger,
+    ipcLayer: deps.ipcLayer,
+  });
 
   // 2. Track modules for disposal (reverse order)
   const modules: IApiModule[] = [];
