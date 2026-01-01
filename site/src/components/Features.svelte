@@ -1,3 +1,7 @@
+<script>
+  const base = import.meta.env.BASE_URL;
+</script>
+
 <section class="features">
   <div class="container">
     <div class="feature-grid">
@@ -211,11 +215,11 @@
     </div>
     <div class="platform-row">
       <span class="platform-badge">
-        <img src="/linux.svg" alt="" class="platform-icon" aria-hidden="true" />
+        <img src="{base}linux.svg" alt="" class="platform-icon" aria-hidden="true" />
         Linux
       </span>
       <span class="platform-badge">
-        <img src="/windows.svg" alt="" class="platform-icon" aria-hidden="true" />
+        <img src="{base}windows.svg" alt="" class="platform-icon" aria-hidden="true" />
         Windows
       </span>
     </div>

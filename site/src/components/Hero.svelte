@@ -1,6 +1,10 @@
+<script>
+  const base = import.meta.env.BASE_URL;
+</script>
+
 <section class="hero">
   <div class="container hero-content">
-    <img src="/logo.png" alt="CodeHydra Logo" width="128" height="128" class="hero-logo" />
+    <img src="{base}logo.png" alt="CodeHydra Logo" width="128" height="128" class="hero-logo" />
     <h1 class="hero-title">
       Multi-Workspace IDE for<br />
       Parallel AI Agent Development

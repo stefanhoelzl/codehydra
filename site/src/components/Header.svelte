@@ -1,8 +1,12 @@
+<script>
+  const base = import.meta.env.BASE_URL;
+</script>
+
 <nav class="header">
   <a href="#main-content" class="skip-link">Skip to main content</a>
   <div class="container header-content">
-    <a href="/" class="logo">
-      <img src="/logo.png" alt="CodeHydra Logo" width="32" height="32" />
+    <a href={base} class="logo">
+      <img src="{base}logo.png" alt="CodeHydra Logo" width="32" height="32" />
       <span>CodeHydra</span>
     </a>
     <a
@@ -12,7 +16,7 @@
       class="github-link"
       aria-label="View on GitHub"
     >
-      <img src="/github.svg" alt="" class="github-icon" aria-hidden="true" />
+      <img src="{base}github.svg" alt="" class="github-icon" aria-hidden="true" />
     </a>
   </div>
 </nav>

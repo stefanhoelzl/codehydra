@@ -1,3 +1,7 @@
+<script>
+  const base = import.meta.env.BASE_URL;
+</script>
+
 <footer class="footer">
   <div class="container footer-content">
     <span class="footer-text">MIT License</span>
@@ -9,7 +13,7 @@
       class="github-link"
       aria-label="View on GitHub"
     >
-      <img src="/github.svg" alt="" class="github-icon" aria-hidden="true" />
+      <img src="{base}github.svg" alt="" class="github-icon" aria-hidden="true" />
     </a>
   </div>
 </footer>
