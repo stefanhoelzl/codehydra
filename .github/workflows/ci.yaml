@@ -45,9 +45,14 @@ jobs:
       - run: npm run test:boundary
 
       - run: npm run dist
+
+      - name: Rename Windows output for consistent naming
+        if: runner.os == 'Windows'
+        run: mv dist/win-unpacked dist/CodeHydra-win
+
       - uses: actions/upload-artifact@v4
         with:
           name: CodeHydra-${{ runner.os == 'Windows' && 'win' || 'linux' }}
-          path: dist/${{ runner.os == 'Windows' && 'win-unpacked/' || 'CodeHydra-*' }}
+          path: dist/CodeHydra-*
           retention-days: 7
           if-no-files-found: error
