@@ -43,7 +43,8 @@ export class ElectronBuildInfo implements BuildInfo {
 
   constructor(gitBranchFn: () => string = getGitBranch) {
     // Cache at construction time - these values should never change during runtime
-    this.version = app.getVersion();
+    // __APP_VERSION__ is injected by Vite at build time (git-based versioning)
+    this.version = __APP_VERSION__;
     this.isDevelopment = !app.isPackaged;
 
     if (this.isDevelopment) {

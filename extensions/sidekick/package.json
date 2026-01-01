@@ -2,7 +2,7 @@
   "name": "sidekick",
   "displayName": "CodeHydra Sidekick",
   "description": "CodeHydra integration for VS Code",
-  "version": "0.0.4",
+  "version": "1.0.0-placeholder",
   "publisher": "codehydra",
   "repository": {
     "type": "git",

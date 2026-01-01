@@ -10,6 +10,9 @@ const { mockState } = vi.hoisted(() => {
   return { mockState: state };
 });
 
+// Mock __APP_VERSION__ global (Vite-injected constant)
+vi.stubGlobal("__APP_VERSION__", "2026.01.01-dev.test1234");
+
 // Mock Electron app module with getters
 vi.mock("electron", () => ({
   app: {
@@ -36,10 +39,10 @@ describe("ElectronBuildInfo", () => {
   });
 
   describe("version", () => {
-    it("returns the app version from Electron", () => {
+    it("returns __APP_VERSION__ (Vite-injected)", () => {
       const buildInfo = new ElectronBuildInfo();
 
-      expect(buildInfo.version).toBe("1.2.3-test");
+      expect(buildInfo.version).toBe("2026.01.01-dev.test1234");
     });
   });
 

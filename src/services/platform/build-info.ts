@@ -4,7 +4,7 @@
  */
 export interface BuildInfo {
   /**
-   * Application version string from package.json.
+   * Application version string (from __APP_VERSION__, injected by Vite at build time).
    */
   readonly version: string;
 

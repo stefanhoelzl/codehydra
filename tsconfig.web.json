@@ -15,6 +15,7 @@
     }
   },
   "include": [
+    "src/env.d.ts",
     "src/renderer/**/*",
     "src/shared/**/*",
     "src/test/**/*",

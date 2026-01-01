@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Skip CI status check
+        type: boolean
+        default: false
+  push:
+    branches:
+      - releases
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      should_build: ${{ steps.ci.outputs.passed }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: |
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            echo "passed=true" >> $GITHUB_OUTPUT
+            echo "::warning::CI check skipped (force=true)"
+            exit 0
+          fi
+          STATUS=$(gh api repos/${{ github.repository }}/commits/$(git rev-parse HEAD)/status --jq '.state')
+          echo "passed=$([[ "$STATUS" = "success" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - run: |
+          TODAY=$(date -u +%Y.%m.%d)
+          COUNT=$(gh run list --workflow=release.yaml --created=$(date -u +%Y-%m-%d) --json status --jq 'length')
+          echo "version=$([[ "$COUNT" -le 1 ]] && echo "$TODAY" || echo "$TODAY.$COUNT")" >> $GITHUB_OUTPUT
+        id: version
+        if: steps.ci.outputs.passed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            builder: --linux AppImage
+          - os: windows-2025
+            platform: win
+            builder: --win dir
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: sudo apt-get update && sudo apt-get install -y libkrb5-dev
+        if: runner.os == 'Linux'
+
+      - run: echo "C:\Program Files\Git\bin" >> $env:GITHUB_PATH
+        if: runner.os == 'Windows'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --force
+
+      - run: for dir in extensions/*/; do (cd "$dir" && npm ci --force); done
+        shell: bash
+
+      - run: npm run build
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+
+      - run: npx electron-builder ${{ matrix.builder }}
+
+      - run: mv dist/win-unpacked dist/CodeHydra-${{ needs.check.outputs.version }}-win
+        if: runner.os == 'Windows'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodeHydra-${{ needs.check.outputs.version }}-${{ matrix.platform }}
+          path: dist/CodeHydra-*
+
+  summary:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: |
+          CODE_SERVER=$(grep 'CODE_SERVER_VERSION' src/services/binary-download/versions.ts | sed 's/.*"\(.*\)".*/\1/')
+          OPENCODE=$(grep 'OPENCODE_VERSION' src/services/binary-download/versions.ts | sed 's/.*"\(.*\)".*/\1/')
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # CodeHydra ${{ needs.check.outputs.version }}
+
+          ## Bundled Versions
+          | Component | Version |
+          |-----------|---------|
+          | code-server | $CODE_SERVER |
+          | opencode | $OPENCODE |
+
+          ## Commits
+          EOF
+          git log --oneline -20 >> $GITHUB_STEP_SUMMARY

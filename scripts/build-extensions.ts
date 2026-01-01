@@ -7,13 +7,21 @@
  * 3. Downloads external extensions from VS Code Marketplace
  * 4. Generates dist/extensions/manifest.json with the complete extension manifest
  *
+ * Version injection:
+ * - Extensions have "version": "1.0.0-placeholder" in package.json (placeholder with major version prefix)
+ * - Version is injected at build time: {major}.{commits}.0[-dev.{hash}]
+ * - Release builds (VERSION env set): 1.47.0
+ * - Dev builds: 1.47.0-dev.a1b2c3d4
+ *
  * Usage: npm run build:extensions
  *        npx tsx scripts/build-extensions.ts
  */
 
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const EXTENSIONS_DIR = path.join(process.cwd(), "extensions");
 const DIST_DIR = path.join(process.cwd(), "dist", "extensions");
@@ -34,6 +42,60 @@ interface BundledExtension {
 interface ExternalExtension {
   id: string;
   version: string;
+}
+
+/**
+ * Hash an extension folder for dev version tagging.
+ * Excludes node_modules and dist directories.
+ * Returns first 8 hex chars of SHA-256 hash.
+ */
+async function hashExtensionFolder(extDir: string): Promise<string> {
+  const hash = createHash("sha256");
+  async function processDir(dir: string): Promise<void> {
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name === "node_modules" || entry.name === "dist") continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) await processDir(fullPath);
+      else if (entry.isFile()) {
+        hash.update(fullPath.slice(extDir.length));
+        hash.update(await fsp.readFile(fullPath));
+      }
+    }
+  }
+  await processDir(extDir);
+  return hash.digest("hex").slice(0, 8);
+}
+
+/**
+ * Get the number of commits that have touched an extension directory.
+ * Will fail if git unavailable - intentional to catch dev env issues.
+ *
+ * Note: If an extension directory is renamed, bump the major version in
+ * package.json to account for the lost commit history.
+ */
+function getCommitCount(extDir: string): string {
+  return execSync(`git rev-list --count HEAD -- "${extDir}"`, {
+    encoding: "utf-8",
+  }).trim();
+}
+
+/**
+ * Get the extension version based on package.json major and git history.
+ *
+ * @param extDir - Full path to the extension directory
+ * @param major - Major version from package.json (e.g., "1")
+ * @returns SemVer version string (e.g., "1.47.0" or "1.47.0-dev.a1b2c3d4")
+ */
+async function getExtensionVersion(extDir: string, major: string): Promise<string> {
+  const commits = getCommitCount(extDir);
+  if (process.env.VERSION) {
+    // Release: valid SemVer format required by VS Code
+    return `${major}.${commits}.0`;
+  }
+  // Dev: SemVer with prerelease tag
+  const hash = await hashExtensionFolder(extDir);
+  return `${major}.${commits}.0-dev.${hash}`;
 }
 
 /**
@@ -158,14 +220,28 @@ function readExtensionPackageJson(extDir: string): ExtensionPackageJson {
 /**
  * Build and package an extension.
  * Runs: npm install && npm run build && vsce package
+ * Version is computed from git history and injected at package time.
+ *
+ * Note: vsce package modifies package.json in-place when injecting the version.
+ * We save and restore the original content to prevent git noise.
  */
-function buildExtension(extDir: string, id: string, version: string): string {
+async function buildExtension(
+  extDir: string,
+  id: string,
+  major: string
+): Promise<{ vsix: string; version: string }> {
   const extPath = path.join(EXTENSIONS_DIR, extDir);
+  const packageJsonPath = path.join(extPath, "package.json");
+
+  // Compute version from git history and folder hash
+  const version = await getExtensionVersion(extPath, major);
+
   // Use extension id (publisher.name) with dots replaced by hyphens for vsix filename
   const vsixName = `${id.replace(/\./g, "-")}-${version}.vsix`;
   const outputPath = path.join(DIST_DIR, vsixName);
 
   console.log(`\nBuilding ${extDir}...`);
+  console.log(`  Version: ${version}`);
 
   // Run npm install
   console.log(`  npm install...`);
@@ -175,15 +251,26 @@ function buildExtension(extDir: string, id: string, version: string): string {
   console.log(`  npm run build...`);
   execSync("npm run build", { cwd: extPath, stdio: "inherit" });
 
-  // Package with vsce
-  console.log(`  vsce package...`);
-  execSync(`npx vsce package --no-dependencies -o "${outputPath}"`, {
-    cwd: extPath,
-    stdio: "inherit",
-  });
+  // Save original package.json before vsce modifies it
+  const originalContent = await fsp.readFile(packageJsonPath, "utf-8");
 
-  console.log(`  Created ${vsixName}`);
-  return vsixName;
+  try {
+    // Package with vsce, injecting the computed version
+    console.log(`  vsce package...`);
+    execSync(
+      `npx vsce package --no-dependencies --no-git-tag-version "${version}" -o "${outputPath}"`,
+      {
+        cwd: extPath,
+        stdio: "inherit",
+      }
+    );
+
+    console.log(`  Created ${vsixName}`);
+    return { vsix: vsixName, version };
+  } finally {
+    // Restore original package.json to prevent git noise
+    await fsp.writeFile(packageJsonPath, originalContent);
+  }
 }
 
 async function main(): Promise<void> {
@@ -208,11 +295,13 @@ async function main(): Promise<void> {
   for (const extDir of extDirs) {
     const pkg = readExtensionPackageJson(extDir);
     const id = `${pkg.publisher}.${pkg.name}`;
-    const vsix = buildExtension(extDir, id, pkg.version);
+    // Extract major version from placeholder (e.g., "1.0.0-placeholder" -> "1")
+    const major = pkg.version.split(".")[0] ?? "1";
+    const { vsix, version } = await buildExtension(extDir, id, major);
 
     manifest.push({
       id,
-      version: pkg.version,
+      version,
       vsix,
     });
   }

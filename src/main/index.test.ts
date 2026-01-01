@@ -17,6 +17,9 @@ import { Path } from "../services/platform/path";
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
 
+// Mock __APP_VERSION__ global (Vite-injected constant)
+vi.stubGlobal("__APP_VERSION__", "2026.01.01-dev.test1234");
+
 // Mock Electron app module with getters and methods
 vi.mock("electron", () => ({
   app: {

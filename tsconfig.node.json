@@ -13,6 +13,7 @@
     "types": ["node"]
   },
   "include": [
+    "src/env.d.ts",
     "src/main/**/*",
     "src/preload/**/*",
     "src/services/**/*",

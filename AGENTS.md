@@ -263,6 +263,19 @@ out/main/assets/ (ASAR in prod)
 - All extensions (local and external) are bundled at build time - no marketplace downloads at runtime
 - Files are copied to app-data before use (external processes can't read ASAR)
 
+## Release Workflow
+
+| Component  | Release Version       | Dev Version                      |
+| ---------- | --------------------- | -------------------------------- |
+| App        | `YYYY.MM.DD`          | `{date}-dev.{hash}[-dirty]`      |
+| Extensions | `{major}.{commits}.0` | `{major}.{commits}.0-dev.{hash}` |
+
+App version via `__APP_VERSION__` (Vite define), logged on startup.
+
+**Trigger**: Manual via GitHub Actions (with optional force flag)
+**Artifacts**: Windows dir, Linux AppImage
+**Full details**: See [Release Workflow](docs/RELEASE.md).
+
 ## Binary Distribution
 
 CodeHydra downloads code-server and opencode binaries from GitHub releases. This happens automatically during:
