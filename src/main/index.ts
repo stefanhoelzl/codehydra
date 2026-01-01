@@ -3,7 +3,7 @@
  * Initializes all components and manages the application lifecycle.
  */
 
-import { app, Menu, dialog } from "electron";
+import { app } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 import {
@@ -24,6 +24,8 @@ import { ExecaProcessRunner } from "../services/platform/process";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
 import { DefaultImageLayer } from "../services/platform/image";
+import { DefaultDialogLayer, type DialogLayer } from "../services/platform/dialog";
+import { DefaultMenuLayer, type MenuLayer } from "../services/platform/menu";
 import {
   DefaultBinaryDownloadService,
   DefaultArchiveExtractor,
@@ -215,6 +217,18 @@ let bootstrapResult: (BootstrapResult & { startServices: () => void }) | null = 
 let servicesStarted = false;
 
 /**
+ * DialogLayer for showing system dialogs.
+ * Created in bootstrap() before any dialogs are shown.
+ */
+let dialogLayer: DialogLayer | null = null;
+
+/**
+ * MenuLayer for managing application menu.
+ * Created in bootstrap() before setting application menu.
+ */
+let menuLayer: MenuLayer | null = null;
+
+/**
  * Starts all application services after setup completes.
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
@@ -287,13 +301,16 @@ async function startServices(): Promise<void> {
     await codeServerManager.ensureRunning();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    await dialog.showMessageBox({
-      type: "error",
-      title: "Code Server Error",
-      message: "Failed to start code-server",
-      detail: `${message}\n\nThe application cannot continue without code-server.`,
-      buttons: ["Quit"],
-    });
+    // Guard: dialogLayer must be initialized by bootstrap()
+    if (dialogLayer) {
+      await dialogLayer.showMessageBox({
+        type: "error",
+        title: "Code Server Error",
+        message: "Failed to start code-server",
+        detail: `${message}\n\nThe application cannot continue without code-server.`,
+        buttons: ["Quit"],
+      });
+    }
     app.quit();
     return;
   }
@@ -558,8 +575,10 @@ async function bootstrap(): Promise<void> {
     isDev: buildInfo.isDevelopment,
   });
 
-  // 1. Disable application menu
-  Menu.setApplicationMenu(null);
+  // 1. Create platform layers and disable application menu
+  dialogLayer = new DefaultDialogLayer(loggingService.createLogger("dialog"));
+  menuLayer = new DefaultMenuLayer(loggingService.createLogger("menu"));
+  menuLayer.setApplicationMenu(null);
 
   // 2. Create VscodeSetupService early (needed for LifecycleModule)
   // Note: Process tree provider is created lazily in startServices() using the factory
@@ -710,16 +729,25 @@ async function bootstrap(): Promise<void> {
     },
     // UI module deps - factory that captures module-level appState
     uiDepsFn: (): UiModuleDeps => {
-      if (!appState || !viewManager) {
-        throw new Error("UI deps not ready - appState/viewManager not initialized");
+      if (!appState || !viewManager || !dialogLayer) {
+        throw new Error("UI deps not ready - appState/viewManager/dialogLayer not initialized");
       }
+      // Capture dialogLayer for closure
+      const dialogLayerRef = dialogLayer;
       return {
         appState,
         viewManager,
-        // Wrap Electron dialog to match MinimalDialog interface
+        // Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
         dialog: {
           showOpenDialog: async (options: { properties: string[] }) => {
-            return dialog.showOpenDialog(options as Parameters<typeof dialog.showOpenDialog>[0]);
+            const result = await dialogLayerRef.showOpenDialog({
+              properties:
+                options.properties as import("../services/platform/dialog").OpenDialogProperty[],
+            });
+            return {
+              canceled: result.canceled,
+              filePaths: result.filePaths.map((p) => p.toString()),
+            };
           },
         },
       };

@@ -601,7 +601,7 @@ export function createBehavioralViewLayer(): ViewLayer & { _getState(): ViewLaye
 
 **Goal**: Abstract dialog and menu APIs, migrate bootstrap error handling and menu setup.
 
-- [ ] **Step 3.1: DialogLayer**
+- [x] **Step 3.1: DialogLayer**
   - Interface: `showOpenDialog(options)`, `showSaveDialog(options)`, `showMessageBox(options)`, `showErrorBox(title, content)`
   - Returns `Path` objects for file paths (normalized per AGENTS.md Path Handling)
   - Implementation: `DefaultDialogLayer` wraps `dialog`
@@ -610,7 +610,7 @@ export function createBehavioralViewLayer(): ViewLayer & { _getState(): ViewLaye
   - Files: `src/services/platform/dialog.ts`, `src/services/platform/dialog.test-utils.ts`, `src/services/platform/dialog.integration.test.ts`
   - Test: Mock returns configured paths, cancellation returns undefined
 
-- [ ] **Step 3.2: MenuLayer**
+- [x] **Step 3.2: MenuLayer**
   - Interface: `setApplicationMenu(menu)`, `getApplicationMenu()`
   - Implementation: `DefaultMenuLayer` wraps `Menu`
   - Behavioral mock: `createBehavioralMenuLayer()` tracks menu state
@@ -618,13 +618,13 @@ export function createBehavioralViewLayer(): ViewLayer & { _getState(): ViewLaye
   - Files: `src/services/platform/menu.ts`, `src/services/platform/menu.test-utils.ts`, `src/services/platform/menu.integration.test.ts`
   - Test: Set menu to null, get returns null
 
-- [ ] **Step 3.3: Update platform/index.ts**
+- [x] **Step 3.3: Update platform/index.ts**
   - Add exports for new layers: IpcLayer, ImageLayer, AppLayer, DialogLayer, MenuLayer
   - Add exports for PlatformError
   - Files: `src/services/platform/index.ts`
   - Test: Import from index works
 
-- [ ] **Step 3.4: Migrate bootstrap dialogs and menu**
+- [x] **Step 3.4: Migrate bootstrap dialogs and menu**
   - Update `bootstrap.ts` to use `DialogLayer` for error dialogs
   - Update `bootstrap.ts` to use `MenuLayer` for menu setup
   - Files: `src/main/bootstrap.ts`
