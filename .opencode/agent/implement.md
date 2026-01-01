@@ -79,15 +79,21 @@ This allows resuming after a plan update without re-doing completed work.
 ┌─────────────────────────────────────────┐
 │ 1. Run: npm run validate:fix            │
 │              ↓                          │
-│ 2. Review output for failures           │
-│              ↓                          │
 │    ┌────────┴────────┐                  │
 │    ▼                 ▼                  │
 │ (failures)      (all pass)              │
 │    │                 │                  │
 │    ▼                 ▼                  │
-│ Fix issues     Report COMPLETE          │
-│ Re-run validate:fix                     │
+│ Fix issues    2. Run: npm run           │
+│ Re-run step 1    test:boundary          │
+│                      ↓                  │
+│               ┌──────┴──────┐           │
+│               ▼             ▼           │
+│          (failures)    (all pass)       │
+│               │             │           │
+│               ▼             ▼           │
+│          Fix issues    Report COMPLETE  │
+│          Re-run step 1                  │
 └─────────────────────────────────────────┘
 ```
 
@@ -105,7 +111,23 @@ When invoked with fix instructions (contains "Fix the following" or similar), yo
 │              ↓                          │
 │ 3. Run: npm run validate:fix            │
 │              ↓                          │
-│ 4. Report COMPLETE                      │
+│    ┌────────┴────────┐                  │
+│    ▼                 ▼                  │
+│ (failures)      (all pass)              │
+│    │                 │                  │
+│    ▼                 ▼                  │
+│ Fix issues    4. If boundary tests      │
+│ Re-run step 3    created/changed:       │
+│                  Run: npm run           │
+│                  test:boundary          │
+│                      ↓                  │
+│               ┌──────┴──────┐           │
+│               ▼             ▼           │
+│          (failures)    (all pass)       │
+│               │             │           │
+│               ▼             ▼           │
+│          Fix issues    Report COMPLETE  │
+│          Re-run step 3                  │
 └─────────────────────────────────────────┘
 ```
 
