@@ -756,4 +756,81 @@ describe("OpenCodeClient boundary tests", () => {
     },
     CI_TIMEOUT_MS
   );
+
+  it(
+    "subagent permission request emits permission.updated event",
+    async () => {
+      await withOpencode(
+        {
+          binaryPath,
+          mockLlmMode: "tool-call",
+          permission: { bash: "ask", edit: "allow", webfetch: "allow" },
+        },
+        async ({ client, sdk }) => {
+          // Track permission events
+          type PermissionEvent =
+            | {
+                type: "permission.updated";
+                event: { id: string; sessionID: string; type: string; title: string };
+              }
+            | {
+                type: "permission.replied";
+                event: { sessionID: string; permissionID: string; response: string };
+              };
+          const permissionEvents: PermissionEvent[] = [];
+
+          client.onPermissionEvent((event) => {
+            permissionEvents.push(event);
+          });
+
+          await client.fetchRootSessions();
+          await client.connect();
+
+          // Create root session
+          const rootSession = await sdk.session.create({ body: {} });
+          const rootSessionId = rootSession.data!.id;
+          await client.fetchRootSessions();
+
+          // Create child session (subagent)
+          const childSession = await sdk.session.create({
+            body: { parentID: rootSessionId },
+          });
+          const childSessionId = childSession.data!.id;
+
+          // Refetch to populate child-to-root mapping
+          await client.fetchRootSessions();
+
+          // Send prompt to CHILD session - triggers bash tool requiring permission
+          const promptPromise = sdk.session.prompt({
+            path: { id: childSessionId },
+            body: { parts: [{ type: "text", text: "Run a command" }] },
+          });
+
+          // Wait for permission.updated event from child session
+          // BUG: Currently fails because child session permission events are filtered out
+          await vi.waitFor(
+            () => {
+              const hasPermission = permissionEvents.some((e) => e.type === "permission.updated");
+              expect(hasPermission).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Verify the event has the child session ID (not remapped to root)
+          const permissionUpdated = permissionEvents.find((e) => e.type === "permission.updated")!;
+          expect(permissionUpdated.event.sessionID).toBe(childSessionId);
+
+          // Approve permission using child session ID
+          await sdk.postSessionIdPermissionsPermissionId({
+            path: { id: childSessionId, permissionID: permissionUpdated.event.id },
+            body: { response: "once" },
+          });
+
+          // Wait for prompt to complete
+          await promptPromise;
+        }
+      );
+    },
+    CI_TIMEOUT_MS
+  );
 });

@@ -151,6 +151,12 @@ export class OpenCodeClient implements IDisposable {
   private readonly rootSessionIds = new Set<string>();
 
   /**
+   * Map of child session ID to its root session ID.
+   * Used to emit permission events for subagents under their root session.
+   */
+  private readonly childToRootSession = new Map<string, string>();
+
+  /**
    * Current aggregated status for this port.
    * Simplified model: 1 agent per port.
    */
@@ -179,11 +185,24 @@ export class OpenCodeClient implements IDisposable {
       const result = await this.sdk.session.list();
       const sessions = result.data as SdkSession[];
 
-      // Clear and rebuild root session set
+      // Clear and rebuild session tracking
       this.rootSessionIds.clear();
+      this.childToRootSession.clear();
+
+      // First pass: identify root sessions
       for (const session of sessions) {
         if (!session.parentID) {
           this.rootSessionIds.add(session.id);
+        }
+      }
+
+      // Second pass: map children to their root (supports arbitrary nesting)
+      for (const session of sessions) {
+        if (session.parentID) {
+          const rootId = this.findRootSessionId(session.parentID, sessions);
+          if (rootId) {
+            this.childToRootSession.set(session.id, rootId);
+          }
         }
       }
 
@@ -193,6 +212,16 @@ export class OpenCodeClient implements IDisposable {
     } catch (error) {
       return err(this.mapSdkError(error));
     }
+  }
+
+  /**
+   * Find the root session ID by walking up the parent chain.
+   */
+  private findRootSessionId(sessionId: string, sessions: SdkSession[]): string | undefined {
+    const session = sessions.find((s) => s.id === sessionId);
+    if (!session) return undefined;
+    if (!session.parentID) return session.id; // This is the root
+    return this.findRootSessionId(session.parentID, sessions);
   }
 
   /**
@@ -316,6 +345,8 @@ export class OpenCodeClient implements IDisposable {
     this.listeners.clear();
     this.permissionListeners.clear();
     this.statusListeners.clear();
+    this.rootSessionIds.clear();
+    this.childToRootSession.clear();
   }
 
   /**
@@ -441,6 +472,10 @@ export class OpenCodeClient implements IDisposable {
     // Support SDK format (info.id) and legacy format (sessionID)
     const sessionId = properties?.info?.id ?? properties?.sessionID;
     if (!sessionId) return;
+
+    // Clean up child mapping if this was a child session
+    this.childToRootSession.delete(sessionId);
+
     this.emitSessionEvent({ type: "deleted", sessionId });
   }
 
@@ -464,23 +499,35 @@ export class OpenCodeClient implements IDisposable {
 
   /**
    * Handle session.created events.
-   * Adds new root sessions to the tracking set.
+   * Adds new root sessions to the tracking set, and maps child sessions to their root.
    */
   private handleSessionCreated(properties?: { info?: { id?: string; parentID?: string } }): void {
     const sessionInfo = properties?.info;
     if (!sessionInfo || typeof sessionInfo.id !== "string") return;
 
-    // Only track root sessions (those without parentID)
     if (!sessionInfo.parentID) {
+      // Root session
       this.rootSessionIds.add(sessionInfo.id);
       // Emit idle status for new root session
       this.emitSessionEvent({ type: "idle", sessionId: sessionInfo.id });
+    } else {
+      // Child session: map to its root
+      if (this.rootSessionIds.has(sessionInfo.parentID)) {
+        // Direct child of a root session
+        this.childToRootSession.set(sessionInfo.id, sessionInfo.parentID);
+      } else {
+        // Parent is also a child - find its root
+        const rootId = this.childToRootSession.get(sessionInfo.parentID);
+        if (rootId) {
+          this.childToRootSession.set(sessionInfo.id, rootId);
+        }
+      }
     }
   }
 
   /**
    * Handle permission.updated events.
-   * Only emits for root sessions.
+   * Emits for root sessions and tracked child sessions.
    */
   private handlePermissionUpdated(properties?: {
     id?: string;
@@ -490,8 +537,12 @@ export class OpenCodeClient implements IDisposable {
   }): void {
     if (!isPermissionUpdatedEvent(properties)) return;
 
-    // Only emit for root sessions
-    if (!this.rootSessionIds.has(properties.sessionID)) return;
+    // Emit for root sessions OR child sessions mapped to a root
+    const isTracked =
+      this.rootSessionIds.has(properties.sessionID) ||
+      this.childToRootSession.has(properties.sessionID);
+
+    if (!isTracked) return;
 
     for (const listener of this.permissionListeners) {
       listener({ type: "permission.updated", event: properties });
@@ -500,7 +551,7 @@ export class OpenCodeClient implements IDisposable {
 
   /**
    * Handle permission.replied events.
-   * Only emits for root sessions.
+   * Emits for root sessions and tracked child sessions.
    */
   private handlePermissionReplied(properties?: {
     sessionID?: string;
@@ -509,8 +560,12 @@ export class OpenCodeClient implements IDisposable {
   }): void {
     if (!isPermissionRepliedEvent(properties)) return;
 
-    // Only emit for root sessions
-    if (!this.rootSessionIds.has(properties.sessionID)) return;
+    // Emit for root sessions OR child sessions mapped to a root
+    const isTracked =
+      this.rootSessionIds.has(properties.sessionID) ||
+      this.childToRootSession.has(properties.sessionID);
+
+    if (!isTracked) return;
 
     for (const listener of this.permissionListeners) {
       listener({ type: "permission.replied", event: properties });

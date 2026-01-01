@@ -1029,7 +1029,7 @@ describe("OpenCodeClient", () => {
         });
       });
 
-      it("ignores non-root sessions", async () => {
+      it("emits for tracked child sessions", async () => {
         mockSdk = createSdkWithSessions([
           createTestSession({ id: "parent-1", directory: "/test" }),
           createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
@@ -1047,6 +1047,43 @@ describe("OpenCodeClient", () => {
             properties: {
               id: "perm-456",
               sessionID: "child-1",
+              type: "bash",
+              title: "Run command",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        // Child sessions are now tracked and emit permission events
+        expect(listener).toHaveBeenCalledWith({
+          type: "permission.updated",
+          event: {
+            id: "perm-456",
+            sessionID: "child-1",
+            type: "bash",
+            title: "Run command",
+          },
+        });
+      });
+
+      it("ignores untracked sessions", async () => {
+        mockSdk = createSdkWithSessions([
+          createTestSession({ id: "parent-1", directory: "/test" }),
+        ]);
+        mockFactory = createMockSdkFactory(mockSdk);
+
+        const listener = vi.fn();
+        client = createClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.updated",
+            properties: {
+              id: "perm-456",
+              sessionID: "unknown-session",
               type: "bash",
               title: "Run command",
             },
@@ -1178,7 +1215,7 @@ describe("OpenCodeClient", () => {
         });
       });
 
-      it("ignores non-root sessions", async () => {
+      it("emits for tracked child sessions", async () => {
         mockSdk = createSdkWithSessions([
           createTestSession({ id: "parent-1", directory: "/test" }),
           createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
@@ -1195,6 +1232,41 @@ describe("OpenCodeClient", () => {
             type: "permission.replied",
             properties: {
               sessionID: "child-1",
+              permissionID: "perm-456",
+              response: "once",
+            },
+          }),
+        } as MessageEvent;
+
+        client["handleMessage"](event);
+
+        // Child sessions are now tracked and emit permission events
+        expect(listener).toHaveBeenCalledWith({
+          type: "permission.replied",
+          event: {
+            sessionID: "child-1",
+            permissionID: "perm-456",
+            response: "once",
+          },
+        });
+      });
+
+      it("ignores untracked sessions", async () => {
+        mockSdk = createSdkWithSessions([
+          createTestSession({ id: "parent-1", directory: "/test" }),
+        ]);
+        mockFactory = createMockSdkFactory(mockSdk);
+
+        const listener = vi.fn();
+        client = createClient(8080);
+        await client.fetchRootSessions();
+        client.onPermissionEvent(listener);
+
+        const event = {
+          data: JSON.stringify({
+            type: "permission.replied",
+            properties: {
+              sessionID: "unknown-session",
               permissionID: "perm-456",
               response: "once",
             },
@@ -1576,7 +1648,7 @@ describe("Permission Event Emission", () => {
       });
     });
 
-    it("ignores child sessions", async () => {
+    it("emits for tracked child sessions", async () => {
       mockSdk = createSdkWithSessions([
         createTestSession({ id: "parent-1", directory: "/test" }),
         createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
@@ -1588,10 +1660,38 @@ describe("Permission Event Emission", () => {
       await client.fetchRootSessions();
       client.onPermissionEvent(listener);
 
-      // Try to emit permission event for child session
+      // Permission event for tracked child session should be emitted
       client["handlePermissionUpdated"]({
         id: "perm-456",
         sessionID: "child-1",
+        type: "bash",
+        title: "Run command",
+      });
+
+      expect(listener).toHaveBeenCalledWith({
+        type: "permission.updated",
+        event: {
+          id: "perm-456",
+          sessionID: "child-1",
+          type: "bash",
+          title: "Run command",
+        },
+      });
+    });
+
+    it("ignores untracked sessions", async () => {
+      mockSdk = createSdkWithSessions([createTestSession({ id: "parent-1", directory: "/test" })]);
+      mockFactory = createMockSdkFactory(mockSdk);
+
+      const listener = vi.fn();
+      client = new OpenCodeClient(8080, SILENT_LOGGER, mockFactory);
+      await client.fetchRootSessions();
+      client.onPermissionEvent(listener);
+
+      // Permission event for unknown session should be ignored
+      client["handlePermissionUpdated"]({
+        id: "perm-456",
+        sessionID: "unknown-session",
         type: "bash",
         title: "Run command",
       });
@@ -1655,7 +1755,7 @@ describe("Permission Event Emission", () => {
       });
     });
 
-    it("ignores child sessions", async () => {
+    it("emits for tracked child sessions", async () => {
       mockSdk = createSdkWithSessions([
         createTestSession({ id: "parent-1", directory: "/test" }),
         createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
@@ -1669,6 +1769,31 @@ describe("Permission Event Emission", () => {
 
       client["handlePermissionReplied"]({
         sessionID: "child-1",
+        permissionID: "perm-456",
+        response: "once",
+      });
+
+      expect(listener).toHaveBeenCalledWith({
+        type: "permission.replied",
+        event: {
+          sessionID: "child-1",
+          permissionID: "perm-456",
+          response: "once",
+        },
+      });
+    });
+
+    it("ignores untracked sessions", async () => {
+      mockSdk = createSdkWithSessions([createTestSession({ id: "parent-1", directory: "/test" })]);
+      mockFactory = createMockSdkFactory(mockSdk);
+
+      const listener = vi.fn();
+      client = new OpenCodeClient(8080, SILENT_LOGGER, mockFactory);
+      await client.fetchRootSessions();
+      client.onPermissionEvent(listener);
+
+      client["handlePermissionReplied"]({
+        sessionID: "unknown-session",
         permissionID: "perm-456",
         response: "once",
       });
