@@ -27,7 +27,7 @@ describe("getConfig", () => {
 
     expect(config.provider).toBe("auto");
     expect(config.assemblyaiApiKey).toBe("");
-    expect(config.maxDuration).toBe(60);
+    expect(config.silenceTimeout).toBe(10);
   });
 
   it("returns configured values", () => {
@@ -35,7 +35,7 @@ describe("getConfig", () => {
       const values: Record<string, unknown> = {
         provider: "assemblyai",
         "assemblyai.apiKey": "test-api-key",
-        maxDuration: 120,
+        silenceTimeout: 30,
       };
       return values[key];
     });
@@ -47,6 +47,6 @@ describe("getConfig", () => {
 
     expect(config.provider).toBe("assemblyai");
     expect(config.assemblyaiApiKey).toBe("test-api-key");
-    expect(config.maxDuration).toBe(120);
+    expect(config.silenceTimeout).toBe(30);
   });
 });

@@ -29,7 +29,7 @@ vi.mock("vscode", () => {
         get: vi.fn((key: string, defaultValue: unknown) => {
           if (key === "provider") return "assemblyai";
           if (key === "assemblyai.apiKey") return "test-api-key";
-          if (key === "maxDuration") return 60;
+          if (key === "silenceTimeout") return 10;
           return defaultValue;
         }),
       })),
@@ -190,17 +190,41 @@ describe("DictationController", () => {
     expect(mocks.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Connection lost"));
   });
 
-  // Test 6: Duration timeout
-  it("auto-stops and shows notification when maxDuration reached", async () => {
+  // Test 6: Silence timeout
+  it("auto-stops and shows notification when silence timeout reached", async () => {
     await controller.start();
     expect(controller.getState().status).toBe("recording");
 
-    // Fast-forward 60 seconds (default maxDuration)
-    await vi.advanceTimersByTimeAsync(60000);
+    // Fast-forward 10 seconds (default silenceTimeout) with no transcripts
+    await vi.advanceTimersByTimeAsync(10000);
 
     expect(controller.getState().status).toBe("idle");
     expect(mocks.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining("Maximum duration")
+      expect.stringContaining("No speech detected")
+    );
+  });
+
+  // Test 6b: Silence timer resets on transcript
+  it("resets silence timer when transcript received", async () => {
+    await controller.start();
+    expect(controller.getState().status).toBe("recording");
+
+    // Wait 8 seconds (not enough to trigger timeout)
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(controller.getState().status).toBe("recording");
+
+    // Receive a transcript - this should reset the timer
+    mockProvider.simulateTranscript("hello");
+
+    // Wait another 8 seconds (16s total, but only 8s since last transcript)
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(controller.getState().status).toBe("recording");
+
+    // Wait 2 more seconds (10s since last transcript) - should now timeout
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(controller.getState().status).toBe("idle");
+    expect(mocks.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining("No speech detected")
     );
   });
 
@@ -210,7 +234,7 @@ describe("DictationController", () => {
     mocks.getConfiguration.mockReturnValueOnce({
       get: vi.fn((key: string, defaultValue: unknown) => {
         if (key === "assemblyai.apiKey") return "";
-        if (key === "maxDuration") return 60;
+        if (key === "silenceTimeout") return 10;
         return defaultValue;
       }),
     } as unknown as ReturnType<typeof mocks.getConfiguration>);

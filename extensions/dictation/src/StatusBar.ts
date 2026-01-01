@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { DictationState } from "./DictationController";
-import { isConfigured, getConfig } from "./config";
+import { isConfigured } from "./config";
 import { COMMANDS } from "./commands";
 
 /**
@@ -68,7 +68,7 @@ export class StatusBar implements vscode.Disposable {
     switch (this.currentState.status) {
       case "idle":
         this.statusBarItem.text = "$(mic)";
-        this.statusBarItem.tooltip = "Dictation: Click to start (Ctrl+Alt+D)";
+        this.statusBarItem.tooltip = "Dictation: Click to start (F10)";
         this.statusBarItem.command = COMMANDS.TOGGLE;
         this.statusBarItem.backgroundColor = undefined;
         break;
@@ -100,18 +100,16 @@ export class StatusBar implements vscode.Disposable {
   }
 
   /**
-   * Update the tooltip for recording state with elapsed/remaining time
+   * Update the tooltip for recording state with elapsed time
    */
   private updateRecordingTooltip(): void {
     if (this.currentState.status !== "recording") {
       return;
     }
 
-    const config = getConfig();
     const elapsed = Math.floor((Date.now() - this.currentState.startTime) / 1000);
-    const maxDuration = config.maxDuration;
 
-    this.statusBarItem.tooltip = `Dictation: Recording (${elapsed}s / ${maxDuration}s)`;
+    this.statusBarItem.tooltip = `Dictation: Recording (${elapsed}s)`;
   }
 
   /**

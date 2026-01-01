@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 export interface DictationConfig {
   provider: "auto" | "assemblyai";
   assemblyaiApiKey: string;
-  maxDuration: number;
+  silenceTimeout: number;
 }
 
 /**
@@ -18,7 +18,7 @@ export function getConfig(): DictationConfig {
   return {
     provider: config.get<"auto" | "assemblyai">("provider", "auto"),
     assemblyaiApiKey: config.get<string>("assemblyai.apiKey", ""),
-    maxDuration: config.get<number>("maxDuration", 60),
+    silenceTimeout: config.get<number>("silenceTimeout", 10),
   };
 }
 

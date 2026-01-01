@@ -37,7 +37,8 @@ const defaultProviderFactory: ProviderFactory = (apiKey) => new AssemblyAIProvid
 export class DictationController implements vscode.Disposable {
   private state: DictationState = { status: "idle" };
   private provider: SpeechToTextProvider | null = null;
-  private durationTimer: ReturnType<typeof setTimeout> | null = null;
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private silenceTimeout: number = 10;
   private unsubscribeTranscript: (() => void) | null = null;
   private unsubscribeError: (() => void) | null = null;
   private unsubscribeAudio: (() => void) | null = null;
@@ -102,6 +103,7 @@ export class DictationController implements vscode.Disposable {
 
       // Set up event handlers
       this.unsubscribeTranscript = this.provider.onTranscript((text) => {
+        this.resetSilenceTimer();
         this.insertText(text);
       });
 
@@ -138,8 +140,9 @@ export class DictationController implements vscode.Disposable {
       // Set recording context for keybindings
       await vscode.commands.executeCommand("setContext", CONTEXT_KEYS.IS_RECORDING, true);
 
-      // Start duration timer
-      this.startDurationTimer(config.maxDuration);
+      // Start silence timer
+      this.silenceTimeout = config.silenceTimeout;
+      this.startSilenceTimer();
     } catch (error) {
       // Handle connection failure
       const message = error instanceof Error ? error.message : String(error);
@@ -270,15 +273,25 @@ export class DictationController implements vscode.Disposable {
   }
 
   /**
-   * Start the duration timeout timer
+   * Start the silence timeout timer
    */
-  private startDurationTimer(maxDuration: number): void {
-    this.durationTimer = setTimeout(() => {
+  private startSilenceTimer(): void {
+    this.silenceTimer = setTimeout(() => {
       void vscode.window.showInformationMessage(
-        `Dictation: Recording stopped. Maximum duration (${maxDuration}s) reached.`
+        `Dictation: Recording stopped. No speech detected for ${this.silenceTimeout} seconds.`
       );
       void this.stop();
-    }, maxDuration * 1000);
+    }, this.silenceTimeout * 1000);
+  }
+
+  /**
+   * Reset the silence timer (called when transcript received)
+   */
+  private resetSilenceTimer(): void {
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+    }
+    this.startSilenceTimer();
   }
 
   /**
@@ -286,9 +299,9 @@ export class DictationController implements vscode.Disposable {
    */
   private cleanup(): void {
     // Clear timers
-    if (this.durationTimer) {
-      clearTimeout(this.durationTimer);
-      this.durationTimer = null;
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
     }
 
     // Unsubscribe from events
