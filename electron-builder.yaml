@@ -54,7 +54,7 @@ linux:
 
 # AppImage-specific settings
 appImage:
-  artifactName: ${productName}-${version}-linux-x64.${ext}
+  artifactName: ${productName}-linux-${version}.${ext}
 
 # macOS configuration (future enhancement - not implemented)
 # mac:

@@ -88,16 +88,16 @@ jobs:
 
       - run: npx electron-builder ${{ matrix.builder }}
 
-      - run: mv dist/win-unpacked dist/CodeHydra-${{ needs.check.outputs.version }}-win
+      - run: mv dist/win-unpacked dist/CodeHydra-win-${{ needs.check.outputs.version }}
         if: runner.os == 'Windows'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CodeHydra-${{ needs.check.outputs.version }}-${{ matrix.platform }}
+          name: CodeHydra-${{ matrix.platform }}-${{ needs.check.outputs.version }}
           path: dist/CodeHydra-*
 
   summary:
-    needs: build
+    needs: [check, build]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -105,17 +105,15 @@ jobs:
           fetch-depth: 0
 
       - run: |
-          CODE_SERVER=$(grep 'CODE_SERVER_VERSION' src/services/binary-download/versions.ts | sed 's/.*"\(.*\)".*/\1/')
-          OPENCODE=$(grep 'OPENCODE_VERSION' src/services/binary-download/versions.ts | sed 's/.*"\(.*\)".*/\1/')
+          CODE_SERVER=$(grep -oP 'CODE_SERVER_VERSION\s*=\s*"\K[^"]+' src/services/binary-download/versions.ts)
+          OPENCODE=$(grep -oP 'OPENCODE_VERSION\s*=\s*"\K[^"]+' src/services/binary-download/versions.ts)
           cat >> $GITHUB_STEP_SUMMARY << EOF
           # CodeHydra ${{ needs.check.outputs.version }}
 
           ## Bundled Versions
-          | Component | Version |
-          |-----------|---------|
-          | code-server | $CODE_SERVER |
-          | opencode | $OPENCODE |
+          - [code-server](https://github.com/coder/code-server/releases/tag/v${CODE_SERVER}) \`${CODE_SERVER}\`
+          - [opencode](https://github.com/sst/opencode/releases/tag/v${OPENCODE}) \`${OPENCODE}\`
 
           ## Commits
           EOF
-          git log --oneline -20 >> $GITHUB_STEP_SUMMARY
+          git log --format="- [%h](https://github.com/${{ github.repository }}/commit/%H) %s" -20 >> $GITHUB_STEP_SUMMARY
