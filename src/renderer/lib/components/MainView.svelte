@@ -271,10 +271,14 @@
     );
   }
 
-  // Handle dismiss (close deletion progress dialog, workspace removed from UI but files may remain)
-  function handleDismiss(): void {
+  // Handle dismiss (force remove workspace from CodeHydra, files may remain on disk)
+  async function handleDismiss(): Promise<void> {
     if (!activeDeletionState) return;
     logger.debug("Dismissing deletion", { workspaceName: activeDeletionState.workspaceName });
+    await api.workspaces.forceRemove(
+      activeDeletionState.projectId,
+      activeDeletionState.workspaceName
+    );
     clearDeletion(activeDeletionState.workspacePath);
   }
 </script>

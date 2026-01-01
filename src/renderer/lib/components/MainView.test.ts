@@ -1165,7 +1165,7 @@ describe("MainView component", () => {
       });
     });
 
-    it("clears state on cancel without calling forceRemove", async () => {
+    it("calls forceRemove and clears state on dismiss", async () => {
       const projectWithWorkspace = {
         id: asProjectId("test-project-12345678"),
         path: "/test/project",
@@ -1217,8 +1217,13 @@ describe("MainView component", () => {
       expect(dismissButton).not.toBeNull();
       await fireEvent.click(dismissButton!);
 
-      // forceRemove should NOT be called - cancel just clears state
-      expect(mockApi.workspaces.forceRemove).not.toHaveBeenCalled();
+      // forceRemove should be called to close the workspace
+      await waitFor(() => {
+        expect(mockApi.workspaces.forceRemove).toHaveBeenCalledWith(
+          "test-project-12345678",
+          "feature"
+        );
+      });
 
       // State should be cleared
       await waitFor(() => {
