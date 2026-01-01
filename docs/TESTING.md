@@ -15,7 +15,7 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 | Pre-commit validation     | `pnpm validate`         | [Test Commands](#test-commands)                     |
 | Decide which test type    | See decision guide      | [Decision Guide](#decision-guide)                   |
 | Create test git repo      | `createTestGitRepo()`   | [Test Helpers](#test-helpers)                       |
-| Create behavioral mock    | `createBehavioralX()`   | [Behavioral Mock Pattern](#behavioral-mock-pattern) |
+| Create behavioral mock    | `createXMock()`         | [Behavioral Mock Pattern](#behavioral-mock-pattern) |
 
 ---
 
@@ -292,70 +292,269 @@ expect(mockGit.createWorktree).toHaveBeenCalledWith("/project", "feat-1", "main"
 import { createMockGitClient } from "./git/git-client.state-mock";
 
 // This tests actual behavior
-const mockGit = createMockGitClient({
-  repositories: {
-    "/project": { branches: ["main", "develop"], currentBranch: "main" },
-  },
+const gitMock = createGitClientMock({
+  repositories: new Map([["/project", { branches: ["main", "develop"], worktrees: [] }]]),
 });
 
 // Mock has in-memory state - createBranch actually adds to branches set
-await mockGit.createBranch(new Path("/project"), "feat-1", "main");
+await gitMock.createBranch(new Path("/project"), "feat-1", "main");
 
 // Verify BEHAVIOR - the branch exists now
-expect(mockGit).toHaveBranch("/project", "feat-1");
+expect(gitMock).toHaveBranch("/project", "feat-1");
 
 // Verify BEHAVIOR - can't create duplicate
-await expect(mockGit.createBranch(new Path("/project"), "feat-1", "main")).rejects.toThrow();
+await expect(gitMock.createBranch(new Path("/project"), "feat-1", "main")).rejects.toThrow();
+
+// Type-safe custom matchers for readable assertions
+expect(gitMock).toHaveWorktree("feat-1");
 ```
 
-### State Inspection
+### Mock Return Pattern
 
-Behavioral mocks expose state inspection via the `$` property and custom matchers:
+Behavioral mocks return the mock interface directly with a `$` accessor for state operations:
 
 ```typescript
-import { createFileSystemMock, directory } from "../platform/filesystem.state-mock";
+// Factory returns mock with $ accessor
+export type FileSystemMock = FileSystemLayer & { readonly $: FileSystemState };
 
-const mock = createFileSystemMock({ entries: { "/data": directory() } });
-await mock.writeFile("/data/config.json", '{"key": "value"}');
+// Usage
+const mock = createFileSystemMock();
 
-// State access via $ property
-expect(mock.$.entries.has("/data/config.json")).toBe(true);
+// Use public API for normal setup (preferred)
+await mock.writeFile("/config.json", "{}");
+await mock.mkdir("/data");
 
-// Custom matchers for cleaner assertions
-expect(mock).toHaveFile("/data/config.json", '{"key": "value"}');
-expect(mock).toHaveDirectory("/data");
+// Use $ for operations not possible through public API
+mock.$.simulateError("/broken", "EIO"); // Simulate I/O error
+mock.$.reset(); // Restore to initial state
+console.log(mock.$.toString()); // Debug state
+```
+
+| Property | Type               | Purpose                                                |
+| -------- | ------------------ | ------------------------------------------------------ |
+| `mock`   | The interface type | Drop-in replacement, exact interface match             |
+| `mock.$` | State class        | Test utilities: `reset()`, `toString()`, setup methods |
+
+### MockState Interface
+
+All mock state classes implement the `MockState` interface:
+
+```typescript
+// src/test/mock-state.ts
+
+/**
+ * Base interface for all behavioral mock state classes.
+ * Provides reset capability and debugging support.
+ */
+export interface MockState {
+  /** Restore mock to initial state (called in afterEach) */
+  reset(): void;
+  /** Format state for error messages and debugging (called by custom matchers) */
+  toString(): string;
+}
+```
+
+**State class example:**
+
+```typescript
+class FileSystemState implements MockState {
+  files = new Map<string, string | Buffer>();
+  dirs = new Set<string>();
+  private readonly initialFiles: Map<string, string | Buffer>;
+  private readonly initialDirs: Set<string>;
+  private errorMap = new Map<string, FileSystemErrorCode>();
+
+  constructor(options?: FileSystemMockOptions) {
+    this.initialFiles = new Map(options?.files);
+    this.initialDirs = new Set(options?.dirs);
+    this.files = new Map(this.initialFiles);
+    this.dirs = new Set(this.initialDirs);
+  }
+
+  reset(): void {
+    this.files = new Map(this.initialFiles);
+    this.dirs = new Set(this.initialDirs);
+    this.errorMap.clear();
+  }
+
+  toString(): string {
+    return [
+      "=== FileSystem Mock ===",
+      `Files (${this.files.size}): ${[...this.files.keys()].slice(0, 10).join(", ") || "(none)"}`,
+      `Dirs (${this.dirs.size}): ${[...this.dirs].slice(0, 10).join(", ") || "(none)"}`,
+    ].join("\n");
+  }
+
+  // Setup methods - only when public API isn't sufficient
+  simulateError(path: string, code: FileSystemErrorCode): void {
+    this.errorMap.set(normalizePath(path), code);
+  }
+
+  clearError(path: string): void {
+    this.errorMap.delete(normalizePath(path));
+  }
+}
+```
+
+### Public API vs $ Accessor
+
+**Prefer public API for normal setup. Use $ only for scenarios impossible through the public API:**
+
+```typescript
+// GOOD: Use public API for normal setup
+await mock.writeFile("/config.json", "{}"); // Creates file naturally
+await mock.mkdir("/data"); // Creates directory naturally
+
+// GOOD: Use $ for scenarios that can't happen through public API
+mock.$.simulateError("/broken", "EIO"); // Can't trigger I/O errors naturally
+mock.$.emitOutput(pid, "stdout data"); // Trigger callback synchronously
+
+// BAD: Using $ for normal operations (defeats behavioral testing)
+mock.$.files.set("/config.json", "{}"); // Should use public writeFile()
+```
+
+### Error Simulation Pattern
+
+Mocks provide type-safe error simulation:
+
+```typescript
+/** Valid filesystem error codes for type-safe error simulation */
+export type FileSystemErrorCode =
+  | "ENOENT" // File not found
+  | "EACCES" // Permission denied
+  | "EEXIST" // File already exists
+  | "ENOTDIR" // Not a directory
+  | "EISDIR" // Is a directory
+  | "ENOTEMPTY" // Directory not empty
+  | "EIO"; // I/O error
+
+// Usage
+mock.$.simulateError("/broken/path", "EIO");
+await expect(mock.readFile("/broken/path")).rejects.toThrow(); // Throws with code: "EIO"
+mock.$.clearError("/broken/path"); // Remove error simulation
+```
+
+### Event and Callback Mocking
+
+For interfaces with event emitters or callbacks:
+
+```typescript
+class ProcessRunnerState implements MockState {
+  private outputCallbacks = new Map<number, (data: string) => void>();
+
+  // Store callbacks when registered
+  onOutput(pid: number, callback: (data: string) => void): void {
+    this.outputCallbacks.set(pid, callback);
+  }
+
+  // Setup method to trigger callbacks synchronously
+  emitOutput(pid: number, data: string): void {
+    this.outputCallbacks.get(pid)?.(data);
+  }
+}
+
+// Usage in tests
+const mock = createProcessRunnerMock();
+const output: string[] = [];
+mock.spawn("node", ["script.js"], { onOutput: (data) => output.push(data) });
+mock.$.emitOutput(1, "Hello from process");
+expect(output).toEqual(["Hello from process"]);
+```
+
+### Type-Safe Custom Matchers
+
+Assertions use vitest custom matchers with conditional types for full type safety:
+
+```typescript
+// src/test/matchers.d.ts
+type FileSystemMatchers<T> = T extends FileSystemMock
+  ? {
+      toHaveFile(path: string): void;
+      toHaveFileContaining(path: string, content: string): void;
+      toHaveDirectory(path: string): void;
+    }
+  : {};
+
+type GitClientMatchers<T> = T extends GitClientMock
+  ? {
+      toHaveWorktree(name: string): void;
+      toHaveBranch(name: string): void;
+      toBeDirty(): void;
+    }
+  : {};
+
+declare module "vitest" {
+  interface Matchers<T> extends FileSystemMatchers<T>, GitClientMatchers<T> {}
+}
+```
+
+**Type safety in action:**
+
+```typescript
+const fsMock = createFileSystemMock();
+const gitMock = createGitClientMock();
+
+expect(fsMock).toHaveFile("/config.json"); // ✅ Works
+expect(fsMock).toHaveWorktree("feature"); // ❌ TypeScript error
+expect(gitMock).toHaveWorktree("feature"); // ✅ Works
+expect(gitMock).toHaveFile("/config.json"); // ❌ TypeScript error
+```
+
+**Matcher implementation:**
+
+```typescript
+// filesystem.test-utils.ts
+export const fileSystemMatchers = {
+  toHaveFile(this: MatcherState, expectedPath: string) {
+    if (!isFileSystemMock(this.actual)) {
+      throw new TypeError("toHaveFile matcher can only be used with FileSystemMock");
+    }
+    const state = this.actual.$;
+    const exists = state.files.has(normalizePath(expectedPath));
+    return {
+      pass: exists,
+      message: () =>
+        exists
+          ? `Expected no file at "${expectedPath}"`
+          : `Expected file at "${expectedPath}"\n\nCurrent state:\n${state}`,
+    };
+  },
+};
 ```
 
 ### Cross-Platform Requirements
 
-Behavioral mocks must handle platform differences. The `createFileSystemMock` factory handles path normalization automatically:
+Behavioral mocks must handle platform differences:
+
+- Use `path.join()` for path construction
+- Use `path.normalize()` for path comparison
+- Support both `/` and `\` separators in assertions
+- Throw errors with correct `code` property (ENOENT, EEXIST, etc.)
 
 ```typescript
-import { createFileSystemMock, file, directory, symlink } from "../platform/filesystem.state-mock";
+import path from "path";
 
-// Create mock with initial filesystem state
-const mock = createFileSystemMock({
-  entries: {
-    "/app": directory(),
-    "/app/config.json": file('{"debug": true}'),
-    "/app/bin/run.sh": file("#!/bin/bash\necho hi", { executable: true }),
-    "/app/current": symlink("/app/v1"),
-  },
-});
-
-// Paths are normalized automatically (handles Windows backslashes, case sensitivity)
-await mock.readFile("/APP/config.json"); // Works on case-insensitive platforms
-await mock.readFile("C:\\app\\config.json"); // Normalized to c:/app/config.json
-
-// State access via $ property
-console.log(mock.$.entries.size); // 4
+/** Normalize path for cross-platform map keys */
+export const normalizePath = (p: string): string => path.normalize(p);
 ```
 
-**Key requirements**:
+### Async Operations in Behavioral Mocks
 
-- Use `createFileSystemMock` from `filesystem.state-mock.ts`
-- Paths are normalized via `Path` class (POSIX format, case-normalized on Windows)
-- Errors thrown as `FileSystemError` with typed error codes (ENOENT, EEXIST, etc.)
+**State updates should be synchronous. Only use async when the interface requires it:**
+
+```typescript
+// GOOD: Synchronous state update, immediate Promise resolution
+async writeFile(path: string, content: string): Promise<void> {
+  this.$.files.set(normalizePath(path), content);  // Synchronous
+  return Promise.resolve();                         // Immediate resolution
+}
+
+// BAD: Unnecessary delays
+async writeFile(path: string, content: string): Promise<void> {
+  await sleep(10);  // Never do this - slows tests
+  this.$.files.set(path, content);
+}
+```
 
 ---
 
@@ -666,12 +865,68 @@ Integration tests replace unit tests as the primary feedback mechanism during de
 
 - Create mocks once per test file, reset state in `beforeEach`
 - Use shallow copies, not deep clones in mock state
-- **Never add artificial delays** (`await sleep()`) in mocks
 - Keep initial state minimal - only what the specific test needs
 - Avoid unnecessary async operations in mocks
 - Reuse mock instances when possible, just reset state
 
 **If tests are slow, it's a bug** - fix the mock or the test, don't accept slowness.
+
+### No Timeouts or Delays in Integration Tests
+
+**Integration tests MUST NOT contain timeouts, delays, or artificial waiting.**
+
+Integration tests use behavioral mocks that respond instantly - there are no real systems to wait for. Any timeout or delay indicates the test or mock is incorrectly structured.
+
+**Forbidden patterns**:
+
+```typescript
+// ❌ WRONG: Artificial delays
+await sleep(100);
+await new Promise(resolve => setTimeout(resolve, 100));
+
+// ❌ WRONG: Timeout configurations
+it("should work", { timeout: 5000 }, async () => { ... });
+
+// ❌ WRONG: Polling/waiting for state
+await waitFor(() => expect(state.ready).toBe(true));
+```
+
+**Correct patterns**:
+
+```typescript
+// ✅ CORRECT: Behavioral mocks respond immediately
+const result = await api.workspaces.create("/project", "feature-1", "main");
+expect(result.name).toBe("feature-1");
+
+// ✅ CORRECT: State changes are synchronous in mocks
+mockGit.setBranchDirty("/project", "feature-1", true);
+const status = await api.workspaces.getStatus("/project", "feature-1");
+expect(status.dirty).toBe(true);
+
+// ✅ CORRECT: Events fire immediately in tests
+const events: unknown[] = [];
+api.on("workspace:created", (data) => events.push(data));
+await api.workspaces.create("/project", "feature-1", "main");
+expect(events).toHaveLength(1); // No waiting needed
+```
+
+**Exception - Fake timers for timeout logic**:
+
+When testing code that has timeout _behavior_ (e.g., "retry after 5 seconds"), use `vi.useFakeTimers()` to test the logic instantly:
+
+```typescript
+// ✅ CORRECT: Testing timeout logic with fake timers
+it("retries connection after delay", async () => {
+  vi.useFakeTimers();
+  const connectPromise = client.connectWithRetry();
+  await vi.advanceTimersByTimeAsync(5000); // Instant, no real delay
+  await connectPromise;
+  expect(client.connected).toBe(true);
+  vi.useRealTimers();
+});
+```
+
+Fake timers test timeout _logic_ instantly - real delays test nothing useful.
 
 ---
 
@@ -750,17 +1005,129 @@ Testing individual modules in isolation (old unit test approach) misses these in
 
 ---
 
-## Common Test Fixture Helper
+## Test File Organization
 
-For reducing boilerplate, use a shared fixture helper:
+Tests are organized by **entry point**, with subgroups for large entry points.
+
+### Main Process Tests
+
+| Entry Point           | Test Location          | Subgroups                    |
+| --------------------- | ---------------------- | ---------------------------- |
+| **CodeHydraApi**      | `src/main/api/`        | `project`, `workspace`, `ui` |
+| **LifecycleApi**      | `src/main/api/`        | `lifecycle` (single file)    |
+| **Direct Services**   | `src/services/<name>/` | Per service                  |
+| **Electron Managers** | `src/main/managers/`   | Per manager                  |
+
+**CodeHydraApi subgroups** (large API with multiple namespaces):
+
+| File                            | Namespace     | Modules Exercised                               |
+| ------------------------------- | ------------- | ----------------------------------------------- |
+| `project.integration.test.ts`   | IProjectApi   | AppState, ProjectStore                          |
+| `workspace.integration.test.ts` | IWorkspaceApi | AppState, GitWorktreeProvider, KeepFilesService |
+| `ui.integration.test.ts`        | IUIApi        | AppState, ViewManager                           |
+
+### Renderer Tests
+
+| Entry Point    | Test Location                                                | Strategy                       |
+| -------------- | ------------------------------------------------------------ | ------------------------------ |
+| **App**        | `src/renderer/App.integration.test.ts`                       | Top-level routing, mode switch |
+| **MainView**   | `src/renderer/lib/components/MainView.integration.test.ts`   | Main view after setup          |
+| **Sidebar**    | `src/renderer/lib/components/Sidebar.integration.test.ts`    | Project/workspace list         |
+| **Dialogs**    | `src/renderer/lib/components/dialogs.integration.test.ts`    | All dialog components          |
+| **Dropdowns**  | `src/renderer/lib/components/dropdowns.integration.test.ts`  | Branch, project dropdowns      |
+| **Setup**      | `src/renderer/lib/components/setup.integration.test.ts`      | Setup flow components          |
+| **Indicators** | `src/renderer/lib/components/indicators.integration.test.ts` | Status indicators, overlays    |
+| **Primitives** | `src/renderer/lib/components/primitives.integration.test.ts` | Icon, Logo, EmptyState         |
+
+---
+
+## Renderer Testing Strategy
+
+### Stores: Test Through Components
+
+Stores exist to serve components. Testing stores in isolation often leads to "tests mirror implementation". Instead, test the **behavior the user sees** through component integration tests.
+
+| Store               | Test Through     | Rationale                             |
+| ------------------- | ---------------- | ------------------------------------- |
+| `projects`          | Sidebar          | Sidebar displays projects/workspaces  |
+| `agent-status`      | Sidebar          | Sidebar shows agent status indicators |
+| `shortcuts`         | App              | App handles shortcut mode             |
+| `dialogs`           | Dialog tests     | Each dialog manages its own state     |
+| `setup`             | Setup components | Setup screen shows progress           |
+| `deletion`          | MainView         | MainView handles deletion flow        |
+| `ui-mode`           | App              | App switches between setup/normal     |
+| `workspace-loading` | MainView         | MainView shows loading overlay        |
+
+### Utils: Split by Purity
+
+| Category                 | Test Type                  | Examples                                                     |
+| ------------------------ | -------------------------- | ------------------------------------------------------------ |
+| **Pure utils** (no deps) | Focused test (`*.test.ts`) | focus-trap, sidebar-utils, domain-events                     |
+| **Utils that wire API**  | Component integration test | initialize-app → App, setup-domain-event-bindings → MainView |
+
+### Component Grouping
+
+Group related components into single integration test files to reduce boilerplate:
+
+| Test File                        | Components                                                               |
+| -------------------------------- | ------------------------------------------------------------------------ |
+| `dialogs.integration.test.ts`    | CreateWorkspaceDialog, CloseProjectDialog, RemoveWorkspaceDialog, Dialog |
+| `dropdowns.integration.test.ts`  | BranchDropdown, ProjectDropdown, FilterableDropdown                      |
+| `setup.integration.test.ts`      | SetupScreen, SetupComplete, SetupError                                   |
+| `indicators.integration.test.ts` | AgentStatusIndicator, WorkspaceLoadingOverlay, ShortcutOverlay           |
+| `primitives.integration.test.ts` | Icon, Logo, EmptyState, DeletionProgressView                             |
+
+---
+
+## Mock Factory Organization
+
+### Two-Level Pattern
+
+Behavioral mocks are organized at two levels:
+
+#### 1. Co-located Individual Mocks
+
+Each boundary interface has its mock factory co-located with the interface:
+
+```
+src/services/platform/
+├── filesystem.ts              # Interface
+├── filesystem.test-utils.ts   # createFileSystemMock() + fileSystemMatchers
+├── network.ts                 # Interface
+├── network.test-utils.ts      # createHttpClientMock(), createPortManagerMock() + matchers
+
+src/services/git/
+├── git-client.interface.ts    # Interface
+└── git-client.test-utils.ts   # createGitClientMock() + gitClientMatchers
+```
+
+**Use for**: Service-level tests that only need 1-2 behavioral mocks.
+
+#### 2. Central Test Fixture Helper
+
+For API-level tests that need multiple mocks composed together:
 
 ```typescript
-// test-fixtures.ts
-export function createTestFixture(options?: {
+// src/test/fixtures.ts
+
+interface TestFixtureOptions {
   projects?: Array<{ path: string; branches: string[]; worktrees?: string[] }>;
   files?: Map<string, string>;
-}) {
-  const gitClient = createBehavioralGitClient({
+}
+
+interface TestFixture {
+  api: ICodeHydraApi;
+  mocks: {
+    gitClient: GitClientMock;
+    fileSystem: FileSystemMock;
+    processRunner: ProcessRunnerMock;
+    httpClient: HttpClientMock;
+    portManager: PortManagerMock;
+  };
+}
+
+export function createTestFixture(options?: TestFixtureOptions): TestFixture {
+  const gitClient = createGitClientMock({
     repositories: new Map(
       (options?.projects ?? []).map((p) => [
         p.path,
@@ -777,25 +1144,70 @@ export function createTestFixture(options?: {
     ),
   });
 
-  const fileSystem = createBehavioralFileSystem({
+  const fileSystem = createFileSystemMock({
     files: options?.files ?? new Map(),
   });
+
+  const processRunner = createProcessRunnerMock();
+  const httpClient = createHttpClientMock();
+  const portManager = createPortManagerMock();
 
   const api = createCodeHydraApi({
     gitClient,
     fileSystem,
-    processRunner: createBehavioralProcessRunner(),
-    httpClient: createBehavioralHttpClient(),
-    portManager: createBehavioralPortManager(),
+    processRunner,
+    httpClient,
+    portManager,
   });
 
-  return { api, gitClient, fileSystem };
+  return {
+    api,
+    mocks: { gitClient, fileSystem, processRunner, httpClient, portManager },
+  };
 }
+```
 
-// Usage in tests
-const { api } = createTestFixture({
+**Use for**: API-level tests (CodeHydraApi, LifecycleApi) that exercise multiple modules.
+
+### Usage in Tests
+
+```typescript
+// API-level test using fixture
+const { api, mocks } = createTestFixture({
   projects: [{ path: "/my-app", branches: ["main", "develop"] }],
 });
+
+// Type-safe assertions on mocks
+expect(mocks.gitClient).toHaveWorktree("feature-1");
+
+// Reset all mocks between tests
+afterEach(() => {
+  Object.values(mocks).forEach((mock) => mock.$.reset());
+});
+```
+
+### Cross-Mock State Coordination
+
+**Behavioral mocks are independent by default.** Each mock maintains its own state. If tests need multiple mocks to agree on state (e.g., FileSystem and Git both know about `/project`), handle coordination in the test fixture helper:
+
+```typescript
+// createTestFixture handles coordination between mocks
+export function createTestFixture(options?: TestFixtureOptions): TestFixture {
+  const projects = options?.projects ?? [];
+
+  // Create git repositories
+  const gitClient = createGitClientMock({
+    repositories: new Map(projects.map((p) => [p.path, { branches: p.branches, worktrees: [] }])),
+  });
+
+  // Create corresponding filesystem structure
+  const fileSystem = createFileSystemMock({
+    dirs: new Set(projects.map((p) => p.path)),
+    files: new Map(projects.flatMap((p) => [[`${p.path}/.git/config`, "[core]..."]])),
+  });
+
+  // ... rest of fixture
+}
 ```
 
 ---
@@ -807,33 +1219,38 @@ const { api } = createTestFixture({
 
 describe("CodeHydraApi - Workspace Management", () => {
   let api: ICodeHydraApi;
-  let gitClient: IGitClient;
-  let fileSystem: FileSystemLayer;
+  let gitMock: GitClientMock;
+  let fsMock: FileSystemMock;
 
   beforeEach(() => {
     // Create behavioral mocks with initial state
-    gitClient = createBehavioralGitClient({
+    gitMock = createGitClientMock({
       repositories: new Map([
         ["/projects/my-app", { branches: ["main", "develop", "feature/old"], worktrees: [] }],
       ]),
     });
 
-    fileSystem = createBehavioralFileSystem({
+    fsMock = createFileSystemMock({
       files: new Map([
         ["/projects/my-app/.git/config", "[core]\n..."],
         ["/data/projects.json", "[]"],
       ]),
-      directories: new Set(["/projects/my-app", "/data"]),
+      dirs: new Set(["/projects/my-app", "/data"]),
     });
 
     // Create real API with behavioral mocks injected
     api = createCodeHydraApi({
-      gitClient,
-      fileSystem,
-      processRunner: createBehavioralProcessRunner(),
-      httpClient: createBehavioralHttpClient(),
-      portManager: createBehavioralPortManager(),
+      gitClient: gitMock,
+      fileSystem: fsMock,
+      processRunner: createProcessRunnerMock(),
+      httpClient: createHttpClientMock(),
+      portManager: createPortManagerMock(),
     });
+  });
+
+  afterEach(() => {
+    gitMock.$.reset();
+    fsMock.$.reset();
   });
 
   describe("workspace creation", () => {
@@ -844,6 +1261,9 @@ describe("CodeHydraApi - Workspace Management", () => {
       expect(workspace.name).toBe("feature-login");
       expect(workspace.branch).toBe("feature-login");
       expect(workspace.baseBranch).toBe("main");
+
+      // Type-safe mock assertion
+      expect(gitMock).toHaveWorktree("feature-login");
 
       const project = await api.projects.get("/projects/my-app");
       expect(project.workspaces).toHaveLength(1);
@@ -870,6 +1290,9 @@ describe("CodeHydraApi - Workspace Management", () => {
       await expect(
         api.workspaces.create("/projects/my-app", "feature-x", "nonexistent")
       ).rejects.toThrow(GitError);
+
+      // Verify no worktree was created
+      expect(gitMock).not.toHaveWorktree("feature-x");
 
       const project = await api.projects.get("/projects/my-app");
       expect(project.workspaces).toHaveLength(0);
