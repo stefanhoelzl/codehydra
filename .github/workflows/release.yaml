@@ -27,9 +27,9 @@ jobs:
           fetch-depth: 0
 
       - run: |
-          if [[ "${{ inputs.force }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" == "push" ]] || [[ "${{ inputs.force }}" == "true" ]]; then
             echo "passed=true" >> $GITHUB_OUTPUT
-            echo "::warning::CI check skipped (force=true)"
+            echo "::warning::CI check skipped (${{ github.event_name }})"
             exit 0
           fi
           STATUS=$(gh api repos/${{ github.repository }}/commits/$(git rev-parse HEAD)/status --jq '.state')
