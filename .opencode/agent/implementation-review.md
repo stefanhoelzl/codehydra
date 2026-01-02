@@ -8,14 +8,8 @@ tools:
   webfetch: true
 permission:
   bash:
-    "*": deny
-    "git log*": allow
-    "git diff*": allow
-    "git show*": allow
-    "git status": allow
-    "ls*": allow
-    "tree*": allow
-    "cat*": allow
+    "pnpm validate*": allow
+    "pnpm test*": allow
 ---
 
 # Implementation Review Agent

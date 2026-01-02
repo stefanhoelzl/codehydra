@@ -17,6 +17,24 @@
       },
     },
   },
+  "permission": {
+    "bash": {
+      "*": "deny",
+      // Git read-only commands
+      "git log*": "allow",
+      "git diff*": "allow",
+      "git show*": "allow",
+      "git status": "allow",
+      // File inspection commands
+      "ls*": "allow",
+      "tree*": "allow",
+      "cat*": "allow",
+      "head*": "allow",
+      "tail*": "allow",
+      "wc*": "allow",
+      "pwd": "allow",
+    },
+  },
   "agent": {
     "build": {
       "color": "#A16207", // amber

@@ -14,12 +14,8 @@ tools:
 permission:
   edit: ask
   bash:
-    "*": deny
-    "git log*": allow
-    "git diff*": allow
-    "git status": allow
-    "ls*": allow
-    "tree*": allow
+    "pnpm validate*": allow
+    "pnpm test*": allow
 ---
 
 # Feature Agent

@@ -6,15 +6,6 @@ tools:
   edit: false
   patch: false
   webfetch: true
-permission:
-  bash:
-    "*": deny
-    "git log*": allow
-    "git diff*": allow
-    "git status": allow
-    "ls*": allow
-    "tree*": allow
-    "cat*": allow
 ---
 
 # Platform Compatibility Review Agent
