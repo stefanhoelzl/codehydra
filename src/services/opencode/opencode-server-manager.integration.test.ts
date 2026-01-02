@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./opencode-server-manager";
-import { AgentStatusManager } from "./agent-status-manager";
+import { AgentStatusManager, OpenCodeProvider } from "./agent-status-manager";
 import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { SILENT_LOGGER } from "../logging";
@@ -20,6 +20,20 @@ import type { PortManager, HttpClient } from "../platform/network";
 import type { PathProvider } from "../platform/path-provider";
 import type { WorkspacePath } from "../../shared/ipc";
 import { createMockSdkClient, createMockSdkFactory } from "./sdk-test-utils";
+import type { SdkClientFactory } from "./opencode-client";
+
+/**
+ * Helper to create and initialize a provider for testing.
+ */
+async function createAndInitializeProvider(
+  port: number,
+  sdkFactory: SdkClientFactory
+): Promise<OpenCodeProvider> {
+  const provider = new OpenCodeProvider(SILENT_LOGGER, sdkFactory);
+  await provider.initializeClient(port);
+  await provider.fetchStatus();
+  return provider;
+}
 
 /**
  * Create a mock PortManager with vitest spies.
@@ -104,8 +118,8 @@ describe("OpenCodeServerManager integration", () => {
       // Start server
       await serverManager.startServer("/workspace/feature-a");
 
-      // Callback should have been fired
-      expect(startedCallback).toHaveBeenCalledWith("/workspace/feature-a", 14001);
+      // Callback should have been fired (with undefined pending prompt)
+      expect(startedCallback).toHaveBeenCalledWith("/workspace/feature-a", 14001, undefined);
     });
 
     it("onServerStopped callback is fired when server stops", async () => {
@@ -126,8 +140,12 @@ describe("OpenCodeServerManager integration", () => {
         agentStatusManager.removeWorkspace(path as WorkspacePath);
       });
 
-      // Initialize workspace directly (simulating start callback)
-      await agentStatusManager.initWorkspace("/workspace/feature-a" as WorkspacePath, 14001);
+      // Initialize workspace directly (simulating start callback with provider creation)
+      const provider = await createAndInitializeProvider(
+        14001,
+        agentStatusManager.getSdkFactory()!
+      );
+      agentStatusManager.addProvider("/workspace/feature-a" as WorkspacePath, provider);
 
       // Start and stop server (stop triggers the callback)
       await serverManager.startServer("/workspace/feature-a");

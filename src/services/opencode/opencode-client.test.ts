@@ -704,8 +704,9 @@ describe("OpenCodeClient", () => {
       client["handleSessionCreated"]({ info: { id: "new-root" } });
 
       expect(client.isRootSession("new-root")).toBe(true);
-      // Should emit idle status for new root session
-      expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "new-root" });
+      // Should emit "created" event - status is unknown until we receive session.status
+      // This allows sessionToPort tracking without assuming idle status
+      expect(listener).toHaveBeenCalledWith({ type: "created", sessionId: "new-root" });
     });
 
     it("does not add child session to tracking set", async () => {
@@ -895,7 +896,8 @@ describe("OpenCodeClient", () => {
         client["handleMessage"](event);
 
         expect(client.isRootSession("new-root")).toBe(true);
-        expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "new-root" });
+        // Should emit "created" event - status is unknown until we receive session.status
+        expect(listener).toHaveBeenCalledWith({ type: "created", sessionId: "new-root" });
       });
 
       it("ignores child sessions", async () => {

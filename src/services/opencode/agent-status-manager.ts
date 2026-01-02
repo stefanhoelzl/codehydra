@@ -6,8 +6,9 @@
  */
 
 import type { WorkspacePath, InternalAgentCounts, AggregatedAgentStatus } from "../../shared/ipc";
-import type { IDisposable, Unsubscribe, ClientStatus } from "./types";
+import { type IDisposable, type Unsubscribe, type ClientStatus, type Result, err } from "./types";
 import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./opencode-client";
+import { OpenCodeError } from "../errors";
 import type { Logger } from "../logging";
 
 /**
@@ -21,8 +22,10 @@ export type StatusChangedCallback = (
 /**
  * Per-workspace provider that manages a single OpenCode client connection.
  * Each workspace has exactly one managed OpenCode server.
+ *
+ * Created by AppState and registered with AgentStatusManager via addProvider().
  */
-class OpenCodeProvider implements IDisposable {
+export class OpenCodeProvider implements IDisposable {
   private client: OpenCodeClient | null = null;
   private clientStatus: ClientStatus = "idle";
   private readonly sdkFactory: SdkClientFactory | undefined;
@@ -160,6 +163,31 @@ class OpenCodeProvider implements IDisposable {
     return () => this.statusChangeListeners.delete(callback);
   }
 
+  /**
+   * Create a new session.
+   * The session is immediately tracked before SSE events arrive.
+   */
+  async createSession(): Promise<Result<string, OpenCodeError>> {
+    if (!this.client) {
+      return err(new OpenCodeError("Not connected", "NOT_CONNECTED"));
+    }
+    return this.client.createSession();
+  }
+
+  /**
+   * Send a prompt to an existing session.
+   */
+  async sendPrompt(
+    sessionId: string,
+    prompt: string,
+    options?: { agent?: string; model?: { providerID: string; modelID: string } }
+  ): Promise<Result<void, OpenCodeError>> {
+    if (!this.client) {
+      return err(new OpenCodeError("Not connected", "NOT_CONNECTED"));
+    }
+    return this.client.sendPrompt(sessionId, prompt, options);
+  }
+
   dispose(): void {
     if (this.client) {
       this.client.dispose();
@@ -267,23 +295,35 @@ export class AgentStatusManager implements IDisposable {
   }
 
   /**
-   * Initialize a workspace for agent tracking with the given port.
-   * Called by AppState when OpenCodeServerManager reports server started.
+   * Get the SDK factory for creating providers.
+   * Used by AppState when creating OpenCodeProvider instances.
    */
-  async initWorkspace(path: WorkspacePath, port: number): Promise<void> {
+  getSdkFactory(): SdkClientFactory | undefined {
+    return this.sdkFactory;
+  }
+
+  /**
+   * Get the logger for creating providers.
+   * Used by AppState when creating OpenCodeProvider instances.
+   */
+  getLogger(): Logger {
+    return this.logger;
+  }
+
+  /**
+   * Add an externally-created provider for a workspace.
+   * Called by AppState after creating and initializing the provider.
+   *
+   * @param path - Workspace path
+   * @param provider - Initialized OpenCodeProvider
+   */
+  addProvider(path: WorkspacePath, provider: OpenCodeProvider): void {
     if (this.providers.has(path)) {
       return;
     }
 
-    const provider = new OpenCodeProvider(this.logger, this.sdkFactory);
     // Subscribe to status changes (includes permission changes)
     provider.onStatusChange(() => this.updateStatus(path));
-
-    // Initialize client with the provided port
-    await provider.initializeClient(port);
-
-    // Fetch initial status from the client
-    await provider.fetchStatus();
 
     // Restore TUI attached state if workspace had TUI attached before (e.g., after restart)
     if (this.tuiAttachedWorkspaces.has(path)) {

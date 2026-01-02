@@ -108,13 +108,13 @@ describe("OpenCodeServerManager", () => {
       expect(manager.getPort("/workspace/feature-a")).toBe(14001);
     });
 
-    it("fires onServerStarted callback with path and port", async () => {
+    it("fires onServerStarted callback with path, port, and undefined pending prompt", async () => {
       const callback = vi.fn();
       manager.onServerStarted(callback);
 
       await manager.startServer("/workspace/feature-a");
 
-      expect(callback).toHaveBeenCalledWith("/workspace/feature-a", 14001);
+      expect(callback).toHaveBeenCalledWith("/workspace/feature-a", 14001, undefined);
     });
 
     it("throws when port allocation fails", async () => {

@@ -276,6 +276,67 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
+   * Create a new session.
+   * The session is immediately tracked in rootSessionIds before SSE events arrive.
+   * This ensures proper status tracking even if session.status arrives before session.created.
+   *
+   * @returns The session ID on success, or an error
+   */
+  async createSession(): Promise<Result<string, OpenCodeError>> {
+    try {
+      const result = await this.sdk.session.create({ body: {} });
+      if (!result.data) {
+        return err(new OpenCodeError("Session creation returned no data", "REQUEST_FAILED"));
+      }
+
+      const sessionId = result.data.id;
+
+      // Track immediately - don't wait for SSE session.created event
+      // This ensures session.status events are handled correctly
+      this.rootSessionIds.add(sessionId);
+
+      this.logger.debug("Session created", { port: this.port, sessionId });
+      return ok(sessionId);
+    } catch (error) {
+      return err(this.mapSdkError(error));
+    }
+  }
+
+  /**
+   * Send a prompt to an existing session.
+   *
+   * @param sessionId - The session to send the prompt to
+   * @param prompt - The prompt text
+   * @param options - Optional agent and model configuration
+   */
+  async sendPrompt(
+    sessionId: string,
+    prompt: string,
+    options?: { agent?: string; model?: { providerID: string; modelID: string } }
+  ): Promise<Result<void, OpenCodeError>> {
+    try {
+      await this.sdk.session.prompt({
+        path: { id: sessionId },
+        body: {
+          ...(options?.agent !== undefined && { agent: options.agent }),
+          ...(options?.model !== undefined && { model: options.model }),
+          parts: [{ type: "text", text: prompt }],
+        },
+      });
+
+      this.logger.debug("Prompt sent", {
+        port: this.port,
+        sessionId,
+        promptLength: prompt.length,
+        ...(options?.agent !== undefined && { agent: options.agent }),
+      });
+      return ok(undefined);
+    } catch (error) {
+      return err(this.mapSdkError(error));
+    }
+  }
+
+  /**
    * Connect to SSE event stream.
    *
    * @param timeoutMs - Connection timeout in milliseconds. Default: 5000
@@ -500,6 +561,7 @@ export class OpenCodeClient implements IDisposable {
   /**
    * Handle session.created events.
    * Adds new root sessions to the tracking set, and maps child sessions to their root.
+   * Emits a "created" event to notify listeners that a session exists but status is unknown.
    */
   private handleSessionCreated(properties?: { info?: { id?: string; parentID?: string } }): void {
     const sessionInfo = properties?.info;
@@ -508,8 +570,9 @@ export class OpenCodeClient implements IDisposable {
     if (!sessionInfo.parentID) {
       // Root session
       this.rootSessionIds.add(sessionInfo.id);
-      // Emit idle status for new root session
-      this.emitSessionEvent({ type: "idle", sessionId: sessionInfo.id });
+      // Emit "created" event - status is unknown until we receive session.status
+      // This allows sessionToPort tracking without assuming idle status
+      this.emitSessionEvent({ type: "created", sessionId: sessionInfo.id });
     } else {
       // Child session: map to its root
       if (this.rootSessionIds.has(sessionInfo.parentID)) {

@@ -25,8 +25,14 @@ import {
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspacePath } from "../shared/ipc";
 import type { Project, ProjectId } from "../shared/api/types";
-import type { AgentStatusManager } from "../services/opencode/agent-status-manager";
-import type { OpenCodeServerManager } from "../services/opencode/opencode-server-manager";
+import {
+  OpenCodeProvider,
+  type AgentStatusManager,
+} from "../services/opencode/agent-status-manager";
+import type {
+  OpenCodeServerManager,
+  PendingPrompt,
+} from "../services/opencode/opencode-server-manager";
 import type { McpServerManager } from "../services/mcp-server";
 import { getErrorMessage } from "../shared/error-utils";
 import { toIpcWorkspaces } from "./api/workspace-conversion";
@@ -111,10 +117,8 @@ export class AppState {
     this.serverManager = manager;
 
     // Wire server callbacks to agent status manager
-    manager.onServerStarted((workspacePath, port) => {
-      if (this.agentStatusManager) {
-        void this.agentStatusManager.initWorkspace(workspacePath as WorkspacePath, port);
-      }
+    manager.onServerStarted((workspacePath, port, pendingPrompt) => {
+      void this.handleServerStarted(workspacePath as WorkspacePath, port, pendingPrompt);
     });
 
     manager.onServerStopped((workspacePath) => {
@@ -126,6 +130,69 @@ export class AppState {
         this.mcpServerManager.clearWorkspace(workspacePath);
       }
     });
+  }
+
+  /**
+   * Handle server started event.
+   * Creates provider, registers with AgentStatusManager, and sends initial prompt if provided.
+   */
+  private async handleServerStarted(
+    workspacePath: WorkspacePath,
+    port: number,
+    pendingPrompt: PendingPrompt | undefined
+  ): Promise<void> {
+    if (!this.agentStatusManager) {
+      return;
+    }
+
+    // Create provider using AgentStatusManager's factory and logger
+    const provider = new OpenCodeProvider(
+      this.agentStatusManager.getLogger(),
+      this.agentStatusManager.getSdkFactory()
+    );
+
+    try {
+      // Initialize client (connects SSE)
+      await provider.initializeClient(port);
+
+      // Fetch initial status
+      await provider.fetchStatus();
+
+      // Register with AgentStatusManager
+      this.agentStatusManager.addProvider(workspacePath, provider);
+
+      // Send initial prompt if provided
+      if (pendingPrompt) {
+        const sessionResult = await provider.createSession();
+        if (sessionResult.ok) {
+          const promptResult = await provider.sendPrompt(
+            sessionResult.value,
+            pendingPrompt.prompt,
+            {
+              ...(pendingPrompt.agent !== undefined && { agent: pendingPrompt.agent }),
+              ...(pendingPrompt.model !== undefined && { model: pendingPrompt.model }),
+            }
+          );
+          if (!promptResult.ok) {
+            this.logger.error("Failed to send initial prompt", {
+              workspacePath,
+              error: promptResult.error.message,
+            });
+          }
+        } else {
+          this.logger.error("Failed to create session for initial prompt", {
+            workspacePath,
+            error: sessionResult.error.message,
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        "Failed to initialize OpenCode provider",
+        { workspacePath, port },
+        error instanceof Error ? error : undefined
+      );
+    }
   }
 
   /**

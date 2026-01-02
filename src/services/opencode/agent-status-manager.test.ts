@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AgentStatusManager } from "./agent-status-manager";
+import { AgentStatusManager, OpenCodeProvider } from "./agent-status-manager";
 import type { WorkspacePath } from "../../shared/ipc";
 import {
   createMockSdkClient,
@@ -20,6 +20,20 @@ import {
 import type { SdkClientFactory } from "./opencode-client";
 import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
 import { SILENT_LOGGER } from "../logging";
+
+/**
+ * Helper to create and initialize a provider for testing.
+ * Mirrors what AppState.handleServerStarted does.
+ */
+async function createAndInitializeProvider(
+  port: number,
+  sdkFactory: SdkClientFactory
+): Promise<OpenCodeProvider> {
+  const provider = new OpenCodeProvider(SILENT_LOGGER, sdkFactory);
+  await provider.initializeClient(port);
+  await provider.fetchStatus();
+  return provider;
+}
 
 describe("AgentStatusManager", () => {
   let manager: AgentStatusManager;
@@ -58,9 +72,10 @@ describe("AgentStatusManager", () => {
     });
   });
 
-  describe("initWorkspace", () => {
-    it("creates OpenCodeClient with provided port", async () => {
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+  describe("addProvider", () => {
+    it("registers provider and tracks workspace", async () => {
+      const provider = await createAndInitializeProvider(14001, mockSdkFactory);
+      manager.addProvider("/test/workspace" as WorkspacePath, provider);
 
       // Should have created a client and be tracking the workspace
       const status = manager.getStatus("/test/workspace" as WorkspacePath);
@@ -82,7 +97,8 @@ describe("AgentStatusManager", () => {
       const listener = vi.fn();
       manager.onStatusChanged(listener);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 8080);
+      const provider = await createAndInitializeProvider(8080, mockSdkFactory);
+      manager.addProvider("/test/workspace" as WorkspacePath, provider);
 
       // When connected (has client) but TUI not attached, should show "none"
       const status = manager.getStatus("/test/workspace" as WorkspacePath);
@@ -100,7 +116,8 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 8080);
+      const provider = await createAndInitializeProvider(8080, mockSdkFactory);
+      manager.addProvider("/test/workspace" as WorkspacePath, provider);
 
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
@@ -112,14 +129,16 @@ describe("AgentStatusManager", () => {
       expect(status.counts.busy).toBe(0);
     });
 
-    it("does not duplicate if called twice", async () => {
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+    it("does not duplicate if called twice with same path", async () => {
+      const provider1 = await createAndInitializeProvider(14001, mockSdkFactory);
+      const provider2 = await createAndInitializeProvider(14001, mockSdkFactory);
+      manager.addProvider("/test/workspace" as WorkspacePath, provider1);
+      manager.addProvider("/test/workspace" as WorkspacePath, provider2);
 
       expect(manager.getAllStatuses().size).toBe(1);
     });
 
-    it("handles connection failure gracefully", async () => {
+    it("handles connection failure gracefully in provider creation", async () => {
       // Mock SDK that fails to connect
       const mockSdk = createMockSdkClient({
         sessions: [],
@@ -130,16 +149,18 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
 
-      // Should not throw, but should handle gracefully
-      await expect(
-        manager.initWorkspace("/test/workspace" as WorkspacePath, 59999)
-      ).resolves.not.toThrow();
+      // Provider creation should not throw
+      const provider = new OpenCodeProvider(SILENT_LOGGER, mockSdkFactory);
+      await expect(provider.initializeClient(59999)).resolves.not.toThrow();
     });
   });
 
   describe("removeWorkspace", () => {
     it("removes workspace from tracking", async () => {
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
       expect(manager.getAllStatuses().size).toBe(1);
 
       manager.removeWorkspace("/test/workspace" as WorkspacePath);
@@ -151,7 +172,10 @@ describe("AgentStatusManager", () => {
       const listener = vi.fn();
       manager.onStatusChanged(listener);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
       listener.mockClear();
 
       manager.removeWorkspace("/test/workspace" as WorkspacePath);
@@ -163,7 +187,10 @@ describe("AgentStatusManager", () => {
     });
 
     it("disposes OpenCodeClient", async () => {
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
 
       // Remove should dispose the client
       manager.removeWorkspace("/test/workspace" as WorkspacePath);
@@ -178,7 +205,10 @@ describe("AgentStatusManager", () => {
       const listener = vi.fn();
       manager.onStatusChanged(listener);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
 
       // When connected but TUI not attached yet, status is "none"
       expect(listener).toHaveBeenCalledWith(
@@ -191,7 +221,10 @@ describe("AgentStatusManager", () => {
       const listener = vi.fn();
       manager.onStatusChanged(listener);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
       listener.mockClear();
 
       // Mark TUI as attached
@@ -210,7 +243,10 @@ describe("AgentStatusManager", () => {
 
       unsubscribe();
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -218,7 +254,10 @@ describe("AgentStatusManager", () => {
 
   describe("setTuiAttached", () => {
     it("transitions status from none to idle when called", async () => {
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
 
       // Before TUI attach: status is "none"
       expect(manager.getStatus("/test/workspace" as WorkspacePath).status).toBe("none");
@@ -234,7 +273,10 @@ describe("AgentStatusManager", () => {
       const listener = vi.fn();
       manager.onStatusChanged(listener);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
       listener.mockClear();
 
       // Call setTuiAttached multiple times
@@ -258,7 +300,7 @@ describe("AgentStatusManager", () => {
       // 3. New provider should have tuiAttached = true restored
       const path = "/test/workspace" as WorkspacePath;
 
-      await manager.initWorkspace(path, 14001);
+      manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
       manager.setTuiAttached(path);
 
       // Verify TUI attached (should be "idle" status)
@@ -271,7 +313,7 @@ describe("AgentStatusManager", () => {
       expect(manager.getStatus(path).status).toBe("none");
 
       // Re-initialize (simulates server restart with new provider)
-      await manager.initWorkspace(path, 14001);
+      manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
 
       // Key assertion: TUI attached state should be restored from tracking set
       // So status should be "idle" (not "none" which would require waiting for new MCP request)
@@ -283,7 +325,7 @@ describe("AgentStatusManager", () => {
       // After clearTuiTracking, re-initializing should NOT restore TUI attached state
       const path = "/test/workspace" as WorkspacePath;
 
-      await manager.initWorkspace(path, 14001);
+      manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
       manager.setTuiAttached(path);
 
       // Verify TUI attached
@@ -294,7 +336,7 @@ describe("AgentStatusManager", () => {
       manager.removeWorkspace(path);
 
       // Re-initialize (simulates recreating workspace)
-      await manager.initWorkspace(path, 14001);
+      manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
 
       // Key assertion: TUI attached state should NOT be restored
       // Status should be "none" (waiting for new MCP request)
@@ -304,7 +346,10 @@ describe("AgentStatusManager", () => {
 
   describe("dispose", () => {
     it("clears all state", async () => {
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 14001);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(14001, mockSdkFactory)
+      );
 
       manager.dispose();
 
@@ -313,7 +358,7 @@ describe("AgentStatusManager", () => {
 
     it("clears TUI tracking state", async () => {
       const path = "/test/workspace" as WorkspacePath;
-      await manager.initWorkspace(path, 14001);
+      manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
       manager.setTuiAttached(path);
 
       // Verify TUI was attached
@@ -324,7 +369,7 @@ describe("AgentStatusManager", () => {
 
       // Re-initialize on the same manager (after dispose)
       // This tests that tuiAttachedWorkspaces was cleared by dispose
-      await manager.initWorkspace(path, 14001);
+      manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
 
       // If tuiAttachedWorkspaces was properly cleared, status should be "none"
       // (not "idle" which would indicate TUI tracking was restored)
@@ -344,7 +389,10 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 8080);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(8080, mockSdkFactory)
+      );
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 
@@ -365,7 +413,10 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 8080);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(8080, mockSdkFactory)
+      );
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 
@@ -392,7 +443,10 @@ describe("AgentStatusManager", () => {
       mockSdkFactory = createMockSdkFactory(mockSdk);
       manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
 
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 8080);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(8080, mockSdkFactory)
+      );
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 
@@ -415,7 +469,10 @@ describe("AgentStatusManager", () => {
       manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
 
       // Initialize workspace (triggers first status fetch)
-      await manager.initWorkspace("/test/workspace" as WorkspacePath, 8080);
+      manager.addProvider(
+        "/test/workspace" as WorkspacePath,
+        await createAndInitializeProvider(8080, mockSdkFactory)
+      );
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 
