@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { McpServerManager } from "./mcp-server-manager";
-import type { PortManager } from "../platform/network";
+import type { MockPortManager } from "../platform/network.test-utils";
 import type { PathProvider } from "../platform/path-provider";
 import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
 import type { WorkspaceLookup } from "./workspace-resolver";
@@ -12,16 +12,7 @@ import type { McpServerFactory } from "./mcp-server";
 import type { McpServer as McpServerSdk } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMockLogger } from "../logging";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
-
-/**
- * Create a mock PortManager.
- */
-function createMockPortManager(overrides?: Partial<PortManager>): PortManager {
-  return {
-    findFreePort: vi.fn().mockResolvedValue(12345),
-    ...overrides,
-  };
-}
+import { createPortManagerMock } from "../platform/network.test-utils";
 
 /**
  * Create a mock ICoreApi.
@@ -67,7 +58,7 @@ function createMockMcpSdk(): McpServerSdk {
 }
 
 describe("McpServerManager", () => {
-  let portManager: PortManager;
+  let portManager: MockPortManager;
   let pathProvider: PathProvider;
   let api: ICoreApi;
   let appState: WorkspaceLookup;
@@ -76,7 +67,7 @@ describe("McpServerManager", () => {
   let activeManager: McpServerManager | null = null;
 
   beforeEach(() => {
-    portManager = createMockPortManager();
+    portManager = createPortManagerMock([12345]);
     pathProvider = createMockPathProvider({ dataRootDir: "/tmp/test-data" });
     api = createMockCoreApi();
     appState = createMockAppState();
@@ -113,9 +104,11 @@ describe("McpServerManager", () => {
         serverFactory: mockSdkFactory,
       });
 
-      await activeManager.start();
+      const port = await activeManager.start();
 
-      expect(portManager.findFreePort).toHaveBeenCalled();
+      // Verify port was allocated (behavioral assertion)
+      expect(port).toBe(12345);
+      expect(portManager.$.allocatedPorts).toEqual([12345]);
     });
 
     it("returns allocated port", async () => {
@@ -138,7 +131,8 @@ describe("McpServerManager", () => {
 
       // Should return same port without allocating new one
       expect(port2).toBe(12345);
-      expect(portManager.findFreePort).toHaveBeenCalledTimes(1);
+      // Verify only one port was allocated (behavioral assertion)
+      expect(portManager.$.allocatedPorts).toEqual([12345]);
     });
   });
 
@@ -163,15 +157,23 @@ describe("McpServerManager", () => {
     });
 
     it("allows restart after stop", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger, {
-        serverFactory: mockSdkFactory,
-      });
+      // Provide two ports for start/stop/restart cycle
+      const restartPortManager = createPortManagerMock([12345, 54321]);
+      activeManager = new McpServerManager(
+        restartPortManager,
+        pathProvider,
+        api,
+        appState,
+        logger,
+        {
+          serverFactory: mockSdkFactory,
+        }
+      );
 
       await activeManager.start();
       await activeManager.stop();
 
-      // Should be able to start again
-      vi.mocked(portManager.findFreePort).mockResolvedValue(54321);
+      // Should be able to start again with next port
       const port = await activeManager.start();
       expect(port).toBe(54321);
     });
@@ -227,9 +229,8 @@ describe("McpServerManager", () => {
 
   describe("error handling", () => {
     it("cleans up on port allocation failure", async () => {
-      const failingPortManager = createMockPortManager({
-        findFreePort: vi.fn().mockRejectedValue(new Error("No ports available")),
-      });
+      // Empty port list causes "No ports available" error on first call
+      const failingPortManager = createPortManagerMock([]);
 
       const manager = new McpServerManager(failingPortManager, pathProvider, api, appState, logger);
 

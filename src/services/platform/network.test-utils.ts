@@ -15,51 +15,14 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "http";
-import { type PortManager } from "./network";
 import { delay } from "../test-utils";
-
-// ============================================================================
-// Mock Option Types
-// ============================================================================
-
-/**
- * Options for creating a mock PortManager.
- */
-export interface MockPortManagerOptions {
-  /** Options for findFreePort */
-  readonly findFreePort?: { port?: number; error?: Error };
-}
 
 // ============================================================================
 // Mock Port Manager
 // ============================================================================
 
-/**
- * Create a mock PortManager for testing.
- *
- * @example Basic usage - returns port 8080
- * const portManager = createMockPortManager();
- *
- * @example Return custom port
- * const portManager = createMockPortManager({
- *   findFreePort: { port: 3000 }
- * });
- *
- * @example Throw errors
- * const portManager = createMockPortManager({
- *   findFreePort: { error: new Error('No ports available') }
- * });
- */
-export function createMockPortManager(options?: MockPortManagerOptions): PortManager {
-  return {
-    findFreePort: async (): Promise<number> => {
-      if (options?.findFreePort?.error) {
-        throw options.findFreePort.error;
-      }
-      return options?.findFreePort?.port ?? 8080;
-    },
-  };
-}
+// Re-export the state mock
+export { createPortManagerMock, type MockPortManager } from "./port-manager.state-mock";
 
 // ============================================================================
 // Test Server for Boundary Tests

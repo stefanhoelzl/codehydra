@@ -366,6 +366,7 @@ State mocks provide a standardized interface for behavioral mocks with type-safe
 State mock files use the `*.state-mock.ts` suffix:
 
 - `src/services/platform/file-system.state-mock.ts`
+- `src/services/platform/port-manager.state-mock.ts`
 - `src/services/git/git-client.state-mock.ts`
 
 ### Core Interfaces

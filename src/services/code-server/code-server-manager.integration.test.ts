@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { join, delimiter } from "node:path";
 import { CodeServerManager } from "./code-server-manager";
 import { createMockSpawnedProcess } from "../platform/process.test-utils";
-import { createMockPortManager } from "../platform/network.test-utils";
+import { createPortManagerMock } from "../platform/network.test-utils";
 import { createMockHttpClient } from "../platform/http-client.state-mock";
 import { SILENT_LOGGER } from "../logging";
 
@@ -52,7 +52,7 @@ describe("CodeServerManager Integration", () => {
       };
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
-      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const portManager = createPortManagerMock([8080]);
       const config = {
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
@@ -85,7 +85,7 @@ describe("CodeServerManager Integration", () => {
       };
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
-      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const portManager = createPortManagerMock([8080]);
       const config = {
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
@@ -124,7 +124,7 @@ describe("CodeServerManager Integration", () => {
       };
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
-      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const portManager = createPortManagerMock([8080]);
       const config = {
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
@@ -163,7 +163,7 @@ describe("CodeServerManager Integration", () => {
       };
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
-      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const portManager = createPortManagerMock([8080]);
       const config = {
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
@@ -203,7 +203,7 @@ describe("CodeServerManager Integration", () => {
       };
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
-      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const portManager = createPortManagerMock([8080]);
       const config = {
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
@@ -238,7 +238,7 @@ describe("CodeServerManager Integration", () => {
       };
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
-      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const portManager = createPortManagerMock([8080]);
       const config = {
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
@@ -272,7 +272,7 @@ describe("CodeServerManager Integration", () => {
       };
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
-      const portManager = createMockPortManager({ findFreePort: { port: 8080 } });
+      const portManager = createPortManagerMock([8080]);
       const config = {
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",

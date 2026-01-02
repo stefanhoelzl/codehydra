@@ -14,9 +14,10 @@ import { OpenCodeServerManager } from "./opencode-server-manager";
 import { AgentStatusManager, OpenCodeProvider } from "./agent-status-manager";
 import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
+import { createPortManagerMock, type MockPortManager } from "../platform/network.test-utils";
 import { SILENT_LOGGER } from "../logging";
 import type { MockSpawnedProcess, MockProcessRunner } from "../platform/process.test-utils";
-import type { PortManager, HttpClient } from "../platform/network";
+import type { HttpClient } from "../platform/network";
 import type { PathProvider } from "../platform/path-provider";
 import type { WorkspacePath } from "../../shared/ipc";
 import { createMockSdkClient, createMockSdkFactory } from "./sdk-test-utils";
@@ -33,18 +34,6 @@ async function createAndInitializeProvider(
   await provider.initializeClient(port);
   await provider.fetchStatus();
   return provider;
-}
-
-/**
- * Create a mock PortManager with vitest spies.
- */
-function createTestPortManager(
-  startPort = 14001
-): PortManager & { findFreePort: ReturnType<typeof vi.fn> } {
-  let currentPort = startPort;
-  return {
-    findFreePort: vi.fn().mockImplementation(async () => currentPort++),
-  };
 }
 
 /**
@@ -69,7 +58,7 @@ describe("OpenCodeServerManager integration", () => {
   let serverManager: OpenCodeServerManager;
   let agentStatusManager: AgentStatusManager;
   let mockProcessRunner: MockProcessRunner;
-  let mockPortManager: ReturnType<typeof createTestPortManager>;
+  let mockPortManager: MockPortManager;
   let mockHttpClient: ReturnType<typeof createTestHttpClient>;
   let mockPathProvider: PathProvider;
   let processes: MockSpawnedProcess[];
@@ -87,7 +76,10 @@ describe("OpenCodeServerManager integration", () => {
       processes.push(proc);
       return proc;
     });
-    mockPortManager = createTestPortManager(14001);
+    // Provide enough ports for tests (max ~5 concurrent servers in some tests)
+    mockPortManager = createPortManagerMock([
+      14001, 14002, 14003, 14004, 14005, 14006, 14007, 14008, 14009, 14010,
+    ]);
     mockHttpClient = createTestHttpClient();
     mockPathProvider = createTestPathProvider();
 

@@ -13,21 +13,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./opencode-server-manager";
 import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
+import { createPortManagerMock, type MockPortManager } from "../platform/network.test-utils";
 import { SILENT_LOGGER } from "../logging";
 import type { MockSpawnedProcess, MockProcessRunner } from "../platform/process.test-utils";
-import type { PortManager, HttpClient } from "../platform/network";
+import type { HttpClient } from "../platform/network";
 import type { PathProvider } from "../platform/path-provider";
-
-/**
- * Create a mock PortManager with vitest spies.
- */
-function createTestPortManager(
-  port = 14001
-): PortManager & { findFreePort: ReturnType<typeof vi.fn> } {
-  return {
-    findFreePort: vi.fn().mockResolvedValue(port),
-  };
-}
 
 /**
  * Create a mock HttpClient with vitest spies.
@@ -55,7 +45,7 @@ function createTestPathProvider(): PathProvider {
 describe("OpenCodeServerManager", () => {
   // Common dependencies
   let mockProcessRunner: MockProcessRunner;
-  let mockPortManager: ReturnType<typeof createTestPortManager>;
+  let mockPortManager: MockPortManager;
   let mockHttpClient: ReturnType<typeof createTestHttpClient>;
   let mockPathProvider: PathProvider;
   let manager: OpenCodeServerManager;
@@ -72,7 +62,7 @@ describe("OpenCodeServerManager", () => {
     });
 
     mockProcessRunner = createMockProcessRunner(mockProcess);
-    mockPortManager = createTestPortManager(14001);
+    mockPortManager = createPortManagerMock([14001]);
     mockHttpClient = createTestHttpClient();
     mockPathProvider = createTestPathProvider();
 
@@ -94,7 +84,7 @@ describe("OpenCodeServerManager", () => {
       const port = await manager.startServer("/workspace/feature-a");
 
       expect(port).toBe(14001);
-      expect(mockPortManager.findFreePort).toHaveBeenCalled();
+      // Port allocation is verified by the port value; spawn is verified below
       expect(mockProcessRunner.run).toHaveBeenCalledWith(
         expect.stringContaining("opencode"),
         expect.arrayContaining(["serve", "--port", "14001"]),
@@ -118,7 +108,15 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("throws when port allocation fails", async () => {
-      mockPortManager.findFreePort.mockRejectedValue(new Error("No ports available"));
+      // Empty port list causes "No ports available" error on first call
+      const failingPortManager = createPortManagerMock([]);
+      manager = new OpenCodeServerManager(
+        mockProcessRunner,
+        failingPortManager,
+        mockHttpClient,
+        mockPathProvider,
+        SILENT_LOGGER
+      );
 
       await expect(manager.startServer("/workspace/feature-a")).rejects.toThrow(
         "No ports available"
@@ -367,14 +365,20 @@ describe("OpenCodeServerManager", () => {
         return callCount === 1 ? mockProcess1 : mockProcess2;
       });
 
-      // Return unique ports
-      let portCount = 14001;
-      mockPortManager.findFreePort.mockImplementation(async () => portCount++);
+      // Create manager with multiple ports
+      const multiPortManager = createPortManagerMock([14001, 14002]);
+      const testManager = new OpenCodeServerManager(
+        mockProcessRunner,
+        multiPortManager,
+        mockHttpClient,
+        mockPathProvider,
+        SILENT_LOGGER
+      );
 
-      await manager.startServer("/project/.worktrees/feature-a");
-      await manager.startServer("/project/.worktrees/feature-b");
+      await testManager.startServer("/project/.worktrees/feature-a");
+      await testManager.startServer("/project/.worktrees/feature-b");
 
-      await manager.stopAllForProject("/project");
+      await testManager.stopAllForProject("/project");
 
       expect(mockProcess1.kill).toHaveBeenCalled();
       expect(mockProcess2.kill).toHaveBeenCalled();
@@ -383,8 +387,8 @@ describe("OpenCodeServerManager", () => {
 
   describe("concurrent starts", () => {
     it("get unique ports", async () => {
-      let portCounter = 14001;
-      mockPortManager.findFreePort.mockImplementation(async () => portCounter++);
+      // Create manager with multiple ports for concurrent starts
+      const multiPortManager = createPortManagerMock([14001, 14002]);
 
       let processCount = 0;
       mockProcessRunner.run.mockImplementation(() => {
@@ -392,9 +396,17 @@ describe("OpenCodeServerManager", () => {
         return createMockSpawnedProcess({ pid: 1000 + processCount });
       });
 
+      const testManager = new OpenCodeServerManager(
+        mockProcessRunner,
+        multiPortManager,
+        mockHttpClient,
+        mockPathProvider,
+        SILENT_LOGGER
+      );
+
       const [port1, port2] = await Promise.all([
-        manager.startServer("/workspace/feature-a"),
-        manager.startServer("/workspace/feature-b"),
+        testManager.startServer("/workspace/feature-a"),
+        testManager.startServer("/workspace/feature-b"),
       ]);
 
       expect(port1).not.toBe(port2);
@@ -424,13 +436,20 @@ describe("OpenCodeServerManager", () => {
         return proc;
       });
 
-      let portCounter = 14001;
-      mockPortManager.findFreePort.mockImplementation(async () => portCounter++);
+      // Create manager with multiple ports
+      const multiPortManager = createPortManagerMock([14001, 14002]);
+      const testManager = new OpenCodeServerManager(
+        mockProcessRunner,
+        multiPortManager,
+        mockHttpClient,
+        mockPathProvider,
+        SILENT_LOGGER
+      );
 
-      await manager.startServer("/workspace/feature-a");
-      await manager.startServer("/workspace/feature-b");
+      await testManager.startServer("/workspace/feature-a");
+      await testManager.startServer("/workspace/feature-b");
 
-      await manager.dispose();
+      await testManager.dispose();
 
       for (const proc of processes) {
         expect(proc.kill).toHaveBeenCalled();

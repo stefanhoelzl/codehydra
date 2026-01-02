@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PluginServer, type ApiCallHandlers } from "./plugin-server";
 import { COMMAND_TIMEOUT_MS, SHUTDOWN_DISCONNECT_TIMEOUT_MS } from "../../shared/plugin-protocol";
-import { createMockPortManager } from "../platform/network.test-utils";
+import { createPortManagerMock } from "../platform/network.test-utils";
 import { SILENT_LOGGER } from "../logging/logging.test-utils";
 
 describe("PluginServer", () => {
@@ -24,10 +24,10 @@ describe("PluginServer", () => {
 
   describe("onConnect", () => {
     let server: PluginServer;
-    let mockPortManager: ReturnType<typeof createMockPortManager>;
+    let mockPortManager: ReturnType<typeof createPortManagerMock>;
 
     beforeEach(() => {
-      mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      mockPortManager = createPortManagerMock([3000]);
       server = new PluginServer(mockPortManager, SILENT_LOGGER);
     });
 
@@ -81,7 +81,7 @@ describe("PluginServer", () => {
 
   describe("isDevelopment option", () => {
     it("accepts isDevelopment: true option", () => {
-      const mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      const mockPortManager = createPortManagerMock([3000]);
       const server = new PluginServer(mockPortManager, SILENT_LOGGER, {
         isDevelopment: true,
       });
@@ -91,7 +91,7 @@ describe("PluginServer", () => {
     });
 
     it("accepts isDevelopment: false option", () => {
-      const mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      const mockPortManager = createPortManagerMock([3000]);
       const server = new PluginServer(mockPortManager, SILENT_LOGGER, {
         isDevelopment: false,
       });
@@ -101,7 +101,7 @@ describe("PluginServer", () => {
     });
 
     it("defaults to isDevelopment: false when not specified", () => {
-      const mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      const mockPortManager = createPortManagerMock([3000]);
       // No isDevelopment option provided
       const server = new PluginServer(mockPortManager, SILENT_LOGGER);
 
@@ -118,10 +118,10 @@ describe("PluginServer", () => {
 
   describe("sendExtensionHostShutdown", () => {
     let server: PluginServer;
-    let mockPortManager: ReturnType<typeof createMockPortManager>;
+    let mockPortManager: ReturnType<typeof createPortManagerMock>;
 
     beforeEach(() => {
-      mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      mockPortManager = createPortManagerMock([3000]);
       server = new PluginServer(mockPortManager, SILENT_LOGGER);
     });
 
@@ -193,10 +193,10 @@ describe("PluginServer", () => {
 
   describe("onApiCall", () => {
     let server: PluginServer;
-    let mockPortManager: ReturnType<typeof createMockPortManager>;
+    let mockPortManager: ReturnType<typeof createPortManagerMock>;
 
     beforeEach(() => {
-      mockPortManager = createMockPortManager({ findFreePort: { port: 3000 } });
+      mockPortManager = createPortManagerMock([3000]);
       server = new PluginServer(mockPortManager, SILENT_LOGGER);
     });
 

@@ -654,15 +654,18 @@ const codeServerManager = new CodeServerManager(config, runner, networkLayer, ne
 **Testing with Mock Clients:**
 
 ```typescript
-import { createMockHttpClient, createMockPortManager } from "../platform/network.test-utils";
+import { createMockHttpClient, createPortManagerMock } from "../platform/network.test-utils";
 
 // Create mock with controllable behavior
 const mockHttpClient = createMockHttpClient({
   response: new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
 });
 
+// Create port manager mock that returns sequential ports
+const portManager = createPortManagerMock([8080, 8081]);
+
 // Inject into service
-const service = new SomeService(mockHttpClient);
+const service = new SomeService(mockHttpClient, portManager);
 ```
 
 **waitForPort() Utility:**
@@ -930,7 +933,7 @@ All paths below are relative to `src/services/`.
 | ---------------------- | ---------------------------------- | ----------------------------------------------- |
 | `FileSystemLayer`      | `createMockFileSystemLayer()`      | `platform/filesystem.test-utils.ts`             |
 | `HttpClient`           | `createMockHttpClient()`           | `platform/network.test-utils.ts`                |
-| `PortManager`          | `createMockPortManager()`          | `platform/network.test-utils.ts`                |
+| `PortManager`          | `createPortManagerMock()`          | `platform/port-manager.state-mock.ts`           |
 | `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.test-utils.ts`                |
 | `PathProvider`         | `createMockPathProvider()`         | `platform/path-provider.test-utils.ts`          |
 | `WorkspaceLockHandler` | `createMockWorkspaceLockHandler()` | `platform/workspace-lock-handler.test-utils.ts` |

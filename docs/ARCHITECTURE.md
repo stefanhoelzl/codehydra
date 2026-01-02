@@ -462,7 +462,7 @@ All external system access goes through abstraction interfaces defined in `src/s
 | ------------------ | ---------------------- | ----------------------------- | ---------------------------------- |
 | Filesystem         | `FileSystemLayer`      | `DefaultFileSystemLayer`      | `createMockFileSystemLayer()`      |
 | HTTP requests      | `HttpClient`           | `DefaultNetworkLayer`         | `createMockHttpClient()`           |
-| Port operations    | `PortManager`          | `DefaultNetworkLayer`         | `createMockPortManager()`          |
+| Port operations    | `PortManager`          | `DefaultNetworkLayer`         | `createPortManagerMock()`          |
 | Process spawning   | `ProcessRunner`        | `ExecaProcessRunner`          | `createMockProcessRunner()`        |
 | Build info         | `BuildInfo`            | `ElectronBuildInfo`           | `createMockBuildInfo()`            |
 | Platform info      | `PlatformInfo`         | `NodePlatformInfo`            | `createMockPlatformInfo()`         |
@@ -564,17 +564,16 @@ The module provides factory functions for creating mock implementations:
 | `createMockPortManager()` | `PortManager` | Mock port availability        |
 
 ```typescript
-import { createMockHttpClient, createMockPortManager } from "../platform/network.test-utils";
+import { createMockHttpClient } from "../platform/network.test-utils";
+import { createPortManagerMock } from "../platform/port-manager.state-mock";
 
 const mockHttpClient = createMockHttpClient({
   response: new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
 });
 
-const mockPortManager = createMockPortManager({
-  findFreePort: { port: 9999 },
-});
+const portManager = createPortManagerMock([9999]);
 
-const service = new SomeService(mockHttpClient, mockPortManager);
+const service = new SomeService(mockHttpClient, portManager);
 ```
 
 ### OpenCode SDK Integration
