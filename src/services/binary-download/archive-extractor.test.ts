@@ -5,7 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DefaultArchiveExtractor, TarExtractor, ZipExtractor } from "./archive-extractor";
 import { ArchiveError } from "./errors";
-import { createMockArchiveExtractor } from "./archive-extractor.test-utils";
 
 // Mock the tar and yauzl modules
 vi.mock("tar", () => ({
@@ -195,26 +194,6 @@ describe("DefaultArchiveExtractor", () => {
     await expect(extractor.extract("/path/to/archive.rar", "/dest")).rejects.toMatchObject({
       errorCode: "INVALID_ARCHIVE",
       message: expect.stringContaining("Unsupported archive format"),
-    });
-  });
-});
-
-describe("createMockArchiveExtractor", () => {
-  it("creates a mock that succeeds by default", async () => {
-    const mock = createMockArchiveExtractor();
-
-    await expect(mock.extract("/archive.tar.gz", "/dest")).resolves.toBeUndefined();
-    expect(mock.extract).toHaveBeenCalledWith("/archive.tar.gz", "/dest");
-  });
-
-  it("creates a mock that throws when error is configured", async () => {
-    const mock = createMockArchiveExtractor({
-      error: { message: "Test error", code: "EXTRACTION_FAILED" },
-    });
-
-    await expect(mock.extract("/archive.tar.gz", "/dest")).rejects.toThrow(ArchiveError);
-    await expect(mock.extract("/archive.tar.gz", "/dest")).rejects.toMatchObject({
-      errorCode: "EXTRACTION_FAILED",
     });
   });
 });

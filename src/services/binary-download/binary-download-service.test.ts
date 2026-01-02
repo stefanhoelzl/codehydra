@@ -15,14 +15,13 @@ import {
   directory,
   createDirEntry,
 } from "../platform/filesystem.state-mock";
-import { createMockArchiveExtractor } from "./archive-extractor.test-utils";
+import { createArchiveExtractorMock } from "./archive-extractor.state-mock";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 
 describe("DefaultBinaryDownloadService", () => {
   const mockHttpClient = createMockHttpClient();
   const mockFs = createFileSystemMock();
-  const mockArchiveExtractor = createMockArchiveExtractor();
   const mockPathProvider = createMockPathProvider({
     dataRootDir: "/app-data",
     binDir: "/app-data/bin",
@@ -32,10 +31,11 @@ describe("DefaultBinaryDownloadService", () => {
     arch: "x64",
   });
 
+  let mockArchiveExtractor: ReturnType<typeof createArchiveExtractorMock>;
   let service: DefaultBinaryDownloadService;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockArchiveExtractor = createArchiveExtractorMock();
     service = new DefaultBinaryDownloadService(
       mockHttpClient,
       mockFs,

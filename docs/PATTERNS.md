@@ -930,14 +930,15 @@ class MyService {
 
 All paths below are relative to `src/services/`.
 
-| Interface              | Mock Factory                       | Location                                        |
-| ---------------------- | ---------------------------------- | ----------------------------------------------- |
-| `FileSystemLayer`      | `createFileSystemMock()`           | `platform/filesystem.state-mock.ts`             |
-| `HttpClient`           | `createMockHttpClient()`           | `platform/network.test-utils.ts`                |
-| `PortManager`          | `createPortManagerMock()`          | `platform/port-manager.state-mock.ts`           |
-| `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.test-utils.ts`                |
-| `PathProvider`         | `createMockPathProvider()`         | `platform/path-provider.test-utils.ts`          |
-| `WorkspaceLockHandler` | `createMockWorkspaceLockHandler()` | `platform/workspace-lock-handler.test-utils.ts` |
+| Interface              | Mock Factory                       | Location                                          |
+| ---------------------- | ---------------------------------- | ------------------------------------------------- |
+| `ArchiveExtractor`     | `createArchiveExtractorMock()`     | `binary-download/archive-extractor.state-mock.ts` |
+| `FileSystemLayer`      | `createFileSystemMock()`           | `platform/filesystem.state-mock.ts`               |
+| `HttpClient`           | `createMockHttpClient()`           | `platform/network.test-utils.ts`                  |
+| `PortManager`          | `createPortManagerMock()`          | `platform/port-manager.state-mock.ts`             |
+| `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.test-utils.ts`                  |
+| `PathProvider`         | `createMockPathProvider()`         | `platform/path-provider.test-utils.ts`            |
+| `WorkspaceLockHandler` | `createMockWorkspaceLockHandler()` | `platform/workspace-lock-handler.test-utils.ts`   |
 
 ### Shell and Platform Layer Patterns
 

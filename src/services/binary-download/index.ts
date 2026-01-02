@@ -28,7 +28,7 @@ export type { BinaryDownloadService } from "./binary-download-service.js";
 export { DefaultBinaryDownloadService } from "./binary-download-service.js";
 
 // Test utilities
-export { createMockArchiveExtractor } from "./archive-extractor.test-utils.js";
-export type { MockArchiveExtractor } from "./archive-extractor.test-utils.js";
+export { createArchiveExtractorMock } from "./archive-extractor.state-mock.js";
+export type { MockArchiveExtractor } from "./archive-extractor.state-mock.js";
 export { createMockBinaryDownloadService } from "./binary-download-service.test-utils.js";
 export type { MockBinaryDownloadService } from "./binary-download-service.test-utils.js";
