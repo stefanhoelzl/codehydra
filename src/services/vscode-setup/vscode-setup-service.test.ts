@@ -562,7 +562,7 @@ describe("VscodeSetupService", () => {
       expect(mockFs).toHaveFileContaining("/mock/bin/code", /^#!/);
     });
 
-    it("calls makeExecutable on Unix scripts", async () => {
+    it.skipIf(process.platform === "win32")("calls makeExecutable on Unix scripts", async () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock": directory(),

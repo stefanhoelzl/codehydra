@@ -219,7 +219,7 @@ describe("DefaultBinaryDownloadService", () => {
         },
       });
 
-      // Use spy filesystem to track calls - include tmpdir for temp file writes
+      // Use spy filesystem to track calls - include temp directory for temp file writes
       const trackingFs = createSpyFileSystemLayer({
         entries: {
           [tmpdir()]: directory(),
