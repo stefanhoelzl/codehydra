@@ -7,7 +7,7 @@
   "packageManager": "pnpm@10.11.0",
   "scripts": {
     "preinstall": "node scripts/check-path-length.cjs",
-    "setup": "pnpm install && pnpm build",
+    "bootstrap": "pnpm install && pnpm build",
     "dev": "pnpm build && electron-vite dev",
     "build:extensions": "tsx scripts/build-extensions.ts",
     "build": "pnpm build:extensions && electron-vite build",
