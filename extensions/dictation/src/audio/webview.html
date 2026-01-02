@@ -3,22 +3,476 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Audio Capture</title>
+    <title>Dictation</title>
     <style>
+      * {
+        box-sizing: border-box;
+      }
+
       body {
         margin: 0;
-        padding: 8px;
+        padding: 16px;
         font-family: var(--vscode-font-family, sans-serif);
+        font-size: var(--vscode-font-size, 13px);
+        color: var(--vscode-editor-foreground, #cccccc);
+        background-color: var(--vscode-editor-background, #1e1e1e);
+        line-height: 1.5;
+      }
+
+      /* Recording indicator border */
+      .recording-indicator {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background-color: var(--vscode-testing-iconPassed, #89d185);
+        display: none;
+      }
+
+      .recording-indicator.visible {
+        display: block;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        padding-top: 4px;
+      }
+
+      h1 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      h2 {
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 8px 0;
+        color: var(--vscode-foreground, #cccccc);
+      }
+
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      section {
+        margin-bottom: 8px;
+      }
+
+      /* Status area */
+      #status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background-color: var(--vscode-editor-inactiveSelectionBackground, #3a3d41);
+        border-radius: 4px;
+        font-size: 14px;
+      }
+
+      #status .recording-dot {
+        display: none;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: var(--vscode-testing-iconPassed, #89d185);
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+
+      #status.recording .recording-dot {
+        display: inline-block;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      /* Shortcuts */
+      .shortcuts-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      .shortcuts-list li {
+        margin-bottom: 4px;
+        color: var(--vscode-descriptionForeground, #888888);
+      }
+
+      kbd {
+        display: inline-block;
+        padding: 2px 6px;
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-size: 11px;
+        background-color: var(--vscode-keybindingLabel-background, #333333);
+        border: 1px solid var(--vscode-keybindingLabel-border, #444444);
+        border-radius: 3px;
+        box-shadow: inset 0 -1px 0 var(--vscode-keybindingLabel-bottomBorder, #222222);
+      }
+
+      hr {
+        border: none;
+        border-top: 1px solid var(--vscode-panel-border, #444444);
+        margin: 8px 0;
+      }
+
+      /* Log container */
+      #log-container {
+        position: relative;
+        flex: 1;
+        min-height: 150px;
+        max-height: 400px;
+      }
+
+      #log {
+        height: 100%;
+        overflow-y: auto;
+        padding: 8px;
+        background-color: var(--vscode-input-background, #3c3c3c);
+        border: 1px solid var(--vscode-input-border, #3c3c3c);
+        border-radius: 4px;
+      }
+
+      /* Session styles - flattened layout */
+      .session {
+        margin-bottom: 8px;
+      }
+
+      .session:last-child {
+        margin-bottom: 0;
+      }
+
+      .session-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+        padding: 2px 0;
+      }
+
+      .session-header .log-timestamp {
+        color: var(--vscode-descriptionForeground, #888888);
+        font-size: 11px;
+        flex-shrink: 0;
+        font-family: var(--vscode-editor-font-family, monospace);
+      }
+
+      .session-status {
+        flex: 1;
+      }
+
+      .session-status.cancelled {
+        color: var(--vscode-errorForeground, #f48771);
+      }
+
+      .copy-btn {
+        padding: 2px 8px;
+        background-color: var(--vscode-button-secondaryBackground, #3a3d41);
+        color: var(--vscode-button-secondaryForeground, #cccccc);
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+
+      .copy-btn:hover {
+        background-color: var(--vscode-button-secondaryHoverBackground, #45494e);
+      }
+
+      .transcript-box {
+        border: 1px solid var(--vscode-panel-border, #444444);
+        border-radius: 4px;
+        padding: 8px 12px;
+        background-color: var(--vscode-editor-inactiveSelectionBackground, #3a3d41);
+        word-wrap: break-word;
+        word-break: break-word;
+        line-height: 1.4;
+      }
+
+      .transcript-box.cancelled {
+        border-color: var(--vscode-errorForeground, #f48771);
+      }
+
+      .transcript-box.active {
+        border-color: var(--vscode-testing-iconPassed, #89d185);
+      }
+
+      .transcript-box-empty {
+        color: var(--vscode-descriptionForeground, #888888);
+        font-style: italic;
+      }
+
+      .session-error {
+        color: var(--vscode-errorForeground, #f48771);
+        margin-top: 4px;
+      }
+
+      /* Legacy log entry styles (kept for errors outside sessions) */
+      .log-entry {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 4px;
+        padding: 2px 0;
+      }
+
+      .log-entry:last-child {
+        margin-bottom: 0;
+      }
+
+      .log-timestamp {
+        color: var(--vscode-descriptionForeground, #888888);
+        font-size: 11px;
+        flex-shrink: 0;
+        font-family: var(--vscode-editor-font-family, monospace);
+      }
+
+      .log-message {
+        flex: 1;
+        word-break: break-word;
+      }
+
+      .log-entry.error .log-message {
+        color: var(--vscode-errorForeground, #f48771);
+      }
+
+      /* Jump to latest button */
+      #jump-to-latest {
+        position: absolute;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 6px 12px;
+        background-color: var(--vscode-button-background, #0e639c);
+        color: var(--vscode-button-foreground, #ffffff);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
         font-size: 12px;
+        display: none;
+        z-index: 10;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+
+      #jump-to-latest:hover {
+        background-color: var(--vscode-button-hoverBackground, #1177bb);
+      }
+
+      #jump-to-latest.visible {
+        display: block;
+      }
+
+      /* Clear log button */
+      .clear-btn {
+        padding: 4px 8px;
+        background-color: var(--vscode-button-secondaryBackground, #3a3d41);
+        color: var(--vscode-button-secondaryForeground, #cccccc);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .clear-btn:hover {
+        background-color: var(--vscode-button-secondaryHoverBackground, #45494e);
+      }
+
+      /* Visually hidden for screen readers */
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+
+      /* Empty state / unconfigured */
+      #unconfigured {
+        display: none;
+        text-align: center;
+        padding: 40px 20px;
+        background-color: var(--vscode-editor-inactiveSelectionBackground, #3a3d41);
+        border-radius: 8px;
+        margin-top: 20px;
+      }
+
+      #unconfigured.visible {
+        display: block;
+      }
+
+      #unconfigured h3 {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin: 0 0 12px 0;
+        font-size: 16px;
+      }
+
+      #unconfigured p {
+        color: var(--vscode-descriptionForeground, #888888);
+        margin: 0 0 16px 0;
+      }
+
+      .settings-btn {
+        padding: 8px 16px;
+        background-color: var(--vscode-button-background, #0e639c);
+        color: var(--vscode-button-foreground, #ffffff);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      .settings-btn:hover {
+        background-color: var(--vscode-button-hoverBackground, #1177bb);
+      }
+
+      #configured-content {
+        display: block;
+      }
+
+      #configured-content.hidden {
+        display: none;
+      }
+
+      /* Codicons - loaded from bundled extension assets */
+      @font-face {
+        font-family: "codicon";
+        src: url("{{codiconsUri}}") format("truetype");
+      }
+
+      .codicon {
+        font: normal normal normal 16px/1 codicon;
+        display: inline-block;
+        text-rendering: auto;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      .codicon-mic::before {
+        content: "\eb35";
+      }
+
+      .codicon-settings-gear::before {
+        content: "\eb51";
+      }
+
+      .codicon-circle-filled::before {
+        content: "\eb8f";
+      }
+
+      .codicon-error::before {
+        content: "\eb27";
+      }
+
+      /* Live Preview section */
+      #preview-section {
+        display: none;
+        margin-top: 16px;
+        padding: 12px;
+        background-color: var(--vscode-input-background, #3c3c3c);
+        border: 1px solid var(--vscode-input-border, #3c3c3c);
+        border-radius: 4px;
+        position: sticky;
+        bottom: 16px;
+      }
+
+      #preview-section.visible {
+        display: block;
+      }
+
+      #preview-section h2 {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground, #888888);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      #live-preview {
+        font-size: 14px;
+        color: var(--vscode-editor-foreground, #cccccc);
+        min-height: 24px;
+        line-height: 1.4;
+        word-wrap: break-word;
+      }
+
+      #live-preview.placeholder {
+        color: var(--vscode-input-placeholderForeground, #888888);
+        font-style: italic;
       }
     </style>
   </head>
   <body>
-    <div
-      id="log"
-      style="display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto"
-    ></div>
-    <div id="status" role="status" aria-live="polite" style="display: none"></div>
+    <div id="recording-indicator" class="recording-indicator"></div>
+
+    <header>
+      <h1><span class="codicon codicon-mic"></span> Dictation</h1>
+      <button id="clear-log-btn" class="clear-btn">Clear Log</button>
+    </header>
+
+    <main>
+      <section aria-labelledby="status-heading">
+        <h2 id="status-heading" class="visually-hidden">Status</h2>
+        <p id="status" aria-live="polite">
+          <span class="recording-dot"></span>
+          <span id="status-text">Ready</span>
+        </p>
+      </section>
+
+      <section aria-labelledby="shortcuts-heading" id="shortcuts-section">
+        <h2 id="shortcuts-heading">Shortcuts</h2>
+        <ul class="shortcuts-list">
+          <li><kbd>F10</kbd> - Start/Stop recording (+ Enter)</li>
+          <li><kbd>Escape</kbd> - Cancel recording (no Enter)</li>
+        </ul>
+      </section>
+
+      <hr />
+
+      <section aria-labelledby="log-heading" id="log-section">
+        <h2 id="log-heading">Log</h2>
+        <div id="log-container">
+          <div id="log" role="log" aria-live="polite" aria-relevant="additions"></div>
+          <button id="jump-to-latest">Jump to latest</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="preview-heading" id="preview-section">
+        <h2 id="preview-heading">Live Preview</h2>
+        <div id="live-preview" aria-live="polite" aria-atomic="true"></div>
+      </section>
+
+      <div id="unconfigured">
+        <h3><span class="codicon codicon-settings-gear"></span> Configure Dictation</h3>
+        <p>
+          To use voice dictation, you need to configure an<br />
+          AssemblyAI API key in settings.
+        </p>
+        <button id="open-settings-btn" class="settings-btn">Open Settings</button>
+      </div>
+
+      <div id="configured-content"></div>
+    </main>
 
     <script>
       // Audio capture state
@@ -26,54 +480,320 @@
       let mediaStream = null;
       let workletNode = null;
       let isRecording = false;
+      let isConfigured = true;
+
+      // Auto-scroll state
+      let isUserScrolledUp = false;
+      let lastScrollTop = 0;
+
+      // Session state
+      let currentSession = null; // Current active session card element
 
       // VS Code API
       const vscode = acquireVsCodeApi();
 
-      // Log colors
-      const logColors = {
-        loading: "#e2c08d", // yellow/warning
-        started: "#89d185", // green/success
-        stopped: "#888888", // gray
-        error: "#f48771", // red/error
-      };
+      // Elements
+      const logElement = document.getElementById("log");
+      const jumpToLatestBtn = document.getElementById("jump-to-latest");
+      const clearLogBtn = document.getElementById("clear-log-btn");
+      const statusElement = document.getElementById("status");
+      const statusTextElement = document.getElementById("status-text");
+      const recordingIndicator = document.getElementById("recording-indicator");
+      const unconfiguredElement = document.getElementById("unconfigured");
+      const configuredContentElement = document.getElementById("configured-content");
+      const shortcutsSection = document.getElementById("shortcuts-section");
+      const logSection = document.getElementById("log-section");
+      const previewSection = document.getElementById("preview-section");
+      const livePreviewElement = document.getElementById("live-preview");
+      const openSettingsBtn = document.getElementById("open-settings-btn");
 
       /**
-       * Add entry to log
+       * Format timestamp
        */
-      function addLogEntry(level, message) {
-        const log = document.getElementById("log");
-        const entry = document.createElement("div");
-        entry.style.display = "flex";
-        entry.style.alignItems = "center";
-        entry.style.gap = "8px";
+      function formatTime(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString();
+      }
 
-        const dot = document.createElement("span");
-        dot.textContent = "●";
-        dot.style.color = logColors[level] || "#888";
+      /**
+       * Check if user is scrolled to bottom (with small threshold)
+       */
+      function isScrolledToBottom() {
+        const threshold = 30;
+        return logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight < threshold;
+      }
 
-        const time = document.createElement("span");
-        time.style.color = "#888";
-        time.style.fontSize = "11px";
-        const now = new Date();
-        time.textContent = now.toLocaleTimeString();
+      /**
+       * Scroll to bottom of log
+       */
+      function scrollToBottom() {
+        logElement.scrollTop = logElement.scrollHeight;
+        isUserScrolledUp = false;
+        jumpToLatestBtn.classList.remove("visible");
+      }
 
-        const msg = document.createElement("span");
-        msg.textContent = message;
-        msg.style.color = level === "error" ? logColors.error : "var(--vscode-foreground, #ccc)";
+      /**
+       * Start a new session
+       */
+      function startSession(timestamp) {
+        // Create session container
+        const session = document.createElement("div");
+        session.className = "session";
+        session.dataset.timestamp = timestamp;
+        session.dataset.transcripts = ""; // Store transcripts as newline-separated text
 
-        entry.appendChild(dot);
-        entry.appendChild(time);
-        entry.appendChild(msg);
-        log.appendChild(entry);
+        // Header line: [timestamp] Recording [Copy]
+        const header = document.createElement("div");
+        header.className = "session-header log-entry";
 
-        // Keep only last 10 entries
-        while (log.children.length > 10) {
-          log.removeChild(log.firstChild);
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "log-timestamp";
+        timeSpan.textContent = formatTime(timestamp);
+
+        const statusSpan = document.createElement("span");
+        statusSpan.className = "session-status";
+        statusSpan.textContent = "Recording";
+
+        const copyBtn = document.createElement("button");
+        copyBtn.className = "copy-btn";
+        copyBtn.textContent = "Copy";
+        copyBtn.onclick = () => copySessionTranscripts(session);
+
+        header.appendChild(timeSpan);
+        header.appendChild(statusSpan);
+        header.appendChild(copyBtn);
+
+        // Transcript box
+        const transcriptBox = document.createElement("div");
+        transcriptBox.className = "transcript-box active";
+
+        session.appendChild(header);
+        session.appendChild(transcriptBox);
+
+        logElement.appendChild(session);
+        currentSession = session;
+
+        // Smart auto-scroll
+        if (!isUserScrolledUp) {
+          scrollToBottom();
+        } else {
+          jumpToLatestBtn.classList.add("visible");
+        }
+      }
+
+      /**
+       * End the current session
+       */
+      function endSession(cancelled) {
+        if (!currentSession) return;
+
+        const transcriptBox = currentSession.querySelector(".transcript-box");
+        const statusSpan = currentSession.querySelector(".session-status");
+
+        // Remove active state from transcript box
+        if (transcriptBox) {
+          transcriptBox.classList.remove("active");
         }
 
-        // Scroll to bottom
-        log.scrollTop = log.scrollHeight;
+        if (cancelled) {
+          // Update status text to "Cancelled" with red color
+          if (statusSpan) {
+            statusSpan.textContent = "Cancelled";
+            statusSpan.classList.add("cancelled");
+          }
+          // Add red border to transcript box
+          if (transcriptBox) {
+            transcriptBox.classList.add("cancelled");
+          }
+        }
+
+        // If no transcripts, show empty message
+        const hasTranscripts =
+          currentSession.dataset.transcripts && currentSession.dataset.transcripts.length > 0;
+        if (!hasTranscripts && transcriptBox) {
+          transcriptBox.classList.add("transcript-box-empty");
+          transcriptBox.textContent = "No transcripts recorded";
+        }
+
+        currentSession = null;
+      }
+
+      /**
+       * Add transcript to current session
+       */
+      function addTranscriptToSession(text) {
+        if (!currentSession) {
+          // No active session, create a standalone entry
+          addLogEntry("transcript", text);
+          return;
+        }
+
+        const transcriptBox = currentSession.querySelector(".transcript-box");
+        if (transcriptBox) {
+          // Append transcript with space separator for flowing text
+          const existing = currentSession.dataset.transcripts || "";
+          const newTranscripts = existing ? existing + " " + text : text;
+          currentSession.dataset.transcripts = newTranscripts;
+          transcriptBox.textContent = newTranscripts;
+        }
+
+        // Smart auto-scroll
+        if (!isUserScrolledUp) {
+          scrollToBottom();
+        } else {
+          jumpToLatestBtn.classList.add("visible");
+        }
+      }
+
+      /**
+       * Add error to current session
+       */
+      function addErrorToSession(message) {
+        if (!currentSession) {
+          // No active session, create a standalone entry
+          addLogEntry("error", message);
+          return;
+        }
+
+        // Add error message after the transcript box
+        const error = document.createElement("p");
+        error.className = "session-error";
+        error.textContent = message;
+        error.setAttribute("role", "alert");
+        currentSession.appendChild(error);
+
+        // Smart auto-scroll
+        if (!isUserScrolledUp) {
+          scrollToBottom();
+        } else {
+          jumpToLatestBtn.classList.add("visible");
+        }
+      }
+
+      /**
+       * Copy all transcripts from a session to clipboard
+       */
+      function copySessionTranscripts(session) {
+        // Get transcripts from data attribute (already newline-separated)
+        const transcripts = session.dataset.transcripts || "";
+
+        if (transcripts) {
+          navigator.clipboard.writeText(transcripts).then(
+            () => {
+              // Visual feedback - temporarily change button text
+              const btn = session.querySelector(".copy-btn");
+              if (btn) {
+                const original = btn.textContent;
+                btn.textContent = "Copied!";
+                setTimeout(() => {
+                  btn.textContent = original;
+                }, 1500);
+              }
+            },
+            (err) => {
+              console.error("Failed to copy:", err);
+            }
+          );
+        }
+      }
+
+      /**
+       * Add entry to log (legacy - for entries outside sessions)
+       */
+      function addLogEntry(type, message, timestamp = Date.now()) {
+        const entry = document.createElement("div");
+        entry.className = `log-entry ${type}`;
+
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "log-timestamp";
+        timeSpan.textContent = formatTime(timestamp);
+
+        const msgSpan = document.createElement("span");
+        msgSpan.className = "log-message";
+        msgSpan.textContent = message;
+
+        // For errors, add alert role for screen readers
+        if (type === "error") {
+          entry.setAttribute("role", "alert");
+        }
+
+        entry.appendChild(timeSpan);
+        entry.appendChild(msgSpan);
+        logElement.appendChild(entry);
+
+        // Smart auto-scroll
+        if (!isUserScrolledUp) {
+          scrollToBottom();
+        } else {
+          // Show jump to latest button
+          jumpToLatestBtn.classList.add("visible");
+        }
+      }
+
+      /**
+       * Clear the log
+       */
+      function clearLog() {
+        logElement.innerHTML = "";
+        currentSession = null;
+        addLogEntry("status", "Log cleared");
+      }
+
+      /**
+       * Update status text and recording indicator
+       */
+      function updateStatus(status, duration) {
+        let text = status;
+        if (duration !== undefined) {
+          const mins = Math.floor(duration / 60);
+          const secs = duration % 60;
+          text = `${status} (${mins}:${secs.toString().padStart(2, "0")})`;
+        }
+        statusTextElement.textContent = text;
+
+        // Show/hide recording indicator
+        const isRecordingStatus =
+          status.toLowerCase().includes("recording") || status.toLowerCase().includes("listening");
+        recordingIndicator.classList.toggle("visible", isRecordingStatus);
+        statusElement.classList.toggle("recording", isRecordingStatus);
+
+        // Show/hide live preview section based on recording state
+        previewSection.classList.toggle("visible", isRecordingStatus);
+        if (isRecordingStatus) {
+          // Show placeholder when recording starts
+          updateLivePreview("");
+        }
+      }
+
+      /**
+       * Update live preview text
+       */
+      function updateLivePreview(text) {
+        if (text) {
+          livePreviewElement.textContent = text;
+          livePreviewElement.classList.remove("placeholder");
+        } else {
+          livePreviewElement.textContent = "Start speaking...";
+          livePreviewElement.classList.add("placeholder");
+        }
+      }
+
+      /**
+       * Update configured state UI
+       */
+      function updateConfiguredState(configured) {
+        isConfigured = configured;
+        if (configured) {
+          unconfiguredElement.classList.remove("visible");
+          shortcutsSection.style.display = "";
+          logSection.style.display = "";
+          clearLogBtn.style.display = "";
+        } else {
+          unconfiguredElement.classList.add("visible");
+          shortcutsSection.style.display = "none";
+          logSection.style.display = "none";
+          clearLogBtn.style.display = "none";
+        }
       }
 
       /**
@@ -181,6 +901,26 @@
         sendMessage({ type: "stopped" });
       }
 
+      // Event listeners
+      clearLogBtn.addEventListener("click", clearLog);
+
+      jumpToLatestBtn.addEventListener("click", scrollToBottom);
+
+      logElement.addEventListener("scroll", () => {
+        const wasScrolledUp = isUserScrolledUp;
+        isUserScrolledUp = !isScrolledToBottom();
+
+        // Hide jump button if now at bottom
+        if (!isUserScrolledUp) {
+          jumpToLatestBtn.classList.remove("visible");
+        }
+      });
+
+      openSettingsBtn.addEventListener("click", () => {
+        // This doesn't work directly from webview, extension needs to handle it
+        sendMessage({ type: "openSettings" });
+      });
+
       // Listen for messages from extension
       window.addEventListener("message", (event) => {
         const message = event.data;
@@ -194,8 +934,35 @@
           case "log":
             addLogEntry(message.level, message.message);
             break;
+          case "transcript":
+            addTranscriptToSession(message.text);
+            break;
+          case "errorLog":
+            addErrorToSession(message.message);
+            break;
+          case "statusUpdate":
+            updateStatus(message.status, message.duration);
+            break;
+          case "clearLog":
+            clearLog();
+            break;
+          case "configUpdate":
+            updateConfiguredState(message.configured);
+            break;
+          case "livePreview":
+            updateLivePreview(message.text);
+            break;
+          case "sessionStart":
+            startSession(message.timestamp);
+            break;
+          case "sessionEnd":
+            endSession(message.cancelled);
+            break;
         }
       });
+
+      // Add initial log entry
+      addLogEntry("status", "Ready");
     </script>
   </body>
 </html>

@@ -19,33 +19,15 @@
     "build": "node esbuild.config.js"
   },
   "dependencies": {
+    "@vscode/codicons": "^0.0.43",
     "assemblyai": "^4.0.0"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
     "@types/vscode": "^1.74.0",
+    "esbuild": "^0.24.0",
     "typescript": "^5.0.0"
   },
   "contributes": {
-    "viewsContainers": {
-      "panel": [
-        {
-          "id": "codehydra-dictation",
-          "title": "Dictation",
-          "icon": "$(mic)"
-        }
-      ]
-    },
-    "views": {
-      "codehydra-dictation": [
-        {
-          "type": "webview",
-          "id": "codehydra.dictation.audioCapture",
-          "name": "Audio Capture",
-          "visibility": "hidden"
-        }
-      ]
-    },
     "commands": [
       {
         "command": "codehydra.dictation.toggle",
@@ -62,6 +44,10 @@
       {
         "command": "codehydra.dictation.cancel",
         "title": "Dictation: Cancel Recording (no Enter)"
+      },
+      {
+        "command": "codehydra.dictation.openPanel",
+        "title": "Dictation: Open Panel"
       }
     ],
     "keybindings": [

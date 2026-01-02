@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import type { SpeechToTextProvider, DictationError } from "./providers/types";
 import { AssemblyAIProvider } from "./providers/assemblyai";
-import type { AudioCaptureViewProvider } from "./audio/AudioCaptureViewProvider";
-import { getConfig, type DictationConfig } from "./config";
+import type { AudioCapturePanel } from "./audio/AudioCapturePanel";
+import { getConfig, isConfigured, type DictationConfig } from "./config";
 import { createHandlerRegistry } from "./utils";
 
 /**
@@ -63,20 +63,21 @@ export class DictationController implements vscode.Disposable {
 
   // Event unsubscribe functions
   private unsubscribeTranscript: (() => void) | null = null;
+  private unsubscribePartialTranscript: (() => void) | null = null;
   private unsubscribeActivity: (() => void) | null = null;
   private unsubscribeError: (() => void) | null = null;
   private unsubscribeAudio: (() => void) | null = null;
   private unsubscribeAudioError: (() => void) | null = null;
   private stateChangeHandlers = createHandlerRegistry<StateChangeHandler>();
 
-  private readonly audioCaptureProvider: AudioCaptureViewProvider;
+  private readonly audioCapturePanel: AudioCapturePanel;
   private readonly providerFactory: ProviderFactory;
 
   constructor(
-    audioCaptureProvider: AudioCaptureViewProvider,
+    audioCapturePanel: AudioCapturePanel,
     providerFactory: ProviderFactory = defaultProviderFactory
   ) {
-    this.audioCaptureProvider = audioCaptureProvider;
+    this.audioCapturePanel = audioCapturePanel;
     this.providerFactory = providerFactory;
   }
 
@@ -131,7 +132,21 @@ export class DictationController implements vscode.Disposable {
 
       // Set up event handlers
       this.unsubscribeTranscript = this.provider.onTranscript((text) => {
-        this.insertText(text);
+        // Clear live preview when final transcript is received
+        this.audioCapturePanel.clearLivePreview();
+
+        // Only emit text when panel is NOT visible (background mode)
+        if (!this.audioCapturePanel.isVisible()) {
+          this.insertText(text);
+        }
+
+        // Always log transcript to panel
+        this.audioCapturePanel.logTranscript(text);
+      });
+
+      // Set up partial transcript handler for live preview
+      this.unsubscribePartialTranscript = this.provider.onPartialTranscript((text) => {
+        this.audioCapturePanel.updateLivePreview(text);
       });
 
       this.unsubscribeActivity = this.provider.onActivity(() => {
@@ -143,12 +158,12 @@ export class DictationController implements vscode.Disposable {
       });
 
       // Set up audio handler (buffers during connect, sends directly after)
-      this.unsubscribeAudio = this.audioCaptureProvider.onAudio((buffer) => {
+      this.unsubscribeAudio = this.audioCapturePanel.onAudio((buffer) => {
         this.handleAudioChunk(buffer);
       });
 
       // Set up audio error handler
-      this.unsubscribeAudioError = this.audioCaptureProvider.onError((error) => {
+      this.unsubscribeAudioError = this.audioCapturePanel.onError((error) => {
         this.handleError(error);
       });
 
@@ -156,7 +171,10 @@ export class DictationController implements vscode.Disposable {
       const sessionId = `dictation-${Date.now()}`;
 
       // Start audio capture first - this determines when we can enter "recording" state
-      await this.audioCaptureProvider.start();
+      await this.audioCapturePanel.start();
+
+      // Start a new session in the log panel
+      this.audioCapturePanel.startSession();
 
       // Transition to recording state with buffering phase (audio ready, API connecting)
       // Always show green (isActive=true) during buffering phase
@@ -189,9 +207,9 @@ export class DictationController implements vscode.Disposable {
 
   /**
    * Stop dictation
-   * @param options Optional: emitEnter for auto-submit feature
+   * @param options Optional: emitEnter for auto-submit feature, cancelled for session end state
    */
-  async stop(options?: { emitEnter?: boolean }): Promise<void> {
+  stop(options?: { emitEnter?: boolean; cancelled?: boolean }): void {
     if (this.state.status !== "recording") {
       return;
     }
@@ -199,16 +217,22 @@ export class DictationController implements vscode.Disposable {
     // Transition to stopping state
     this.setState({ status: "stopping" });
 
+    // Clear live preview
+    this.audioCapturePanel.clearLivePreview();
+
+    // End the session in the log panel
+    this.audioCapturePanel.endSession(options?.cancelled ?? false);
+
     // Cleanup resources
     this.cleanup();
 
     // Emit Enter if auto-submit is enabled for manual stop
-    if (options?.emitEnter) {
+    // Only emit when panel is NOT visible (background mode)
+    if (options?.emitEnter && !this.audioCapturePanel.isVisible()) {
       this.insertText("\n");
     }
 
-    // Close the panel (where audio capture view lives)
-    await vscode.commands.executeCommand("workbench.action.closePanel");
+    // Tab stays open - don't close
 
     // Transition to idle state
     this.setState({ status: "idle" });
@@ -217,8 +241,15 @@ export class DictationController implements vscode.Disposable {
   /**
    * Toggle dictation (start if idle, stop if recording)
    * Uses manual stop behavior (emits Enter if autoSubmit enabled)
+   * Opens settings if not configured
    */
   async toggle(): Promise<void> {
+    // If not configured, open settings
+    if (!isConfigured()) {
+      void vscode.commands.executeCommand("workbench.action.openSettings", "codehydra.dictation");
+      return;
+    }
+
     if (this.state.status === "idle") {
       await this.start();
     } else if (this.state.status === "recording") {
@@ -236,7 +267,7 @@ export class DictationController implements vscode.Disposable {
    */
   async cancel(): Promise<void> {
     if (this.state.status === "recording" || this.state.status === "loading") {
-      await this.stop({ emitEnter: false });
+      await this.stop({ emitEnter: false, cancelled: true });
     }
   }
 
@@ -259,6 +290,35 @@ export class DictationController implements vscode.Disposable {
   private setState(state: DictationState): void {
     this.state = state;
     this.stateChangeHandlers.forEach((h) => h(state));
+
+    // Update panel status
+    this.updatePanelStatus(state);
+  }
+
+  /**
+   * Update the panel status display
+   */
+  private updatePanelStatus(state: DictationState): void {
+    switch (state.status) {
+      case "idle":
+        this.audioCapturePanel.updateStatus("Ready");
+        break;
+      case "loading":
+        this.audioCapturePanel.updateStatus("Connecting...");
+        break;
+      case "recording": {
+        const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+        const statusText = state.isActive ? "Recording" : "Listening";
+        this.audioCapturePanel.updateStatus(statusText, elapsed);
+        break;
+      }
+      case "stopping":
+        this.audioCapturePanel.updateStatus("Stopping...");
+        break;
+      case "error":
+        this.audioCapturePanel.updateStatus(`Error: ${state.message}`);
+        break;
+    }
   }
 
   /**
@@ -458,6 +518,9 @@ export class DictationController implements vscode.Disposable {
       }
     }
 
+    // Log error to panel
+    this.audioCapturePanel.logError(message);
+
     // Stop and cleanup (keep panel open so user can see error in log)
     this.cleanup();
     // No Enter emitted on error (auto-stop, not manual)
@@ -534,6 +597,11 @@ export class DictationController implements vscode.Disposable {
       this.unsubscribeTranscript = null;
     }
 
+    if (this.unsubscribePartialTranscript) {
+      this.unsubscribePartialTranscript();
+      this.unsubscribePartialTranscript = null;
+    }
+
     if (this.unsubscribeActivity) {
       this.unsubscribeActivity();
       this.unsubscribeActivity = null;
@@ -559,7 +627,7 @@ export class DictationController implements vscode.Disposable {
     this.isProviderConnected = false;
 
     // Stop audio capture (provider manages its own lifecycle)
-    this.audioCaptureProvider.stop();
+    this.audioCapturePanel.stop();
 
     // Dispose provider
     if (this.provider) {

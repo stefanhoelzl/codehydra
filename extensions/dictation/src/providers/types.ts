@@ -16,6 +16,12 @@ export type DictationError =
 export type TranscriptHandler = (text: string) => void;
 
 /**
+ * Partial transcript handler callback type
+ * Called for word-level partial transcripts during speech
+ */
+export type PartialTranscriptHandler = (text: string) => void;
+
+/**
  * Activity handler callback type
  * Called when speech activity is detected (for timer reset and visual feedback)
  */
@@ -64,4 +70,11 @@ export interface SpeechToTextProvider extends vscode.Disposable {
    * @returns Unsubscribe function
    */
   onActivity(handler: ActivityHandler): () => void;
+
+  /**
+   * Register a handler for partial transcript events
+   * Called when word-level partial transcripts are received during speech
+   * @returns Unsubscribe function
+   */
+  onPartialTranscript(handler: PartialTranscriptHandler): () => void;
 }

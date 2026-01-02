@@ -20,6 +20,22 @@ function copyAssets() {
       fs.copyFileSync(srcPath, destPath);
     }
   }
+
+  // Copy codicons font file for webview
+  const codiconsDir = path.join(__dirname, "dist", "codicons");
+  fs.mkdirSync(codiconsDir, { recursive: true });
+  const codiconsSrc = path.join(
+    __dirname,
+    "node_modules",
+    "@vscode",
+    "codicons",
+    "dist",
+    "codicon.ttf"
+  );
+  const codiconsDest = path.join(codiconsDir, "codicon.ttf");
+  if (fs.existsSync(codiconsSrc)) {
+    fs.copyFileSync(codiconsSrc, codiconsDest);
+  }
 }
 
 esbuild

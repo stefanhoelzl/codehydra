@@ -1,6 +1,7 @@
 import type {
   SpeechToTextProvider,
   TranscriptHandler,
+  PartialTranscriptHandler,
   ActivityHandler,
   ErrorHandler,
   DictationError,
@@ -13,6 +14,7 @@ import type {
 export class MockProvider implements SpeechToTextProvider {
   private state: "disconnected" | "connecting" | "connected" = "disconnected";
   private transcriptHandlers: TranscriptHandler[] = [];
+  private partialTranscriptHandlers: PartialTranscriptHandler[] = [];
   private activityHandlers: ActivityHandler[] = [];
   private errorHandlers: ErrorHandler[] = [];
 
@@ -92,9 +94,20 @@ export class MockProvider implements SpeechToTextProvider {
     };
   }
 
+  onPartialTranscript(handler: PartialTranscriptHandler): () => void {
+    this.partialTranscriptHandlers.push(handler);
+    return () => {
+      const index = this.partialTranscriptHandlers.indexOf(handler);
+      if (index >= 0) {
+        this.partialTranscriptHandlers.splice(index, 1);
+      }
+    };
+  }
+
   dispose(): void {
     this.state = "disconnected";
     this.transcriptHandlers = [];
+    this.partialTranscriptHandlers = [];
     this.activityHandlers = [];
     this.errorHandlers = [];
   }
@@ -102,6 +115,10 @@ export class MockProvider implements SpeechToTextProvider {
   // Test helpers
   simulateTranscript(text: string): void {
     this.transcriptHandlers.forEach((h) => h(text));
+  }
+
+  simulatePartialTranscript(text: string): void {
+    this.partialTranscriptHandlers.forEach((h) => h(text));
   }
 
   simulateActivity(): void {

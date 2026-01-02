@@ -1,10 +1,61 @@
 /**
+ * Transcript message for the log
+ */
+export interface TranscriptMessage {
+  type: "transcript";
+  text: string;
+  timestamp: number;
+}
+
+/**
+ * Error message for the log
+ */
+export interface ErrorMessage {
+  type: "error";
+  message: string;
+  timestamp: number;
+}
+
+/**
+ * Status message for the log
+ */
+export interface StatusMessage {
+  type: "status";
+  status: string;
+  duration?: number;
+}
+
+/**
+ * Session start message - begins a new recording session card in the log
+ */
+export interface SessionStartMessage {
+  type: "sessionStart";
+  timestamp: number;
+}
+
+/**
+ * Session end message - finalizes the current session card
+ */
+export interface SessionEndMessage {
+  type: "sessionEnd";
+  cancelled: boolean;
+}
+
+/**
  * Messages sent from the extension to the webview
  */
 export type ToWebviewMessage =
   | { type: "start" }
   | { type: "stop" }
-  | { type: "log"; level: "loading" | "started" | "stopped" | "error"; message: string };
+  | { type: "log"; level: "loading" | "started" | "stopped" | "error"; message: string }
+  | { type: "transcript"; text: string; timestamp: number }
+  | { type: "errorLog"; message: string; timestamp: number }
+  | { type: "statusUpdate"; status: string; duration?: number }
+  | { type: "clearLog" }
+  | { type: "configUpdate"; configured: boolean }
+  | { type: "livePreview"; text: string }
+  | SessionStartMessage
+  | SessionEndMessage;
 
 /**
  * Error codes for microphone access
@@ -23,4 +74,5 @@ export type FromWebviewMessage =
   | { type: "audio"; data: number[] }
   | { type: "started" }
   | { type: "stopped" }
-  | { type: "error"; code: MicrophoneErrorCode; message: string };
+  | { type: "error"; code: MicrophoneErrorCode; message: string }
+  | { type: "openSettings" };

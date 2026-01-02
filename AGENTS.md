@@ -756,7 +756,7 @@ VS Code extension communication via Socket.IO:
 
 - **Architecture**: PluginServer (main) ↔ codehydra extension (Socket.IO client)
 - **Connection**: Extension reads `CODEHYDRA_PLUGIN_PORT` env var on activation
-- **Startup commands**: Auto-configures workspace layout (close sidebars, open terminal)
+- **Startup commands**: Auto-configures workspace layout (close sidebars, open terminal, open dictation tab if configured)
 - **Shutdown event**: Terminates extension host on workspace deletion (releases file handles on Windows)
 
 **Server → Client Events:**

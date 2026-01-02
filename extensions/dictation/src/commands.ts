@@ -6,6 +6,7 @@ export const COMMANDS = {
   START: "codehydra.dictation.start",
   STOP: "codehydra.dictation.stop",
   CANCEL: "codehydra.dictation.cancel",
+  OPEN_PANEL: "codehydra.dictation.openPanel",
 } as const;
 
 /**

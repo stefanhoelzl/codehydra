@@ -151,6 +151,9 @@ importers:
 
   extensions/dictation:
     dependencies:
+      '@vscode/codicons':
+        specifier: ^0.0.43
+        version: 0.0.43
       assemblyai:
         specifier: ^4.0.0
         version: 4.22.1

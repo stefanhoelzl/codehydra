@@ -11,6 +11,9 @@ Voice-to-text dictation for VS Code. Speak into your microphone and have text tr
 - Smart auto-stop based on speech activity detection
 - Auto-submit: Emit Enter key when manually stopping dictation
 - Audio buffering during API connection for minimal perceived latency
+- **Non-intrusive tab interface**: Audio capture runs in a background editor tab
+- **Transcription log**: View all transcriptions in a scrollable, accessible log area
+- **Auto-opens on startup**: Tab opens automatically if API key is configured
 
 ## Requirements
 
@@ -38,6 +41,20 @@ Open VS Code Settings and search for "dictation" to configure:
 - **Keyboard shortcut**: `F10` (toggle)
 - **Status bar**: Click the microphone/record icon
 - **Command palette**: "Dictation: Toggle Recording"
+
+### Dictation Tab
+
+The dictation tab opens automatically on startup if an API key is configured. It runs in the background and doesn't steal focus from your current editor.
+
+Features of the dictation tab:
+
+- **Recording indicator**: Green border appears at the top when recording
+- **Status display**: Shows current state (Ready, Recording, etc.) with elapsed time
+- **Transcription log**: All transcribed text appears in a scrollable log with timestamps
+- **Keyboard shortcuts reference**: Quick reminder of F10 and Escape shortcuts
+- **Clear Log button**: Clear the transcription log when needed
+
+The tab stays open after recording stops - you can review your transcriptions anytime.
 
 ### Status Bar States
 
@@ -67,6 +84,17 @@ During the initial connection phase, the icon is always green to indicate record
 3. **Watch for color changes** - Orange means you've paused; green means speech is detected
 4. **Auto-submit**: When you manually stop (F10 or click), an Enter key is automatically inserted
 5. **Long sentences**: Speech detection keeps the recording alive even during natural pauses
+6. **Cancel recording**: Press `Escape` to stop recording without emitting Enter
+
+### Accessibility
+
+The dictation tab is designed with accessibility in mind:
+
+- **Semantic HTML**: Proper heading hierarchy and section structure
+- **ARIA live regions**: Status changes are announced by screen readers
+- **Keyboard navigation**: All interactive elements are keyboard accessible
+- **High contrast**: Uses VS Code theme variables for consistent theming
+- **Error alerts**: Error messages have `role="alert"` for screen reader announcement
 
 ## Troubleshooting
 

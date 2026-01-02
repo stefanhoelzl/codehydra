@@ -3,10 +3,10 @@ import type { Uri } from "vscode";
 import { MockProvider } from "./providers/mock";
 import type { DictationError } from "./providers/types";
 import type {
-  AudioCaptureViewProvider,
+  AudioCapturePanel,
   AudioHandler,
   CaptureErrorHandler,
-} from "./audio/AudioCaptureViewProvider";
+} from "./audio/AudioCapturePanel";
 import { DictationController, type DictationState } from "./DictationController";
 
 // Track mock function calls - must use vi.fn() inline in the factory
@@ -44,15 +44,41 @@ vi.mock("vscode", () => {
 });
 
 /**
- * Mock AudioCaptureViewProvider for testing
+ * Mock AudioCapturePanel for testing
  */
-class MockAudioCaptureProvider implements Pick<
-  AudioCaptureViewProvider,
-  "start" | "stop" | "onAudio" | "onError"
+class MockAudioCapturePanel implements Pick<
+  AudioCapturePanel,
+  | "start"
+  | "stop"
+  | "onAudio"
+  | "onError"
+  | "open"
+  | "logTranscript"
+  | "logError"
+  | "updateStatus"
+  | "clearLog"
+  | "sendConfigUpdate"
+  | "updateLivePreview"
+  | "clearLivePreview"
+  | "isVisible"
+  | "startSession"
+  | "endSession"
 > {
   private audioHandlers: AudioHandler[] = [];
   private errorHandlers: CaptureErrorHandler[] = [];
   public shouldFailStart = false;
+  public isDisposed = false;
+  public transcripts: string[] = [];
+  public errors: string[] = [];
+  public statusUpdates: { status: string; duration?: number }[] = [];
+  public logCleared = false;
+  public openCalled = false;
+  public livePreviewText = "";
+  public livePreviewCleared = false;
+  public panelVisible = false;
+  public sessionStarted = false;
+  public sessionEndCalled = false;
+  public sessionCancelled: boolean | null = null;
 
   async start(): Promise<void> {
     if (this.shouldFailStart) {
@@ -62,6 +88,10 @@ class MockAudioCaptureProvider implements Pick<
 
   stop(): void {
     // no-op for mock
+  }
+
+  open(): void {
+    this.openCalled = true;
   }
 
   onAudio(handler: AudioHandler): () => void {
@@ -80,6 +110,52 @@ class MockAudioCaptureProvider implements Pick<
     };
   }
 
+  logTranscript(text: string): void {
+    this.transcripts.push(text);
+  }
+
+  logError(message: string): void {
+    this.errors.push(message);
+  }
+
+  updateStatus(status: string, duration?: number): void {
+    this.statusUpdates.push({ status, duration });
+  }
+
+  clearLog(): void {
+    this.logCleared = true;
+  }
+
+  updateLivePreview(text: string): void {
+    this.livePreviewText = text;
+  }
+
+  clearLivePreview(): void {
+    this.livePreviewText = "";
+    this.livePreviewCleared = true;
+  }
+
+  isVisible(): boolean {
+    return this.panelVisible;
+  }
+
+  sendConfigUpdate(): void {
+    // no-op for mock
+  }
+
+  startSession(): void {
+    this.sessionStarted = true;
+  }
+
+  endSession(cancelled: boolean): void {
+    this.sessionEndCalled = true;
+    this.sessionCancelled = cancelled;
+  }
+
+  dispose(): void {
+    this.isDisposed = true;
+  }
+
   // Test helpers
   simulateAudio(buffer: ArrayBuffer): void {
     this.audioHandlers.forEach((h) => h(buffer));
@@ -87,6 +163,20 @@ class MockAudioCaptureProvider implements Pick<
 
   simulateError(error: DictationError): void {
     this.errorHandlers.forEach((h) => h(error));
+  }
+
+  reset(): void {
+    this.transcripts = [];
+    this.errors = [];
+    this.statusUpdates = [];
+    this.logCleared = false;
+    this.openCalled = false;
+    this.livePreviewText = "";
+    this.livePreviewCleared = false;
+    this.panelVisible = false;
+    this.sessionStarted = false;
+    this.sessionEndCalled = false;
+    this.sessionCancelled = null;
   }
 }
 
@@ -104,7 +194,7 @@ async function getVscodeMocks() {
 describe("DictationController", () => {
   let controller: DictationController;
   let mockProvider: MockProvider;
-  let mockAudioCaptureProvider: MockAudioCaptureProvider;
+  let mockAudioCapturePanel: MockAudioCapturePanel;
   let mocks: Awaited<ReturnType<typeof getVscodeMocks>>;
 
   beforeEach(async () => {
@@ -113,10 +203,10 @@ describe("DictationController", () => {
     mocks = await getVscodeMocks();
 
     mockProvider = new MockProvider();
-    mockAudioCaptureProvider = new MockAudioCaptureProvider();
+    mockAudioCapturePanel = new MockAudioCapturePanel();
 
     controller = new DictationController(
-      mockAudioCaptureProvider as unknown as AudioCaptureViewProvider,
+      mockAudioCapturePanel as unknown as AudioCapturePanel,
       () => mockProvider
     );
 
@@ -186,8 +276,8 @@ describe("DictationController", () => {
       // Send audio while API is connecting
       const audio1 = new ArrayBuffer(100);
       const audio2 = new ArrayBuffer(200);
-      mockAudioCaptureProvider.simulateAudio(audio1);
-      mockAudioCaptureProvider.simulateAudio(audio2);
+      mockAudioCapturePanel.simulateAudio(audio1);
+      mockAudioCapturePanel.simulateAudio(audio2);
 
       // Audio should not be sent yet (provider not connected)
       expect(mockProvider.receivedAudio).toHaveLength(0);
@@ -354,7 +444,7 @@ describe("DictationController", () => {
       expect(controller.getState().status).toBe("recording");
 
       // Send audio - resets timer
-      mockAudioCaptureProvider.simulateAudio(new ArrayBuffer(100));
+      mockAudioCapturePanel.simulateAudio(new ArrayBuffer(100));
 
       // Wait another 4 seconds
       await vi.advanceTimersByTimeAsync(4000);
@@ -454,7 +544,7 @@ describe("DictationController", () => {
     it("transitions to error state on audio capture error", async () => {
       await controller.start();
 
-      mockAudioCaptureProvider.simulateError({
+      mockAudioCapturePanel.simulateError({
         type: "permission",
         message: "Microphone access denied",
       });
@@ -487,12 +577,12 @@ describe("DictationController", () => {
   describe("loading state", () => {
     it("shows notification when toggling during loading", async () => {
       mockProvider.deferConnect = true;
-      mockAudioCaptureProvider.shouldFailStart = false;
+      mockAudioCapturePanel.shouldFailStart = false;
 
       // Start but simulate slow audio capture start
-      const originalStart = mockAudioCaptureProvider.start.bind(mockAudioCaptureProvider);
+      const originalStart = mockAudioCapturePanel.start.bind(mockAudioCapturePanel);
       let resolveStart: () => void;
-      mockAudioCaptureProvider.start = () =>
+      mockAudioCapturePanel.start = () =>
         new Promise((resolve) => {
           resolveStart = () => {
             resolve();
@@ -511,7 +601,7 @@ describe("DictationController", () => {
       expect(mocks.showInformationMessage).toHaveBeenCalledWith("Dictation: Already connecting...");
 
       // Cleanup: restore and complete
-      mockAudioCaptureProvider.start = originalStart;
+      mockAudioCapturePanel.start = originalStart;
       resolveStart!();
       await startPromise;
     });
@@ -532,6 +622,74 @@ describe("DictationController", () => {
       expect(mocks.showErrorMessage).toHaveBeenCalledWith(
         expect.stringContaining("No API key configured")
       );
+    });
+
+    it("opens settings when toggle is called without API key", async () => {
+      mocks.getConfiguration.mockReturnValueOnce({
+        get: vi.fn((key: string, defaultValue: unknown) => {
+          if (key === "assemblyai.apiKey") return "";
+          return defaultValue;
+        }),
+      } as unknown as ReturnType<typeof mocks.getConfiguration>);
+
+      await controller.toggle();
+
+      expect(controller.getState().status).toBe("idle");
+      expect(mocks.executeCommand).toHaveBeenCalledWith(
+        "workbench.action.openSettings",
+        "codehydra.dictation"
+      );
+    });
+  });
+
+  describe("panel logging", () => {
+    it("logs transcript to panel via logTranscript()", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateTranscript("Hello world");
+
+      expect(mockAudioCapturePanel.transcripts).toContain("Hello world");
+    });
+
+    it("logs error to panel via logError()", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateError({ type: "connection", message: "Lost connection" });
+
+      expect(mockAudioCapturePanel.errors.length).toBeGreaterThan(0);
+      expect(mockAudioCapturePanel.errors[0]).toContain("Connection lost");
+    });
+
+    it("updates status via updateStatus()", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      // Status updates are called during state transitions
+      expect(mockAudioCapturePanel.statusUpdates.length).toBeGreaterThan(0);
+
+      await controller.stop();
+
+      // Should have "Ready" status after stop
+      const lastStatus =
+        mockAudioCapturePanel.statusUpdates[mockAudioCapturePanel.statusUpdates.length - 1];
+      expect(lastStatus.status).toBe("Ready");
+    });
+
+    it("tab stays open after recording stops", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      await controller.stop();
+
+      // Panel should not be disposed
+      expect(mockAudioCapturePanel.isDisposed).toBe(false);
+      expect(controller.getState().status).toBe("idle");
     });
   });
 
@@ -571,6 +729,155 @@ describe("DictationController", () => {
       // Should be in a consistent state
       const state = controller.getState();
       expect(["idle", "recording", "loading", "stopping", "error"]).toContain(state.status);
+    });
+  });
+
+  describe("live preview", () => {
+    it("sends partial transcripts to live preview", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulatePartialTranscript("Hello");
+
+      expect(mockAudioCapturePanel.livePreviewText).toBe("Hello");
+    });
+
+    it("clears live preview when final transcript is received", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulatePartialTranscript("Hello world");
+      expect(mockAudioCapturePanel.livePreviewText).toBe("Hello world");
+
+      mockProvider.simulateTranscript("Hello world ");
+      expect(mockAudioCapturePanel.livePreviewCleared).toBe(true);
+    });
+
+    it("clears live preview when recording stops", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulatePartialTranscript("Hello");
+
+      await controller.stop();
+
+      expect(mockAudioCapturePanel.livePreviewCleared).toBe(true);
+    });
+  });
+
+  describe("smart output (visibility-based)", () => {
+    beforeEach(async () => {
+      // Reset window properties to ensure type command is used (not terminal)
+      const vscode = await import("vscode");
+      Object.defineProperty(vscode.window, "activeTextEditor", {
+        value: { document: {} },
+        configurable: true,
+      });
+      Object.defineProperty(vscode.window, "activeTerminal", {
+        value: undefined,
+        configurable: true,
+      });
+    });
+
+    it("does not emit text when panel is visible", async () => {
+      mockAudioCapturePanel.panelVisible = true;
+
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateTranscript("Hello world");
+
+      // Transcript should be logged but NOT emitted
+      expect(mockAudioCapturePanel.transcripts).toContain("Hello world");
+      expect(mocks.executeCommand).not.toHaveBeenCalledWith("type", { text: "Hello world" });
+    });
+
+    it("emits text when panel is not visible", async () => {
+      mockAudioCapturePanel.panelVisible = false;
+
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateTranscript("Hello world");
+
+      // Transcript should be logged AND emitted
+      expect(mockAudioCapturePanel.transcripts).toContain("Hello world");
+      expect(mocks.executeCommand).toHaveBeenCalledWith("type", { text: "Hello world" });
+    });
+
+    it("does not emit Enter when panel is visible (manual stop)", async () => {
+      mockAudioCapturePanel.panelVisible = true;
+
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      await controller.toggle(); // Manual stop with autoSubmit enabled
+
+      expect(mocks.executeCommand).not.toHaveBeenCalledWith("type", { text: "\n" });
+    });
+
+    it("emits Enter when panel is not visible (manual stop)", async () => {
+      mockAudioCapturePanel.panelVisible = false;
+
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      await controller.toggle(); // Manual stop with autoSubmit enabled
+
+      expect(mocks.executeCommand).toHaveBeenCalledWith("type", { text: "\n" });
+    });
+  });
+
+  describe("session management", () => {
+    it("starts a new session when recording begins", async () => {
+      expect(mockAudioCapturePanel.sessionStarted).toBe(false);
+
+      await controller.start();
+
+      expect(mockAudioCapturePanel.sessionStarted).toBe(true);
+    });
+
+    it("ends session with cancelled=false on normal stop (toggle)", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      expect(mockAudioCapturePanel.sessionEndCalled).toBe(false);
+
+      await controller.toggle(); // Normal stop
+
+      expect(mockAudioCapturePanel.sessionEndCalled).toBe(true);
+      expect(mockAudioCapturePanel.sessionCancelled).toBe(false);
+    });
+
+    it("ends session with cancelled=true on cancel (Escape)", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      expect(mockAudioCapturePanel.sessionEndCalled).toBe(false);
+
+      await controller.cancel(); // Cancel with Escape
+
+      expect(mockAudioCapturePanel.sessionEndCalled).toBe(true);
+      expect(mockAudioCapturePanel.sessionCancelled).toBe(true);
+    });
+
+    it("ends session with cancelled=false on auto-stop", async () => {
+      await controller.start();
+
+      // Wait for auto-stop (5 seconds)
+      await vi.advanceTimersByTimeAsync(5001);
+
+      expect(mockAudioCapturePanel.sessionEndCalled).toBe(true);
+      expect(mockAudioCapturePanel.sessionCancelled).toBe(false);
     });
   });
 });

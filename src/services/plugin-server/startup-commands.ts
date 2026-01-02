@@ -28,6 +28,7 @@ const STARTUP_COMMAND_TIMEOUT_MS = 5000;
  * - Close sidebars to maximize editor space
  * - Open OpenCode terminal for AI workflow
  * - Unlock editor groups for flexible tab management
+ * - Open dictation panel in background (no-op if not configured)
  * - Focus terminal to ensure OpenCode input is ready for typing
  */
 export const STARTUP_COMMANDS = [
@@ -36,6 +37,7 @@ export const STARTUP_COMMANDS = [
   "opencode.openTerminal", // Open OpenCode terminal for AI workflow
   "workbench.action.unlockEditorGroup", // Unlock editor group for tab reuse
   "workbench.action.closeEditorsInOtherGroups", // Clean up empty editor groups
+  "codehydra.dictation.openPanel", // Open dictation tab in background (no-op if no API key)
   "workbench.action.terminal.focus", // Ensure terminal input is focused
 ] as const;
 
