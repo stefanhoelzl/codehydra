@@ -1,12 +1,22 @@
 import * as vscode from "vscode";
 
 /**
+ * Clamp a value between min and max
+ */
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
  * Dictation configuration
  */
 export interface DictationConfig {
   provider: "auto" | "assemblyai";
   assemblyaiApiKey: string;
-  silenceTimeout: number;
+  assemblyaiConnectionTimeout: number;
+  autoStopDelay: number;
+  listeningDelay: number;
+  autoSubmit: boolean;
 }
 
 /**
@@ -18,7 +28,14 @@ export function getConfig(): DictationConfig {
   return {
     provider: config.get<"auto" | "assemblyai">("provider", "auto"),
     assemblyaiApiKey: config.get<string>("assemblyai.apiKey", ""),
-    silenceTimeout: config.get<number>("silenceTimeout", 10),
+    assemblyaiConnectionTimeout: clamp(
+      config.get<number>("assemblyai.connectionTimeout", 2000),
+      1000,
+      10000
+    ),
+    autoStopDelay: clamp(config.get<number>("autoStopDelay", 5), 3, 60),
+    listeningDelay: clamp(config.get<number>("listeningDelay", 300), 100, 1000),
+    autoSubmit: config.get<boolean>("autoSubmit", true),
   };
 }
 

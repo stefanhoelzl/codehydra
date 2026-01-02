@@ -7,7 +7,7 @@ import type {
   AudioHandler,
   CaptureErrorHandler,
 } from "./audio/AudioCaptureViewProvider";
-import { DictationController } from "./DictationController";
+import { DictationController, type DictationState } from "./DictationController";
 
 // Track mock function calls - must use vi.fn() inline in the factory
 // because vi.mock is hoisted to the top of the file
@@ -29,7 +29,10 @@ vi.mock("vscode", () => {
         get: vi.fn((key: string, defaultValue: unknown) => {
           if (key === "provider") return "assemblyai";
           if (key === "assemblyai.apiKey") return "test-api-key";
-          if (key === "silenceTimeout") return 10;
+          if (key === "assemblyai.connectionTimeout") return 2000;
+          if (key === "autoStopDelay") return 5;
+          if (key === "listeningDelay") return 300;
+          if (key === "autoSubmit") return true;
           return defaultValue;
         }),
       })),
@@ -128,241 +131,446 @@ describe("DictationController", () => {
     vi.useRealTimers();
   });
 
-  // Test 1: Start recording
-  it("transitions to recording state on successful start", async () => {
-    expect(controller.getState().status).toBe("idle");
-
-    await controller.start();
-
-    expect(controller.getState().status).toBe("recording");
-    expect(mocks.executeCommand).toHaveBeenCalledWith(
-      "setContext",
-      "codehydra.dictation.isRecording",
-      true
-    );
-  });
-
-  // Test 2: Stop recording
-  it("transitions to idle state on stop and calls cleanup", async () => {
-    await controller.start();
-    expect(controller.getState().status).toBe("recording");
-
-    await controller.stop();
-
-    expect(controller.getState().status).toBe("idle");
-    expect(mocks.executeCommand).toHaveBeenCalledWith(
-      "setContext",
-      "codehydra.dictation.isRecording",
-      false
-    );
-  });
-
-  // Test 3: Transcript received
-  it("inserts transcript text using type command", async () => {
-    await controller.start();
-
-    mockProvider.simulateTranscript("Hello world");
-
-    // The type command should have been called to insert text at cursor
-    expect(mocks.executeCommand).toHaveBeenCalledWith("type", { text: "Hello world" });
-  });
-
-  // Test 4: Connection error
-  it("shows error notification and returns to idle on connection failure", async () => {
-    mockProvider.shouldFailConnect = true;
-
-    await controller.start();
-
-    expect(controller.getState().status).toBe("idle");
-    expect(mocks.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to connect")
-    );
-  });
-
-  // Test 5: Connection lost
-  it("shows error notification and returns to idle on connection loss", async () => {
-    await controller.start();
-    expect(controller.getState().status).toBe("recording");
-
-    mockProvider.simulateClose();
-
-    expect(controller.getState().status).toBe("idle");
-    expect(mocks.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Connection lost"));
-  });
-
-  // Test 6: Silence timeout
-  it("auto-stops and shows notification when silence timeout reached", async () => {
-    await controller.start();
-    expect(controller.getState().status).toBe("recording");
-
-    // Fast-forward 10 seconds (default silenceTimeout) with no transcripts
-    await vi.advanceTimersByTimeAsync(10000);
-
-    expect(controller.getState().status).toBe("idle");
-    expect(mocks.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining("No speech detected")
-    );
-  });
-
-  // Test 6b: Silence timer resets on transcript
-  it("resets silence timer when transcript received", async () => {
-    await controller.start();
-    expect(controller.getState().status).toBe("recording");
-
-    // Wait 8 seconds (not enough to trigger timeout)
-    await vi.advanceTimersByTimeAsync(8000);
-    expect(controller.getState().status).toBe("recording");
-
-    // Receive a transcript - this should reset the timer
-    mockProvider.simulateTranscript("hello");
-
-    // Wait another 8 seconds (16s total, but only 8s since last transcript)
-    await vi.advanceTimersByTimeAsync(8000);
-    expect(controller.getState().status).toBe("recording");
-
-    // Wait 2 more seconds (10s since last transcript) - should now timeout
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(controller.getState().status).toBe("idle");
-    expect(mocks.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining("No speech detected")
-    );
-  });
-
-  // Test 7: No API key
-  it("shows error and stays idle when no API key configured", async () => {
-    // Override config to return empty API key
-    mocks.getConfiguration.mockReturnValueOnce({
-      get: vi.fn((key: string, defaultValue: unknown) => {
-        if (key === "assemblyai.apiKey") return "";
-        if (key === "silenceTimeout") return 10;
-        return defaultValue;
-      }),
-    } as unknown as ReturnType<typeof mocks.getConfiguration>);
-
-    await controller.start();
-
-    expect(controller.getState().status).toBe("idle");
-    expect(mocks.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining("No API key configured")
-    );
-  });
-
-  // Test 8: Permission denied (formerly Test 9)
-  it("shows error and returns to idle on microphone permission denied", async () => {
-    await controller.start();
-    expect(controller.getState().status).toBe("recording");
-
-    mockAudioCaptureProvider.simulateError({
-      type: "permission",
-      message: "Microphone access denied",
-    });
-
-    expect(controller.getState().status).toBe("idle");
-    expect(mocks.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining("Microphone access denied")
-    );
-  });
-
-  // Test 10: Rapid toggle
-  it("handles rapid toggle without crashing", async () => {
-    // Toggle quickly 3 times
-    const p1 = controller.toggle();
-    const p2 = controller.toggle();
-    const p3 = controller.toggle();
-
-    await Promise.all([p1, p2, p3]);
-
-    // Should be in a consistent state (not crashed)
+  // Helper to get recording state details
+  function getRecordingState(): Extract<DictationState, { status: "recording" }> | null {
     const state = controller.getState();
-    expect(["idle", "recording", "starting", "stopping"]).toContain(state.status);
-  });
+    return state.status === "recording" ? state : null;
+  }
 
-  // Test 11: Toggle during starting
-  it("shows notification and ignores toggle during starting state", async () => {
-    // Make provider defer connection until we call completeConnect()
-    mockProvider.deferConnect = true;
+  describe("basic start/stop", () => {
+    it("transitions to recording state with buffering phase on start", async () => {
+      // Defer connection to see buffering phase
+      mockProvider.deferConnect = true;
 
-    // Start connection (will be in 'starting' state)
-    const startPromise = controller.start();
+      expect(controller.getState().status).toBe("idle");
 
-    // Allow microtasks to run so state transitions to 'starting'
-    await Promise.resolve();
-    expect(controller.getState().status).toBe("starting");
+      await controller.start();
 
-    // Try to toggle while starting
-    await controller.toggle();
+      const state = getRecordingState();
+      expect(state).not.toBeNull();
+      expect(state?.phase).toBe("buffering");
+      expect(state?.isActive).toBe(true); // Always green during buffering
 
-    expect(mocks.showInformationMessage).toHaveBeenCalledWith("Dictation: Already connecting...");
-
-    // Complete the connection
-    mockProvider.completeConnect();
-    await startPromise;
-  });
-
-  // Test 12: Auth error notification
-  it("shows auth error notification", async () => {
-    await controller.start();
-
-    mockProvider.simulateError({ type: "auth", message: "Invalid API key" });
-
-    expect(mocks.showErrorMessage).toHaveBeenCalledWith(
-      "Dictation: Invalid API key. Please check your settings."
-    );
-  });
-
-  // Test 13: Quota error notification
-  it("shows quota error notification", async () => {
-    await controller.start();
-
-    mockProvider.simulateError({ type: "quota", message: "Rate limit exceeded" });
-
-    expect(mocks.showErrorMessage).toHaveBeenCalledWith(
-      "Dictation: API quota exceeded. Rate limit exceeded"
-    );
-  });
-
-  // Test 14: Provider error notification
-  it("shows provider error notification", async () => {
-    await controller.start();
-
-    mockProvider.simulateError({ type: "provider", code: 500, message: "Server error" });
-
-    expect(mocks.showErrorMessage).toHaveBeenCalledWith(
-      "Dictation: Error from speech service. Server error"
-    );
-  });
-
-  // Test 15: Terminal text insertion
-  it("inserts transcript into terminal when no editor is active", async () => {
-    // Import vscode to access the mock
-    const vscode = await import("vscode");
-    const mockTerminal = { sendText: vi.fn() };
-
-    // Override activeTextEditor and activeTerminal
-    Object.defineProperty(vscode.window, "activeTextEditor", {
-      value: undefined,
-      configurable: true,
-    });
-    Object.defineProperty(vscode.window, "activeTerminal", {
-      value: mockTerminal,
-      configurable: true,
+      // Complete connection to clean up
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0);
     });
 
-    await controller.start();
+    it("transitions to idle state on stop", async () => {
+      await controller.start();
+      expect(controller.getState().status).toBe("recording");
 
-    mockProvider.simulateTranscript("hello world");
+      await controller.stop();
 
-    expect(mockTerminal.sendText).toHaveBeenCalledWith("hello world", false);
-    expect(mocks.executeCommand).not.toHaveBeenCalledWith("type", expect.anything());
+      expect(controller.getState().status).toBe("idle");
+    });
+
+    it("inserts transcript text using type command", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateTranscript("Hello world");
+
+      expect(mocks.executeCommand).toHaveBeenCalledWith("type", { text: "Hello world" });
+    });
   });
 
-  // Test 16: Audio forwarding
-  it("forwards audio from capture to provider", async () => {
-    await controller.start();
+  describe("connection and buffering", () => {
+    it("buffers audio during connection", async () => {
+      mockProvider.deferConnect = true;
 
-    const audioData = new ArrayBuffer(100);
-    mockAudioCaptureProvider.simulateAudio(audioData);
+      await controller.start();
+      expect(getRecordingState()?.phase).toBe("buffering");
 
-    expect(mockProvider.receivedAudio).toContain(audioData);
+      // Send audio while API is connecting
+      const audio1 = new ArrayBuffer(100);
+      const audio2 = new ArrayBuffer(200);
+      mockAudioCaptureProvider.simulateAudio(audio1);
+      mockAudioCaptureProvider.simulateAudio(audio2);
+
+      // Audio should not be sent yet (provider not connected)
+      expect(mockProvider.receivedAudio).toHaveLength(0);
+
+      // Complete connection
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      // Now audio should be sent (in order)
+      expect(mockProvider.receivedAudio).toHaveLength(2);
+      expect(mockProvider.receivedAudio[0]).toBe(audio1);
+      expect(mockProvider.receivedAudio[1]).toBe(audio2);
+    });
+
+    it("transitions to streaming phase after connection", async () => {
+      mockProvider.deferConnect = true;
+
+      await controller.start();
+      expect(getRecordingState()?.phase).toBe("buffering");
+
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      expect(getRecordingState()?.phase).toBe("streaming");
+    });
+
+    it("shows error on connection timeout", async () => {
+      mockProvider.deferConnect = true;
+
+      await controller.start();
+
+      // Advance past connection timeout (2000ms)
+      await vi.advanceTimersByTimeAsync(2001);
+
+      expect(controller.getState().status).toBe("error");
+      const state = controller.getState();
+      if (state.status === "error") {
+        expect(state.message).toContain("timeout");
+      }
+    });
+
+    it("shows error on connection failure", async () => {
+      mockProvider.shouldFailConnect = true;
+
+      await controller.start();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      expect(controller.getState().status).toBe("error");
+    });
+  });
+
+  describe("activity and visual feedback", () => {
+    it("shows active (green) during buffering phase regardless of activity", async () => {
+      mockProvider.deferConnect = true;
+
+      await controller.start();
+
+      // Should be active during buffering
+      expect(getRecordingState()?.isActive).toBe(true);
+
+      // Even after waiting, still active (no listening timer during buffering)
+      await vi.advanceTimersByTimeAsync(500);
+      expect(getRecordingState()?.isActive).toBe(true);
+    });
+
+    it("shows listening (orange) after delay when no activity in streaming phase", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      // Initially might still be active, then after 300ms should show listening
+      await vi.advanceTimersByTimeAsync(301);
+
+      expect(getRecordingState()?.isActive).toBe(false);
+    });
+
+    it("shows active (green) on activity in streaming phase", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      // Wait for listening timer
+      await vi.advanceTimersByTimeAsync(301);
+      expect(getRecordingState()?.isActive).toBe(false);
+
+      // Simulate activity
+      mockProvider.simulateActivity();
+
+      expect(getRecordingState()?.isActive).toBe(true);
+    });
+
+    it("resets listening timer on activity", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      // Wait 200ms (less than listening delay)
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Simulate activity - resets the timer
+      mockProvider.simulateActivity();
+
+      // Wait another 200ms (400ms total, but only 200ms since last activity)
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Should still be active (timer was reset)
+      expect(getRecordingState()?.isActive).toBe(true);
+    });
+  });
+
+  describe("auto-stop timer", () => {
+    it("auto-stops after silence timeout with no activity", async () => {
+      await controller.start();
+
+      // Wait for 5 seconds (autoStopDelay)
+      await vi.advanceTimersByTimeAsync(5001);
+
+      expect(controller.getState().status).toBe("idle");
+      expect(mocks.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining("No speech detected")
+      );
+    });
+
+    it("resets auto-stop timer on activity", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      // Wait 4 seconds
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(controller.getState().status).toBe("recording");
+
+      // Simulate activity - resets timer
+      mockProvider.simulateActivity();
+
+      // Wait another 4 seconds (8s total, but only 4s since activity)
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(controller.getState().status).toBe("recording");
+
+      // Wait 1 more second (5s since activity) - should timeout
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(controller.getState().status).toBe("idle");
+    });
+
+    it("resets auto-stop timer on audio during buffering", async () => {
+      // Override config with longer connection timeout for this test
+      mocks.getConfiguration.mockReturnValueOnce({
+        get: vi.fn((key: string, defaultValue: unknown) => {
+          if (key === "assemblyai.apiKey") return "test-api-key";
+          if (key === "assemblyai.connectionTimeout") return 10000; // 10s timeout
+          if (key === "autoStopDelay") return 5;
+          if (key === "listeningDelay") return 300;
+          if (key === "autoSubmit") return true;
+          return defaultValue;
+        }),
+      } as unknown as ReturnType<typeof mocks.getConfiguration>);
+
+      mockProvider.deferConnect = true;
+
+      await controller.start();
+
+      // Wait 4 seconds
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(controller.getState().status).toBe("recording");
+
+      // Send audio - resets timer
+      mockAudioCaptureProvider.simulateAudio(new ArrayBuffer(100));
+
+      // Wait another 4 seconds
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(controller.getState().status).toBe("recording");
+
+      // Wait 1 more second (5s since audio) - should timeout
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(controller.getState().status).toBe("idle");
+    });
+
+    it("resets both auto-stop and listening timers on activity", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      // Wait for listening timer
+      await vi.advanceTimersByTimeAsync(301);
+      expect(getRecordingState()?.isActive).toBe(false);
+
+      // Wait close to auto-stop timeout
+      await vi.advanceTimersByTimeAsync(4500);
+
+      // Simulate activity - should reset BOTH timers
+      mockProvider.simulateActivity();
+
+      // Should be active again
+      expect(getRecordingState()?.isActive).toBe(true);
+
+      // Should still be recording (auto-stop was reset)
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(controller.getState().status).toBe("recording");
+    });
+  });
+
+  describe("auto-submit feature", () => {
+    it("emits Enter on manual stop (toggle) when autoSubmit is enabled", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      await controller.toggle(); // Manual stop
+
+      expect(mocks.executeCommand).toHaveBeenCalledWith("type", { text: "\n" });
+    });
+
+    it("does not emit Enter on auto-stop (silence timeout)", async () => {
+      await controller.start();
+
+      // Wait for auto-stop
+      await vi.advanceTimersByTimeAsync(5001);
+
+      expect(mocks.executeCommand).not.toHaveBeenCalledWith("type", { text: "\n" });
+    });
+
+    it("does not emit Enter on error", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateError({ type: "connection", message: "Lost connection" });
+
+      expect(mocks.executeCommand).not.toHaveBeenCalledWith("type", { text: "\n" });
+    });
+
+    it("does not emit Enter when autoSubmit is disabled", async () => {
+      // Override config to disable autoSubmit
+      mocks.getConfiguration.mockReturnValueOnce({
+        get: vi.fn((key: string, defaultValue: unknown) => {
+          if (key === "autoSubmit") return false;
+          if (key === "assemblyai.apiKey") return "test-api-key";
+          if (key === "assemblyai.connectionTimeout") return 2000;
+          if (key === "autoStopDelay") return 5;
+          if (key === "listeningDelay") return 300;
+          return defaultValue;
+        }),
+      } as unknown as ReturnType<typeof mocks.getConfiguration>);
+
+      await controller.start();
+      await controller.toggle(); // Manual stop
+
+      expect(mocks.executeCommand).not.toHaveBeenCalledWith("type", { text: "\n" });
+    });
+  });
+
+  describe("error handling", () => {
+    it("transitions to error state on provider error", async () => {
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateError({ type: "auth", message: "Invalid key" });
+
+      const state = controller.getState();
+      expect(state.status).toBe("error");
+    });
+
+    it("transitions to error state on audio capture error", async () => {
+      await controller.start();
+
+      mockAudioCaptureProvider.simulateError({
+        type: "permission",
+        message: "Microphone access denied",
+      });
+
+      expect(controller.getState().status).toBe("error");
+    });
+
+    it("error state notifies handlers (for StatusBar auto-clear)", async () => {
+      // This test verifies that error state is properly communicated to handlers
+      // which allows StatusBar to implement its 3-second auto-clear timer
+      const stateChanges: DictationState[] = [];
+      controller.onStateChange((state) => stateChanges.push(state));
+
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateError({ type: "connection", message: "Lost connection" });
+
+      // Find the error state in changes
+      const errorState = stateChanges.find((s) => s.status === "error");
+      expect(errorState).toBeDefined();
+      expect(errorState?.status).toBe("error");
+      if (errorState?.status === "error") {
+        expect(errorState.message).toContain("Connection lost");
+      }
+    });
+  });
+
+  describe("loading state", () => {
+    it("shows notification when toggling during loading", async () => {
+      mockProvider.deferConnect = true;
+      mockAudioCaptureProvider.shouldFailStart = false;
+
+      // Start but simulate slow audio capture start
+      const originalStart = mockAudioCaptureProvider.start.bind(mockAudioCaptureProvider);
+      let resolveStart: () => void;
+      mockAudioCaptureProvider.start = () =>
+        new Promise((resolve) => {
+          resolveStart = () => {
+            resolve();
+          };
+        });
+
+      const startPromise = controller.start();
+
+      // Should be in loading state
+      await vi.advanceTimersByTimeAsync(0);
+      expect(controller.getState().status).toBe("loading");
+
+      // Try to toggle during loading
+      await controller.toggle();
+
+      expect(mocks.showInformationMessage).toHaveBeenCalledWith("Dictation: Already connecting...");
+
+      // Cleanup: restore and complete
+      mockAudioCaptureProvider.start = originalStart;
+      resolveStart!();
+      await startPromise;
+    });
+  });
+
+  describe("no API key", () => {
+    it("shows error and stays idle when no API key configured", async () => {
+      mocks.getConfiguration.mockReturnValueOnce({
+        get: vi.fn((key: string, defaultValue: unknown) => {
+          if (key === "assemblyai.apiKey") return "";
+          return defaultValue;
+        }),
+      } as unknown as ReturnType<typeof mocks.getConfiguration>);
+
+      await controller.start();
+
+      expect(controller.getState().status).toBe("idle");
+      expect(mocks.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("No API key configured")
+      );
+    });
+  });
+
+  describe("terminal text insertion", () => {
+    it("inserts transcript into terminal when no editor is active", async () => {
+      const vscode = await import("vscode");
+      const mockTerminal = { sendText: vi.fn() };
+
+      Object.defineProperty(vscode.window, "activeTextEditor", {
+        value: undefined,
+        configurable: true,
+      });
+      Object.defineProperty(vscode.window, "activeTerminal", {
+        value: mockTerminal,
+        configurable: true,
+      });
+
+      await controller.start();
+      mockProvider.completeConnect();
+      await vi.advanceTimersByTimeAsync(0); // Flush promises
+
+      mockProvider.simulateTranscript("hello world");
+
+      expect(mockTerminal.sendText).toHaveBeenCalledWith("hello world", false);
+      expect(mocks.executeCommand).not.toHaveBeenCalledWith("type", { text: "hello world" });
+    });
+  });
+
+  describe("rapid toggle", () => {
+    it("handles rapid toggle without crashing", async () => {
+      const p1 = controller.toggle();
+      const p2 = controller.toggle();
+      const p3 = controller.toggle();
+
+      await Promise.all([p1, p2, p3]);
+
+      // Should be in a consistent state
+      const state = controller.getState();
+      expect(["idle", "recording", "loading", "stopping", "error"]).toContain(state.status);
+    });
   });
 });

@@ -16,6 +16,12 @@ export type DictationError =
 export type TranscriptHandler = (text: string) => void;
 
 /**
+ * Activity handler callback type
+ * Called when speech activity is detected (for timer reset and visual feedback)
+ */
+export type ActivityHandler = () => void;
+
+/**
  * Error handler callback type
  */
 export type ErrorHandler = (error: DictationError) => void;
@@ -51,4 +57,11 @@ export interface SpeechToTextProvider extends vscode.Disposable {
    * @returns Unsubscribe function
    */
   onError(handler: ErrorHandler): () => void;
+
+  /**
+   * Register a handler for activity events
+   * Called when speech activity is detected (word-level or partial transcripts)
+   * @returns Unsubscribe function
+   */
+  onActivity(handler: ActivityHandler): () => void;
 }

@@ -4,11 +4,13 @@ Voice-to-text dictation for VS Code. Speak into your microphone and have text tr
 
 ## Features
 
-- Real-time speech-to-text transcription
-- Seamless integration with VS Code editor
-- Status bar indicator shows recording state
-- Keyboard shortcut for quick toggle
-- Automatic timeout to prevent accidental long recordings
+- Real-time speech-to-text transcription with activity-based visual feedback
+- Seamless integration with VS Code editor and terminal
+- Status bar indicator shows recording state with color feedback
+- Keyboard shortcut for quick toggle (F10)
+- Smart auto-stop based on speech activity detection
+- Auto-submit: Emit Enter key when manually stopping dictation
+- Audio buffering during API connection for minimal perceived latency
 
 ## Requirements
 
@@ -20,35 +22,51 @@ Voice-to-text dictation for VS Code. Speak into your microphone and have text tr
 
 Open VS Code Settings and search for "dictation" to configure:
 
-| Setting                                 | Description                           | Default   |
-| --------------------------------------- | ------------------------------------- | --------- |
-| `codehydra.dictation.provider`          | Speech-to-text provider               | `auto`    |
-| `codehydra.dictation.assemblyai.apiKey` | AssemblyAI API key                    | _(empty)_ |
-| `codehydra.dictation.maxDuration`       | Maximum recording duration in seconds | `60`      |
+| Setting                                            | Description                                               | Default   |
+| -------------------------------------------------- | --------------------------------------------------------- | --------- |
+| `codehydra.dictation.provider`                     | Speech-to-text provider                                   | `auto`    |
+| `codehydra.dictation.assemblyai.apiKey`            | AssemblyAI API key                                        | _(empty)_ |
+| `codehydra.dictation.assemblyai.connectionTimeout` | Connection timeout in ms when connecting to AssemblyAI    | `2000`    |
+| `codehydra.dictation.autoStopDelay`                | Auto-stop after this many seconds without speech activity | `5`       |
+| `codehydra.dictation.listeningDelay`               | Delay in ms before showing 'listening' (orange) state     | `300`     |
+| `codehydra.dictation.autoSubmit`                   | Emit Enter key when manually stopping dictation           | `true`    |
 
 ## Usage
 
 ### Starting/Stopping Dictation
 
-- **Keyboard shortcut**: `Ctrl+Alt+D` (toggle)
-- **Status bar**: Click the microphone icon
+- **Keyboard shortcut**: `F10` (toggle)
+- **Status bar**: Click the microphone/record icon
 - **Command palette**: "Dictation: Toggle Recording"
-- **Stop with Escape**: Press `Escape` to stop (only while recording)
 
-### Status Bar Icons
+### Status Bar States
 
-| Icon            | State          | Description             |
-| --------------- | -------------- | ----------------------- |
-| $(mic)          | Idle           | Ready to record         |
-| $(mic) (dimmed) | Not configured | No API key set          |
-| $(loading~spin) | Connecting     | Establishing connection |
-| $(mic-filled)   | Recording      | Actively transcribing   |
+| Icon            | Color   | State          | Description                         |
+| --------------- | ------- | -------------- | ----------------------------------- |
+| $(record)       | Default | Idle           | Ready to record                     |
+| $(mic)          | Default | Not configured | No API key set (click to configure) |
+| $(loading~spin) | Default | Loading        | Initializing dictation              |
+| $(mic-filled)   | Green   | Active         | Speech detected                     |
+| $(mic)          | Orange  | Listening      | Recording, no speech detected       |
+| $(loading~spin) | Default | Stopping       | Stopping dictation                  |
+| $(error)        | Red     | Error          | Dictation failed (auto-clears)      |
+
+### Visual Feedback
+
+The status bar color changes based on speech detection:
+
+- **Green (mic-filled)**: Speech is being detected
+- **Orange (mic)**: Recording, but no speech detected for 300ms
+
+During the initial connection phase, the icon is always green to indicate recording is active.
 
 ### Tips
 
 1. **Speak clearly** - The transcription quality depends on clear audio
-2. **Check the tooltip** - Hover over the status bar icon to see elapsed time
-3. **Watch for auto-stop** - Recording automatically stops at `maxDuration` to limit costs
+2. **Check the tooltip** - Hover over the status bar icon to see elapsed time and status
+3. **Watch for color changes** - Orange means you've paused; green means speech is detected
+4. **Auto-submit**: When you manually stop (F10 or click), an Enter key is automatically inserted
+5. **Long sentences**: Speech detection keeps the recording alive even during natural pauses
 
 ## Troubleshooting
 
