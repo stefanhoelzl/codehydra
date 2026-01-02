@@ -38,6 +38,18 @@
   "agent": {
     "build": {
       "color": "#A16207", // amber
+      "permission": {
+        "bash": {
+          "*": "allow",
+        },
+      },
+    },
+    "general": {
+      "permission": {
+        "bash": {
+          "*": "allow",
+        },
+      },
     },
     "plan": {
       "color": "#3B82F6", // blue
