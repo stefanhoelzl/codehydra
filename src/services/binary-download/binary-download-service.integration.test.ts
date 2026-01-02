@@ -14,13 +14,9 @@ import { DefaultArchiveExtractor } from "./archive-extractor";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
-import { createMockHttpClient } from "../platform/network.test-utils";
-import {
-  createTestTarGzWithRoot,
-  createMockDownloadResponse,
-  cleanupTestArchive,
-} from "./test-utils";
-import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "./versions";
+import { createMockHttpClient } from "../platform/http-client.state-mock";
+import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
+import { CODE_SERVER_VERSION, OPENCODE_VERSION, BINARY_CONFIGS } from "./versions";
 import { createMockLogger } from "../logging/logging.test-utils";
 
 describe("BinaryDownloadService (integration)", () => {
@@ -53,7 +49,11 @@ describe("BinaryDownloadService (integration)", () => {
 
         // Create mock HttpClient that returns the archive
         const mockHttpClient = createMockHttpClient({
-          response: createMockDownloadResponse(archiveContent, archiveContent.length),
+          defaultResponse: {
+            body: archiveContent,
+            status: 200,
+            headers: { "content-length": String(archiveContent.length) },
+          },
         });
 
         // Create real FileSystemLayer and ArchiveExtractor
@@ -114,7 +114,11 @@ describe("BinaryDownloadService (integration)", () => {
         try {
           const archiveContent = await fs.readFile(archivePath);
           const mockHttpClient = createMockHttpClient({
-            response: createMockDownloadResponse(archiveContent, archiveContent.length),
+            defaultResponse: {
+              body: archiveContent,
+              status: 200,
+              headers: { "content-length": String(archiveContent.length) },
+            },
           });
 
           const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
@@ -159,7 +163,11 @@ describe("BinaryDownloadService (integration)", () => {
       try {
         const archiveContent = await fs.readFile(archivePath);
         const mockHttpClient = createMockHttpClient({
-          response: createMockDownloadResponse(archiveContent, archiveContent.length),
+          defaultResponse: {
+            body: archiveContent,
+            status: 200,
+            headers: { "content-length": String(archiveContent.length) },
+          },
         });
 
         const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
@@ -214,15 +222,23 @@ describe("BinaryDownloadService (integration)", () => {
         const codeServerContent = await fs.readFile(codeServerArchive);
         const opencodeContent = await fs.readFile(opencodeArchive);
 
-        // Mock HttpClient that returns different archives based on call order
-        let callCount = 0;
+        // Get the actual URLs that will be called for linux x64
+        const codeServerUrl = BINARY_CONFIGS["code-server"].getUrl("linux", "x64");
+        const opencodeUrl = BINARY_CONFIGS["opencode"].getUrl("linux", "x64");
+
+        // Configure mock with per-URL responses
         const mockHttpClient = createMockHttpClient({
-          implementation: async () => {
-            callCount++;
-            if (callCount === 1) {
-              return createMockDownloadResponse(codeServerContent, codeServerContent.length);
-            }
-            return createMockDownloadResponse(opencodeContent, opencodeContent.length);
+          responses: {
+            [codeServerUrl]: {
+              body: codeServerContent,
+              status: 200,
+              headers: { "content-length": String(codeServerContent.length) },
+            },
+            [opencodeUrl]: {
+              body: opencodeContent,
+              status: 200,
+              headers: { "content-length": String(opencodeContent.length) },
+            },
           },
         });
 
@@ -293,7 +309,11 @@ describe("BinaryDownloadService (integration)", () => {
       try {
         const archiveContent = await fs.readFile(archivePath);
         const mockHttpClient = createMockHttpClient({
-          response: createMockDownloadResponse(archiveContent, archiveContent.length),
+          defaultResponse: {
+            body: archiveContent,
+            status: 200,
+            headers: { "content-length": String(archiveContent.length) },
+          },
         });
 
         const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());

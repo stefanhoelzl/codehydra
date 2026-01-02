@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { BinaryDownloadError } from "./errors";
 import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "./versions";
-import { createMockHttpClient } from "../platform/network.test-utils";
+import { createMockHttpClient } from "../platform/http-client.state-mock";
 import { createMockFileSystemLayer, createDirEntry } from "../platform/filesystem.test-utils";
 import { createMockArchiveExtractor } from "./archive-extractor.test-utils";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
@@ -136,7 +136,7 @@ describe("DefaultBinaryDownloadService", () => {
   describe("download", () => {
     it("throws BinaryDownloadError on HTTP 404", async () => {
       const httpClient = createMockHttpClient({
-        response: new Response(null, { status: 404 }),
+        defaultResponse: { status: 404 },
       });
       const serviceWith404 = new DefaultBinaryDownloadService(
         httpClient,
@@ -155,7 +155,7 @@ describe("DefaultBinaryDownloadService", () => {
 
     it("throws BinaryDownloadError on network error", async () => {
       const httpClient = createMockHttpClient({
-        error: new TypeError("Failed to fetch"),
+        defaultResponse: { error: new TypeError("Failed to fetch") },
       });
       const serviceWithError = new DefaultBinaryDownloadService(
         httpClient,
@@ -215,19 +215,12 @@ describe("DefaultBinaryDownloadService", () => {
       const rmCalls: Array<{ path: string; options: unknown }> = [];
       let readdirCallCount = 0;
 
-      // Create streaming response body
-      const body = new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("binary content"));
-          controller.close();
-        },
-      });
-
       const successHttpClient = createMockHttpClient({
-        response: new Response(body, {
+        defaultResponse: {
+          body: "binary content",
           status: 200,
           headers: { "content-length": "14" },
-        }),
+        },
       });
 
       const trackingFs = createMockFileSystemLayer({

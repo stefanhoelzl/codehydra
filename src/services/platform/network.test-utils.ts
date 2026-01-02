@@ -1,10 +1,12 @@
 /**
  * Test utilities for network layer mocking and boundary testing.
  *
- * Provides mock factories for HttpClient and PortManager
+ * Provides mock factories for PortManager
  * to enable easy unit testing of consumers.
  *
  * Also provides test server helpers for boundary tests against real HTTP servers.
+ *
+ * NOTE: For HttpClient mocking, use createMockHttpClient from http-client.state-mock.ts
  */
 
 import {
@@ -13,7 +15,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "http";
-import { type HttpClient, type HttpRequestOptions, type PortManager } from "./network";
+import { type PortManager } from "./network";
 import { delay } from "../test-utils";
 
 // ============================================================================
@@ -21,67 +23,11 @@ import { delay } from "../test-utils";
 // ============================================================================
 
 /**
- * Options for creating a mock HttpClient.
- */
-export interface MockHttpClientOptions {
-  /** Response to return from fetch. Default: 200 OK with empty body */
-  readonly response?: Response;
-  /** Error to throw from fetch */
-  readonly error?: Error;
-  /** Custom implementation for fetch */
-  readonly implementation?: (url: string, options?: HttpRequestOptions) => Promise<Response>;
-}
-
-/**
  * Options for creating a mock PortManager.
  */
 export interface MockPortManagerOptions {
   /** Options for findFreePort */
   readonly findFreePort?: { port?: number; error?: Error };
-}
-
-// ============================================================================
-// Mock HTTP Client
-// ============================================================================
-
-/**
- * Create a mock HttpClient for testing.
- *
- * @example Basic usage - returns 200 OK
- * const httpClient = createMockHttpClient();
- *
- * @example Return custom response
- * const httpClient = createMockHttpClient({
- *   response: new Response('{"status":"ok"}', { status: 200 })
- * });
- *
- * @example Throw error
- * const httpClient = createMockHttpClient({
- *   error: new Error('Connection refused')
- * });
- *
- * @example Custom implementation
- * const httpClient = createMockHttpClient({
- *   implementation: async (url) => {
- *     if (url.includes('/health')) return new Response('ok');
- *     throw new Error('Not found');
- *   }
- * });
- */
-export function createMockHttpClient(options?: MockHttpClientOptions): HttpClient {
-  const defaultResponse = new Response("", { status: 200 });
-
-  return {
-    fetch: async (url: string, fetchOptions?: HttpRequestOptions): Promise<Response> => {
-      if (options?.implementation) {
-        return options.implementation(url, fetchOptions);
-      }
-      if (options?.error) {
-        throw options.error;
-      }
-      return options?.response ?? defaultResponse;
-    },
-  };
 }
 
 // ============================================================================
