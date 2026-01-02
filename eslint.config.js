@@ -47,13 +47,6 @@ export default tseslint.config(
       "@typescript-eslint/no-require-imports": "off",
     },
   },
-  // VS Code extensions use CommonJS for compatibility
-  {
-    files: ["extensions/**/*.js"],
-    rules: {
-      "@typescript-eslint/no-require-imports": "off",
-    },
-  },
   // VS Code extensions - allow underscore-prefixed unused vars (interface implementations)
   {
     files: ["extensions/**/*.ts"],

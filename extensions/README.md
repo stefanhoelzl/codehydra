@@ -6,26 +6,31 @@ This directory contains the source code for VS Code extensions used by CodeHydra
 
 ```
 extensions/
+├── tsconfig.ext.json         # Shared TypeScript config (strict)
+├── vite.config.ext.ts        # Base Vite config for extensions
 ├── external.json             # External extensions (marketplace IDs)
 ├── dictation/                # Voice-to-text dictation extension
 │   ├── src/                  # TypeScript source
+│   │   ├── extension.ts      # Extension entry point
+│   │   └── audio/            # Audio capture and processing
 │   ├── package.json          # Extension manifest
-│   ├── tsconfig.json         # TypeScript configuration
-│   └── esbuild.config.js     # Build configuration
+│   └── vite.config.ts        # Vite build configuration
 ├── sidekick/                 # Custom sidekick extension source
+│   ├── src/                  # TypeScript source
+│   │   ├── extension.ts      # Extension entry point
+│   │   └── types.ts          # Internal type definitions
 │   ├── package.json          # Extension manifest
-│   ├── extension.js          # Extension entry point
 │   ├── api.d.ts              # TypeScript declarations for third-party use
-│   └── esbuild.config.js     # Build configuration
+│   └── vite.config.ts        # Vite build configuration
 └── README.md                 # This file
 ```
 
 ## Build Process
 
-Extensions are built via the `build:extensions` npm script:
+Extensions are built via the `build:extensions` pnpm script:
 
 ```bash
-npm run build:extensions
+pnpm build:extensions
 ```
 
 This:
@@ -36,17 +41,19 @@ This:
 4. Generates `dist/extensions/manifest.json` with the complete extension manifest
 5. Outputs `.vsix` files to `dist/extensions/`
 
-The main `npm run build` command runs `build:extensions` before `electron-vite build`, ensuring the packaged extensions are available for bundling.
+The main `pnpm build` command runs `build:extensions` before `electron-vite build`, ensuring the packaged extensions are available for bundling.
 
 ## Adding a New Extension
 
 1. Create a new directory under `extensions/` (e.g., `extensions/my-extension/`)
 2. Add required files:
    - `package.json` with VS Code extension manifest (must include `publisher`, `name`, `version`)
-   - `extension.js` or TypeScript source
+   - `src/extension.ts` - TypeScript source (all extensions must use TypeScript)
+   - `vite.config.ts` - Vite config that merges with `../vite.config.ext.ts`
    - `.vscodeignore` to exclude dev files from the package
-   - `npm run build` script to compile the extension
-3. Run `npm run build:extensions` - the new extension will be auto-discovered and built
+3. Run `pnpm build:extensions` - the new extension will be auto-discovered and built
+
+**Note:** All extensions must use TypeScript with strict type checking. JavaScript is not supported.
 
 ## External Extensions (external.json)
 

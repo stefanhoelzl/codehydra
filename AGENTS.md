@@ -255,7 +255,7 @@ VS Code setup assets are stored as dedicated files instead of inline code.
 | `extensions/external.json` | External extension IDs and versions (downloaded at build time) |
 | `extensions/sidekick/`     | Custom extension source (packaged to .vsix at build)           |
 
-**Note:** There are no `settings.json` or `keybindings.json` asset files. VS Code settings with `window` or `resource` scope can be configured via the sidekick extension's `configurationDefaults` in `package.json`. Application-scope settings (like telemetry and workspace trust) cannot be set by extensions.
+**Note:** All extensions must use TypeScript (not JavaScript/JSDoc). There are no `settings.json` or `keybindings.json` asset files. VS Code settings with `window` or `resource` scope can be configured via the sidekick extension's `configurationDefaults` in `package.json`. Application-scope settings (like telemetry and workspace trust) cannot be set by extensions.
 
 ### Build Process
 

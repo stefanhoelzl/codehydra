@@ -8,8 +8,6 @@
     "declaration": false,
     "noEmit": true,
     "verbatimModuleSyntax": false,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
     "exactOptionalPropertyTypes": false,
     "types": ["node", "vscode"]
   },

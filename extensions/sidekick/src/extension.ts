@@ -1,54 +1,20 @@
-const vscode = require("vscode");
-const path = require("path");
-const { io } = require("socket.io-client");
+import * as vscode from "vscode";
+import * as path from "path";
+import { io } from "socket.io-client";
+import type { CodehydraApi } from "../api";
+import type {
+  TypedSocket,
+  PluginResult,
+  PluginConfig,
+  CommandRequest,
+  LogContext,
+  WorkspaceCreateRequest,
+  InitialPrompt,
+} from "./types";
 
-/**
- * @typedef {Object} CommandRequest
- * @property {string} command - VS Code command identifier
- * @property {unknown[]} [args] - Optional arguments to pass to the command
- */
-
-/**
- * @typedef {Object} PluginResultSuccess
- * @property {true} success
- * @property {unknown} data
- */
-
-/**
- * @typedef {Object} PluginResultError
- * @property {false} success
- * @property {string} error
- */
-
-/**
- * @typedef {PluginResultSuccess | PluginResultError} PluginResult
- */
-
-/**
- * @typedef {Object} WorkspaceStatus
- * @property {boolean} isDirty
- * @property {{ type: 'none' } | { type: 'idle' | 'busy' | 'mixed', counts: { idle: number, busy: number, total: number } }} agent
- */
-
-/**
- * @typedef {Object} SetMetadataRequest
- * @property {string} key
- * @property {string | null} value
- */
-
-/**
- * @typedef {Object} PluginConfig
- * @property {boolean} isDevelopment
- */
-
-/** @type {import('socket.io-client').Socket | null} */
-let socket = null;
-
-/** @type {boolean} */
+let socket: TypedSocket | null = null;
 let isConnected = false;
-
-/** @type {Array<{ resolve: () => void, reject: (error: Error) => void }>} */
-let pendingReady = [];
+let pendingReady: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
 
 /** Timeout for API calls in milliseconds (matches COMMAND_TIMEOUT_MS) */
 const API_TIMEOUT_MS = 10000;
@@ -60,20 +26,11 @@ const TERMINAL_KILL_TIMEOUT_MS = 5000;
 // Development Mode State Variables
 // ============================================================================
 
-/** @type {boolean} */
 let isDevelopment = false;
-
-/** @type {vscode.OutputChannel | null} */
-let debugOutputChannel = null;
-
-/** @type {string} */
+let debugOutputChannel: vscode.OutputChannel | null = null;
 let currentWorkspacePath = "";
-
-/** @type {number | null} */
-let currentPluginPort = null;
-
-/** @type {vscode.ExtensionContext | null} */
-let extensionContext = null;
+let currentPluginPort: number | null = null;
+let extensionContext: vscode.ExtensionContext | null = null;
 
 // ============================================================================
 // API Utilities
@@ -81,12 +38,8 @@ let extensionContext = null;
 
 /**
  * Emit an API call with timeout handling.
- * @template T
- * @param {string} event - Event name
- * @param {unknown} [request] - Request payload (optional for parameterless calls)
- * @returns {Promise<T>} Resolves with data on success, rejects with Error on failure
  */
-function emitApiCall(event, request) {
+function emitApiCall<T>(event: string, request?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!socket) {
       reject(new Error("Not connected to CodeHydra"));
@@ -98,10 +51,7 @@ function emitApiCall(event, request) {
       reject(new Error(`API call timed out: ${event}`));
     }, API_TIMEOUT_MS);
 
-    /**
-     * @param {PluginResult} result
-     */
-    const handleResult = (result) => {
+    const handleResult = (result: PluginResult<T>): void => {
       clearTimeout(timeout);
       if (result.success) {
         resolve(result.data);
@@ -111,9 +61,14 @@ function emitApiCall(event, request) {
     };
 
     // Emit with or without request based on event type
+    // Socket.IO's TypedSocket requires exact event name literals for type inference.
+    // This generic wrapper uses a dynamic event string, which TypeScript cannot verify
+    // against the ClientToServerEvents interface at compile time.
     if (request !== undefined) {
+      // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate dynamic event names
       socket.emit(event, request, handleResult);
     } else {
+      // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate dynamic event names
       socket.emit(event, handleResult);
     }
   });
@@ -126,27 +81,14 @@ function emitApiCall(event, request) {
 /**
  * CodeHydra API for VS Code extensions.
  * Provides access to workspace status and metadata.
- *
- * @example
- * ```javascript
- * const ext = vscode.extensions.getExtension('codehydra.sidekick');
- * const api = ext?.exports?.codehydra;
- * if (!api) throw new Error('codehydra extension not available');
- *
- * await api.whenReady();
- * const status = await api.workspace.getStatus();
- * const metadata = await api.workspace.getMetadata();
- * await api.workspace.setMetadata('note', 'Working on feature X');
- * ```
  */
 const codehydraApi = {
   /**
    * Wait for the extension to be connected to CodeHydra.
    * Resolves immediately if already connected.
-   * @returns {Promise<void>}
    */
-  whenReady() {
-    if (isConnected && socket && socket.connected) {
+  whenReady(): Promise<void> {
+    if (isConnected && socket?.connected) {
       return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
@@ -160,52 +102,27 @@ const codehydraApi = {
    * Methods are fire-and-forget and gracefully handle disconnected state.
    */
   log: {
-    /**
-     * Log a silly message (most verbose).
-     * @param {string} message - Log message
-     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
-     */
-    silly(message, context) {
+    silly(message: string, context?: LogContext): void {
       if (!socket?.connected) return;
       socket.emit("api:log", { level: "silly", message, context });
     },
 
-    /**
-     * Log a debug message.
-     * @param {string} message - Log message
-     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
-     */
-    debug(message, context) {
+    debug(message: string, context?: LogContext): void {
       if (!socket?.connected) return;
       socket.emit("api:log", { level: "debug", message, context });
     },
 
-    /**
-     * Log an info message.
-     * @param {string} message - Log message
-     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
-     */
-    info(message, context) {
+    info(message: string, context?: LogContext): void {
       if (!socket?.connected) return;
       socket.emit("api:log", { level: "info", message, context });
     },
 
-    /**
-     * Log a warning message.
-     * @param {string} message - Log message
-     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
-     */
-    warn(message, context) {
+    warn(message: string, context?: LogContext): void {
       if (!socket?.connected) return;
       socket.emit("api:log", { level: "warn", message, context });
     },
 
-    /**
-     * Log an error message.
-     * @param {string} message - Log message
-     * @param {Record<string, string | number | boolean | null>} [context] - Optional context data
-     */
-    error(message, context) {
+    error(message: string, context?: LogContext): void {
       if (!socket?.connected) return;
       socket.emit("api:log", { level: "error", message, context });
     },
@@ -216,72 +133,27 @@ const codehydraApi = {
    * All methods require the connection to be established (use whenReady() first).
    */
   workspace: {
-    /**
-     * Get the current status of this workspace.
-     * @returns {Promise<WorkspaceStatus>} Workspace status including dirty flag and agent status
-     */
     getStatus() {
       return emitApiCall("api:workspace:getStatus");
     },
 
-    /**
-     * Get the OpenCode server port for this workspace.
-     * Returns the port number if the OpenCode server is running, or null if not running.
-     *
-     * @returns {Promise<number | null>} Port number or null if server not running
-     * @example
-     * ```javascript
-     * const port = await api.workspace.getOpencodePort();
-     * if (port !== null) {
-     *   console.log(`OpenCode server running on port ${port}`);
-     *   // Connect to OpenCode server at http://localhost:${port}
-     * }
-     * ```
-     */
     getOpencodePort() {
-      return emitApiCall("api:workspace:getOpencodePort");
+      return emitApiCall<number | null>("api:workspace:getOpencodePort");
     },
 
-    /**
-     * Restart the OpenCode server for this workspace, preserving the same port.
-     * Useful for reloading configuration changes.
-     *
-     * @returns {Promise<number>} Port number of the restarted server
-     * @example
-     * ```javascript
-     * const port = await api.workspace.restartOpencodeServer();
-     * console.log(`OpenCode server restarted on port ${port}`);
-     * ```
-     */
     restartOpencodeServer() {
-      return emitApiCall("api:workspace:restartOpencodeServer");
+      return emitApiCall<number>("api:workspace:restartOpencodeServer");
     },
 
-    /**
-     * Get all metadata for this workspace.
-     * @returns {Promise<Record<string, string>>} Metadata record (always includes 'base' key)
-     */
     getMetadata() {
-      return emitApiCall("api:workspace:getMetadata");
+      return emitApiCall<Record<string, string>>("api:workspace:getMetadata");
     },
 
-    /**
-     * Set or delete a metadata value for this workspace.
-     * @param {string} key - Metadata key (must match /^[A-Za-z][A-Za-z0-9-]*$/)
-     * @param {string | null} value - Value to set, or null to delete the key
-     * @returns {Promise<void>}
-     */
-    setMetadata(key, value) {
-      return emitApiCall("api:workspace:setMetadata", { key, value });
+    setMetadata(key: string, value: string | null) {
+      return emitApiCall<void>("api:workspace:setMetadata", { key, value });
     },
 
-    /**
-     * Execute a VS Code command in this workspace.
-     * @param {string} command - VS Code command identifier (e.g., "workbench.action.files.save")
-     * @param {unknown[]} [args] - Optional arguments to pass to the command
-     * @returns {Promise<unknown>} The command's return value, or undefined if command returns nothing
-     */
-    executeCommand(command, args) {
+    executeCommand(command: string, args?: readonly unknown[]) {
       // Client-side validation
       if (typeof command !== "string" || command.trim().length === 0) {
         return Promise.reject(new Error("Command must be a non-empty string"));
@@ -289,17 +161,14 @@ const codehydraApi = {
       if (args !== undefined && !Array.isArray(args)) {
         return Promise.reject(new Error("Args must be an array"));
       }
-      return emitApiCall("api:workspace:executeCommand", { command, args });
+      return emitApiCall<unknown>("api:workspace:executeCommand", { command, args });
     },
 
-    /**
-     * Create a new workspace in the same project as the current workspace.
-     * @param {string} name - Name for the new workspace (becomes branch name)
-     * @param {string} base - Base branch to create the workspace from
-     * @param {{ initialPrompt?: string | { prompt: string; agent?: string }; keepInBackground?: boolean }} [options] - Optional creation options
-     * @returns {Promise<{ name: string; path: string; base: string }>} The created workspace
-     */
-    create(name, base, options) {
+    create(
+      name: string,
+      base: string,
+      options?: { initialPrompt?: InitialPrompt; keepInBackground?: boolean }
+    ) {
       // Client-side validation
       if (typeof name !== "string" || name.trim().length === 0) {
         return Promise.reject(new Error("Name must be a non-empty string"));
@@ -326,39 +195,31 @@ const codehydraApi = {
         }
       }
       // Build request
-      const request = { name, base };
-      if (options?.initialPrompt !== undefined) {
-        request.initialPrompt = options.initialPrompt;
-      }
-      if (options?.keepInBackground !== undefined) {
-        request.keepInBackground = options.keepInBackground;
-      }
+      const request: WorkspaceCreateRequest = {
+        name,
+        base,
+        initialPrompt: options?.initialPrompt,
+        keepInBackground: options?.keepInBackground,
+      };
       return emitApiCall("api:workspace:create", request);
     },
   },
-};
+  // `satisfies` ensures the implementation matches the public CodehydraApi contract
+  // while preserving the literal types for internal use (better inference than `as`)
+} satisfies CodehydraApi;
 
 // ============================================================================
 // Debug Commands (Development Only)
 // ============================================================================
 
-/**
- * Get or create the debug output channel.
- * @returns {vscode.OutputChannel}
- */
-function getDebugOutputChannel() {
+function getDebugOutputChannel(): vscode.OutputChannel {
   if (!debugOutputChannel) {
     debugOutputChannel = vscode.window.createOutputChannel("CodeHydra Debug");
   }
   return debugOutputChannel;
 }
 
-/**
- * Safely format a result for display in output channel.
- * @param {unknown} result
- * @returns {string}
- */
-function formatResult(result) {
+function formatResult(result: unknown): string {
   try {
     return JSON.stringify(result, null, 2);
   } catch (e) {
@@ -366,12 +227,7 @@ function formatResult(result) {
   }
 }
 
-/**
- * Log a successful debug command result to the output channel.
- * @param {string} name - Command name
- * @param {unknown} data - Result data
- */
-function logDebugResult(name, data) {
+function logDebugResult(name: string, data: unknown): void {
   const channel = getDebugOutputChannel();
   const timestamp = new Date().toISOString();
   channel.appendLine(`=== ${name} [${timestamp}] ===`);
@@ -380,12 +236,7 @@ function logDebugResult(name, data) {
   channel.show(true); // Show but don't steal focus
 }
 
-/**
- * Log a debug command error to the output channel.
- * @param {string} name - Command name
- * @param {Error} err - The error
- */
-function logDebugError(name, err) {
+function logDebugError(name: string, err: Error): void {
   const channel = getDebugOutputChannel();
   const timestamp = new Date().toISOString();
   channel.appendLine(`=== ${name} [${timestamp}] ERROR ===`);
@@ -394,12 +245,7 @@ function logDebugError(name, err) {
   channel.show(true);
 }
 
-/**
- * Run a debug command and handle result/error logging.
- * @param {string} name - Command name for display
- * @param {() => Promise<unknown>} fn - Async function to execute
- */
-async function runDebugCommand(name, fn) {
+async function runDebugCommand(name: string, fn: () => Promise<unknown>): Promise<void> {
   try {
     const result = await fn();
     logDebugResult(name, result);
@@ -408,11 +254,7 @@ async function runDebugCommand(name, fn) {
   }
 }
 
-/**
- * Register debug commands for development mode.
- * @param {vscode.ExtensionContext} context
- */
-function registerDebugCommands(context) {
+function registerDebugCommands(context: vscode.ExtensionContext): void {
   // Debug: Get Workspace Status
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.debug.getStatus", async () => {
@@ -455,12 +297,7 @@ function registerDebugCommands(context) {
 // Terminal Cleanup
 // ============================================================================
 
-/**
- * Kill all terminals and wait for them to close.
- * Returns after all terminals are closed OR after timeout.
- * @returns {Promise<void>}
- */
-async function killAllTerminalsAndWait() {
+async function killAllTerminalsAndWait(): Promise<void> {
   const terminals = [...vscode.window.terminals];
 
   if (terminals.length === 0) {
@@ -471,24 +308,22 @@ async function killAllTerminalsAndWait() {
   codehydraApi.log.debug("Killing terminals", { count: terminals.length });
   const pendingTerminals = new Set(terminals);
 
-  await new Promise((resolve) => {
+  await new Promise<void>((resolve) => {
     let resolved = false;
 
-    const done = () => {
+    const done = (): void => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeout);
-      disposable.dispose(); // Clean up listener
+      disposable.dispose();
       resolve();
     };
 
-    // Set up timeout - proceed anyway after 5 seconds
     const timeout = setTimeout(() => {
       codehydraApi.log.warn("Terminal kill timeout", { remaining: pendingTerminals.size });
       done();
     }, TERMINAL_KILL_TIMEOUT_MS);
 
-    // IMPORTANT: Set up listener BEFORE disposing terminals to avoid race condition
     const disposable = vscode.window.onDidCloseTerminal((closedTerminal) => {
       pendingTerminals.delete(closedTerminal);
       codehydraApi.log.debug("Terminal closed", { remaining: pendingTerminals.size });
@@ -498,12 +333,10 @@ async function killAllTerminalsAndWait() {
       }
     });
 
-    // Dispose all terminals AFTER listener is set up
     for (const terminal of terminals) {
       terminal.dispose();
     }
 
-    // Check in case all terminals closed synchronously (unlikely but safe)
     if (pendingTerminals.size === 0) {
       codehydraApi.log.debug("All terminals closed (sync)");
       done();
@@ -515,35 +348,24 @@ async function killAllTerminalsAndWait() {
 // PluginServer Connection
 // ============================================================================
 
-/**
- * Connect to the CodeHydra PluginServer.
- * @param {number} port - Port number to connect to
- * @param {string} workspacePath - Normalized workspace path
- */
-function connectToPluginServer(port, workspacePath) {
-  // Store for debug commands
+function connectToPluginServer(port: number, workspacePath: string): void {
   currentWorkspacePath = workspacePath;
   currentPluginPort = port;
 
-  const url = `http://localhost:${port}`;
+  const url = `http://127.0.0.1:${port}`;
   socket = io(url, {
     transports: ["websocket"],
     auth: {
       workspacePath: workspacePath,
     },
-    // Exponential backoff reconnection
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
     reconnectionAttempts: Infinity,
-    // Don't connect until all handlers are registered
     autoConnect: false,
-  });
+  }) as TypedSocket;
 
-  // Handle config event - must be registered before socket.connect() is called.
-  // The server emits "config" immediately after connection validation.
-  socket.on("config", (config) => {
-    // Runtime validation - silently ignore invalid config
+  socket.on("config", (config: PluginConfig) => {
     if (typeof config !== "object" || config === null) {
       return;
     }
@@ -554,8 +376,7 @@ function connectToPluginServer(port, workspacePath) {
     isDevelopment = config.isDevelopment;
     codehydraApi.log.debug("Config received", { isDevelopment });
 
-    // Set context for command enablement (enables commands in Command Palette)
-    vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
+    void vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
 
     if (isDevelopment && extensionContext) {
       registerDebugCommands(extensionContext);
@@ -566,14 +387,12 @@ function connectToPluginServer(port, workspacePath) {
     isConnected = true;
     codehydraApi.log.info("Connected to PluginServer");
 
-    // Resolve all pending whenReady() promises
     const pending = pendingReady;
     pendingReady = [];
     for (const { resolve } of pending) {
       resolve();
     }
 
-    // Set opencode port env var for terminals
     codehydraApi.workspace
       .getOpencodePort()
       .then((port) => {
@@ -585,7 +404,7 @@ function connectToPluginServer(port, workspacePath) {
           codehydraApi.log.debug("Set CODEHYDRA_OPENCODE_PORT", { port });
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         const error = err instanceof Error ? err.message : String(err);
         codehydraApi.log.warn("Failed to get opencode port", { error });
       });
@@ -598,12 +417,9 @@ function connectToPluginServer(port, workspacePath) {
 
   socket.on("connect_error", (err) => {
     codehydraApi.log.error("Connection error", { error: err.message });
-    // Note: We don't reject pending promises here because Socket.IO will retry
-    // Only if the connection is permanently failed should we reject
   });
 
-  // Handle command requests from CodeHydra
-  socket.on("command", async (request, ack) => {
+  socket.on("command", async (request: CommandRequest, ack) => {
     codehydraApi.log.debug("Command received", { command: request.command });
 
     try {
@@ -618,15 +434,11 @@ function connectToPluginServer(port, workspacePath) {
     }
   });
 
-  // Handle shutdown request for workspace deletion
-  // This terminates the extension host to release file handles
   socket.on("shutdown", async (ack) => {
     codehydraApi.log.info("Shutdown received");
 
-    // Step 1: Kill all terminals and wait for them to close
     await killAllTerminalsAndWait();
 
-    // Step 2: Graceful cleanup - remove workspace folders (releases file watchers)
     try {
       const folders = vscode.workspace.workspaceFolders;
       if (folders && folders.length > 0) {
@@ -636,18 +448,14 @@ function connectToPluginServer(port, workspacePath) {
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       codehydraApi.log.error("Graceful shutdown failed", { error });
-      // Continue anyway - we're exiting
     }
 
-    // Send ack before exit
     ack({ success: true, data: undefined });
 
-    // Use setImmediate to allow ack to flush before exit
     codehydraApi.log.info("Exiting extension host");
     setImmediate(() => process.exit(0));
   });
 
-  // All handlers registered, now connect
   socket.connect();
 }
 
@@ -655,62 +463,49 @@ function connectToPluginServer(port, workspacePath) {
 // Extension Lifecycle
 // ============================================================================
 
-/**
- * @param {vscode.ExtensionContext} context
- * @returns {{ codehydra: typeof codehydraApi }}
- */
-function activate(context) {
-  // Store context for debug command registration
+export function activate(context: vscode.ExtensionContext): { codehydra: typeof codehydraApi } {
   extensionContext = context;
 
-  // Register user-facing commands (always available)
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.restartOpencodeServer", async () => {
       try {
         const port = await codehydraApi.workspace.restartOpencodeServer();
-        vscode.window.showInformationMessage(`OpenCode server restarted on port ${port}`);
+        await vscode.window.showInformationMessage(`OpenCode server restarted on port ${port}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        vscode.window.showErrorMessage(`Failed to restart OpenCode server: ${message}`);
+        await vscode.window.showErrorMessage(`Failed to restart OpenCode server: ${message}`);
       }
     })
   );
 
-  // NOTE: Startup commands (close sidebars, open terminal, etc.) are now handled
-  // by CodeHydra main process via PluginServer.onConnect() callback when this
-  // extension connects. See src/main/index.ts startServices() and
-  // src/services/plugin-server/startup-commands.ts for implementation.
-
-  // Get plugin port from environment
   const pluginPortStr = process.env.CODEHYDRA_PLUGIN_PORT;
   if (!pluginPortStr) {
-    // Plugin communication disabled - return API anyway (methods will reject with "Not connected" error)
     return { codehydra: codehydraApi };
   }
 
   const pluginPort = parseInt(pluginPortStr, 10);
   if (isNaN(pluginPort) || pluginPort <= 0 || pluginPort > 65535) {
-    // Invalid port - return API anyway
     return { codehydra: codehydraApi };
   }
 
-  // Get workspace path
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
-    // No workspace folder open - return API anyway
     return { codehydra: codehydraApi };
   }
 
-  const workspacePath = path.normalize(workspaceFolders[0].uri.fsPath);
+  // Handle noUncheckedIndexedAccess
+  const firstFolder = workspaceFolders[0];
+  if (!firstFolder) {
+    return { codehydra: codehydraApi };
+  }
+  const workspacePath = path.normalize(firstFolder.uri.fsPath);
 
-  // Connect to PluginServer
   connectToPluginServer(pluginPort, workspacePath);
 
-  // Return the API for other extensions to use
   return { codehydra: codehydraApi };
 }
 
-function deactivate() {
+export function deactivate(): void {
   if (socket) {
     codehydraApi.log.info("Deactivating");
     socket.disconnect();
@@ -718,36 +513,25 @@ function deactivate() {
   }
   isConnected = false;
 
-  // Clear environment variable collection (removes CODEHYDRA_OPENCODE_PORT from terminals)
   if (extensionContext) {
     extensionContext.environmentVariableCollection.clear();
   }
 
-  // Dispose output channel
   if (debugOutputChannel) {
     debugOutputChannel.dispose();
     debugOutputChannel = null;
   }
 
-  // Note: Debug commands registered via registerDebugCommands() are automatically
-  // disposed when the extension deactivates because they were added to context.subscriptions.
-  // No explicit cleanup is needed for them.
+  void vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", false);
 
-  // Clear development context
-  vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", false);
-
-  // Clear state
   extensionContext = null;
   isDevelopment = false;
   currentWorkspacePath = "";
   currentPluginPort = null;
 
-  // Reject any pending whenReady() promises
   const pending = pendingReady;
   pendingReady = [];
   for (const { reject } of pending) {
     reject(new Error("Extension deactivating"));
   }
 }
-
-module.exports = { activate, deactivate };

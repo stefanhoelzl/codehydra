@@ -512,10 +512,9 @@ export class DictationController implements vscode.Disposable {
       case "provider":
         message = `Error from speech service. ${error.message}`;
         break;
-      default: {
-        const _exhaustive: never = error;
-        message = `Unknown error. ${(error as DictationError).message}`;
-      }
+      default:
+        // Exhaustive check: TypeScript errors if not all cases are handled
+        message = `Unknown error. ${(error as never as DictationError).message}`;
     }
 
     // Log error to panel
