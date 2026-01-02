@@ -1,19 +1,9 @@
 name: Setup
-description: Setup pnpm with caching and platform-specific dependencies
+description: Setup pnpm with caching
 
 runs:
   using: composite
   steps:
-    - uses: awalsh128/cache-apt-pkgs-action@v1
-      with:
-        packages: libkrb5-dev
-        version: 1.0
-      if: runner.os == 'Linux'
-
-    - run: echo "C:\Program Files\Git\bin" >> $env:GITHUB_PATH
-      shell: pwsh
-      if: runner.os == 'Windows'
-
     - uses: pnpm/action-setup@v4
 
     - id: pnpm-cache
