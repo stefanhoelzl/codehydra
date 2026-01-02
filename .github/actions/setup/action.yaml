@@ -1,0 +1,31 @@
+name: Setup
+description: Setup pnpm with caching and platform-specific dependencies
+
+runs:
+  using: composite
+  steps:
+    - uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: libkrb5-dev
+        version: 1.0
+      if: runner.os == 'Linux'
+
+    - run: echo "C:\Program Files\Git\bin" >> $env:GITHUB_PATH
+      shell: pwsh
+      if: runner.os == 'Windows'
+
+    - uses: pnpm/action-setup@v4
+
+    - id: pnpm-cache
+      shell: bash
+      run: echo "STORE_PATH=$(pnpm --silent store path)" >> $GITHUB_OUTPUT
+
+    - uses: actions/cache@v4
+      with:
+        path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+
+    - run: pnpm install --frozen-lockfile
+      shell: bash

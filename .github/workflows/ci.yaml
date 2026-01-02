@@ -16,21 +16,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install kerberos dev dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libkrb5-dev
-
-      - uses: pnpm/action-setup@v4
-        with:
-          cache: true
-
-      # Add Git Bash to PATH on Windows so code-server's postinstall.sh can run
-      - name: Add Git Bash to PATH (Windows)
-        if: runner.os == 'Windows'
-        run: echo "C:\Program Files\Git\bin" >> $env:GITHUB_PATH
-
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - run: pnpm validate
       - run: pnpm test:boundary
@@ -39,8 +25,7 @@ jobs:
 
       - run: git diff --exit-code
 
-      - name: Rename Windows output for consistent naming
-        if: runner.os == 'Windows'
+      - if: runner.os == 'Windows'
         run: mv dist/win-unpacked dist/CodeHydra-win
 
       - uses: actions/upload-artifact@v4
@@ -70,12 +55,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          cache: true
-
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - run: pnpm site:build
 
