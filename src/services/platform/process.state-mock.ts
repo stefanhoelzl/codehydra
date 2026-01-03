@@ -377,7 +377,16 @@ function matchesValue(actual: unknown, expected: unknown): boolean {
     const matcher = expected as { asymmetricMatch: (actual: unknown) => boolean };
     return matcher.asymmetricMatch(actual);
   }
-  // Direct equality
+
+  // Array comparison - compare element by element
+  if (Array.isArray(expected) && Array.isArray(actual)) {
+    if (actual.length !== expected.length) {
+      return false;
+    }
+    return expected.every((exp, i) => matchesValue(actual[i], exp));
+  }
+
+  // Direct equality for primitives
   return actual === expected;
 }
 
