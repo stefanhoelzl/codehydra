@@ -312,10 +312,6 @@ export class VscodeSetupService implements IVscodeSetup {
       }
     }
 
-    // Create wrapper scripts for the binaries
-    this.logger?.debug("Creating wrapper scripts", {});
-    await this.binaryDownloadService.createWrapperScripts();
-
     return { success: true };
   }
 

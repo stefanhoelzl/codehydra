@@ -43,11 +43,6 @@ export interface BinaryDownloadService {
    * @returns Absolute path to the binary executable
    */
   getBinaryPath(binary: BinaryType): string;
-
-  /**
-   * Create wrapper scripts in binDir for all installed binaries.
-   */
-  createWrapperScripts(): Promise<void>;
 }
 
 /**
@@ -156,31 +151,6 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     const destDir = this.getBinaryDir(binary);
     const relativePath = config.extractedBinaryPath(platform);
     return path.join(destDir, relativePath);
-  }
-
-  async createWrapperScripts(): Promise<void> {
-    const binDir = this.pathProvider.binDir;
-    this.logger?.debug("Creating wrapper scripts", { binDir: binDir.toString() });
-    await this.fileSystemLayer.mkdir(binDir, { recursive: true });
-
-    const platform = this.platformInfo.platform;
-    const isWindows = platform === "win32";
-
-    // Create wrapper scripts for both binaries
-    for (const binary of ["code-server", "opencode"] as const) {
-      const binaryPath = this.getBinaryPath(binary);
-      const scriptName = binary + (isWindows ? ".cmd" : "");
-      const scriptPath = path.join(binDir.toString(), scriptName);
-
-      const content = isWindows
-        ? this.createWindowsWrapper(binaryPath)
-        : this.createUnixWrapper(binaryPath);
-
-      await this.fileSystemLayer.writeFile(scriptPath, content);
-
-      // Make executable on Unix (no-op on Windows)
-      await this.fileSystemLayer.makeExecutable(scriptPath);
-    }
   }
 
   /**
@@ -299,25 +269,5 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     } catch {
       // Ignore permission errors - the file might already be executable
     }
-  }
-
-  /**
-   * Create a Unix shell wrapper script.
-   */
-  private createUnixWrapper(binaryPath: string): string {
-    return `#!/bin/sh
-exec "${binaryPath}" "$@"
-`;
-  }
-
-  /**
-   * Create a Windows batch wrapper script.
-   */
-  private createWindowsWrapper(binaryPath: string): string {
-    // Use forward slashes in Windows paths for cmd compatibility
-    const normalizedPath = binaryPath.replace(/\//g, "\\");
-    return `@echo off
-"${normalizedPath}" %*
-`;
   }
 }

@@ -35,14 +35,12 @@ function createMockBinaryDownloadService(
   overrides?: Partial<{
     isInstalled: (binary: "code-server" | "opencode") => Promise<boolean>;
     download: (binary: "code-server" | "opencode") => Promise<void>;
-    createWrapperScripts: () => Promise<void>;
     getBinaryPath: (binary: "code-server" | "opencode") => string;
   }>
 ): BinaryDownloadService {
   return {
     isInstalled: overrides?.isInstalled ?? vi.fn().mockResolvedValue(false),
     download: overrides?.download ?? vi.fn().mockResolvedValue(undefined),
-    createWrapperScripts: overrides?.createWrapperScripts ?? vi.fn().mockResolvedValue(undefined),
     getBinaryPath:
       overrides?.getBinaryPath ?? vi.fn().mockImplementation((binary) => `/mock/${binary}/bin`),
   };
@@ -650,9 +648,6 @@ describe("VscodeSetupService", () => {
         download: vi.fn().mockImplementation(async (binary) => {
           downloadOrder.push(`download:${binary}`);
         }),
-        createWrapperScripts: vi.fn().mockImplementation(async () => {
-          downloadOrder.push("createWrapperScripts");
-        }),
       });
 
       mockFs = createFileSystemMock({
@@ -682,11 +677,7 @@ describe("VscodeSetupService", () => {
 
       expect(result).toEqual({ success: true });
       // Verify binaries are downloaded before extensions (using preflight result)
-      expect(downloadOrder).toEqual([
-        "download:code-server",
-        "download:opencode",
-        "createWrapperScripts",
-      ]);
+      expect(downloadOrder).toEqual(["download:code-server", "download:opencode"]);
       // Note: isInstalled is NOT called during setup when preflight is passed
       // The preflight result already contains missingBinaries info
     });
@@ -695,7 +686,6 @@ describe("VscodeSetupService", () => {
       const mockBinaryService = createMockBinaryDownloadService({
         isInstalled: vi.fn().mockResolvedValue(true), // Not used when preflight passed
         download: vi.fn(),
-        createWrapperScripts: vi.fn(),
       });
 
       mockFs = createFileSystemMock({
@@ -738,15 +728,12 @@ describe("VscodeSetupService", () => {
 
       // Should NOT download when preflight says no binaries missing
       expect(mockBinaryService.download).not.toHaveBeenCalled();
-      // Should still create wrapper scripts
-      expect(mockBinaryService.createWrapperScripts).toHaveBeenCalled();
     });
 
     it("returns error when binary download fails", async () => {
       const mockBinaryService = createMockBinaryDownloadService({
         isInstalled: vi.fn().mockResolvedValue(false),
         download: vi.fn().mockRejectedValue(new Error("Network timeout")),
-        createWrapperScripts: vi.fn(),
       });
 
       mockFs = createFileSystemMock({
@@ -777,7 +764,6 @@ describe("VscodeSetupService", () => {
       const mockBinaryService = createMockBinaryDownloadService({
         isInstalled: vi.fn().mockResolvedValue(false),
         download: vi.fn().mockResolvedValue(undefined),
-        createWrapperScripts: vi.fn().mockResolvedValue(undefined),
       });
 
       mockFs = createFileSystemMock({
