@@ -975,3 +975,126 @@ For bug fixes during cleanup:
 **Recommended**: Use `pnpm validate:fix` to auto-fix formatting/linting issues before validation. This saves cycles on small errors.
 
 Run all checks before marking any task complete.
+
+---
+
+## Feature Agent Workflow
+
+The `@feature` agent orchestrates the complete feature lifecycle from planning to merge.
+
+### Plan Status Transitions
+
+| Status                  | Set By     | When                                                |
+| ----------------------- | ---------- | --------------------------------------------------- |
+| `REVIEW_PENDING`        | @feature   | Plan created                                        |
+| `APPROVED`              | @implement | Starting implementation                             |
+| `IMPLEMENTATION_REVIEW` | @implement | Implementation complete, ready for review & testing |
+| `COMPLETED`             | @general   | User accepted, committed                            |
+
+### Workflow Overview
+
+```
+PLANNING → Write plan → Ask reviewers → User approves → Invoke reviewers (parallel)
+                                                              │
+                              ┌───────────────────────────────┘
+                              ▼
+                     Reviews complete → Summarize with grades → Fix issues
+                              │
+                              ▼
+                     @implement → @implementation-review → USER_TESTING
+                              │
+                              ▼
+                     User accepts → @general commits → /ship
+                              │
+                        ┌─────┴─────┬─────────┐
+                        ▼           ▼         ▼
+                     MERGED     FAILED    TIMEOUT
+                        │           │         │
+                        ▼           ▼         ▼
+                   Delete ws   User reviews  User decides
+```
+
+### /ship Command
+
+The `/ship` command creates a PR with auto-merge and waits for merge queue:
+
+1. Validates clean working tree (fails if uncommitted changes)
+2. Checks for existing PR (idempotent - resumes polling if PR exists)
+3. Rebases onto target branch
+4. Creates PR with conventional commit title
+5. Enables auto-merge with merge (not squash)
+6. Polls for merge (15 minute timeout for merge queue)
+7. Updates local target branch on success
+
+**Outcomes:**
+
+- **MERGED**: PR merged successfully, workspace deleted by default
+- **FAILED**: PR failed (conflicts, checks, etc.) - requires user review
+- **TIMEOUT**: Still processing after 15 min - user decides wait/abort
+
+---
+
+## GitHub Repository Setup
+
+The `/ship` command requires the following GitHub configuration:
+
+### 1. Enable Auto-Delete Branches
+
+Settings → General → "Automatically delete head branches" ✓
+
+### 2. Enable Auto-Merge
+
+Settings → General → "Allow auto-merge" ✓
+
+### 3. Configure Branch Protection (Ruleset)
+
+Settings → Rules → Rulesets → New ruleset
+
+**Ruleset settings:**
+
+- Name: `main-protection`
+- Enforcement status: Active
+- Target branches: Include by pattern → `main`
+
+**Branch rules:**
+
+- ✓ Restrict deletions
+- ✓ Require a pull request before merging
+  - Required approvals: 0 (for automated workflow)
+- ✓ Require status checks to pass before merging
+  - Status checks:
+    - `CI (ubuntu-24.04)`
+    - `CI (windows-2025)`
+  - ✓ Require branches to be up to date before merging
+- ✓ Block force pushes
+- ✓ Require merge queue
+  - Merge method: Merge commit (preserve history)
+  - Build concurrency: 2
+  - Minimum entries to merge: 1
+  - Maximum entries to build: 5
+
+**Recommended merge queue settings for this project:**
+
+- Batch size: 1-2 (small project, fast CI)
+- This minimizes wait time when one PR in a batch fails
+
+### 4. Verify CI Workflow Triggers
+
+Ensure `.github/workflows/ci.yaml` has:
+
+```yaml
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  merge_group:
+
+jobs:
+  ci:
+    if: |
+      github.event_name != 'pull_request' || 
+      github.event.pull_request.head.repo.full_name != github.repository
+```
+
+The `merge_group` trigger is required for merge queue to run CI.
+The `if` condition prevents duplicate CI runs for same-repo PRs.

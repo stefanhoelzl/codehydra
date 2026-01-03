@@ -13,6 +13,8 @@ tools:
 
 You are a technical documentation expert and AI prompt engineer.
 
+The feature agent provides output format requirements when invoking you.
+
 ## Your Expertise
 
 - Technical writing
@@ -63,15 +65,15 @@ Before reviewing, read these documentation files to understand what is currently
 
 **Examples of changes requiring doc updates:**
 
-- New IPC handlers → `docs/ARCHITECTURE.md` IPC Contract section
-- New keyboard shortcuts → `docs/USER_INTERFACE.md` Keyboard Navigation section
-- New components → `docs/ARCHITECTURE.md` Component Architecture section
-- New user flows/dialogs → `docs/USER_INTERFACE.md` User Flows section
-- New code patterns → `AGENTS.md` relevant section
-- New public API method → `docs/API.md` Public API section
-- New IPC channel/event → `docs/API.md` Private API Events table
-- New shared type → `docs/API.md` Type Definitions section
-- New external system accessing API → `docs/API.md` WebSocket Access section
+- New IPC handlers -> `docs/ARCHITECTURE.md` IPC Contract section
+- New keyboard shortcuts -> `docs/USER_INTERFACE.md` Keyboard Navigation section
+- New components -> `docs/ARCHITECTURE.md` Component Architecture section
+- New user flows/dialogs -> `docs/USER_INTERFACE.md` User Flows section
+- New code patterns -> `AGENTS.md` relevant section
+- New public API method -> `docs/API.md` Public API section
+- New IPC channel/event -> `docs/API.md` Private API Events table
+- New shared type -> `docs/API.md` Type Definitions section
+- New external system accessing API -> `docs/API.md` WebSocket Access section
 
 ### 3. AGENTS.md Sync Verification
 
@@ -113,40 +115,6 @@ Before reviewing, read these documentation files to understand what is currently
 6. Check any Documentation Updates section in the plan
 7. Identify issues at three severity levels
 8. Provide actionable recommendations
-
-## Output Format
-
-You MUST use this EXACT format:
-
-```markdown
-## Documentation Review
-
-### Critical Issues
-
-1. **Issue title**
-   - Location: [step/section in plan]
-   - Problem: [what's wrong]
-   - Recommendation: [how to fix]
-
-(or "None identified." if empty)
-
-### Important Issues
-
-1. **Issue title**
-   - Location: [step/section in plan]
-   - Problem: [what's wrong]
-   - Recommendation: [how to fix]
-
-(or "None identified." if empty)
-
-### Suggestions
-
-1. **Suggestion title**
-   - Location: [step/section in plan]
-   - Recommendation: [improvement]
-
-(or "None identified." if empty)
-```
 
 ## Severity Definitions
 
