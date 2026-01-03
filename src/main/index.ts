@@ -19,7 +19,7 @@ import {
   type BuildInfo,
   type LoggingService,
 } from "../services";
-import { VscodeSetupService, WrapperScriptGenerationService } from "../services/vscode-setup";
+import { VscodeSetupService } from "../services/vscode-setup";
 import { ExecaProcessRunner } from "../services/platform/process";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
@@ -172,6 +172,8 @@ function createCodeServerConfig(): CodeServerConfig {
     extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
     userDataDir: pathProvider.vscodeUserDataDir.toNative(),
     binDir: pathProvider.binDir.toNative(),
+    codeServerDir: pathProvider.codeServerDir.toNative(),
+    opencodeDir: pathProvider.opencodeDir.toNative(),
   };
 }
 
@@ -636,26 +638,11 @@ async function bootstrap(): Promise<void> {
     loggingService.createLogger("vscode-setup")
   );
 
-  // 3. Regenerate wrapper scripts on every startup (cheap operation, ~1ms)
-  // This ensures scripts are always fresh and match current binary versions
-  const wrapperScriptService = new WrapperScriptGenerationService(
-    pathProvider,
-    fileSystemLayer,
-    platformInfo,
-    loggingService.createLogger("vscode-setup") // Use vscode-setup logger for wrapper scripts
-  );
-  try {
-    await wrapperScriptService.regenerate();
-  } catch (error) {
-    // Log but don't fail bootstrap - scripts can be regenerated during setup
-    appLogger.warn("Failed to regenerate wrapper scripts", { error: getErrorMessage(error) });
-  }
-
-  // 4. Run preflight to determine if setup is needed
+  // 3. Run preflight to determine if setup is needed
   const preflightResult = await vscodeSetupService.preflight();
   const setupComplete = preflightResult.success && !preflightResult.needsSetup;
 
-  // 5. Create WindowManager with appropriate title and icon
+  // 4. Create WindowManager with appropriate title and icon
   // In dev mode, show branch name: "CodeHydra (branch-name)"
   const windowTitle =
     buildInfo.isDevelopment && buildInfo.gitBranch
@@ -681,12 +668,12 @@ async function bootstrap(): Promise<void> {
     pathProvider.appIconPath.toNative()
   );
 
-  // 6. Create ViewLayer and SessionLayer for ViewManager
+  // 5. Create ViewLayer and SessionLayer for ViewManager
   const viewLogger = loggingService.createLogger("view");
   sessionLayer = new DefaultSessionLayer(viewLogger);
   viewLayer = new DefaultViewLayer(windowLayer, viewLogger);
 
-  // 7. Create ViewManager with port=0 initially
+  // 6. Create ViewManager with port=0 initially
   // Port will be updated when startServices() runs
   viewManager = ViewManager.create({
     windowManager,
@@ -700,14 +687,14 @@ async function bootstrap(): Promise<void> {
     logger: viewLogger,
   });
 
-  // 7. Maximize window after ViewManager subscription is active
+  // 6b. Maximize window after ViewManager subscription is active
   // On Linux, maximize() is async - wait for it to complete before loading UI
   await windowManager.maximizeAsync();
 
   // Capture viewManager for closure (TypeScript narrow refinement doesn't persist)
   const viewManagerRef = viewManager;
 
-  // 8. Initialize bootstrap with API registry and modules
+  // 7. Initialize bootstrap with API registry and modules
   // LifecycleModule is created immediately (handles lifecycle.* IPC)
   // CoreModule and UiModule are created when startServices() calls bootstrapResult.startServices()
   const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
@@ -805,7 +792,7 @@ async function bootstrap(): Promise<void> {
   // Note: IPC handlers for lifecycle.* are now registered by LifecycleModule
   // No need to call registerLifecycleHandlers() separately
 
-  // 10. Services are NOT started here anymore
+  // 8. Services are NOT started here anymore
   // The renderer will call lifecycle.startServices() after loading
   // This allows the UI to display a loading screen during service startup
   if (setupComplete) {
@@ -814,7 +801,7 @@ async function bootstrap(): Promise<void> {
     appLogger.info("Setup required");
   }
 
-  // 11. Load UI layer HTML
+  // 9. Load UI layer HTML
   // Renderer will call lifecycle.getState() in onMount and route based on response
   // Use file:// URL to load local HTML file
   const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
@@ -823,7 +810,7 @@ async function bootstrap(): Promise<void> {
   // Focus UI layer so keyboard shortcuts (Alt+X) work immediately on startup
   viewManager.focusUI();
 
-  // 12. Open DevTools in development only
+  // 10. Open DevTools in development only
   // Note: DevTools not auto-opened to avoid z-order issues on Linux.
   // Use Ctrl+Shift+I to open manually when needed (opens detached).
   if (buildInfo.isDevelopment) {

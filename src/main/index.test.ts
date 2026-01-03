@@ -54,6 +54,8 @@ describe("Main process wiring", () => {
         extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
         userDataDir: pathProvider.vscodeUserDataDir.toNative(),
         binDir: pathProvider.binDir.toNative(),
+        codeServerDir: pathProvider.codeServerDir.toNative(),
+        opencodeDir: pathProvider.opencodeDir.toNative(),
       };
     }
 

@@ -49,6 +49,21 @@ function createMockBinaryDownloadService(
 }
 
 /**
+ * Create mock bin assets directory entries.
+ * These are the wrapper scripts copied from assets/bin to the user's bin dir.
+ */
+function createBinAssetsEntries() {
+  return {
+    "/mock/assets/bin": directory(),
+    "/mock/assets/bin/code": file("#!/bin/sh\nexec code-server"),
+    "/mock/assets/bin/code.cmd": file("@echo off\ncall code-server"),
+    "/mock/assets/bin/opencode": file("#!/bin/sh\nexec opencode.cjs"),
+    "/mock/assets/bin/opencode.cmd": file("@echo off\ncall opencode.cjs"),
+    "/mock/assets/bin/opencode.cjs": file("// opencode wrapper"),
+  };
+}
+
+/**
  * Create default mock manifest.json content (new flat array format).
  */
 function createManifestConfig(): string {
@@ -443,6 +458,7 @@ describe("VscodeSetupService", () => {
           "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
+          ...createBinAssetsEntries(),
         },
       });
       mockProcessRunner = createMockProcessRunner({
@@ -496,6 +512,7 @@ describe("VscodeSetupService", () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock": directory(),
+          ...createBinAssetsEntries(),
         },
       });
 
@@ -510,10 +527,11 @@ describe("VscodeSetupService", () => {
       expect(mockFs).toHaveDirectory("/mock/bin");
     });
 
-    it("generates scripts for current platform", async () => {
+    it("copies scripts from assets to bin directory", async () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock": directory(),
+          ...createBinAssetsEntries(),
         },
       });
 
@@ -525,8 +543,7 @@ describe("VscodeSetupService", () => {
       );
       await service.setupBinDirectory();
 
-      // Should generate code script (opencode may be skipped if not found)
-      // Note: code-server wrapper is not generated - we launch code-server directly
+      // Should copy code script from assets
       expect(mockFs).toHaveFile("/mock/bin/code");
 
       // Scripts should be Unix-style (shebang)
@@ -537,6 +554,7 @@ describe("VscodeSetupService", () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock": directory(),
+          ...createBinAssetsEntries(),
         },
       });
 
@@ -548,15 +566,17 @@ describe("VscodeSetupService", () => {
       );
       await service.setupBinDirectory();
 
-      // Should call makeExecutable for each Unix script (code, and opencode if found)
-      // Note: code-server wrapper is not generated - we launch code-server directly
+      // Should call makeExecutable for each Unix script (code, opencode)
+      // Note: .cjs and .cmd files are not made executable
       expect(mockFs).toBeExecutable("/mock/bin/code");
+      expect(mockFs).toBeExecutable("/mock/bin/opencode");
     });
 
-    it("does not call makeExecutable on Windows", async () => {
+    it("does not call makeExecutable on Windows scripts (.cmd)", async () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock": directory(),
+          ...createBinAssetsEntries(),
         },
       });
 
@@ -578,6 +598,7 @@ describe("VscodeSetupService", () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock/bin": file("not a directory"),
+          ...createBinAssetsEntries(),
         },
       });
 
@@ -601,6 +622,7 @@ describe("VscodeSetupService", () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock": directory(),
+          ...createBinAssetsEntries(),
         },
       });
       const progressCallback = vi.fn();
@@ -641,6 +663,7 @@ describe("VscodeSetupService", () => {
           "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
+          ...createBinAssetsEntries(),
         },
       });
       mockProcessRunner = createMockProcessRunner({
@@ -683,6 +706,7 @@ describe("VscodeSetupService", () => {
           "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
+          ...createBinAssetsEntries(),
         },
       });
       mockProcessRunner = createMockProcessRunner({
@@ -764,6 +788,7 @@ describe("VscodeSetupService", () => {
           "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
+          ...createBinAssetsEntries(),
         },
       });
       mockProcessRunner = createMockProcessRunner({
@@ -804,18 +829,20 @@ describe("VscodeSetupService", () => {
           "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
+          ...createBinAssetsEntries(),
         },
       });
       mockProcessRunner = createMockProcessRunner({
         defaultResult: { stdout: "Extension installed", stderr: "", exitCode: 0 },
       });
 
-      // No binaryDownloadService passed
+      // No BinaryDownloadService - backward compatibility mode
       const service = new VscodeSetupService(
         mockProcessRunner,
         mockPathProvider,
         mockFs,
         mockPlatformInfo
+        // Note: no binaryDownloadService parameter
       );
       const preflight = createFullSetupPreflightResult();
       const result = await service.setup(preflight);

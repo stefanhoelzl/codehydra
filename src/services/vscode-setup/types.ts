@@ -228,29 +228,5 @@ export type PreflightResult =
       readonly error: PreflightError;
     };
 
-// ============================================================================
-// Bin Script Types
-// ============================================================================
-
-/** Paths to target binaries for wrapper script generation */
-export interface BinTargetPaths {
-  /** Path to code-server's remote-cli script (code command) */
-  readonly codeRemoteCli: string;
-  /** Path to opencode binary, or null if not installed */
-  readonly opencodeBinary: string | null;
-  /** Path to bundled Node.js from code-server */
-  readonly bundledNodePath: string;
-}
-
-/** Branded type for script filenames */
-export type ScriptFilename = string & { readonly __brand: "ScriptFilename" };
-
-/** A generated wrapper script ready to write to disk */
-export interface GeneratedScript {
-  /** Filename without path (e.g., "code", "code.cmd") */
-  readonly filename: ScriptFilename;
-  /** Full script content */
-  readonly content: string;
-  /** Whether script needs executable permission (Unix only) */
-  readonly needsExecutable: boolean;
-}
+// Note: Bin script types (BinTargetPaths, ScriptFilename, GeneratedScript) have been
+// removed. CLI wrapper scripts are now static files in resources/bin/ compiled by Vite.

@@ -223,6 +223,10 @@ export class CodeServerManager {
         cleanEnv.CODEHYDRA_PLUGIN_PORT = String(this.config.pluginPort);
       }
 
+      // Set code-server and opencode directories for wrapper scripts
+      cleanEnv.CODEHYDRA_CODE_SERVER_DIR = this.config.codeServerDir;
+      cleanEnv.CODEHYDRA_OPENCODE_DIR = this.config.opencodeDir;
+
       this.process = this.processRunner.run(this.config.binaryPath, args, {
         cwd: this.config.runtimeDir,
         env: cleanEnv,

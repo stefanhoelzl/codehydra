@@ -3,8 +3,7 @@
  */
 
 export { VscodeSetupService } from "./vscode-setup-service";
-export { WrapperScriptGenerationService } from "./wrapper-script-generation-service";
-export { generateScripts } from "./bin-scripts";
+export { generateOpencodeConfigContent } from "./bin-scripts";
 export {
   CURRENT_SETUP_VERSION,
   type IVscodeSetup,
@@ -16,9 +15,6 @@ export {
   type SetupMarker,
   type ProcessRunner,
   type ProcessResult,
-  type BinTargetPaths,
-  type GeneratedScript,
-  type ScriptFilename,
   type ExtensionsManifest,
   type ExtensionConfig,
   type PreflightResult,

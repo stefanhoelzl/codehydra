@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { join } from "node:path";
-import { readFile as nodeReadFile, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { readFile as nodeReadFile, stat, mkdir, copyFile } from "node:fs/promises";
 import { VscodeSetupService } from "./vscode-setup-service";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
@@ -15,6 +15,16 @@ import { SILENT_LOGGER } from "../logging";
 import { createTempDir } from "../test-utils";
 import type { ProcessRunner, ProcessResult } from "./types";
 import type { SpawnedProcess } from "../platform/process";
+
+/**
+ * Path to source bin scripts in resources/bin/.
+ */
+const RESOURCES_BIN_DIR = resolve(__dirname, "../../../resources/bin");
+
+/**
+ * Path to compiled opencode wrapper (built by pnpm build:wrappers).
+ */
+const DIST_BIN_DIR = resolve(__dirname, "../../../dist/bin");
 
 /**
  * Create a mock ProcessRunner for boundary tests.
@@ -32,6 +42,23 @@ function createBoundaryProcessRunner(): ProcessRunner {
   };
 }
 
+/**
+ * Set up bin assets directory with source scripts for testing.
+ * Copies scripts from resources/bin/ and dist/bin/ to the temp assets dir.
+ */
+async function setupBinAssets(binAssetsDir: string): Promise<void> {
+  await mkdir(binAssetsDir, { recursive: true });
+
+  // Copy shell scripts from resources/bin/
+  const shellScripts = ["code", "code.cmd", "opencode", "opencode.cmd"];
+  for (const script of shellScripts) {
+    await copyFile(join(RESOURCES_BIN_DIR, script), join(binAssetsDir, script));
+  }
+
+  // Copy compiled opencode.cjs from dist/bin/
+  await copyFile(join(DIST_BIN_DIR, "opencode.cjs"), join(binAssetsDir, "opencode.cjs"));
+}
+
 describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let fs: DefaultFileSystemLayer;
@@ -47,9 +74,13 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
 
   it("creates bin directory on filesystem", async () => {
     const binDir = join(tempDir.path, "bin");
+    const binAssetsDir = join(tempDir.path, "assets", "bin");
+    await setupBinAssets(binAssetsDir);
+
     const pathProvider = createMockPathProvider({
       dataRootDir: tempDir.path,
       binDir,
+      binAssetsDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
       setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
@@ -76,9 +107,13 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
     }
 
     const binDir = join(tempDir.path, "bin");
+    const binAssetsDir = join(tempDir.path, "assets", "bin");
+    await setupBinAssets(binAssetsDir);
+
     const pathProvider = createMockPathProvider({
       dataRootDir: tempDir.path,
       binDir,
+      binAssetsDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
       setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
@@ -104,9 +139,13 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
 
   it("generates scripts with correct content", async () => {
     const binDir = join(tempDir.path, "bin");
+    const binAssetsDir = join(tempDir.path, "assets", "bin");
+    await setupBinAssets(binAssetsDir);
+
     const pathProvider = createMockPathProvider({
       dataRootDir: tempDir.path,
       binDir,
+      binAssetsDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
       setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),
@@ -130,9 +169,13 @@ describe("VscodeSetupService.setupBinDirectory (boundary)", () => {
 
   it("generates Windows scripts with correct content", async () => {
     const binDir = join(tempDir.path, "bin");
+    const binAssetsDir = join(tempDir.path, "assets", "bin");
+    await setupBinAssets(binAssetsDir);
+
     const pathProvider = createMockPathProvider({
       dataRootDir: tempDir.path,
       binDir,
+      binAssetsDir,
       vscodeDir: join(tempDir.path, "vscode"),
       vscodeAssetsDir: join(tempDir.path, "assets"),
       setupMarkerPath: join(tempDir.path, "vscode", ".setup-completed"),

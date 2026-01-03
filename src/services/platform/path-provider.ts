@@ -65,6 +65,9 @@ export interface PathProvider {
   /** Path to MCP config file: `<dataRoot>/opencode/codehydra-mcp.json` */
   readonly mcpConfigPath: Path;
 
+  /** Directory for CLI wrapper script assets: `<appPath>/out/main/assets/bin/` */
+  readonly binAssetsDir: Path;
+
   /**
    * Get the workspaces directory for a project.
    * @param projectPath Absolute path to the project (string or Path)
@@ -102,6 +105,7 @@ export class DefaultPathProvider implements PathProvider {
   readonly opencodeBinaryPath: Path;
   readonly bundledNodePath: Path;
   readonly mcpConfigPath: Path;
+  readonly binAssetsDir: Path;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
     const dataRootDirStr = this.computeDataRootDir(buildInfo, platformInfo);
@@ -142,6 +146,9 @@ export class DefaultPathProvider implements PathProvider {
 
     // MCP config file path
     this.mcpConfigPath = new Path(this.dataRootDir, "opencode", "codehydra-mcp.json");
+
+    // Bin wrapper assets directory
+    this.binAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets", "bin");
   }
 
   /**

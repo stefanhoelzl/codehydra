@@ -45,6 +45,8 @@ export default defineConfig({
         targets: [
           { src: "dist/extensions/*", dest: "assets" },
           { src: "resources/scripts/*", dest: "assets/scripts" },
+          { src: "resources/bin/*", dest: "assets/bin" },
+          { src: "dist/bin/*", dest: "assets/bin" },
         ],
       }),
     ],

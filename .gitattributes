@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# Force LF line endings for Unix shell scripts (critical for execution)
+resources/bin/code text eol=lf
+resources/bin/opencode text eol=lf

@@ -333,24 +333,33 @@ When these are updated, `pnpm install` will download new versions. Production in
 
 ## CLI Wrapper Scripts
 
-During VS Code setup, CLI wrapper scripts are generated in `<app-data>/bin/`:
+During VS Code setup, CLI wrapper scripts are copied from bundled assets to `<app-data>/bin/`:
 
-| Script                      | Purpose                                                             |
-| --------------------------- | ------------------------------------------------------------------- |
-| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli)                              |
-| `opencode` / `opencode.cmd` | Wrapper that reads `CODEHYDRA_OPENCODE_PORT` and attaches to server |
+| Script                      | Purpose                                                     |
+| --------------------------- | ----------------------------------------------------------- |
+| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli)                      |
+| `opencode` / `opencode.cmd` | Wrapper that reads env vars and attaches to OpenCode server |
 
 **opencode wrapper architecture:**
 
 ```
 opencode (shell) → opencode.cjs (Node.js) → opencode binary
                         ├─ Reads $CODEHYDRA_OPENCODE_PORT (set by sidekick extension)
+                        ├─ Reads $CODEHYDRA_OPENCODE_DIR (set by CodeServerManager)
                         └─ Runs `opencode attach http://127.0.0.1:<port>`
 ```
 
-- Uses bundled Node.js from code-server (`<app-data>/code-server/<version>/lib/node`)
+**Environment Variables (set by CodeServerManager when spawning code-server):**
+
+| Variable                    | Set By             | Purpose                                       |
+| --------------------------- | ------------------ | --------------------------------------------- |
+| `CODEHYDRA_CODE_SERVER_DIR` | CodeServerManager  | Directory containing code-server installation |
+| `CODEHYDRA_OPENCODE_DIR`    | CodeServerManager  | Directory containing opencode binary          |
+| `CODEHYDRA_OPENCODE_PORT`   | sidekick extension | Port of running OpenCode server               |
+
+- Uses bundled Node.js from code-server (`$CODEHYDRA_CODE_SERVER_DIR/lib/node`)
 - **Only works in managed terminals**: The sidekick extension sets `CODEHYDRA_OPENCODE_PORT` for all new terminals
-- Thin shell wrappers (`opencode` / `opencode.cmd`) delegate all logic to the cross-platform `opencode.cjs` script
+- Thin shell wrappers (`opencode` / `opencode.cmd`) delegate all logic to the cross-platform `opencode.cjs` script (compiled from TypeScript at build time)
 
 **Session Restoration**: The wrapper automatically queries the OpenCode server for existing
 sessions, filters by the current workspace directory, and restores the most recently updated

@@ -29,6 +29,7 @@ export interface MockPathProviderOptions {
   opencodeBinaryPath?: Path | string;
   bundledNodePath?: Path | string;
   mcpConfigPath?: Path | string;
+  binAssetsDir?: Path | string;
   getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
 }
 
@@ -98,6 +99,7 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
       overrides?.mcpConfigPath,
       "/test/app-data/opencode/codehydra-mcp.json"
     ),
+    binAssetsDir: ensurePath(overrides?.binAssetsDir, "/mock/assets/bin"),
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

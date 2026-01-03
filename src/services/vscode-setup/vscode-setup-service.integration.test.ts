@@ -78,6 +78,15 @@ describe("VscodeSetupService Integration", () => {
     // Create mock vsix files (just needs to exist for the test)
     await writeFile(join(assetsDir, "codehydra-sidekick-0.0.3.vsix"), "mock-vsix-content");
     await writeFile(join(assetsDir, "sst-dev-opencode-0.0.13.vsix"), "mock-opencode-vsix-content");
+
+    // Create bin assets directory with wrapper scripts
+    const binAssetsDir = join(assetsDir, "bin");
+    await mkdir(binAssetsDir, { recursive: true });
+    await writeFile(join(binAssetsDir, "code"), "#!/bin/sh\nexec code-server");
+    await writeFile(join(binAssetsDir, "code.cmd"), "@echo off\ncall code-server");
+    await writeFile(join(binAssetsDir, "opencode"), "#!/bin/sh\nexec opencode.cjs");
+    await writeFile(join(binAssetsDir, "opencode.cmd"), "@echo off\ncall opencode.cjs");
+    await writeFile(join(binAssetsDir, "opencode.cjs"), "// opencode wrapper");
   }
 
   /**
@@ -133,6 +142,7 @@ describe("VscodeSetupService Integration", () => {
       setupMarkerPath: mockPaths.markerPath,
       vscodeAssetsDir: mockPaths.assetsDir,
       binDir: mockPaths.binDir,
+      binAssetsDir: join(mockPaths.assetsDir, "bin"),
       mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
     });
   });
@@ -356,6 +366,7 @@ describe("VscodeSetupService Integration", () => {
         setupMarkerPath: mockPaths.markerPath,
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
+        binAssetsDir: join(mockPaths.assetsDir, "bin"),
         mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
       });
 
@@ -372,8 +383,7 @@ describe("VscodeSetupService Integration", () => {
 
       expect(result.success).toBe(true);
 
-      // Verify bin directory was created with scripts
-      // Note: code-server wrapper is not generated - we launch code-server directly
+      // Verify bin directory was created with scripts copied from assets
       const entries = await import("node:fs/promises").then((fs) => fs.readdir(binDir));
       expect(entries).toContain("code");
     });
@@ -388,6 +398,7 @@ describe("VscodeSetupService Integration", () => {
         setupMarkerPath: mockPaths.markerPath,
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
+        binAssetsDir: join(mockPaths.assetsDir, "bin"),
         mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
       });
 

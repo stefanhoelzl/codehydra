@@ -72,6 +72,8 @@ function createTestConfig(baseDir: string): CodeServerConfig {
     extensionsDir: `${baseDir}/extensions`,
     userDataDir: `${baseDir}/user-data`,
     binDir: `${baseDir}/bin`,
+    codeServerDir: `${baseDir}/code-server`,
+    opencodeDir: `${baseDir}/opencode`,
   };
 }
 

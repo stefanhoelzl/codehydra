@@ -54,6 +54,8 @@ describe("CodeServerManager Integration", () => {
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -83,6 +85,8 @@ describe("CodeServerManager Integration", () => {
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -118,6 +122,8 @@ describe("CodeServerManager Integration", () => {
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -153,6 +159,8 @@ describe("CodeServerManager Integration", () => {
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -189,6 +197,8 @@ describe("CodeServerManager Integration", () => {
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -221,6 +231,8 @@ describe("CodeServerManager Integration", () => {
         userDataDir: "/tmp/user-data",
         binDir: "/app/bin",
         pluginPort: 9876,
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -250,6 +262,8 @@ describe("CodeServerManager Integration", () => {
         extensionsDir: "/tmp/extensions",
         userDataDir: "/tmp/user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
         // Note: pluginPort not set
       };
 
@@ -265,6 +279,38 @@ describe("CodeServerManager Integration", () => {
       // Verify CODEHYDRA_PLUGIN_PORT is NOT set
       const spawned = processRunner.$.spawned(0);
       expect(spawned.$.env?.CODEHYDRA_PLUGIN_PORT).toBeUndefined();
+    });
+
+    it("includes CODEHYDRA_CODE_SERVER_DIR and CODEHYDRA_OPENCODE_DIR", async () => {
+      const processRunner = createMockProcessRunner({
+        onSpawn: () => ({ pid: 12345 }),
+      });
+
+      const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
+      const portManager = createPortManagerMock([8080]);
+      const config = {
+        binaryPath: "/app/code-server",
+        runtimeDir: "/tmp/runtime",
+        extensionsDir: "/tmp/extensions",
+        userDataDir: "/tmp/user-data",
+        binDir: "/app/bin",
+        codeServerDir: "/app/code-server/4.106.3",
+        opencodeDir: "/app/opencode/1.0.163",
+      };
+
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger
+      );
+      await manager.ensureRunning();
+
+      // Verify CODEHYDRA_CODE_SERVER_DIR and CODEHYDRA_OPENCODE_DIR are set
+      const spawned = processRunner.$.spawned(0);
+      expect(spawned.$.env?.CODEHYDRA_CODE_SERVER_DIR).toBe("/app/code-server/4.106.3");
+      expect(spawned.$.env?.CODEHYDRA_OPENCODE_DIR).toBe("/app/opencode/1.0.163");
     });
   });
 });

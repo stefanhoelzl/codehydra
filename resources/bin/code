@@ -1,0 +1,7 @@
+#!/bin/sh
+if [ -z "$CODEHYDRA_CODE_SERVER_DIR" ]; then
+  echo "Error: CODEHYDRA_CODE_SERVER_DIR not set." >&2
+  echo "Make sure you're in a CodeHydra workspace terminal." >&2
+  exit 1
+fi
+exec "$CODEHYDRA_CODE_SERVER_DIR/lib/vscode/bin/remote-cli/code-$(uname -s | tr '[:upper:]' '[:lower:]').sh" "$@"

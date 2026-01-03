@@ -25,4 +25,8 @@ export interface CodeServerConfig {
   readonly binDir: string;
   /** Optional port for the PluginServer (CODEHYDRA_PLUGIN_PORT env var) */
   readonly pluginPort?: number;
+  /** Directory containing code-server installation (for CODEHYDRA_CODE_SERVER_DIR env var) */
+  readonly codeServerDir: string;
+  /** Directory containing opencode binary (for CODEHYDRA_OPENCODE_DIR env var) */
+  readonly opencodeDir: string;
 }

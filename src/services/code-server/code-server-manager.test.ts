@@ -60,6 +60,8 @@ describe("CodeServerManager", () => {
     extensionsDir: "/tmp/code-server-extensions",
     userDataDir: "/tmp/code-server-user-data",
     binDir: "/app/bin",
+    codeServerDir: "/app/code-server-dir",
+    opencodeDir: "/app/opencode-dir",
   };
 
   beforeEach(() => {
@@ -99,6 +101,8 @@ describe("CodeServerManager", () => {
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const instance = new CodeServerManager(
@@ -163,6 +167,8 @@ describe("CodeServerManager", () => {
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
           binDir: "/app/bin",
+          codeServerDir: "/app/code-server-dir",
+          opencodeDir: "/app/opencode-dir",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -210,6 +216,8 @@ describe("CodeServerManager", () => {
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
           binDir: "/app/bin",
+          codeServerDir: "/app/code-server-dir",
+          opencodeDir: "/app/opencode-dir",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -235,6 +243,8 @@ describe("CodeServerManager", () => {
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
           binDir: "/app/bin",
+          codeServerDir: "/app/code-server-dir",
+          opencodeDir: "/app/opencode-dir",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -268,6 +278,8 @@ describe("CodeServerManager", () => {
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
           binDir: "/app/bin",
+          codeServerDir: "/app/code-server-dir",
+          opencodeDir: "/app/opencode-dir",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -300,6 +312,8 @@ describe("CodeServerManager", () => {
           extensionsDir: "/tmp/code-server-extensions",
           userDataDir: "/tmp/code-server-user-data",
           binDir: "/app/bin",
+          codeServerDir: "/app/code-server-dir",
+          opencodeDir: "/app/opencode-dir",
         },
         mockProcessRunner,
         mockHttpClient,
@@ -403,6 +417,8 @@ describe("CodeServerManager (with full DI)", () => {
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -430,6 +446,8 @@ describe("CodeServerManager (with full DI)", () => {
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -472,6 +490,8 @@ describe("CodeServerManager (with full DI)", () => {
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -508,6 +528,8 @@ describe("CodeServerManager (with full DI)", () => {
         extensionsDir: "/tmp/code-server-extensions",
         userDataDir: "/tmp/code-server-user-data",
         binDir: "/app/bin",
+        codeServerDir: "/app/code-server-dir",
+        opencodeDir: "/app/opencode-dir",
       };
 
       const manager = new CodeServerManager(
@@ -547,6 +569,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -589,6 +613,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -634,6 +660,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -688,6 +716,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -727,6 +757,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -759,6 +791,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -791,6 +825,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -825,6 +861,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -853,6 +891,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -881,6 +921,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
@@ -909,6 +951,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
       extensionsDir: "/tmp/extensions",
       userDataDir: "/tmp/user-data",
       binDir: "/app/bin",
+      codeServerDir: "/app/code-server-dir",
+      opencodeDir: "/app/opencode-dir",
     };
 
     const manager = new CodeServerManager(
