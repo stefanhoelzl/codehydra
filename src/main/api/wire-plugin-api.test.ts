@@ -55,6 +55,7 @@ function createMockApi(): ICodeHydraApi {
     lifecycle: {
       getState: vi.fn().mockResolvedValue("ready"),
       setup: vi.fn().mockResolvedValue({ success: true }),
+      startServices: vi.fn().mockResolvedValue({ success: true }),
       quit: vi.fn(),
     },
     on: vi.fn().mockReturnValue(() => {}),

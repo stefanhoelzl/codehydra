@@ -26,7 +26,6 @@ import type {
   MockWithState,
   Snapshot,
   MatcherImplementationsFor,
-  MatchersFor,
 } from "../../test/state-mock";
 
 // =============================================================================
@@ -487,7 +486,7 @@ interface ViewLayerMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends MatchersFor<T, MockViewLayer, ViewLayerMatchers> {}
+  interface Assertion<T> extends ViewLayerMatchers {}
 }
 
 export const viewLayerMatchers: MatcherImplementationsFor<MockViewLayer, ViewLayerMatchers> = {

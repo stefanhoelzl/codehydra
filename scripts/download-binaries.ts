@@ -21,8 +21,9 @@ import { DefaultArchiveExtractor } from "../src/services/binary-download/archive
 import { DefaultNetworkLayer } from "../src/services/platform/network";
 import { DefaultFileSystemLayer } from "../src/services/platform/filesystem";
 import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../src/services/binary-download/versions";
-import type { PathProvider } from "../src/services/platform/path-provider";
+import { DefaultPathProvider } from "../src/services/platform/path-provider";
 import type { PlatformInfo, SupportedArch } from "../src/services/platform/platform-info";
+import type { BuildInfo } from "../src/services/platform/build-info";
 import type { BinaryType, DownloadProgress } from "../src/services/binary-download/types";
 import type { Logger, LogContext } from "../src/services/logging";
 
@@ -65,37 +66,12 @@ function getSupportedArch(): SupportedArch {
   throw new Error(`Unsupported architecture: ${process.arch}. CodeHydra requires x64 or arm64.`);
 }
 
-// Create a path provider for development mode (uses ./app-data/)
-function createDevPathProvider(platformInfo: PlatformInfo): PathProvider {
-  const dataRootDir = path.join(process.cwd(), "app-data");
-  const isWindows = platformInfo.platform === "win32";
-
-  // Binary directories with versions
-  const codeServerDir = path.join(dataRootDir, "code-server", CODE_SERVER_VERSION);
-  const opencodeDir = path.join(dataRootDir, "opencode", OPENCODE_VERSION);
-
+// Create build info for development mode
+function createDevBuildInfo(): BuildInfo {
   return {
-    dataRootDir,
-    projectsDir: path.join(dataRootDir, "projects"),
-    vscodeDir: path.join(dataRootDir, "vscode"),
-    vscodeExtensionsDir: path.join(dataRootDir, "vscode", "extensions"),
-    vscodeUserDataDir: path.join(dataRootDir, "vscode", "user-data"),
-    vscodeSetupMarkerPath: path.join(dataRootDir, "vscode", ".setup-completed"),
-    electronDataDir: path.join(dataRootDir, "electron"),
-    vscodeAssetsDir: path.join(process.cwd(), "out", "main", "assets"),
-    appIconPath: path.join(process.cwd(), "resources", "icon.png"),
-    binDir: path.join(dataRootDir, "bin"),
-    codeServerDir,
-    opencodeDir,
-    codeServerBinaryPath: path.join(
-      codeServerDir,
-      isWindows ? "bin/code-server.cmd" : "bin/code-server"
-    ),
-    opencodeBinaryPath: path.join(opencodeDir, isWindows ? "opencode.exe" : "opencode"),
-    getProjectWorkspacesDir: (projectPath: string): string => {
-      const basename = path.basename(projectPath);
-      return path.join(dataRootDir, "projects", basename, "workspaces");
-    },
+    version: "dev",
+    isDevelopment: true,
+    appPath: process.cwd(),
   };
 }
 
@@ -126,7 +102,7 @@ async function findMainRepoAppData(): Promise<string | null> {
       // This is a worktree - .git is a file with gitdir: pointer
       const content = await fs.promises.readFile(gitPath, "utf-8");
       const match = content.match(/^gitdir:\s*(.+)$/m);
-      if (match) {
+      if (match?.[1]) {
         // gitdir points to .git/worktrees/<name>, go up to find main repo
         // e.g., /repo/.git/worktrees/download -> /repo
         const worktreeGitDir = match[1].trim();
@@ -256,7 +232,8 @@ async function main(): Promise<void> {
   console.log("Setting up binary dependencies...\n");
 
   const platformInfo = createPlatformInfo();
-  const pathProvider = createDevPathProvider(platformInfo);
+  const buildInfo = createDevBuildInfo();
+  const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
   // Check if we're in a git worktree
   const mainRepoAppData = await findMainRepoAppData();
@@ -285,7 +262,7 @@ async function main(): Promise<void> {
     "code-server",
     CODE_SERVER_VERSION,
     mainRepoAppData,
-    pathProvider.dataRootDir
+    pathProvider.dataRootDir.toString()
   );
 
   console.log("Checking opencode...");
@@ -294,7 +271,7 @@ async function main(): Promise<void> {
     "opencode",
     OPENCODE_VERSION,
     mainRepoAppData,
-    pathProvider.dataRootDir
+    pathProvider.dataRootDir.toString()
   );
 
   // Create wrapper scripts
