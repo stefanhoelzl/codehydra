@@ -2,7 +2,7 @@
 /**
  * Tests for AgentStatusManager.
  *
- * Uses SDK mock utilities for testing OpenCodeClient integration.
+ * Uses SDK behavioral mock for testing OpenCodeClient integration.
  * AgentStatusManager now receives ports directly from OpenCodeServerManager
  * via callbacks routed through AppState.
  */
@@ -11,13 +11,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AgentStatusManager, OpenCodeProvider } from "./agent-status-manager";
 import type { WorkspacePath } from "../../shared/ipc";
 import {
-  createMockSdkClient,
-  createMockSdkFactory,
+  createSdkClientMock,
+  createSdkFactoryMock,
   createTestSession,
-  createMockEventStream,
   createSessionCreatedEvent,
-} from "./sdk-test-utils";
-import type { SdkClientFactory } from "./opencode-client";
+  createSessionStatusEvent,
+  asSdkFactory,
+  type SdkClientFactory,
+  type MockSdkClient,
+} from "./sdk-client.state-mock";
 import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
 import { SILENT_LOGGER } from "../logging";
 
@@ -29,7 +31,7 @@ async function createAndInitializeProvider(
   port: number,
   sdkFactory: SdkClientFactory
 ): Promise<OpenCodeProvider> {
-  const provider = new OpenCodeProvider(SILENT_LOGGER, sdkFactory);
+  const provider = new OpenCodeProvider(SILENT_LOGGER, asSdkFactory(sdkFactory));
   await provider.initializeClient(port);
   await provider.fetchStatus();
   return provider;
@@ -43,10 +45,10 @@ describe("AgentStatusManager", () => {
     vi.clearAllMocks();
 
     // Create default SDK mock factory
-    const mockSdk = createMockSdkClient();
-    mockSdkFactory = createMockSdkFactory(mockSdk);
+    const mockSdk = createSdkClientMock();
+    mockSdkFactory = createSdkFactoryMock(mockSdk);
 
-    manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+    manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
   });
 
   afterEach(() => {
@@ -87,12 +89,11 @@ describe("AgentStatusManager", () => {
 
     it("shows none status when connected but TUI not attached", async () => {
       // Mock SDK client with empty sessions
-      const mockSdk = createMockSdkClient({
+      const mockSdk = createSdkClientMock({
         sessions: [],
-        sessionStatuses: {},
       });
-      mockSdkFactory = createMockSdkFactory(mockSdk);
-      manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       const listener = vi.fn();
       manager.onStatusChanged(listener);
@@ -109,12 +110,11 @@ describe("AgentStatusManager", () => {
 
     it("shows idle status when TUI attached but no sessions", async () => {
       // Mock SDK client with empty sessions
-      const mockSdk = createMockSdkClient({
+      const mockSdk = createSdkClientMock({
         sessions: [],
-        sessionStatuses: {},
       });
-      mockSdkFactory = createMockSdkFactory(mockSdk);
-      manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       const provider = await createAndInitializeProvider(8080, mockSdkFactory);
       manager.addProvider("/test/workspace" as WorkspacePath, provider);
@@ -140,17 +140,15 @@ describe("AgentStatusManager", () => {
 
     it("handles connection failure gracefully in provider creation", async () => {
       // Mock SDK that fails to connect
-      const mockSdk = createMockSdkClient({
+      const mockSdk = createSdkClientMock({
         sessions: [],
-        sessionStatuses: {},
+        connectionError: new Error("Connection refused"),
       });
-      // Simulate connection failure by making event.subscribe throw
-      mockSdk.event.subscribe = vi.fn().mockRejectedValue(new Error("Connection refused"));
-      mockSdkFactory = createMockSdkFactory(mockSdk);
-      manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       // Provider creation should not throw
-      const provider = new OpenCodeProvider(SILENT_LOGGER, mockSdkFactory);
+      const provider = new OpenCodeProvider(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
       await expect(provider.initializeClient(59999)).resolves.not.toThrow();
     });
   });
@@ -378,21 +376,53 @@ describe("AgentStatusManager", () => {
   });
 
   describe("port-based aggregation", () => {
+    /**
+     * Helper to emit session events and wait for async processing.
+     * This simulates receiving SSE events from the OpenCode server.
+     */
+    async function emitSessionEvents(
+      mockSdk: MockSdkClient,
+      sessions: Array<{ id: string; directory: string; status: SdkSessionStatus }>
+    ): Promise<void> {
+      for (const session of sessions) {
+        // Emit session.created event to register the session
+        mockSdk.$.emitEvent(
+          createSessionCreatedEvent({
+            id: session.id,
+            directory: session.directory,
+            title: "Test",
+            projectID: "proj-test",
+            version: "1",
+            time: { created: Date.now(), updated: Date.now() },
+          })
+        );
+        // Emit session.status event to set the status
+        mockSdk.$.emitEvent(createSessionStatusEvent(session.id, session.status));
+      }
+      // Wait for async processing of events
+      await Promise.resolve();
+    }
+
     it("single client idle returns { idle: 1, busy: 0 }", async () => {
-      const testSession = createTestSession({ id: "ses-1", directory: "/test" });
-      // Include session.created event to populate sessionToPort (via event stream)
-      const mockSdk = createMockSdkClient({
-        sessions: [testSession],
-        sessionStatuses: { "ses-1": { type: "idle" as const } },
-        eventStream: createMockEventStream([createSessionCreatedEvent(testSession)]),
+      // Create mock with session that has idle status
+      const mockSdk = createSdkClientMock({
+        sessions: [
+          createTestSession({ id: "ses-1", directory: "/test", status: { type: "idle" } }),
+        ],
       });
-      mockSdkFactory = createMockSdkFactory(mockSdk);
-      manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       manager.addProvider(
         "/test/workspace" as WorkspacePath,
         await createAndInitializeProvider(8080, mockSdkFactory)
       );
+
+      // Emit SSE events to register session and set status
+      await emitSessionEvents(mockSdk, [
+        { id: "ses-1", directory: "/test", status: { type: "idle" } },
+      ]);
+
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 
@@ -403,20 +433,25 @@ describe("AgentStatusManager", () => {
     });
 
     it("single client busy returns { idle: 0, busy: 1 }", async () => {
-      const testSession = createTestSession({ id: "ses-1", directory: "/test" });
-      // Include session.created event to populate sessionToPort (via event stream)
-      const mockSdk = createMockSdkClient({
-        sessions: [testSession],
-        sessionStatuses: { "ses-1": { type: "busy" as const } },
-        eventStream: createMockEventStream([createSessionCreatedEvent(testSession)]),
+      // Create mock with session that has busy status
+      const mockSdk = createSdkClientMock({
+        sessions: [
+          createTestSession({ id: "ses-1", directory: "/test", status: { type: "busy" } }),
+        ],
       });
-      mockSdkFactory = createMockSdkFactory(mockSdk);
-      manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       manager.addProvider(
         "/test/workspace" as WorkspacePath,
         await createAndInitializeProvider(8080, mockSdkFactory)
       );
+
+      // Emit SSE events to register session and set status
+      await emitSessionEvents(mockSdk, [
+        { id: "ses-1", directory: "/test", status: { type: "busy" } },
+      ]);
+
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 
@@ -433,20 +468,21 @@ describe("AgentStatusManager", () => {
         message: "Rate limited",
         next: Date.now() + 1000,
       };
-      const testSession = createTestSession({ id: "ses-1", directory: "/test" });
-      // Include session.created event to populate sessionToPort (via event stream)
-      const mockSdk = createMockSdkClient({
-        sessions: [testSession],
-        sessionStatuses: { "ses-1": retryStatus },
-        eventStream: createMockEventStream([createSessionCreatedEvent(testSession)]),
+      // Create mock with session that has retry status
+      const mockSdk = createSdkClientMock({
+        sessions: [createTestSession({ id: "ses-1", directory: "/test", status: retryStatus })],
       });
-      mockSdkFactory = createMockSdkFactory(mockSdk);
-      manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       manager.addProvider(
         "/test/workspace" as WorkspacePath,
         await createAndInitializeProvider(8080, mockSdkFactory)
       );
+
+      // Emit SSE events to register session and set status
+      await emitSessionEvents(mockSdk, [{ id: "ses-1", directory: "/test", status: retryStatus }]);
+
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 
@@ -458,21 +494,25 @@ describe("AgentStatusManager", () => {
     it("regression: no accumulation over many status change cycles", async () => {
       // Regression test: Verify that count stays at 1 for a single workspace
       // regardless of how many status changes occur (no session accumulation bug)
-      const testSession = createTestSession({ id: "ses-1", directory: "/test" });
-      // Include session.created event to populate sessionToPort (via event stream)
-      const mockSdk = createMockSdkClient({
-        sessions: [testSession],
-        sessionStatuses: { "ses-1": { type: "idle" as const } },
-        eventStream: createMockEventStream([createSessionCreatedEvent(testSession)]),
+      const mockSdk = createSdkClientMock({
+        sessions: [
+          createTestSession({ id: "ses-1", directory: "/test", status: { type: "idle" } }),
+        ],
       });
-      mockSdkFactory = createMockSdkFactory(mockSdk);
-      manager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       // Initialize workspace (triggers first status fetch)
       manager.addProvider(
         "/test/workspace" as WorkspacePath,
         await createAndInitializeProvider(8080, mockSdkFactory)
       );
+
+      // Emit SSE events to register session and set status
+      await emitSessionEvents(mockSdk, [
+        { id: "ses-1", directory: "/test", status: { type: "idle" } },
+      ]);
+
       // Mark TUI as attached (simulates first MCP request received)
       manager.setTuiAttached("/test/workspace" as WorkspacePath);
 

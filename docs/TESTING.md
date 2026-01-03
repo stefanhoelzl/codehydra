@@ -484,6 +484,84 @@ import "../services/platform/filesystem.state-mock";
 
 Note: The `filesystem.state-mock.ts` file calls `expect.extend(fileSystemMatchers)` when imported, so matchers are automatically available in tests.
 
+### SDK Client Mock
+
+The OpenCode SDK client mock provides behavioral simulation for `@opencode-ai/sdk` integration testing.
+
+**Factory Function**:
+
+```typescript
+import {
+  createSdkClientMock,
+  createSdkFactoryMock,
+  createTestSession,
+  type SdkClientFactory,
+  type MockSdkClient,
+} from "src/services/opencode/sdk-client.state-mock";
+
+// Create mock with initial sessions
+const mock = createSdkClientMock({
+  sessions: [
+    { id: "ses-0001", directory: "/test", status: { type: "idle" } },
+    { id: "ses-0002", directory: "/test", status: { type: "busy" } },
+  ],
+});
+
+// Create factory for dependency injection
+const factory = createSdkFactoryMock(mock);
+```
+
+**State Interface** (`SdkClientMockState`):
+
+| Property              | Type                               | Description                       |
+| --------------------- | ---------------------------------- | --------------------------------- |
+| `sessions`            | `ReadonlyMap<string, MockSession>` | Session ID → session with status  |
+| `connected`           | `boolean`                          | Whether event stream is connected |
+| `prompts`             | `readonly PromptRecord[]`          | History of prompts sent           |
+| `emittedEvents`       | `readonly SdkEvent[]`              | History of emitted events         |
+| `permissionResponses` | `readonly PermissionResponse[]`    | History of permission responses   |
+| `emitEvent(event)`    | `(event: SdkEvent) => void`        | Push event synchronously          |
+| `completeStream()`    | `() => void`                       | End the event stream              |
+| `errorStream(error)`  | `(error: Error) => void`           | Error the event stream            |
+| `setConnectionError`  | `(error: Error \| null) => void`   | Make subscribe() reject           |
+
+**Custom Matchers**:
+
+```typescript
+// Assert a prompt was sent to a session
+expect(mock).toHaveSentPrompt("ses-0001"); // Any prompt
+expect(mock).toHaveSentPrompt("ses-0001", "Hello"); // Exact match
+expect(mock).toHaveSentPrompt("ses-0001", /implement.*feature/); // RegExp
+
+// Assert session exists
+expect(mock).toHaveSession("ses-0001");
+```
+
+**Event Emission** (synchronous for test predictability):
+
+```typescript
+import { createSessionStatusEvent } from "./sdk-client.state-mock";
+
+// Emit events via state - immediately resolves pending iterator reads
+mock.$.emitEvent(createSessionStatusEvent("ses-0001", { type: "busy" }));
+
+// Assertions can be made immediately (no await needed)
+expect(client.currentStatus).toBe("busy");
+expect(listener).toHaveBeenCalledWith("busy");
+```
+
+**Helper Functions**:
+
+| Function                         | Returns       | Description                  |
+| -------------------------------- | ------------- | ---------------------------- |
+| `createTestSession(overrides)`   | `MockSession` | Create session with defaults |
+| `createSessionStatusEvent()`     | `SdkEvent`    | session.status event         |
+| `createSessionCreatedEvent()`    | `SdkEvent`    | session.created event        |
+| `createSessionIdleEvent()`       | `SdkEvent`    | session.idle event           |
+| `createSessionDeletedEvent()`    | `SdkEvent`    | session.deleted event        |
+| `createPermissionUpdatedEvent()` | `SdkEvent`    | permission.updated event     |
+| `createPermissionRepliedEvent()` | `SdkEvent`    | permission.replied event     |
+
 ---
 
 ## Test Performance Requirements

@@ -20,8 +20,12 @@ import type { MockSpawnedProcess, MockProcessRunner } from "../platform/process.
 import type { HttpClient } from "../platform/network";
 import type { PathProvider } from "../platform/path-provider";
 import type { WorkspacePath } from "../../shared/ipc";
-import { createMockSdkClient, createMockSdkFactory } from "./sdk-test-utils";
-import type { SdkClientFactory } from "./opencode-client";
+import {
+  createSdkClientMock,
+  createSdkFactoryMock,
+  asSdkFactory,
+  type SdkClientFactory,
+} from "./sdk-client.state-mock";
 
 /**
  * Helper to create and initialize a provider for testing.
@@ -30,7 +34,7 @@ async function createAndInitializeProvider(
   port: number,
   sdkFactory: SdkClientFactory
 ): Promise<OpenCodeProvider> {
-  const provider = new OpenCodeProvider(SILENT_LOGGER, sdkFactory);
+  const provider = new OpenCodeProvider(SILENT_LOGGER, asSdkFactory(sdkFactory));
   await provider.initializeClient(port);
   await provider.fetchStatus();
   return provider;
@@ -62,6 +66,7 @@ describe("OpenCodeServerManager integration", () => {
   let mockHttpClient: ReturnType<typeof createTestHttpClient>;
   let mockPathProvider: PathProvider;
   let processes: MockSpawnedProcess[];
+  let mockSdkFactory: SdkClientFactory;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -92,9 +97,9 @@ describe("OpenCodeServerManager integration", () => {
     );
 
     // Create AgentStatusManager with mock SDK
-    const mockSdk = createMockSdkClient();
-    const mockSdkFactory = createMockSdkFactory(mockSdk);
-    agentStatusManager = new AgentStatusManager(SILENT_LOGGER, mockSdkFactory);
+    const mockSdk = createSdkClientMock();
+    mockSdkFactory = createSdkFactoryMock(mockSdk);
+    agentStatusManager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
   });
 
   afterEach(async () => {
@@ -133,10 +138,7 @@ describe("OpenCodeServerManager integration", () => {
       });
 
       // Initialize workspace directly (simulating start callback with provider creation)
-      const provider = await createAndInitializeProvider(
-        14001,
-        agentStatusManager.getSdkFactory()!
-      );
+      const provider = await createAndInitializeProvider(14001, mockSdkFactory);
       agentStatusManager.addProvider("/workspace/feature-a" as WorkspacePath, provider);
 
       // Start and stop server (stop triggers the callback)
