@@ -1,3 +1,15 @@
 {
-  "task.allowAutomaticTasks": "on"
+  "task.allowAutomaticTasks": "on",
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.pnpm-store/**": true,
+    "**/.vite/**": true,
+    "**/app-data/**": true,
+    "**/coverage/**": true,
+    "**/dist/**": true,
+    "**/node_modules/**": true,
+    "**/out/**": true,
+    "**/pnpm-lock.yaml": true,
+    "**/site/dist/**": true
+  }
 }
