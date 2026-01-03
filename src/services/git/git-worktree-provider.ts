@@ -43,6 +43,19 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
   private cleanupInProgress = false;
 
   /**
+   * Check if error is a Windows long-path related error from git.
+   * These errors occur when git worktree remove can't delete directories
+   * with paths > 260 characters.
+   */
+  private isWindowsLongPathError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("filename too long") ||
+      (message.includes("directory not empty") && message.includes("failed to delete"))
+    );
+  }
+
+  /**
    * Apply base fallback to metadata if not present.
    * Fallback priority: config > branch > name
    */
@@ -315,7 +328,22 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       try {
         await this.gitClient.removeWorktree(this.projectRoot, workspacePath);
       } catch (error) {
-        worktreeError = error as Error;
+        const err = error as Error;
+        // On Windows, git may fail to delete directories with long paths (>260 chars)
+        // Error messages: "Filename too long" or "Directory not empty"
+        // Fall back to manual deletion + prune
+        if (this.isWindowsLongPathError(err)) {
+          try {
+            await this.fileSystemLayer.rm(workspacePath, { recursive: true, force: true });
+            await this.gitClient.pruneWorktrees(this.projectRoot);
+            this.logger.info("Removed workspace via fallback", { path: workspacePath.toString() });
+          } catch {
+            // Fallback also failed - save original error
+            worktreeError = err;
+          }
+        } else {
+          worktreeError = err;
+        }
       }
     }
 
