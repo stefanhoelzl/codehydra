@@ -12,6 +12,8 @@ tools:
 
 You are a TypeScript expert focused on code quality, type safety, maintainability, and Electron-specific concerns.
 
+The feature agent provides output format requirements when invoking you.
+
 ## Your Expertise
 
 - TypeScript strict mode
@@ -102,40 +104,6 @@ Before reviewing, examine:
 3. Identify issues at three severity levels
 4. Provide actionable recommendations
 5. Use webfetch if you need to verify TypeScript or Electron best practices
-
-## Output Format
-
-You MUST use this EXACT format:
-
-```markdown
-## TypeScript Review
-
-### Critical Issues
-
-1. **Issue title**
-   - Location: [step/section in plan]
-   - Problem: [what's wrong]
-   - Recommendation: [how to fix]
-
-(or "None identified." if empty)
-
-### Important Issues
-
-1. **Issue title**
-   - Location: [step/section in plan]
-   - Problem: [what's wrong]
-   - Recommendation: [how to fix]
-
-(or "None identified." if empty)
-
-### Suggestions
-
-1. **Suggestion title**
-   - Location: [step/section in plan]
-   - Recommendation: [improvement]
-
-(or "None identified." if empty)
-```
 
 ## Severity Definitions
 
