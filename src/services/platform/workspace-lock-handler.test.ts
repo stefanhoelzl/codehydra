@@ -511,7 +511,7 @@ describe.skipIf(process.platform !== "win32")("WindowsWorkspaceLockHandler", () 
       await service.killProcesses([1234]);
 
       expect(processRunner).toHaveSpawned([
-        { command: "taskkill", args: ["/pid", "1234", "/t", "/f"] },
+        { command: "taskkill", args: ["/pid", 1234, "/t", "/f"] },
       ]);
     });
 
@@ -524,7 +524,7 @@ describe.skipIf(process.platform !== "win32")("WindowsWorkspaceLockHandler", () 
       expect(processRunner).toHaveSpawned([
         {
           command: "taskkill",
-          args: ["/pid", "1234", "/pid", "5678", "/pid", "9012", "/t", "/f"],
+          args: ["/pid", 1234, "/pid", 5678, "/pid", 9012, "/t", "/f"],
         },
       ]);
     });
