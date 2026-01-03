@@ -12,9 +12,9 @@ import {
 } from "../../services/shell/view.test-utils";
 import { createSessionLayerMock } from "../../services/shell/session.state-mock";
 import {
-  createTestWindowLayer,
-  type TestWindowLayer,
-} from "../../services/shell/window.test-utils";
+  createWindowLayerInternalMock,
+  type MockWindowLayerInternal,
+} from "../../services/shell/window.state-mock";
 import type { WindowHandle } from "../../services/shell/types";
 
 // Mock ShortcutController before imports
@@ -51,12 +51,14 @@ function createMockWindowManager(windowHandle: WindowHandle) {
 /**
  * Creates a test window layer with a pre-created window for ViewManager tests.
  *
- * This extends the shared createTestWindowLayer() with:
+ * This extends the shared createWindowLayerInternalMock() with:
  * - A pre-created window handle (ViewManager needs an existing window)
  * - A mock _getRawWindow that returns a mock BaseWindow for ShortcutController
  */
-function createViewManagerWindowLayer(): TestWindowLayer & { _createdWindowHandle: WindowHandle } {
-  const behavioralLayer = createTestWindowLayer();
+function createViewManagerWindowLayer(): MockWindowLayerInternal & {
+  _createdWindowHandle: WindowHandle;
+} {
+  const behavioralLayer = createWindowLayerInternalMock();
 
   // Create a window to get a handle
   const windowHandle = behavioralLayer.createWindow({
@@ -80,7 +82,7 @@ function createViewManagerWindowLayer(): TestWindowLayer & { _createdWindowHandl
     _createdWindowHandle: windowHandle,
   });
 
-  return extended as unknown as TestWindowLayer & { _createdWindowHandle: WindowHandle };
+  return extended as unknown as MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
 }
 
 /**
@@ -88,7 +90,7 @@ function createViewManagerWindowLayer(): TestWindowLayer & { _createdWindowHandl
  */
 function createViewManagerDeps(): ViewManagerDeps & {
   viewLayer: BehavioralViewLayer;
-  windowLayer: TestWindowLayer & { _createdWindowHandle: WindowHandle };
+  windowLayer: MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
 } {
   const windowLayer = createViewManagerWindowLayer();
   const viewLayer = createBehavioralViewLayer();

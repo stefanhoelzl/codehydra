@@ -3,14 +3,14 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createBehavioralWindowLayer, type BehavioralWindowLayer } from "./window.test-utils";
+import { createWindowLayerMock, type MockWindowLayer } from "./window.state-mock";
 import { ShellError, isShellErrorWithCode } from "./errors";
 
 describe("WindowLayer (integration)", () => {
-  let windowLayer: BehavioralWindowLayer;
+  let windowLayer: MockWindowLayer;
 
   beforeEach(() => {
-    windowLayer = createBehavioralWindowLayer();
+    windowLayer = createWindowLayerMock();
   });
 
   describe("createWindow", () => {
@@ -20,8 +20,7 @@ describe("WindowLayer (integration)", () => {
       expect(handle.id).toMatch(/^window-\d+$/);
       expect(handle.__brand).toBe("WindowHandle");
 
-      const state = windowLayer._getState();
-      expect(state.windows.has(handle.id)).toBe(true);
+      expect(windowLayer).toHaveWindow(handle.id);
     });
 
     it("creates a window with custom dimensions", () => {
@@ -40,9 +39,7 @@ describe("WindowLayer (integration)", () => {
     it("creates a window with title", () => {
       const handle = windowLayer.createWindow({ title: "Test Window" });
 
-      const state = windowLayer._getState();
-      const windowState = state.windows.get(handle.id);
-      expect(windowState?.title).toBe("Test Window");
+      expect(windowLayer).toHaveWindowTitle(handle.id, "Test Window");
     });
 
     it("creates multiple windows with unique IDs", () => {
@@ -51,8 +48,7 @@ describe("WindowLayer (integration)", () => {
 
       expect(handle1.id).not.toBe(handle2.id);
 
-      const state = windowLayer._getState();
-      expect(state.windows.size).toBe(2);
+      expect(windowLayer).toHaveWindowCount(2);
     });
   });
 
@@ -62,8 +58,7 @@ describe("WindowLayer (integration)", () => {
       windowLayer.destroy(handle);
 
       expect(windowLayer.isDestroyed(handle)).toBe(true);
-      const state = windowLayer._getState();
-      expect(state.windows.has(handle.id)).toBe(false);
+      expect(windowLayer).toHaveWindowCount(0);
     });
 
     it("throws WINDOW_NOT_FOUND for non-existent window", () => {
@@ -104,8 +99,7 @@ describe("WindowLayer (integration)", () => {
 
       windowLayer.destroyAll();
 
-      const state = windowLayer._getState();
-      expect(state.windows.size).toBe(0);
+      expect(windowLayer).toHaveWindowCount(0);
     });
 
     it("throws when any window has attached views", () => {
@@ -117,9 +111,8 @@ describe("WindowLayer (integration)", () => {
       expect(() => windowLayer.destroyAll()).toThrow(ShellError);
 
       // Windows should still exist
-      const state = windowLayer._getState();
-      expect(state.windows.has(handle1.id)).toBe(true);
-      expect(state.windows.has(handle2.id)).toBe(true);
+      expect(windowLayer).toHaveWindow(handle1.id);
+      expect(windowLayer).toHaveWindow(handle2.id);
     });
   });
 
@@ -172,9 +165,7 @@ describe("WindowLayer (integration)", () => {
 
       windowLayer.setTitle(handle, "Updated Title");
 
-      const state = windowLayer._getState();
-      const windowState = state.windows.get(handle.id);
-      expect(windowState?.title).toBe("Updated Title");
+      expect(windowLayer).toHaveWindowTitle(handle.id, "Updated Title");
     });
   });
 
@@ -204,7 +195,7 @@ describe("WindowLayer (integration)", () => {
       const callback = vi.fn();
 
       windowLayer.onResize(handle, callback);
-      windowLayer._triggerResize(handle);
+      windowLayer.$.triggerResize(handle);
 
       expect(callback).toHaveBeenCalled();
     });
@@ -215,7 +206,7 @@ describe("WindowLayer (integration)", () => {
 
       const unsubscribe = windowLayer.onResize(handle, callback);
       unsubscribe();
-      windowLayer._triggerResize(handle);
+      windowLayer.$.triggerResize(handle);
 
       expect(callback).not.toHaveBeenCalled();
     });
@@ -227,7 +218,7 @@ describe("WindowLayer (integration)", () => {
 
       windowLayer.onResize(handle, callback1);
       windowLayer.onResize(handle, callback2);
-      windowLayer._triggerResize(handle);
+      windowLayer.$.triggerResize(handle);
 
       expect(callback1).toHaveBeenCalled();
       expect(callback2).toHaveBeenCalled();
@@ -240,7 +231,7 @@ describe("WindowLayer (integration)", () => {
       const callback = vi.fn();
 
       windowLayer.onMaximize(handle, callback);
-      windowLayer._triggerMaximize(handle);
+      windowLayer.$.triggerMaximize(handle);
 
       expect(callback).toHaveBeenCalled();
       expect(windowLayer.isMaximized(handle)).toBe(true);
@@ -252,7 +243,7 @@ describe("WindowLayer (integration)", () => {
       const callback = vi.fn();
 
       windowLayer.onUnmaximize(handle, callback);
-      windowLayer._triggerUnmaximize(handle);
+      windowLayer.$.triggerUnmaximize(handle);
 
       expect(callback).toHaveBeenCalled();
       expect(windowLayer.isMaximized(handle)).toBe(false);
@@ -299,9 +290,7 @@ describe("WindowLayer (integration)", () => {
 
       windowLayer.trackAttachedView(handle, viewHandle);
 
-      const state = windowLayer._getState();
-      const windowState = state.windows.get(handle.id);
-      expect(windowState?.attachedViews.has("view-1")).toBe(true);
+      expect(windowLayer).toHaveAttachedView(handle.id, "view-1");
     });
 
     it("untracks detached views", () => {
@@ -311,9 +300,7 @@ describe("WindowLayer (integration)", () => {
       windowLayer.trackAttachedView(handle, viewHandle);
       windowLayer.untrackAttachedView(handle, viewHandle);
 
-      const state = windowLayer._getState();
-      const windowState = state.windows.get(handle.id);
-      expect(windowState?.attachedViews.has("view-1")).toBe(false);
+      expect(windowLayer).toHaveAttachedViewCount(handle.id, 0);
     });
   });
 

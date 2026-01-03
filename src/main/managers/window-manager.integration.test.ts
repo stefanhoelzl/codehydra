@@ -8,9 +8,9 @@ import { SILENT_LOGGER } from "../../services/logging";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
 import { createImageLayerMock } from "../../services/platform/image.state-mock";
 import {
-  createTestWindowLayer,
-  type TestWindowLayer,
-} from "../../services/shell/window.test-utils";
+  createWindowLayerInternalMock,
+  type MockWindowLayerInternal,
+} from "../../services/shell/window.state-mock";
 import type { ImageHandle } from "../../services/platform/types";
 
 /**
@@ -21,8 +21,8 @@ function createWindowManagerDeps(
     platformInfo?: ReturnType<typeof createMockPlatformInfo>;
     imageLayer?: ReturnType<typeof createImageLayerMock>;
   } = {}
-): WindowManagerDeps & { windowLayer: TestWindowLayer } {
-  const windowLayer = createTestWindowLayer();
+): WindowManagerDeps & { windowLayer: MockWindowLayerInternal } {
+  const windowLayer = createWindowLayerInternalMock();
   const imageLayer = overrides.imageLayer ?? createImageLayerMock();
   const platformInfo = overrides.platformInfo ?? createMockPlatformInfo();
 
@@ -42,22 +42,20 @@ describe("WindowManager", () => {
   describe("create", () => {
     it("creates a window with default title", () => {
       const deps = createWindowManagerDeps();
-      WindowManager.create(deps);
+      const manager = WindowManager.create(deps);
 
-      const state = deps.windowLayer._getState();
-      expect(state.windows.size).toBe(1);
-
-      const window = [...state.windows.values()][0];
-      expect(window?.title).toBe("CodeHydra");
+      expect(deps.windowLayer).toHaveWindowCount(1);
+      expect(deps.windowLayer).toHaveWindowTitle(manager.getWindowHandle().id, "CodeHydra");
     });
 
     it("creates a window with custom title", () => {
       const deps = createWindowManagerDeps();
-      WindowManager.create(deps, "CodeHydra (feature-branch)");
+      const manager = WindowManager.create(deps, "CodeHydra (feature-branch)");
 
-      const state = deps.windowLayer._getState();
-      const window = [...state.windows.values()][0];
-      expect(window?.title).toBe("CodeHydra (feature-branch)");
+      expect(deps.windowLayer).toHaveWindowTitle(
+        manager.getWindowHandle().id,
+        "CodeHydra (feature-branch)"
+      );
     });
 
     it("returns a WindowManager instance", () => {
@@ -69,12 +67,12 @@ describe("WindowManager", () => {
 
     it("creates window with correct dimensions", () => {
       const deps = createWindowManagerDeps();
-      WindowManager.create(deps);
+      const manager = WindowManager.create(deps);
 
-      const state = deps.windowLayer._getState();
-      const window = [...state.windows.values()][0];
-      expect(window?.bounds.width).toBe(1200);
-      expect(window?.bounds.height).toBe(800);
+      expect(deps.windowLayer).toHaveWindowBounds(manager.getWindowHandle().id, {
+        width: 1200,
+        height: 800,
+      });
     });
 
     it("sets window icon from provided icon path", () => {
@@ -211,7 +209,7 @@ describe("WindowManager", () => {
 
       // Trigger resize via the behavioral mock
       const handle = manager.getWindowHandle();
-      deps.windowLayer._triggerResize(handle);
+      deps.windowLayer.$.triggerResize(handle);
 
       expect(callback).toHaveBeenCalled();
     });
@@ -229,7 +227,7 @@ describe("WindowManager", () => {
 
       // Trigger resize
       const handle = manager.getWindowHandle();
-      deps.windowLayer._triggerResize(handle);
+      deps.windowLayer.$.triggerResize(handle);
 
       // Callback should not be called after unsubscribe
       expect(callback).not.toHaveBeenCalled();
@@ -244,9 +242,10 @@ describe("WindowManager", () => {
       manager.setTitle("CodeHydra - my-app / feature - (main)");
 
       const handle = manager.getWindowHandle();
-      const state = deps.windowLayer._getState();
-      const window = state.windows.get(handle.id);
-      expect(window?.title).toBe("CodeHydra - my-app / feature - (main)");
+      expect(deps.windowLayer).toHaveWindowTitle(
+        handle.id,
+        "CodeHydra - my-app / feature - (main)"
+      );
     });
   });
 

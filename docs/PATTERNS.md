@@ -1127,16 +1127,17 @@ class DefaultViewLayer implements ViewLayer {
 
 All paths below are relative to `src/services/`.
 
-| Interface      | Mock Factory                    | Location                        |
-| -------------- | ------------------------------- | ------------------------------- |
-| `IpcLayer`     | `createBehavioralIpcLayer()`    | `platform/ipc.test-utils.ts`    |
-| `DialogLayer`  | `createBehavioralDialogLayer()` | `platform/dialog.test-utils.ts` |
-| `ImageLayer`   | `createImageLayerMock()`        | `platform/image.state-mock.ts`  |
-| `AppLayer`     | `createAppLayerMock()`          | `platform/app.state-mock.ts`    |
-| `MenuLayer`    | `createBehavioralMenuLayer()`   | `platform/menu.test-utils.ts`   |
-| `WindowLayer`  | `createBehavioralWindowLayer()` | `shell/window.test-utils.ts`    |
-| `ViewLayer`    | `createBehavioralViewLayer()`   | `shell/view.test-utils.ts`      |
-| `SessionLayer` | `createSessionLayerMock()`      | `shell/session.state-mock.ts`   |
+| Interface             | Mock Factory                      | Location                        |
+| --------------------- | --------------------------------- | ------------------------------- |
+| `IpcLayer`            | `createBehavioralIpcLayer()`      | `platform/ipc.test-utils.ts`    |
+| `DialogLayer`         | `createBehavioralDialogLayer()`   | `platform/dialog.test-utils.ts` |
+| `ImageLayer`          | `createImageLayerMock()`          | `platform/image.state-mock.ts`  |
+| `AppLayer`            | `createAppLayerMock()`            | `platform/app.state-mock.ts`    |
+| `MenuLayer`           | `createBehavioralMenuLayer()`     | `platform/menu.test-utils.ts`   |
+| `WindowLayer`         | `createWindowLayerMock()`         | `shell/window.state-mock.ts`    |
+| `WindowLayerInternal` | `createWindowLayerInternalMock()` | `shell/window.state-mock.ts`    |
+| `ViewLayer`           | `createBehavioralViewLayer()`     | `shell/view.test-utils.ts`      |
+| `SessionLayer`        | `createSessionLayerMock()`        | `shell/session.state-mock.ts`   |
 
 ### WorkspaceLockHandler Pattern
 
