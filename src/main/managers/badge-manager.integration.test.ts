@@ -338,6 +338,41 @@ describe("BadgeManager Integration", () => {
   });
 
   describe("Windows overlay icon", () => {
+    it("creates image in same ImageLayer that WindowLayer would use for lookup", () => {
+      // This test verifies the architectural constraint that BadgeManager and WindowLayer
+      // must share the same ImageLayer instance. If separate instances are used,
+      // the ImageHandle created by BadgeManager won't be found when WindowLayer
+      // calls getNativeImage(), causing the overlay to not display.
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      appLayer = createAppLayerMock({ platform: "win32" });
+      const sharedImageLayer = createImageLayerMock();
+
+      // Track the ImageHandle passed to setOverlayIcon
+      let capturedImageHandle: ImageHandle | null = null;
+      const mockWindowManager = {
+        setOverlayIcon: (image: ImageHandle | null) => {
+          capturedImageHandle = image;
+        },
+      };
+
+      const badgeManager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        sharedImageLayer, // Using the shared instance
+        mockWindowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      badgeManager.updateBadge("all-working");
+
+      // The image handle must exist in the shared ImageLayer and be valid
+      expect(capturedImageHandle).not.toBeNull();
+      expect(sharedImageLayer).toHaveImage(capturedImageHandle!.id, {
+        isEmpty: false,
+        size: { width: 16, height: 16 },
+      });
+    });
+
     it("generates image for mixed state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       appLayer = createAppLayerMock({ platform: "win32" });
