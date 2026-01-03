@@ -951,13 +951,17 @@ For bug fixes during cleanup:
 
 ## Validation Commands
 
-| Check      | Command           | Requirement   |
-| ---------- | ----------------- | ------------- |
-| TypeScript | pnpm check        | Zero errors   |
-| ESLint     | pnpm lint         | Zero errors   |
-| Prettier   | pnpm format:check | All formatted |
-| Tests      | pnpm test         | All passing   |
-| Build      | pnpm build        | Completes     |
+| Check              | Command               | Requirement   |
+| ------------------ | --------------------- | ------------- |
+| TypeScript (all)   | pnpm check            | Zero errors   |
+| TypeScript node    | pnpm check:node       | Zero errors   |
+| TypeScript svelte  | pnpm check:svelte     | Zero errors   |
+| TypeScript scripts | pnpm check:scripts    | Zero errors   |
+| TypeScript ext     | pnpm check:extensions | Zero errors   |
+| ESLint             | pnpm lint             | Zero errors   |
+| Prettier           | pnpm format:check     | All formatted |
+| Tests              | pnpm test             | All passing   |
+| Build              | pnpm build            | Completes     |
 
 **Recommended**: Use `pnpm validate:fix` to auto-fix formatting/linting issues before validation. This saves cycles on small errors.
 

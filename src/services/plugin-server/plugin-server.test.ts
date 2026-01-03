@@ -210,10 +210,12 @@ describe("PluginServer", () => {
           .fn()
           .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
         getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: null }),
+        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
         executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+        create: vi.fn().mockResolvedValue({ success: true, data: {} }),
       };
 
       // Should not throw
@@ -226,10 +228,12 @@ describe("PluginServer", () => {
           .fn()
           .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
         getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: null }),
+        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
         executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+        create: vi.fn().mockResolvedValue({ success: true, data: {} }),
       };
 
       const handlers2: ApiCallHandlers = {
@@ -241,10 +245,12 @@ describe("PluginServer", () => {
           },
         }),
         getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: 12345 }),
+        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: { note: "test" } }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
         executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+        create: vi.fn().mockResolvedValue({ success: true, data: {} }),
       };
 
       server.onApiCall(handlers1);
@@ -259,10 +265,12 @@ describe("PluginServer", () => {
           .fn()
           .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
         getOpencodePort: vi.fn().mockResolvedValue({ success: true, data: 12345 }),
+        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
         executeCommand: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+        create: vi.fn().mockResolvedValue({ success: true, data: {} }),
       };
 
       // Should not throw - handlers are registered
