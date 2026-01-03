@@ -12,6 +12,7 @@ import { ProjectStore } from "./project/project-store";
 import { DefaultFileSystemLayer } from "./platform/filesystem";
 import { SILENT_LOGGER } from "./logging";
 import { createFileSystemMock, directory } from "./platform/filesystem.state-mock";
+import { createMockGitClient } from "./git/git-client.state-mock";
 import { createGitWorktreeProvider } from "./index";
 import { projectDirName } from "./platform/paths";
 import { Path } from "./platform/path";
@@ -191,41 +192,24 @@ describe("Services Integration", () => {
 
   describe("Abstraction layer", () => {
     it("IWorkspaceProvider works with mocked IGitClient", async () => {
-      // This test verifies the abstraction by using a mocked git client
-      const mockGitClient = {
-        isRepositoryRoot: async () => true,
-        listWorktrees: async () => [
-          { name: "main", path: new Path("/mock/repo"), branch: "main", isMain: true },
-          {
-            name: "feature",
-            path: new Path("/mock/workspaces/feature"),
-            branch: "feature",
-            isMain: false,
+      // This test verifies the abstraction by using a behavioral mock git client
+      const mockGitClient = createMockGitClient({
+        repositories: {
+          "/mock/repo": {
+            branches: ["main", "feature"],
+            remoteBranches: ["origin/main"],
+            remotes: ["origin"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature",
+                path: "/mock/workspaces/feature",
+                branch: "feature",
+              },
+            ],
           },
-        ],
-        addWorktree: async () => {},
-        removeWorktree: async () => {},
-        pruneWorktrees: async () => {},
-        listBranches: async () => [
-          { name: "main", isRemote: false },
-          { name: "origin/main", isRemote: true },
-        ],
-        createBranch: async () => {},
-        deleteBranch: async () => {},
-        getCurrentBranch: async () => "main",
-        getStatus: async () => ({
-          isDirty: false,
-          modifiedCount: 0,
-          stagedCount: 0,
-          untrackedCount: 0,
-        }),
-        fetch: async () => {},
-        listRemotes: async () => ["origin"],
-        getBranchConfig: async () => null,
-        setBranchConfig: async () => {},
-        getBranchConfigsByPrefix: async () => ({}),
-        unsetBranchConfig: async () => {},
-      };
+        },
+      });
 
       const mockFileSystemLayer = createFileSystemMock({
         entries: {
@@ -246,7 +230,7 @@ describe("Services Integration", () => {
       expect(workspaces[0]?.name).toBe("feature");
 
       const bases = await provider.listBases();
-      expect(bases).toHaveLength(2);
+      expect(bases).toHaveLength(3); // main, feature (local), origin/main (remote)
     });
   });
 

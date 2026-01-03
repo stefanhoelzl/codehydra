@@ -289,20 +289,23 @@ expect(mockGit.createWorktree).toHaveBeenCalledWith("/project", "feat-1", "main"
 ### Good: Behavioral Mock
 
 ```typescript
+import { createMockGitClient } from "./git/git-client.state-mock";
+
 // This tests actual behavior
-const mockGit = createBehavioralGitClient({
-  repositories: new Map([["/project", { branches: ["main", "develop"], worktrees: [] }]]),
+const mockGit = createMockGitClient({
+  repositories: {
+    "/project": { branches: ["main", "develop"], currentBranch: "main" },
+  },
 });
 
-// Mock has in-memory state - createWorktree actually adds to worktrees list
-await api.workspaces.create("/project", "feat-1", "main");
+// Mock has in-memory state - createBranch actually adds to branches set
+await mockGit.createBranch(new Path("/project"), "feat-1", "main");
 
-// Verify BEHAVIOR - the worktree exists now
-const project = await api.projects.get("/project");
-expect(project.workspaces).toContainEqual(expect.objectContaining({ name: "feat-1" }));
+// Verify BEHAVIOR - the branch exists now
+expect(mockGit).toHaveBranch("/project", "feat-1");
 
 // Verify BEHAVIOR - can't create duplicate
-await expect(api.workspaces.create("/project", "feat-1", "main")).rejects.toThrow();
+await expect(mockGit.createBranch(new Path("/project"), "feat-1", "main")).rejects.toThrow();
 ```
 
 ### State Inspection

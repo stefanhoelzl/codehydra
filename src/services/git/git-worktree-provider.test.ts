@@ -1,13 +1,12 @@
 // @vitest-environment node
 /**
- * Unit tests for GitWorktreeProvider using mocked IGitClient.
+ * Tests for GitWorktreeProvider using behavioral mock for IGitClient.
+ * Uses state-based assertions instead of call-tracking mocks.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
-import type { IGitClient } from "./git-client";
 import { WorkspaceError } from "../errors";
-import type { BranchInfo, WorktreeInfo } from "./types";
 import {
   createFileSystemMock,
   createSpyFileSystemLayer,
@@ -19,36 +18,7 @@ import { FileSystemError } from "../errors";
 import { createMockLogger } from "../logging/logging.test-utils";
 import { delay } from "../test-utils";
 import { Path } from "../platform/path";
-
-/**
- * Create a mock IGitClient for testing.
- */
-function createMockGitClient(overrides: Partial<IGitClient> = {}): IGitClient {
-  return {
-    isRepositoryRoot: vi.fn().mockResolvedValue(true),
-    listWorktrees: vi.fn().mockResolvedValue([]),
-    addWorktree: vi.fn().mockResolvedValue(undefined),
-    removeWorktree: vi.fn().mockResolvedValue(undefined),
-    pruneWorktrees: vi.fn().mockResolvedValue(undefined),
-    listBranches: vi.fn().mockResolvedValue([]),
-    createBranch: vi.fn().mockResolvedValue(undefined),
-    deleteBranch: vi.fn().mockResolvedValue(undefined),
-    getCurrentBranch: vi.fn().mockResolvedValue("main"),
-    getStatus: vi.fn().mockResolvedValue({
-      isDirty: false,
-      modifiedCount: 0,
-      stagedCount: 0,
-      untrackedCount: 0,
-    }),
-    fetch: vi.fn().mockResolvedValue(undefined),
-    listRemotes: vi.fn().mockResolvedValue([]),
-    getBranchConfig: vi.fn().mockResolvedValue(null),
-    setBranchConfig: vi.fn().mockResolvedValue(undefined),
-    getBranchConfigsByPrefix: vi.fn().mockResolvedValue({}),
-    unsetBranchConfig: vi.fn().mockResolvedValue(undefined),
-    ...overrides,
-  };
-}
+import { createMockGitClient } from "./git-client.state-mock";
 
 describe("GitWorktreeProvider", () => {
   const PROJECT_ROOT = new Path("/home/user/projects/my-repo");
@@ -58,7 +28,14 @@ describe("GitWorktreeProvider", () => {
 
   describe("create (factory)", () => {
     it("creates provider for valid git repository", async () => {
-      const mockClient = createMockGitClient();
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
 
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -84,8 +61,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws WorkspaceError when path is not a git repository root", async () => {
+      // Empty repositories = path is not a repository
       const mockClient = createMockGitClient({
-        isRepositoryRoot: vi.fn().mockResolvedValue(false),
+        repositories: {},
       });
 
       await expect(
@@ -94,9 +72,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws WorkspaceError when git client throws", async () => {
+      // Create a mock that throws on isRepositoryRoot
       const mockClient = createMockGitClient({
-        isRepositoryRoot: vi.fn().mockRejectedValue(new Error("Path does not exist")),
+        repositories: {},
       });
+      // Override to throw an error
+      mockClient.isRepositoryRoot = vi.fn().mockRejectedValue(new Error("Path does not exist"));
 
       await expect(
         GitWorktreeProvider.create(PROJECT_ROOT, mockClient, WORKSPACES_DIR, mockFs, mockLogger)
@@ -106,14 +87,13 @@ describe("GitWorktreeProvider", () => {
 
   describe("discover", () => {
     it("returns empty array when only main worktree exists", async () => {
-      const mainWorktree: WorktreeInfo = {
-        name: "my-repo",
-        path: PROJECT_ROOT,
-        branch: "main",
-        isMain: true,
-      };
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue([mainWorktree]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -129,17 +109,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("excludes main worktree from results", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-branch",
-          path: new Path("/data/workspaces/feature-branch"),
-          branch: "feature-branch",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-branch"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-branch",
+                path: "/data/workspaces/feature-branch",
+                branch: "feature-branch",
+              },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -156,17 +139,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles detached HEAD workspaces", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "detached-workspace",
-          path: new Path("/data/workspaces/detached"),
-          branch: null,
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "detached-workspace",
+                path: "/data/workspaces/detached",
+                branch: null,
+              },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -183,23 +169,17 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns multiple workspaces", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-a",
-          path: new Path("/data/workspaces/feature-a"),
-          branch: "feature-a",
-          isMain: false,
-        },
-        {
-          name: "feature-b",
-          path: new Path("/data/workspaces/feature-b"),
-          branch: "feature-b",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-a", "feature-b"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-a", path: "/data/workspaces/feature-a", branch: "feature-a" },
+              { name: "feature-b", path: "/data/workspaces/feature-b", branch: "feature-b" },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -215,28 +195,21 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips corrupted worktree entries without throwing", async () => {
-      // Simulate worktrees with invalid/missing data that git might return
-      // Note: We can't create WorktreeInfo with empty path since Path throws for empty strings
-      // So we test with valid-looking but potentially problematic entries
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        // Valid worktree
-        {
-          name: "feature-valid",
-          path: new Path("/data/workspaces/feature-valid"),
-          branch: "feature-valid",
-          isMain: false,
-        },
-        // Worktree with empty name but valid path
-        {
-          name: "",
-          path: new Path("/data/workspaces/unnamed"),
-          branch: "unnamed-branch",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-valid", "unnamed-branch"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-valid",
+                path: "/data/workspaces/feature-valid",
+                branch: "feature-valid",
+              },
+              { name: "", path: "/data/workspaces/unnamed", branch: "unnamed-branch" },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -249,26 +222,25 @@ describe("GitWorktreeProvider", () => {
       // Should not throw and should handle gracefully
       const workspaces = await provider.discover();
 
-      // Should include valid worktrees, and filter or include entries based on implementation
-      // The key is that it doesn't throw
+      // Should include valid worktrees
       expect(Array.isArray(workspaces)).toBe(true);
-      // At minimum, the valid worktree should be included
       expect(workspaces.some((w) => w.name === "feature-valid")).toBe(true);
     });
 
     it("returns baseBranch from config when set", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({ base: "develop" }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+            branchConfigs: {
+              "feature-x": { "codehydra.base": "develop" },
+            },
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -285,18 +257,17 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("falls back to branch name when config returns null", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({}), // No base config
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+            // No config set
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -313,18 +284,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("falls back to workspace name when detached HEAD (branch is null)", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "detached-workspace",
-          path: new Path("/data/workspaces/detached-workspace"),
-          branch: null,
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({}), // No config
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "detached-workspace",
+                path: "/data/workspaces/detached-workspace",
+                branch: null,
+              },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -341,19 +314,21 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("logs warning and uses fallback when getBranchConfigsByPrefix throws", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockRejectedValue(new Error("Config read failed")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+          },
+        },
       });
+      // Override to throw an error
+      mockClient.getBranchConfigsByPrefix = vi
+        .fn()
+        .mockRejectedValue(new Error("Config read failed"));
 
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -371,39 +346,24 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("fallback priority: config > branch > name", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        // Has config - should use config value
-        {
-          name: "workspace-a",
-          path: new Path("/data/workspaces/workspace-a"),
-          branch: "branch-a",
-          isMain: false,
-        },
-        // No config - should use branch
-        {
-          name: "workspace-b",
-          path: new Path("/data/workspaces/workspace-b"),
-          branch: "branch-b",
-          isMain: false,
-        },
-        // No config, no branch (detached) - should use name
-        {
-          name: "workspace-c",
-          path: new Path("/data/workspaces/workspace-c"),
-          branch: null,
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockImplementation((_repo, branch) => {
-          // Only workspace-a has config set
-          if (branch === "branch-a") {
-            return Promise.resolve({ base: "configured-base" });
-          }
-          return Promise.resolve({});
-        }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "branch-a", "branch-b"],
+            currentBranch: "main",
+            worktrees: [
+              // Has config - should use config value
+              { name: "workspace-a", path: "/data/workspaces/workspace-a", branch: "branch-a" },
+              // No config - should use branch
+              { name: "workspace-b", path: "/data/workspaces/workspace-b", branch: "branch-b" },
+              // No config, no branch (detached) - should use name
+              { name: "workspace-c", path: "/data/workspaces/workspace-c", branch: null },
+            ],
+            branchConfigs: {
+              "branch-a": { "codehydra.base": "configured-base" },
+            },
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -429,13 +389,14 @@ describe("GitWorktreeProvider", () => {
 
   describe("listBases", () => {
     it("returns local and remote branches", async () => {
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature", isRemote: false },
-        { name: "origin/main", isRemote: true },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature"],
+            remoteBranches: ["origin/main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -456,8 +417,13 @@ describe("GitWorktreeProvider", () => {
   describe("updateBases", () => {
     it("returns success when fetch succeeds", async () => {
       const mockClient = createMockGitClient({
-        listRemotes: vi.fn().mockResolvedValue(["origin"]),
-        fetch: vi.fn().mockResolvedValue(undefined),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remotes: ["origin"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -475,12 +441,23 @@ describe("GitWorktreeProvider", () => {
 
     it("returns partial failure when some fetches fail", async () => {
       const mockClient = createMockGitClient({
-        listRemotes: vi.fn().mockResolvedValue(["origin", "backup"]),
-        fetch: vi
-          .fn()
-          .mockResolvedValueOnce(undefined)
-          .mockRejectedValueOnce(new Error("Network error")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remotes: ["origin", "backup"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override fetch to fail for backup remote
+      const originalFetch = mockClient.fetch.bind(mockClient);
+      mockClient.fetch = vi.fn().mockImplementation(async (repoPath: Path, remote?: string) => {
+        if (remote === "backup") {
+          throw new Error("Network error");
+        }
+        return originalFetch(repoPath, remote);
+      });
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -499,7 +476,13 @@ describe("GitWorktreeProvider", () => {
 
     it("returns empty arrays when no remotes exist", async () => {
       const mockClient = createMockGitClient({
-        listRemotes: vi.fn().mockResolvedValue([]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remotes: [],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -519,11 +502,12 @@ describe("GitWorktreeProvider", () => {
   describe("createWorkspace", () => {
     it("creates workspace and returns workspace info", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -537,17 +521,18 @@ describe("GitWorktreeProvider", () => {
 
       expect(workspace.name).toBe("feature-x");
       expect(workspace.branch).toBe("feature-x");
-      expect(mockClient.createBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x", "main");
-      expect(mockClient.addWorktree).toHaveBeenCalled();
+      // Behavioral assertion: branch should exist in mock state
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("sanitizes branch names with slashes", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -561,13 +546,22 @@ describe("GitWorktreeProvider", () => {
 
       // The directory name should have sanitized slashes
       expect(workspace.name).toBe("user/feature");
-      expect(mockClient.createBranch).toHaveBeenCalledWith(PROJECT_ROOT, "user/feature", "main");
+      // Behavioral assertion: branch should be created
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "user/feature");
     });
 
     it("rolls back branch on worktree creation failure", async () => {
       const mockClient = createMockGitClient({
-        addWorktree: vi.fn().mockRejectedValue(new Error("Worktree creation failed")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override addWorktree to fail
+      mockClient.addWorktree = vi.fn().mockRejectedValue(new Error("Worktree creation failed"));
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -578,12 +572,18 @@ describe("GitWorktreeProvider", () => {
 
       await expect(provider.createWorkspace("feature-x", "main")).rejects.toThrow();
 
-      expect(mockClient.deleteBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x");
+      // Branch should have been rolled back (deleted)
+      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("throws WorkspaceError when branch creation fails", async () => {
       const mockClient = createMockGitClient({
-        createBranch: vi.fn().mockRejectedValue(new Error("Branch exists")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"], // Branch already exists
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -597,16 +597,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("creates workspace using existing branch when baseBranch matches branch name", async () => {
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "existing-branch", isRemote: false },
-      ];
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "existing-branch"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -620,19 +617,20 @@ describe("GitWorktreeProvider", () => {
 
       expect(workspace.name).toBe("existing-branch");
       expect(workspace.branch).toBe("existing-branch");
-      // Should NOT create branch - it already exists
-      expect(mockClient.createBranch).not.toHaveBeenCalled();
-      // Should still create worktree
-      expect(mockClient.addWorktree).toHaveBeenCalled();
+      // Branch already existed, should still have exactly these branches
+      const branches = await mockClient.listBranches(PROJECT_ROOT);
+      const localBranches = branches.filter((b) => !b.isRemote);
+      expect(localBranches).toHaveLength(2);
     });
 
     it("throws WorkspaceError when branch exists but baseBranch differs", async () => {
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "existing-branch", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "existing-branch"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -651,22 +649,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws WorkspaceError when branch is already checked out in worktree", async () => {
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "checked-out-branch", isRemote: false },
-      ];
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "existing-workspace",
-          path: new Path("/data/workspaces/existing-workspace"),
-          branch: "checked-out-branch",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "checked-out-branch"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "existing-workspace",
+                path: "/data/workspaces/existing-workspace",
+                branch: "checked-out-branch",
+              },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -685,13 +681,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws WorkspaceError when branch is checked out in main worktree", async () => {
-      const branches: BranchInfo[] = [{ name: "main", isRemote: false }];
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -708,18 +704,17 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("does not rollback branch when worktree creation fails for existing branch", async () => {
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "existing-branch", isRemote: false },
-      ];
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        addWorktree: vi.fn().mockRejectedValue(new Error("Worktree creation failed")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "existing-branch"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override addWorktree to fail
+      mockClient.addWorktree = vi.fn().mockRejectedValue(new Error("Worktree creation failed"));
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -732,21 +727,19 @@ describe("GitWorktreeProvider", () => {
         provider.createWorkspace("existing-branch", "existing-branch")
       ).rejects.toThrow();
 
-      // Should NOT delete existing branch
-      expect(mockClient.deleteBranch).not.toHaveBeenCalled();
+      // Branch should NOT be deleted (it was pre-existing)
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "existing-branch");
     });
 
     it("ignores remote branches when checking for existing branch", async () => {
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "origin/feature-x", isRemote: true }, // Remote branch with same name
-      ];
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remoteBranches: ["origin/feature-x"], // Remote branch with same name
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -760,20 +753,17 @@ describe("GitWorktreeProvider", () => {
       const workspace = await provider.createWorkspace("origin/feature-x", "main");
 
       expect(workspace.name).toBe("origin/feature-x");
-      expect(mockClient.createBranch).toHaveBeenCalledWith(
-        PROJECT_ROOT,
-        "origin/feature-x",
-        "main"
-      );
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "origin/feature-x");
     });
 
-    it("calls setBranchConfig with correct args after creating workspace", async () => {
+    it("sets branch config with correct args after creating workspace", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -785,23 +775,21 @@ describe("GitWorktreeProvider", () => {
 
       await provider.createWorkspace("feature-x", "main");
 
-      expect(mockClient.setBranchConfig).toHaveBeenCalledWith(
-        PROJECT_ROOT,
-        "feature-x",
-        "codehydra.base",
-        "main"
-      );
+      // Behavioral assertion: config should be set
+      expect(mockClient).toHaveBranchConfig(PROJECT_ROOT, "feature-x", "codehydra.base", "main");
     });
 
     it("logs warning and continues if setBranchConfig fails", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
-        setBranchConfig: vi.fn().mockRejectedValue(new Error("Config write failed")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override setBranchConfig to fail
+      mockClient.setBranchConfig = vi.fn().mockRejectedValue(new Error("Config write failed"));
 
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -819,11 +807,12 @@ describe("GitWorktreeProvider", () => {
 
     it("returns workspace with metadata.base set", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -842,12 +831,14 @@ describe("GitWorktreeProvider", () => {
   describe("removeWorkspace", () => {
     it("removes workspace without deleting branch", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -861,25 +852,30 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(false);
-      expect(mockClient.removeWorktree).toHaveBeenCalledWith(PROJECT_ROOT, worktreePath);
-      expect(mockClient.pruneWorktrees).toHaveBeenCalledWith(PROJECT_ROOT);
-      expect(mockClient.deleteBranch).not.toHaveBeenCalled();
+      expect(mockClient).not.toHaveWorktree(PROJECT_ROOT, worktreePath);
+      // Branch should still exist
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("deletes branch even when worktree removal fails", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
-        removeWorktree: vi.fn().mockRejectedValue(new Error("Permission denied: files locked")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
+      });
+      // Override removeWorktree to fail
+      mockClient.removeWorktree = vi
+        .fn()
+        .mockRejectedValue(new Error("Permission denied: files locked"));
+      // Override deleteBranch to remove branch from state (bypasses checkout check for this test)
+      const repo = mockClient.$.repositories.get(PROJECT_ROOT.toString());
+      mockClient.deleteBranch = vi.fn().mockImplementation(async () => {
+        repo?.branches.delete("feature-x");
       });
 
       const provider = await GitWorktreeProvider.create(
@@ -896,24 +892,28 @@ describe("GitWorktreeProvider", () => {
       );
 
       // But branch should still be deleted before the error is thrown
-      expect(mockClient.deleteBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x");
+      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("throws worktree error even when branch deletion succeeds", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
-        removeWorktree: vi.fn().mockRejectedValue(new Error("Removal failed")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
+      // Override removeWorktree to fail
+      mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("Removal failed"));
+      // Override deleteBranch to remove branch from state (bypasses checkout check for this test)
+      const repo = mockClient.$.repositories.get(PROJECT_ROOT.toString());
+      mockClient.deleteBranch = vi.fn().mockImplementation(async () => {
+        repo?.branches.delete("feature-x");
+      });
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -925,24 +925,23 @@ describe("GitWorktreeProvider", () => {
       // Should throw worktree error after branch is deleted
       await expect(provider.removeWorkspace(worktreePath, true)).rejects.toThrow("Removal failed");
       // Branch should still be deleted
-      expect(mockClient.deleteBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x");
+      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("throws branch error when worktree succeeds but branch deletion fails", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
-        deleteBranch: vi.fn().mockRejectedValue(new Error("Branch deletion failed")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
+      // Override deleteBranch to fail
+      mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch deletion failed"));
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -959,20 +958,19 @@ describe("GitWorktreeProvider", () => {
 
     it("throws worktree error when both worktree and branch deletion fail", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
-        removeWorktree: vi.fn().mockRejectedValue(new Error("Worktree error")),
-        deleteBranch: vi.fn().mockRejectedValue(new Error("Branch error")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
+      // Override both to fail
+      mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("Worktree error"));
+      mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch error"));
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -983,23 +981,18 @@ describe("GitWorktreeProvider", () => {
 
       // Should throw worktree error (takes precedence)
       await expect(provider.removeWorkspace(worktreePath, true)).rejects.toThrow("Worktree error");
-      // Branch deletion should still be attempted
-      expect(mockClient.deleteBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x");
     });
 
     it("removes workspace and deletes branch when requested", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1013,11 +1006,18 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(true);
-      expect(mockClient.deleteBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x");
+      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("throws WorkspaceError when trying to remove main worktree", async () => {
-      const mockClient = createMockGitClient();
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -1031,12 +1031,14 @@ describe("GitWorktreeProvider", () => {
 
     it("handles detached HEAD workspace (no branch to delete)", async () => {
       const worktreePath = new Path("/data/workspaces/detached");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "detached", path: worktreePath, branch: null, isMain: false },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            worktrees: [{ name: "detached", path: worktreePath.toString(), branch: null }],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1050,17 +1052,19 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(false);
-      expect(mockClient.deleteBranch).not.toHaveBeenCalled();
     });
 
     it("returns success when worktree already removed (idempotent)", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
       // Worktree is NOT in the list - already removed
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            // No worktrees
+          },
+        },
       });
 
       const provider = await GitWorktreeProvider.create(
@@ -1075,22 +1079,20 @@ describe("GitWorktreeProvider", () => {
       const result = await provider.removeWorkspace(worktreePath, false);
 
       expect(result.workspaceRemoved).toBe(true);
-      expect(mockClient.removeWorktree).not.toHaveBeenCalled();
     });
 
     it("deletes branch on retry when worktree already unregistered", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
       // Worktree is NOT in the list - already unregistered from previous attempt
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
+      // But branch still exists
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            // No worktrees
+          },
+        },
       });
 
       const provider = await GitWorktreeProvider.create(
@@ -1105,64 +1107,20 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(true);
-      expect(mockClient.removeWorktree).not.toHaveBeenCalled();
       // Branch name extracted from path basename
-      expect(mockClient.deleteBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x");
+      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("returns success when branch already deleted (idempotent)", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
-      // Branch list does NOT include "feature-x" - already deleted
-      const branches: BranchInfo[] = [{ name: "main", isRemote: false }];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
-      });
-
-      const provider = await GitWorktreeProvider.create(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
-
-      // Request branch deletion, but branch doesn't exist
-      const result = await provider.removeWorkspace(worktreePath, true);
-
-      expect(result.workspaceRemoved).toBe(true);
-      expect(result.baseDeleted).toBe(true); // Success - branch already gone
-      expect(mockClient.deleteBranch).not.toHaveBeenCalled();
-    });
-
-    it("multiple calls return success (full idempotent flow)", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktreesWithWorkspace: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        { name: "feature-x", path: worktreePath, branch: "feature-x", isMain: false },
-      ];
-      const worktreesWithoutWorkspace: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
-      const branchesWithFeature: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
-      const branchesWithoutFeature: BranchInfo[] = [{ name: "main", isRemote: false }];
-
-      const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValueOnce(worktreesWithWorkspace) // First call
-          .mockResolvedValueOnce(worktreesWithoutWorkspace), // Second call
-        listBranches: vi
-          .fn()
-          .mockResolvedValueOnce(branchesWithFeature) // First call
-          .mockResolvedValueOnce(branchesWithoutFeature), // Second call
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
 
       const provider = await GitWorktreeProvider.create(
@@ -1177,30 +1135,31 @@ describe("GitWorktreeProvider", () => {
       const result1 = await provider.removeWorkspace(worktreePath, true);
       expect(result1.workspaceRemoved).toBe(true);
       expect(result1.baseDeleted).toBe(true);
-      expect(mockClient.removeWorktree).toHaveBeenCalledTimes(1);
-      expect(mockClient.deleteBranch).toHaveBeenCalledTimes(1);
 
       // Second call - idempotent, returns success without operations
-      // Note: branchName is derived from path basename when worktree is not found
       const result2 = await provider.removeWorkspace(worktreePath, true);
       expect(result2.workspaceRemoved).toBe(true);
       expect(result2.baseDeleted).toBe(true); // Branch already deleted, treat as success
-      // removeWorktree not called again
-      expect(mockClient.removeWorktree).toHaveBeenCalledTimes(1);
-      // deleteBranch not called again (branch doesn't exist anymore)
-      expect(mockClient.deleteBranch).toHaveBeenCalledTimes(1);
     });
   });
 
   describe("isDirty", () => {
     it("returns false for clean workspace", async () => {
       const mockClient = createMockGitClient({
-        getStatus: vi.fn().mockResolvedValue({
-          isDirty: false,
-          modifiedCount: 0,
-          stagedCount: 0,
-          untrackedCount: 0,
-        }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: "/data/workspaces/feature-x",
+                branch: "feature-x",
+                isDirty: false,
+              },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1217,12 +1176,20 @@ describe("GitWorktreeProvider", () => {
 
     it("returns true when workspace has modified files", async () => {
       const mockClient = createMockGitClient({
-        getStatus: vi.fn().mockResolvedValue({
-          isDirty: true,
-          modifiedCount: 2,
-          stagedCount: 0,
-          untrackedCount: 0,
-        }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: "/data/workspaces/feature-x",
+                branch: "feature-x",
+                isDirty: true,
+              },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1237,14 +1204,15 @@ describe("GitWorktreeProvider", () => {
       expect(dirty).toBe(true);
     });
 
-    it("returns true when workspace has staged files", async () => {
+    it("returns true when main worktree is dirty", async () => {
       const mockClient = createMockGitClient({
-        getStatus: vi.fn().mockResolvedValue({
-          isDirty: true,
-          modifiedCount: 0,
-          stagedCount: 1,
-          untrackedCount: 0,
-        }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            mainIsDirty: true,
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1254,29 +1222,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
-
-      expect(dirty).toBe(true);
-    });
-
-    it("returns true when workspace has untracked files", async () => {
-      const mockClient = createMockGitClient({
-        getStatus: vi.fn().mockResolvedValue({
-          isDirty: true,
-          modifiedCount: 0,
-          stagedCount: 0,
-          untrackedCount: 3,
-        }),
-      });
-      const provider = await GitWorktreeProvider.create(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
-
-      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
+      const dirty = await provider.isDirty(PROJECT_ROOT);
 
       expect(dirty).toBe(true);
     });
@@ -1284,7 +1230,14 @@ describe("GitWorktreeProvider", () => {
 
   describe("isMainWorkspace", () => {
     it("returns true for project root path", async () => {
-      const mockClient = createMockGitClient();
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -1299,7 +1252,14 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns false for other paths", async () => {
-      const mockClient = createMockGitClient();
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -1314,7 +1274,14 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles path normalization", async () => {
-      const mockClient = createMockGitClient();
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -1324,7 +1291,6 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Path with trailing slash normalizes to same value - Path handles this automatically
-      // Testing that two different Path constructions with equivalent strings match
       const pathWithTrailingSlash = new Path(PROJECT_ROOT.toString() + "/");
       const isMain = provider.isMainWorkspace(pathWithTrailingSlash);
 
@@ -1334,19 +1300,17 @@ describe("GitWorktreeProvider", () => {
 
   describe("path normalization", () => {
     it("Path class removes trailing slashes", async () => {
-      // Path automatically normalizes trailing slashes
       const worktreePath = new Path("/data/workspaces/feature-x/");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1365,17 +1329,16 @@ describe("GitWorktreeProvider", () => {
     it("Path class handles mixed separators", async () => {
       // Path normalizes ./ components
       const worktreePath = new Path("/data/workspaces/./feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1392,24 +1355,18 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("Path class normalizes paths when comparing", async () => {
-      // Worktree returned by git has trailing slash - Path normalizes it
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x/"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature-x", isRemote: false },
-      ];
+      // Worktree stored with trailing slash
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x/", branch: "feature-x" },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1424,18 +1381,19 @@ describe("GitWorktreeProvider", () => {
 
       expect(result.workspaceRemoved).toBe(true);
       // Should have found the branch to delete
-      expect(mockClient.deleteBranch).toHaveBeenCalledWith(PROJECT_ROOT, "feature-x");
+      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
   });
 
   describe("defaultBase", () => {
     it("returns 'main' when main branch exists", async () => {
-      const branches: BranchInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "feature", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1451,12 +1409,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns 'master' when only master exists (no main)", async () => {
-      const branches: BranchInfo[] = [
-        { name: "master", isRemote: false },
-        { name: "feature", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["master", "feature"],
+            currentBranch: "master",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1472,13 +1431,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns 'main' when both main and master exist", async () => {
-      const branches: BranchInfo[] = [
-        { name: "master", isRemote: false },
-        { name: "main", isRemote: false },
-        { name: "feature", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["master", "main", "feature"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1494,12 +1453,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns undefined when neither main nor master exists", async () => {
-      const branches: BranchInfo[] = [
-        { name: "feature", isRemote: false },
-        { name: "develop", isRemote: false },
-      ];
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockResolvedValue(branches),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["feature", "develop"],
+            currentBranch: "feature",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1516,8 +1476,15 @@ describe("GitWorktreeProvider", () => {
 
     it("returns undefined when listBases() throws (error handling)", async () => {
       const mockClient = createMockGitClient({
-        listBranches: vi.fn().mockRejectedValue(new Error("Git error")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override listBranches to throw
+      mockClient.listBranches = vi.fn().mockRejectedValue(new Error("Git error"));
 
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1535,17 +1502,20 @@ describe("GitWorktreeProvider", () => {
 
   describe("cleanupOrphanedWorkspaces", () => {
     it("removes orphaned directories", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path(WORKSPACES_DIR, "feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+                branch: "feature-x",
+              },
+            ],
+          },
+        },
       });
       // Mock fs with registered worktree and an orphan
       const spyFs = createSpyFileSystemLayer({
@@ -1574,17 +1544,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips registered workspaces", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path(WORKSPACES_DIR, "feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+                branch: "feature-x",
+              },
+            ],
+          },
+        },
       });
       const spyFs = createSpyFileSystemLayer({
         entries: {
@@ -1607,11 +1580,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips symlinks", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const spyFs = createSpyFileSystemLayer({
         entries: {
@@ -1634,11 +1609,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips files", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const spyFs = createSpyFileSystemLayer({
         entries: {
@@ -1661,23 +1638,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("validates paths stay within workspacesDir", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
-      // Note: The behavioral mock normalizes paths, so "../../../etc" becomes
-      // a normalized path that's not a child of workspacesDir
-      // We create a directory with the name "../../../etc" as a child entry
       const spyFs = createSpyFileSystemLayer({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
-          // Path traversal attempts are normalized and would escape workspacesDir
         },
       });
       // Manually add an entry with a suspicious name using setEntry
-      // to simulate what readdir might return
       spyFs.$.setEntry(new Path(WORKSPACES_DIR, "../../../etc"), directory());
 
       const provider = await GitWorktreeProvider.create(
@@ -1695,24 +1669,34 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("re-checks registration before delete (TOCTOU protection)", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
-      const worktreesWithNewWorkspace: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "orphan-workspace",
-          path: new Path(WORKSPACES_DIR, "orphan-workspace"),
-          branch: "orphan-workspace",
-          isMain: false,
-        },
-      ];
+      let listWorktreesCallCount = 0;
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValueOnce(worktrees) // First call: initial check
-          .mockResolvedValueOnce(worktreesWithNewWorkspace), // Second call: re-check before delete
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override listWorktrees to add worktree on second call
+      const originalListWorktrees = mockClient.listWorktrees.bind(mockClient);
+      mockClient.listWorktrees = vi.fn().mockImplementation(async (repoPath: Path) => {
+        listWorktreesCallCount++;
+        if (listWorktreesCallCount > 1) {
+          // On second call, pretend worktree was registered
+          return [
+            ...(await originalListWorktrees(repoPath)),
+            {
+              name: "orphan-workspace",
+              path: new Path(WORKSPACES_DIR, "orphan-workspace"),
+              branch: "orphan-workspace",
+              isMain: false,
+            },
+          ];
+        }
+        return originalListWorktrees(repoPath);
+      });
+
       const spyFs = createSpyFileSystemLayer({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
@@ -1735,11 +1719,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns CleanupResult with counts", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const spyFs = createSpyFileSystemLayer({
         entries: {
@@ -1763,21 +1749,22 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("fails silently on rm error", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const orphanPath = new Path(WORKSPACES_DIR, "orphan-workspace");
-      // Use directory with error configured - behavioral mock throws error on rm when entry has error
       const spyFs = createSpyFileSystemLayer({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [orphanPath.toString()]: directory({ error: "EACCES" }),
         },
       });
-      // Override rm to throw error (behavioral mock doesn't throw on rm with error entry)
+      // Override rm to throw error
       spyFs.rm.mockRejectedValue(
         new FileSystemError("EACCES", orphanPath.toNative(), "Permission denied")
       );
@@ -1800,8 +1787,16 @@ describe("GitWorktreeProvider", () => {
 
     it("fails silently when listWorktrees throws", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockRejectedValue(new Error("Git error")),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override listWorktrees to throw
+      mockClient.listWorktrees = vi.fn().mockRejectedValue(new Error("Git error"));
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -1819,11 +1814,12 @@ describe("GitWorktreeProvider", () => {
 
     it("handles missing workspacesDir", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       // Empty mock - no workspacesDir means readdir throws ENOENT
       const mockFsNotFound = createFileSystemMock();
@@ -1843,11 +1839,12 @@ describe("GitWorktreeProvider", () => {
 
     it("handles empty workspacesDir", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       // Workspaces dir exists but is empty
       const mockFsEmpty = createFileSystemMock({
@@ -1871,17 +1868,20 @@ describe("GitWorktreeProvider", () => {
 
     it("normalizes paths when comparing", async () => {
       // Worktree path has trailing slash - Path normalizes it automatically
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path(WORKSPACES_DIR.toString() + "/feature-x/"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: WORKSPACES_DIR.toString() + "/feature-x/",
+                branch: "feature-x",
+              },
+            ],
+          },
+        },
       });
       const spyFs = createSpyFileSystemLayer({
         entries: {
@@ -1905,26 +1905,35 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns early if already in progress", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-      ];
-      // Use a slow listWorktrees to simulate long-running operation
-      // First call is fast (for factory), subsequent calls are slow
-      let callCount = 0;
-      let slowResolve: ((value: WorktreeInfo[]) => void) | null = null;
+      let slowResolve: (() => void) | null = null;
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockImplementation(() => {
-          callCount++;
-          if (callCount === 1) {
-            // First call during cleanupOrphanedWorkspaces
-            return new Promise<WorktreeInfo[]>((resolve) => {
-              slowResolve = resolve;
-            });
-          }
-          // Subsequent calls resolve immediately
-          return Promise.resolve(worktrees);
-        }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
+      // Override listWorktrees to be slow on first call
+      let callCount = 0;
+      mockClient.listWorktrees = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // First call is slow
+          await new Promise<void>((resolve) => {
+            slowResolve = resolve;
+          });
+        }
+        return [
+          {
+            name: "my-repo",
+            path: PROJECT_ROOT,
+            branch: "main",
+            isMain: true,
+          },
+        ];
+      });
+
       const mockFsWithOrphan = createSpyFileSystemLayer({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
@@ -1954,25 +1963,26 @@ describe("GitWorktreeProvider", () => {
       expect(secondResult.failedPaths).toHaveLength(0);
 
       // Now resolve the first cleanup
-      slowResolve!(worktrees);
+      slowResolve!();
       await firstCleanup;
     });
   });
 
   describe("discover - metadata property", () => {
     it("returns metadata with base from config", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({ base: "develop" }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+            branchConfigs: {
+              "feature-x": { "codehydra.base": "develop" },
+            },
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -1989,18 +1999,17 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns metadata with base fallback to branch when no config", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({}), // No base config
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+            // No config
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2017,18 +2026,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns metadata with base fallback to name when no branch (detached HEAD)", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "detached-workspace",
-          path: new Path("/data/workspaces/detached-workspace"),
-          branch: null,
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({}),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "detached-workspace",
+                path: "/data/workspaces/detached-workspace",
+                branch: null,
+              },
+            ],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2045,22 +2056,23 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns full metadata from config (multiple keys)", async () => {
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: new Path("/data/workspaces/feature-x"),
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({
-          base: "main",
-          note: "WIP auth feature",
-          model: "claude-4",
-        }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+            branchConfigs: {
+              "feature-x": {
+                "codehydra.base": "main",
+                "codehydra.note": "WIP auth feature",
+                "codehydra.model": "claude-4",
+              },
+            },
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2084,11 +2096,12 @@ describe("GitWorktreeProvider", () => {
   describe("createWorkspace - metadata property", () => {
     it("returns workspace with metadata.base set", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2107,17 +2120,14 @@ describe("GitWorktreeProvider", () => {
   describe("setMetadata", () => {
     it("validates key format (rejects invalid)", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: worktreePath,
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2140,19 +2150,16 @@ describe("GitWorktreeProvider", () => {
       }
     });
 
-    it("calls setBranchConfig correctly", async () => {
+    it("sets branch config correctly", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: worktreePath,
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2164,7 +2171,8 @@ describe("GitWorktreeProvider", () => {
 
       await provider.setMetadata(worktreePath, "note", "WIP feature");
 
-      expect(mockClient.setBranchConfig).toHaveBeenCalledWith(
+      // Behavioral assertion: config should be set
+      expect(mockClient).toHaveBranchConfig(
         PROJECT_ROOT,
         "feature-x",
         "codehydra.note",
@@ -2172,19 +2180,19 @@ describe("GitWorktreeProvider", () => {
       );
     });
 
-    it("calls unsetBranchConfig when value is null", async () => {
+    it("unsets branch config when value is null", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: worktreePath,
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+            branchConfigs: {
+              "feature-x": { "codehydra.note": "existing note" },
+            },
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2196,22 +2204,24 @@ describe("GitWorktreeProvider", () => {
 
       await provider.setMetadata(worktreePath, "note", null);
 
-      expect(mockClient.unsetBranchConfig).toHaveBeenCalledWith(
-        PROJECT_ROOT,
-        "feature-x",
-        "codehydra.note"
-      );
+      // Config should be removed - the key should not exist
+      // Note: when a branch's config becomes empty, the mock removes the entire entry
+      const branchConfigs = mockClient.$.repositories.get(PROJECT_ROOT.toString())?.branchConfigs;
+      const featureConfigs = branchConfigs?.get("feature-x");
+      // Either the config map is gone (empty cleanup) or the key doesn't exist
+      expect(featureConfigs?.has("codehydra.note") ?? false).toBe(false);
     });
   });
 
   describe("keepFilesService integration", () => {
     it("calls copyToWorkspace after worktree created when service provided", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const mockKeepFilesService = {
         copyToWorkspace: vi.fn().mockResolvedValue({
@@ -2240,11 +2250,12 @@ describe("GitWorktreeProvider", () => {
 
     it("works without keepFilesService (backward compatible)", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2262,11 +2273,12 @@ describe("GitWorktreeProvider", () => {
 
     it("works with options but no keepFilesService", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2284,11 +2296,12 @@ describe("GitWorktreeProvider", () => {
 
     it("does not throw when copy has errors (logging handled by KeepFilesService)", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const mockKeepFilesService = {
         copyToWorkspace: vi.fn().mockResolvedValue({
@@ -2316,11 +2329,12 @@ describe("GitWorktreeProvider", () => {
 
     it("creates workspace when copy succeeds (logging handled by KeepFilesService)", async () => {
       const mockClient = createMockGitClient({
-        listWorktrees: vi
-          .fn()
-          .mockResolvedValue([
-            { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-          ]),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
       });
       const mockKeepFilesService = {
         copyToWorkspace: vi.fn().mockResolvedValue({
@@ -2352,18 +2366,17 @@ describe("GitWorktreeProvider", () => {
   describe("getMetadata", () => {
     it("applies base fallback when not in config", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: worktreePath,
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({ note: "test note" }), // No base
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+            branchConfigs: {
+              "feature-x": { "codehydra.note": "test note" }, // No base
+            },
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
@@ -2381,22 +2394,21 @@ describe("GitWorktreeProvider", () => {
 
     it("returns all metadata keys", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
-      const worktrees: WorktreeInfo[] = [
-        { name: "my-repo", path: PROJECT_ROOT, branch: "main", isMain: true },
-        {
-          name: "feature-x",
-          path: worktreePath,
-          branch: "feature-x",
-          isMain: false,
-        },
-      ];
       const mockClient = createMockGitClient({
-        listWorktrees: vi.fn().mockResolvedValue(worktrees),
-        getBranchConfigsByPrefix: vi.fn().mockResolvedValue({
-          base: "develop",
-          note: "WIP",
-          model: "claude-4",
-        }),
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+            branchConfigs: {
+              "feature-x": {
+                "codehydra.base": "develop",
+                "codehydra.note": "WIP",
+                "codehydra.model": "claude-4",
+              },
+            },
+          },
+        },
       });
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,

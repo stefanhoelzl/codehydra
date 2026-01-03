@@ -939,6 +939,37 @@ All paths below are relative to `src/services/`.
 | `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.test-utils.ts`                  |
 | `PathProvider`         | `createMockPathProvider()`         | `platform/path-provider.test-utils.ts`            |
 | `WorkspaceLockHandler` | `createMockWorkspaceLockHandler()` | `platform/workspace-lock-handler.test-utils.ts`   |
+| `IGitClient`           | `createMockGitClient()`            | `git/git-client.state-mock.ts`                    |
+
+**Git client mock example:**
+
+```typescript
+import { createMockGitClient } from "./git/git-client.state-mock";
+
+const mock = createMockGitClient({
+  repositories: {
+    "/project": {
+      branches: ["main", "feature-x"],
+      remoteBranches: ["origin/main"],
+      remotes: ["origin"],
+      worktrees: [
+        { name: "feature-x", path: "/workspaces/feature-x", branch: "feature-x", isDirty: true },
+      ],
+      branchConfigs: { "feature-x": { "codehydra.base": "main" } },
+      mainIsDirty: false,
+      currentBranch: "main",
+    },
+  },
+});
+
+// Mutations update state
+await mock.createBranch(new Path("/project"), "feature-y", "main");
+expect(mock).toHaveBranch("/project", "feature-y");
+
+// Custom matchers
+expect(mock).toHaveWorktree("/project", "/workspaces/feature-x");
+expect(mock).toHaveBranchConfig("/project", "feature-x", "codehydra.base", "main");
+```
 
 ### Shell and Platform Layer Patterns
 
