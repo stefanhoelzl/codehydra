@@ -9,6 +9,9 @@
  * Falls back to copying if symlinks aren't supported (Windows without
  * Developer Mode, cross-device scenarios).
  *
+ * Wrapper scripts are copied separately via `pnpm build:wrappers` which
+ * copies from resources/bin/ and dist/bin/ to app-data/bin/.
+ *
  * Usage: pnpm postinstall (automatically run after pnpm install)
  *        npx tsx scripts/download-binaries.ts (manual run)
  */
@@ -25,37 +28,16 @@ import { DefaultPathProvider } from "../src/services/platform/path-provider";
 import type { PlatformInfo, SupportedArch } from "../src/services/platform/platform-info";
 import type { BuildInfo } from "../src/services/platform/build-info";
 import type { BinaryType, DownloadProgress } from "../src/services/binary-download/types";
-import type { Logger, LogContext } from "../src/services/logging";
+import type { Logger } from "../src/services/logging";
 
-// Console logger for the script
+// Console logger for the script - suppresses warnings to avoid alarming output
+// (e.g., ENOENT from readdir when checking if binary is installed is expected)
 const logger: Logger = {
-  silly(): void {
-    // Don't log silly messages in postinstall
-  },
-  debug(): void {
-    // Don't log debug messages in postinstall
-  },
-  info(message: string, context?: LogContext): void {
-    if (context) {
-      console.log(`[info] ${message}`, context);
-    } else {
-      console.log(`[info] ${message}`);
-    }
-  },
-  warn(message: string, context?: LogContext): void {
-    if (context) {
-      console.warn(`[warn] ${message}`, context);
-    } else {
-      console.warn(`[warn] ${message}`);
-    }
-  },
-  error(message: string, context?: LogContext): void {
-    if (context) {
-      console.error(`[error] ${message}`, context);
-    } else {
-      console.error(`[error] ${message}`);
-    }
-  },
+  silly(): void {},
+  debug(): void {},
+  info(): void {},
+  warn(): void {},
+  error(): void {},
 };
 
 // Map Node.js arch to SupportedArch
@@ -274,16 +256,13 @@ async function main(): Promise<void> {
     pathProvider.dataRootDir.toString()
   );
 
-  // Create wrapper scripts
-  console.log("\nCreating wrapper scripts...");
-  await service.createWrapperScripts();
-  console.log(`  Wrapper scripts created in ${pathProvider.binDir}`);
-
   console.log("\nBinary setup complete!");
 }
 
 main().catch((error) => {
-  console.error("\nError during binary download:");
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+  const message = error instanceof Error ? error.message : String(error);
+  console.log(`\nBinary download skipped: ${message}`);
+  console.log("Run 'pnpm postinstall' to retry, or binaries will download on first app launch.");
+  // Exit successfully - missing dev binaries shouldn't fail pnpm install
+  process.exit(0);
 });

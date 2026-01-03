@@ -43,7 +43,6 @@ export interface MockBinaryDownloadService {
   isInstalled: Mock<(binary: BinaryType) => Promise<boolean>>;
   download: Mock<(binary: BinaryType, onProgress?: DownloadProgressCallback) => Promise<void>>;
   getBinaryPath: Mock<(binary: BinaryType) => string>;
-  createWrapperScripts: Mock<() => Promise<void>>;
 }
 
 /**
@@ -80,7 +79,5 @@ export function createMockBinaryDownloadService(
       }
       return defaultPaths[binary];
     }),
-
-    createWrapperScripts: vi.fn(async (): Promise<void> => {}),
   };
 }
