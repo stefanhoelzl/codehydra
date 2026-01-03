@@ -6,15 +6,15 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { createBehavioralImageLayer, type BehavioralImageLayer } from "./image.test-utils";
+import { createImageLayerMock, type MockImageLayer } from "./image.state-mock";
 import { createImageHandle } from "./types";
 import { PlatformError } from "./errors";
 
 describe("ImageLayer (behavioral mock)", () => {
-  let imageLayer: BehavioralImageLayer;
+  let imageLayer: MockImageLayer;
 
   beforeEach(() => {
-    imageLayer = createBehavioralImageLayer();
+    imageLayer = createImageLayerMock();
   });
 
   describe("createFromPath", () => {
@@ -26,9 +26,7 @@ describe("ImageLayer (behavioral mock)", () => {
 
     it("stores the path in state", () => {
       imageLayer.createFromPath("/test/icon.png");
-      const state = imageLayer._getState();
-      const image = state.images.get("image-1");
-      expect(image?.fromPath).toBe("/test/icon.png");
+      expect(imageLayer).toHaveImage("image-1", { fromPath: "/test/icon.png" });
     });
 
     it("creates non-empty images", () => {
@@ -110,10 +108,10 @@ describe("ImageLayer (behavioral mock)", () => {
   describe("release", () => {
     it("removes the image from state", () => {
       const handle = imageLayer.createFromPath("/test/icon.png");
-      expect(imageLayer._getState().images.size).toBe(1);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
 
       imageLayer.release(handle);
-      expect(imageLayer._getState().images.size).toBe(0);
+      expect(imageLayer).toHaveImages([]);
     });
 
     it("subsequent operations on released handle throw", () => {

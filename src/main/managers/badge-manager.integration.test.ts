@@ -10,9 +10,9 @@ import {
   type BehavioralAppLayer,
 } from "../../services/platform/app.test-utils";
 import {
-  createBehavioralImageLayer,
-  type BehavioralImageLayer,
-} from "../../services/platform/image.test-utils";
+  createImageLayerMock,
+  type MockImageLayer,
+} from "../../services/platform/image.state-mock";
 import type { WindowManager } from "./window-manager";
 import type { ImageHandle } from "../../services/platform/types";
 import type { AgentStatusManager, StatusChangedCallback } from "../../services/opencode";
@@ -69,12 +69,12 @@ function createMockAgentStatusManager(): Pick<
 
 describe("BadgeManager Integration", () => {
   let appLayer: BehavioralAppLayer;
-  let imageLayer: BehavioralImageLayer;
+  let imageLayer: MockImageLayer;
   let windowManager: MockWindowManager;
 
   beforeEach(() => {
     appLayer = createBehavioralAppLayer({ platform: "darwin" });
-    imageLayer = createBehavioralImageLayer();
+    imageLayer = createImageLayerMock();
     windowManager = createMockWindowManager();
   });
 
@@ -373,7 +373,7 @@ describe("BadgeManager Integration", () => {
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
-      expect(imageLayer._getState().images.size).toBe(1);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("Some workspaces ready");
     });
@@ -401,7 +401,7 @@ describe("BadgeManager Integration", () => {
 
       badgeManager.connectToStatusManager(statusManager as unknown as AgentStatusManager);
 
-      expect(imageLayer._getState().images.size).toBe(1);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("All workspaces working");
     });

@@ -10,9 +10,9 @@ import {
   type BehavioralAppLayer,
 } from "../../services/platform/app.test-utils";
 import {
-  createBehavioralImageLayer,
-  type BehavioralImageLayer,
-} from "../../services/platform/image.test-utils";
+  createImageLayerMock,
+  type MockImageLayer,
+} from "../../services/platform/image.state-mock";
 import type { WindowManager } from "./window-manager";
 import type { ImageHandle } from "../../services/platform/types";
 
@@ -36,12 +36,12 @@ function createMockWindowManager(): MockWindowManager {
 
 describe("BadgeManager", () => {
   let appLayer: BehavioralAppLayer;
-  let imageLayer: BehavioralImageLayer;
+  let imageLayer: MockImageLayer;
   let windowManager: MockWindowManager;
 
   beforeEach(() => {
     appLayer = createBehavioralAppLayer();
-    imageLayer = createBehavioralImageLayer();
+    imageLayer = createImageLayerMock();
     windowManager = createMockWindowManager();
   });
 
@@ -113,7 +113,7 @@ describe("BadgeManager", () => {
       manager.updateBadge("all-working");
 
       // Verify image was created
-      expect(imageLayer._getState().images.size).toBe(1);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("All workspaces working");
     });
@@ -131,7 +131,7 @@ describe("BadgeManager", () => {
 
       manager.updateBadge("mixed");
 
-      expect(imageLayer._getState().images.size).toBe(1);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("Some workspaces ready");
     });
@@ -150,7 +150,7 @@ describe("BadgeManager", () => {
       manager.updateBadge("none");
 
       // No image created for "none"
-      expect(imageLayer._getState().images.size).toBe(0);
+      expect(imageLayer).toHaveImages([]);
       expect(windowManager.setOverlayIconCalls).toHaveLength(1);
       expect(windowManager.setOverlayIconCalls[0]?.image).toBeNull();
       expect(windowManager.setOverlayIconCalls[0]?.description).toBe("");
@@ -224,10 +224,7 @@ describe("BadgeManager", () => {
 
       manager.updateBadge("all-working");
 
-      const state = imageLayer._getState();
-      expect(state.images.size).toBe(1);
-      const image = state.images.get("image-1");
-      expect(image?.size).toEqual({ width: 16, height: 16 });
+      expect(imageLayer).toHaveImage("image-1", { size: { width: 16, height: 16 } });
     });
 
     it("creates different images for different states", () => {
@@ -245,7 +242,7 @@ describe("BadgeManager", () => {
       manager.updateBadge("mixed");
 
       // Should create 2 different images
-      expect(imageLayer._getState().images.size).toBe(2);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }, { id: "image-2" }]);
     });
   });
 
@@ -267,7 +264,7 @@ describe("BadgeManager", () => {
       manager.updateBadge("all-working");
 
       // Should only create image once
-      expect(imageLayer._getState().images.size).toBe(1);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
 
       // But all calls should update the overlay
       expect(windowManager.setOverlayIconCalls).toHaveLength(3);
@@ -288,7 +285,7 @@ describe("BadgeManager", () => {
       manager.updateBadge("mixed");
 
       // Should create 2 different images
-      expect(imageLayer._getState().images.size).toBe(2);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }, { id: "image-2" }]);
     });
   });
 
@@ -306,10 +303,7 @@ describe("BadgeManager", () => {
 
       manager.updateBadge("mixed");
 
-      const state = imageLayer._getState();
-      const image = state.images.get("image-1");
-      expect(image).toBeDefined();
-      expect(image?.isEmpty).toBe(false);
+      expect(imageLayer).toHaveImage("image-1", { isEmpty: false });
     });
   });
 
@@ -327,10 +321,7 @@ describe("BadgeManager", () => {
 
       manager.updateBadge("all-working");
 
-      const state = imageLayer._getState();
-      const image = state.images.get("image-1");
-      expect(image).toBeDefined();
-      expect(image?.isEmpty).toBe(false);
+      expect(imageLayer).toHaveImage("image-1", { isEmpty: false });
     });
   });
 
@@ -351,13 +342,13 @@ describe("BadgeManager", () => {
       manager.updateBadge("mixed");
 
       // Verify images are cached
-      expect(imageLayer._getState().images.size).toBe(2);
+      expect(imageLayer).toHaveImages([{ id: "image-1" }, { id: "image-2" }]);
 
       // Dispose should release all cached images
       manager.dispose();
 
       // Verify all images have been released
-      expect(imageLayer._getState().images.size).toBe(0);
+      expect(imageLayer).toHaveImages([]);
     });
 
     it("clears overlay on dispose when connected to status manager", () => {
@@ -411,7 +402,7 @@ describe("BadgeManager", () => {
       manager.dispose();
       manager.dispose();
 
-      expect(imageLayer._getState().images.size).toBe(0);
+      expect(imageLayer).toHaveImages([]);
     });
   });
 });

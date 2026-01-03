@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WindowManager, type WindowManagerDeps } from "./window-manager";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
-import { createBehavioralImageLayer } from "../../services/platform/image.test-utils";
+import { createImageLayerMock } from "../../services/platform/image.state-mock";
 import {
   createTestWindowLayer,
   type TestWindowLayer,
@@ -19,11 +19,11 @@ import type { ImageHandle } from "../../services/platform/types";
 function createWindowManagerDeps(
   overrides: {
     platformInfo?: ReturnType<typeof createMockPlatformInfo>;
-    imageLayer?: ReturnType<typeof createBehavioralImageLayer>;
+    imageLayer?: ReturnType<typeof createImageLayerMock>;
   } = {}
 ): WindowManagerDeps & { windowLayer: TestWindowLayer } {
   const windowLayer = createTestWindowLayer();
-  const imageLayer = overrides.imageLayer ?? createBehavioralImageLayer();
+  const imageLayer = overrides.imageLayer ?? createImageLayerMock();
   const platformInfo = overrides.platformInfo ?? createMockPlatformInfo();
 
   return {
