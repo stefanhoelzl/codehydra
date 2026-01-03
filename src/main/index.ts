@@ -23,7 +23,7 @@ import { VscodeSetupService, WrapperScriptGenerationService } from "../services/
 import { ExecaProcessRunner } from "../services/platform/process";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
-import { DefaultImageLayer } from "../services/platform/image";
+import { DefaultImageLayer, type ImageLayer } from "../services/platform/image";
 import { DefaultDialogLayer, type DialogLayer } from "../services/platform/dialog";
 import { DefaultMenuLayer, type MenuLayer } from "../services/platform/menu";
 import { DefaultWindowLayer, type WindowLayerInternal } from "../services/shell/window";
@@ -250,6 +250,13 @@ let viewLayer: ViewLayer | null = null;
 let sessionLayer: SessionLayer | null = null;
 
 /**
+ * ImageLayer for image operations.
+ * Created in bootstrap() and shared between WindowLayer and BadgeManager.
+ * Must be a single instance so ImageHandles are resolvable across components.
+ */
+let imageLayer: ImageLayer | null = null;
+
+/**
  * Starts all application services after setup completes.
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
@@ -367,8 +374,11 @@ async function startServices(): Promise<void> {
   agentStatusManager = new AgentStatusManager(loggingService.createLogger("opencode"));
 
   // Create and connect BadgeManager
+  // Uses shared imageLayer (created in bootstrap) so ImageHandles are resolvable by WindowLayer
+  if (!imageLayer) {
+    throw new Error("ImageLayer not initialized - startServices called before bootstrap");
+  }
   const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
-  const imageLayer = new DefaultImageLayer(loggingService.createLogger("badge"));
   badgeManager = new BadgeManager(
     platformInfo,
     appLayer,
@@ -652,15 +662,18 @@ async function bootstrap(): Promise<void> {
       ? `CodeHydra (${buildInfo.gitBranch})`
       : "CodeHydra";
 
-  // Create WindowLayer and ImageLayer for WindowManager
+  // Create ImageLayer (shared between WindowLayer and BadgeManager)
+  // Must be a single instance so ImageHandles are resolvable across components
+  imageLayer = new DefaultImageLayer(loggingService.createLogger("window"));
+
+  // Create WindowLayer for WindowManager
   const windowLogger = loggingService.createLogger("window");
-  const windowImageLayer = new DefaultImageLayer(windowLogger);
-  windowLayer = new DefaultWindowLayer(windowImageLayer, platformInfo, windowLogger);
+  windowLayer = new DefaultWindowLayer(imageLayer, platformInfo, windowLogger);
 
   windowManager = WindowManager.create(
     {
       windowLayer,
-      imageLayer: windowImageLayer,
+      imageLayer,
       logger: windowLogger,
       platformInfo,
     },
