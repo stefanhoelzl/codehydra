@@ -9,14 +9,12 @@ Use when summarizing plan reviews from multiple reviewers:
 ```markdown
 ## Plan Review Summary
 
-| Reviewer           | Grade | Issues                     |
-| ------------------ | ----- | -------------------------- |
-| @review-arch       | B     | 1 important, 2 suggestions |
-| @review-typescript | A     | No issues                  |
-| @review-testing    | C     | 1 critical, 1 important    |
-| @review-docs       | A     | 1 suggestion               |
-| @review-platform   | B     | 1 important                |
-| @review-ui         | A     | No issues                  |
+| Reviewer        | Grade | Issues                     |
+| --------------- | ----- | -------------------------- |
+| @review-arch    | B     | 1 important, 2 suggestions |
+| @review-quality | A     | No issues                  |
+| @review-testing | C     | 1 critical, 1 important    |
+| @review-ui      | A     | No issues (if included)    |
 
 ### Critical Issues
 
@@ -30,7 +28,7 @@ Use when summarizing plan reviews from multiple reviewers:
    - Location: affected section
    - Fix: recommendation
 
-3. **[review-platform]** Issue description
+3. **[review-testing]** Issue description
    - Location: affected section
    - Fix: recommendation
 
@@ -44,21 +42,17 @@ Use when summarizing plan reviews from multiple reviewers:
    - Location: affected section
    - Fix: recommendation
 
-6. **[review-docs]** Suggestion description
-   - Location: affected section
-   - Fix: recommendation
-
 ---
 
-Addressing all 6 issues. Let me know if you want to skip any (e.g., "skip 5-6").
+Addressing all 5 issues. Let me know if you want to skip any (e.g., "skip 4-5").
 ```
 
-## Implementation Review Summary Format
+## Code Review Summary Format
 
-Use when summarizing a single implementation review:
+Use when summarizing a single code review:
 
 ```markdown
-## Implementation Review
+## Code Review
 
 **Grade: B** - Good implementation with minor issues
 

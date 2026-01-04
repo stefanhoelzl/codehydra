@@ -3,7 +3,7 @@ description: Implements approved plans with TDD, reports to feature agent
 mode: subagent
 thinking:
   type: enabled
-  budgetTokens: 10000
+  budgetTokens: 8000
 tools:
   webfetch: true
 permission:
