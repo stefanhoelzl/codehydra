@@ -2,6 +2,7 @@ import { defineConfig, mergeConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
 import baseConfig from '../vite.config.ext';
+import { codehydraDefaults, createSvelteOnWarn } from '../../vite.defaults';
 
 /**
  * Markdown Review Editor extension Vite config.
@@ -25,17 +26,12 @@ export default mergeConfig(
 					await build({
 						configFile: false,
 						plugins: [
+							codehydraDefaults(),
 							svelte({
-								onwarn(warning) {
-									// Allow specific a11y warnings for intentional UI patterns:
-									// - CommentEditor container uses click/mousedown for activation convenience
-									// - Discussion thread uses mouseup for copy-on-select behavior
-									if (warning.code?.startsWith('a11y_')) {
-										return; // Suppress a11y warnings
-									}
-									// Treat all other Svelte warnings as errors
-									throw new Error(`Svelte warning: ${warning.message}`);
-								}
+								// Allow a11y warnings for intentional UI patterns:
+								// - CommentEditor container uses click/mousedown for activation convenience
+								// - Discussion thread uses mouseup for copy-on-select behavior
+								onwarn: createSvelteOnWarn({ allowA11y: true })
 							})
 						],
 						build: {
@@ -47,9 +43,7 @@ export default mergeConfig(
 									entryFileNames: 'index.js',
 									assetFileNames: 'index.[ext]'
 								}
-							},
-							minify: false,
-							sourcemap: false
+							}
 						},
 						resolve: {
 							alias: {

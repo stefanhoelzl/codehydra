@@ -7,14 +7,15 @@
  * Also copies wrapper scripts to ./app-data/bin/ for development use.
  */
 
-import { builtinModules } from "node:module";
 import { defineConfig } from "vite";
 import { resolve } from "path";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import { chmod } from "node:fs/promises";
+import { codehydraDefaults } from "./vite.defaults";
 
 export default defineConfig({
   plugins: [
+    codehydraDefaults({ nodeBuiltins: true }),
     // Copy wrapper scripts to app-data/bin/ for development
     viteStaticCopy({
       targets: [
@@ -53,14 +54,6 @@ export default defineConfig({
       fileName: () => "opencode.cjs",
     },
     outDir: "dist/bin",
-    rollupOptions: {
-      // Externalize all Node.js built-in modules
-      external: [...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
-    },
-    // Don't minify - makes debugging easier
-    minify: false,
-    // No sourcemaps for CLI scripts
-    sourcemap: false,
     // Clear dist/bin on each build
     emptyOutDir: true,
   },

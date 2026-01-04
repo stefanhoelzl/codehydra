@@ -14,6 +14,7 @@ import type {
 	AnnotationContent
 } from './message-types';
 import { logger } from './logger';
+import { serializeDocument } from '../lib/utils/document-storage';
 
 // Track active prompt requests for cancellation support
 const activeRequests = new Map<string, AbortController>();
@@ -302,7 +303,6 @@ export async function handleSaveAs(
 
 		if (uri) {
 			logger.info(`Saving document: path=${uri.fsPath}`);
-			const { serializeDocument } = await import('../lib/utils/document-storage');
 			const serialized = serializeDocument(content, annotations);
 			await vscode.workspace.fs.writeFile(uri, Buffer.from(serialized, 'utf-8'));
 			logger.info('Document saved successfully');

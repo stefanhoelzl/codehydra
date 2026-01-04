@@ -1,5 +1,5 @@
-import { builtinModules } from "node:module";
 import { defineConfig, type UserConfig } from "vite";
+import { codehydraDefaults } from "../vite.defaults";
 
 /**
  * Base Vite configuration for VS Code extensions.
@@ -13,20 +13,13 @@ import { defineConfig, type UserConfig } from "vite";
  * additional SSR settings - see sidekick/vite.config.ts for an example.
  */
 const baseConfig: UserConfig = {
+  plugins: [codehydraDefaults({ nodeBuiltins: true, external: ["vscode"] })],
   build: {
     lib: {
       entry: "", // Must be overridden by each extension
       formats: ["cjs"],
       fileName: () => "extension.cjs",
     },
-    rollupOptions: {
-      // Externalize:
-      // - vscode: VS Code API (provided at runtime)
-      // - Node.js built-ins: path, fs, etc. (available in VS Code extension host)
-      external: ["vscode", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
-    },
-    minify: false,
-    sourcemap: false,
     emptyOutDir: true,
   },
 };
