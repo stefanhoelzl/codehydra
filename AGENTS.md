@@ -885,6 +885,8 @@ CodeHydra runs an MCP (Model Context Protocol) server that exposes workspace API
 
 **Note**: MCP tools mirror the Public API workspace methods. See `docs/API.md` for detailed documentation.
 
+**VS Code Object Serialization**: Commands requiring VS Code objects (Uri, Position, Range, Selection, Location) use the `$vscode` wrapper format. Example: `{ "$vscode": "Uri", "value": "file:///path/to/file.ts" }`. See [docs/API.md#vs-code-object-serialization](docs/API.md#vs-code-object-serialization) for full format documentation.
+
 ## Development Workflow
 
 - **Features**: Efficient coverage - implement with tests, batch validate at end
