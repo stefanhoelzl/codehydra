@@ -29,9 +29,10 @@ import { SILENT_LOGGER } from "../logging";
  */
 async function createAndInitializeProvider(
   port: number,
-  sdkFactory: SdkClientFactory
+  sdkFactory: SdkClientFactory,
+  workspacePath = "/test/workspace"
 ): Promise<OpenCodeProvider> {
-  const provider = new OpenCodeProvider(SILENT_LOGGER, asSdkFactory(sdkFactory));
+  const provider = new OpenCodeProvider(workspacePath, SILENT_LOGGER, asSdkFactory(sdkFactory));
   await provider.initializeClient(port);
   await provider.fetchStatus();
   return provider;
@@ -148,7 +149,11 @@ describe("AgentStatusManager", () => {
       manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       // Provider creation should not throw
-      const provider = new OpenCodeProvider(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
+      const provider = new OpenCodeProvider(
+        "/test/workspace",
+        SILENT_LOGGER,
+        asSdkFactory(mockSdkFactory)
+      );
       await expect(provider.initializeClient(59999)).resolves.not.toThrow();
     });
   });

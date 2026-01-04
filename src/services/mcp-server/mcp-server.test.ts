@@ -28,7 +28,7 @@ function createMockCoreApi(overrides?: {
     forceRemove: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-    getOpencodePort: vi.fn().mockResolvedValue(14001),
+    getOpenCodeSession: vi.fn().mockResolvedValue(14001),
     restartOpencodeServer: vi.fn().mockResolvedValue(14001),
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
@@ -153,7 +153,7 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_get_status");
       expect(toolNames).toContain("workspace_get_metadata");
       expect(toolNames).toContain("workspace_set_metadata");
-      expect(toolNames).toContain("workspace_get_opencode_port");
+      expect(toolNames).toContain("workspace_get_opencode_session");
       expect(toolNames).toContain("workspace_restart_opencode_server");
       expect(toolNames).toContain("workspace_delete");
       expect(toolNames).toContain("workspace_execute_command");

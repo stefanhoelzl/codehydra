@@ -196,7 +196,7 @@ describe("bootstrap.startup", () => {
     expect(api.workspaces.forceRemove).toBeTypeOf("function");
     expect(api.workspaces.get).toBeTypeOf("function");
     expect(api.workspaces.getStatus).toBeTypeOf("function");
-    expect(api.workspaces.getOpencodePort).toBeTypeOf("function");
+    expect(api.workspaces.getOpenCodeSession).toBeTypeOf("function");
     expect(api.workspaces.setMetadata).toBeTypeOf("function");
     expect(api.workspaces.getMetadata).toBeTypeOf("function");
 

@@ -134,6 +134,16 @@ export interface Workspace {
 }
 
 /**
+ * OpenCode session information.
+ */
+export interface OpenCodeSession {
+  /** Port number the OpenCode server is running on */
+  readonly port: number;
+  /** Session ID for the primary session */
+  readonly sessionId: string;
+}
+
+/**
  * Agent status counts for workspaces with active AI agents.
  */
 export interface AgentStatusCounts {
@@ -185,22 +195,22 @@ export interface WorkspaceApi {
   getStatus(): Promise<WorkspaceStatus>;
 
   /**
-   * Get the OpenCode server port for this workspace.
-   * Returns the port number if the OpenCode server is running, or null if not running.
+   * Get the OpenCode session info for this workspace.
+   * Returns the session info if the OpenCode server is running, or null if not running.
    *
-   * @returns Port number or null if server not running
+   * @returns Session info (port and sessionId) or null if server not running
    * @throws Error if not connected or request fails
    *
    * @example
    * ```typescript
-   * const port = await api.workspace.getOpencodePort();
-   * if (port !== null) {
-   *   console.log(`OpenCode server running on port ${port}`);
-   *   // Connect to OpenCode server at http://localhost:${port}
+   * const session = await api.workspace.getOpenCodeSession();
+   * if (session !== null) {
+   *   console.log(`OpenCode server running on port ${session.port}`);
+   *   console.log(`Primary session: ${session.sessionId}`);
    * }
    * ```
    */
-  getOpencodePort(): Promise<number | null>;
+  getOpenCodeSession(): Promise<OpenCodeSession | null>;
 
   /**
    * Restart the OpenCode server for this workspace, preserving the same port.

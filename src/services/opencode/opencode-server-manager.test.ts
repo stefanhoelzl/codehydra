@@ -219,7 +219,7 @@ describe("OpenCodeServerManager", () => {
       await manager.startServer("/workspace/feature-a");
       await manager.stopServer("/workspace/feature-a");
 
-      expect(callback).toHaveBeenCalledWith("/workspace/feature-a");
+      expect(callback).toHaveBeenCalledWith("/workspace/feature-a", false);
     });
 
     it("awaits pending startServer before killing", async () => {

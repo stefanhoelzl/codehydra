@@ -40,7 +40,7 @@ function createMockApi(): ICodeHydraApi {
       forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-      getOpencodePort: vi.fn().mockResolvedValue(null),
+      getOpenCodeSession: vi.fn().mockResolvedValue(null),
       restartOpencodeServer: vi.fn().mockResolvedValue(14001),
       setMetadata: vi.fn(),
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
@@ -94,37 +94,44 @@ describe("wirePluginApi", () => {
     expect(pluginServer.registeredHandlers).not.toBeNull();
   });
 
-  describe("getOpencodePort handler", () => {
+  describe("getOpenCodeSession handler", () => {
     it("should resolve workspace path to projectId and workspaceName", async () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      await handlers.getOpencodePort("/home/user/.codehydra/workspaces/my-feature");
+      await handlers.getOpenCodeSession("/home/user/.codehydra/workspaces/my-feature");
 
       expect(workspaceResolver.findProjectForWorkspace).toHaveBeenCalledWith(
         "/home/user/.codehydra/workspaces/my-feature"
       );
     });
 
-    it("should return success result with port number", async () => {
-      vi.mocked(api.workspaces.getOpencodePort).mockResolvedValue(12345);
+    it("should return success result with session info", async () => {
+      vi.mocked(api.workspaces.getOpenCodeSession).mockResolvedValue({
+        port: 12345,
+        sessionId: "ses-123",
+      });
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpencodePort("/home/user/.codehydra/workspaces/my-feature");
+      const result = await handlers.getOpenCodeSession(
+        "/home/user/.codehydra/workspaces/my-feature"
+      );
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data).toBe(12345);
+        expect(result.data).toEqual({ port: 12345, sessionId: "ses-123" });
       }
     });
 
-    it("should return success result with null when no server", async () => {
-      vi.mocked(api.workspaces.getOpencodePort).mockResolvedValue(null);
+    it("should return success result with null when no session", async () => {
+      vi.mocked(api.workspaces.getOpenCodeSession).mockResolvedValue(null);
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpencodePort("/home/user/.codehydra/workspaces/my-feature");
+      const result = await handlers.getOpenCodeSession(
+        "/home/user/.codehydra/workspaces/my-feature"
+      );
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -137,7 +144,7 @@ describe("wirePluginApi", () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpencodePort("/unknown/workspace");
+      const result = await handlers.getOpenCodeSession("/unknown/workspace");
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -146,15 +153,19 @@ describe("wirePluginApi", () => {
     });
 
     it("should return error result when API throws", async () => {
-      vi.mocked(api.workspaces.getOpencodePort).mockRejectedValue(new Error("Port lookup failed"));
+      vi.mocked(api.workspaces.getOpenCodeSession).mockRejectedValue(
+        new Error("Session lookup failed")
+      );
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpencodePort("/home/user/.codehydra/workspaces/my-feature");
+      const result = await handlers.getOpenCodeSession(
+        "/home/user/.codehydra/workspaces/my-feature"
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe("Port lookup failed");
+        expect(result.error).toBe("Session lookup failed");
       }
     });
 
@@ -162,9 +173,9 @@ describe("wirePluginApi", () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      await handlers.getOpencodePort("/home/user/.codehydra/workspaces/my-feature");
+      await handlers.getOpenCodeSession("/home/user/.codehydra/workspaces/my-feature");
 
-      expect(api.workspaces.getOpencodePort).toHaveBeenCalledWith(
+      expect(api.workspaces.getOpenCodeSession).toHaveBeenCalledWith(
         expect.any(String), // projectId (generated from path)
         "my-feature" as WorkspaceName
       );

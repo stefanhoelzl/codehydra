@@ -5,7 +5,7 @@
  * CodeHydra (server) and VS Code extensions (clients).
  */
 
-import type { WorkspaceStatus, Workspace, InitialPrompt } from "./api/types";
+import type { WorkspaceStatus, Workspace, InitialPrompt, OpenCodeSession } from "./api/types";
 import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
 
 // ============================================================================
@@ -342,11 +342,13 @@ export interface ClientToServerEvents {
   "api:workspace:getStatus": (ack: (result: PluginResult<WorkspaceStatus>) => void) => void;
 
   /**
-   * Get the OpenCode server port for the connected workspace.
+   * Get the OpenCode session info for the connected workspace.
    *
-   * @param ack - Acknowledgment callback with port number (null if not running)
+   * @param ack - Acknowledgment callback with session info (null if not running)
    */
-  "api:workspace:getOpencodePort": (ack: (result: PluginResult<number | null>) => void) => void;
+  "api:workspace:getOpenCodeSession": (
+    ack: (result: PluginResult<OpenCodeSession | null>) => void
+  ) => void;
 
   /**
    * Restart the OpenCode server for the connected workspace, preserving the same port.

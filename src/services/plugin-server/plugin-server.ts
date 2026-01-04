@@ -37,7 +37,7 @@ import {
   validateLogRequest,
 } from "../../shared/plugin-protocol";
 import { LogLevel } from "../logging/types";
-import type { WorkspaceStatus, Workspace } from "../../shared/api/types";
+import type { WorkspaceStatus, Workspace, OpenCodeSession } from "../../shared/api/types";
 import { getErrorMessage } from "../errors";
 import { Path } from "../platform/path";
 
@@ -72,11 +72,11 @@ export interface ApiCallHandlers {
   getStatus(workspacePath: string): Promise<PluginResult<WorkspaceStatus>>;
 
   /**
-   * Handle getOpencodePort request.
+   * Handle getOpenCodeSession request.
    * @param workspacePath - Normalized workspace path
-   * @returns Port number (null if not running) or error
+   * @returns Session info (null if not running) or error
    */
-  getOpencodePort(workspacePath: string): Promise<PluginResult<number | null>>;
+  getOpenCodeSession(workspacePath: string): Promise<PluginResult<OpenCodeSession | null>>;
 
   /**
    * Handle restartOpencodeServer request.
@@ -594,11 +594,11 @@ export class PluginServer {
     );
 
     socket.on(
-      "api:workspace:getOpencodePort",
+      "api:workspace:getOpenCodeSession",
       this.createNoArgHandler(
-        "api:workspace:getOpencodePort",
+        "api:workspace:getOpenCodeSession",
         workspacePath,
-        (h) => h.getOpencodePort
+        (h) => h.getOpenCodeSession
       )
     );
 

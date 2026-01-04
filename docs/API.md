@@ -44,16 +44,16 @@ Both methods provide the same API contract - only the transport differs.
 
 All methods operate on the **connected workspace**.
 
-| Method                  | Signature                                                                              | Description                                            |
-| ----------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `getStatus`             | `() => Promise<WorkspaceStatus>`                                                       | Get workspace status (dirty flag, agent status)        |
-| `getOpencodePort`       | `() => Promise<number \| null>`                                                        | Get OpenCode server port (null if not running)         |
-| `restartOpencodeServer` | `() => Promise<number>`                                                                | Restart OpenCode server, preserving port, returns port |
-| `getMetadata`           | `() => Promise<Record<string, string>>`                                                | Get all metadata (always includes `base` key)          |
-| `setMetadata`           | `(key: string, value: string \| null) => Promise<void>`                                | Set or delete a metadata key                           |
-| `executeCommand`        | `(command: string, args?: unknown[]) => Promise<unknown>`                              | Execute a VS Code command (10-second timeout)          |
-| `delete`                | `(options?: { keepBranch?: boolean }) => Promise<{ started: true }>`                   | Delete the workspace (terminates OpenCode, async)      |
-| `create`                | `(name: string, base: string, options?: WorkspaceCreateOptions) => Promise<Workspace>` | Create a new workspace in the same project             |
+| Method                  | Signature                                                                              | Description                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `getStatus`             | `() => Promise<WorkspaceStatus>`                                                       | Get workspace status (dirty flag, agent status)                 |
+| `getOpenCodeSession`    | `() => Promise<OpenCodeSession \| null>`                                               | Get OpenCode session info (port + sessionId, null if not ready) |
+| `restartOpencodeServer` | `() => Promise<number>`                                                                | Restart OpenCode server, preserving port, returns port          |
+| `getMetadata`           | `() => Promise<Record<string, string>>`                                                | Get all metadata (always includes `base` key)                   |
+| `setMetadata`           | `(key: string, value: string \| null) => Promise<void>`                                | Set or delete a metadata key                                    |
+| `executeCommand`        | `(command: string, args?: unknown[]) => Promise<unknown>`                              | Execute a VS Code command (10-second timeout)                   |
+| `delete`                | `(options?: { keepBranch?: boolean }) => Promise<{ started: true }>`                   | Delete the workspace (terminates OpenCode, async)               |
+| `create`                | `(name: string, base: string, options?: WorkspaceCreateOptions) => Promise<Workspace>` | Create a new workspace in the same project                      |
 
 #### `log` Namespace
 
@@ -109,10 +109,11 @@ switch (status.agent.type) {
 #### Connect to OpenCode Server
 
 ```typescript
-const port = await api.workspace.getOpencodePort();
-if (port !== null) {
-  // Connect to OpenCode API at http://localhost:${port}
-  const response = await fetch(`http://localhost:${port}/api/sessions`);
+const session = await api.workspace.getOpenCodeSession();
+if (session !== null) {
+  // Connect to OpenCode API at http://localhost:${session.port}
+  // Primary session ID is available as session.sessionId
+  const response = await fetch(`http://localhost:${session.port}/api/sessions`);
   const sessions = await response.json();
 }
 ```
@@ -330,9 +331,14 @@ interface Workspace {
   base: string;
 }
 
+interface OpenCodeSession {
+  readonly port: number;
+  readonly sessionId: string;
+}
+
 interface WorkspaceApi {
   getStatus(): Promise<WorkspaceStatus>;
-  getOpencodePort(): Promise<number | null>;
+  getOpenCodeSession(): Promise<OpenCodeSession | null>;
   restartOpencodeServer(): Promise<number>;
   getMetadata(): Promise<Readonly<Record<string, string>>>;
   setMetadata(key: string, value: string | null): Promise<void>;
@@ -413,7 +419,7 @@ All events use acknowledgment callbacks for request/response pattern.
 | Event                                 | Request Payload          | Response                                |
 | ------------------------------------- | ------------------------ | --------------------------------------- |
 | `api:workspace:getStatus`             | None                     | `PluginResult<WorkspaceStatus>`         |
-| `api:workspace:getOpencodePort`       | None                     | `PluginResult<number \| null>`          |
+| `api:workspace:getOpenCodeSession`    | None                     | `PluginResult<OpenCodeSession \| null>` |
 | `api:workspace:restartOpencodeServer` | None                     | `PluginResult<number>`                  |
 | `api:workspace:getMetadata`           | None                     | `PluginResult<Record<string, string>>`  |
 | `api:workspace:setMetadata`           | `SetMetadataRequest`     | `PluginResult<void>`                    |
@@ -524,8 +530,8 @@ class CodehydraClient {
     return this.emit("api:workspace:getStatus");
   }
 
-  async getOpencodePort(): Promise<number | null> {
-    return this.emit("api:workspace:getOpencodePort");
+  async getOpenCodeSession(): Promise<OpenCodeSession | null> {
+    return this.emit("api:workspace:getOpenCodeSession");
   }
 
   async getMetadata(): Promise<Record<string, string>> {
@@ -646,7 +652,7 @@ const unsubscribe = on("workspace:switched", (event) => {
 | `forceRemove`           | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<void>`                                                                                                              | Force remove (skip cleanup)                                                                                                                                                                                                                                                                            |
 | `get`                   | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Workspace \| undefined>`                                                                                            | Get a workspace                                                                                                                                                                                                                                                                                        |
 | `getStatus`             | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<WorkspaceStatus>`                                                                                                   | Get workspace status                                                                                                                                                                                                                                                                                   |
-| `getOpencodePort`       | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<number \| null>`                                                                                                    | Get OpenCode server port                                                                                                                                                                                                                                                                               |
+| `getOpenCodeSession`    | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<OpenCodeSession \| null>`                                                                                           | Get OpenCode session info (port + sessionId)                                                                                                                                                                                                                                                           |
 | `restartOpencodeServer` | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<number>`                                                                                                            | Restart OpenCode server, preserving port                                                                                                                                                                                                                                                               |
 | `setMetadata`           | `(projectId: ProjectId, workspaceName: WorkspaceName, key: string, value: string \| null) => Promise<void>`                                                                          | Set/delete metadata                                                                                                                                                                                                                                                                                    |
 | `getMetadata`           | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Record<string, string>>`                                                                                            | Get all metadata                                                                                                                                                                                                                                                                                       |

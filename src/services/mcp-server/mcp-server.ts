@@ -334,16 +334,17 @@ export class McpServer implements IMcpServer {
       )
     );
 
-    // workspace_get_opencode_port
+    // workspace_get_opencode_session
     this.registeredTools.push(
       this.mcpServer.registerTool(
-        "workspace_get_opencode_port",
+        "workspace_get_opencode_session",
         {
-          description: "Get the OpenCode server port for the current workspace",
+          description:
+            "Get the OpenCode session info (port and session ID) for the current workspace",
           inputSchema: z.object({}),
         },
         this.createWorkspaceHandler(async (resolved) =>
-          this.api.workspaces.getOpencodePort(resolved.projectId, resolved.workspaceName)
+          this.api.workspaces.getOpenCodeSession(resolved.projectId, resolved.workspaceName)
         )
       )
     );
@@ -561,14 +562,14 @@ export class McpServer implements IMcpServer {
    */
   private async getCallerModel(resolved: McpResolvedWorkspace): Promise<PromptModel | undefined> {
     try {
-      // Get caller's OpenCode port
-      const callerPort = await this.api.workspaces.getOpencodePort(
+      // Get caller's OpenCode session
+      const session = await this.api.workspaces.getOpenCodeSession(
         resolved.projectId,
         resolved.workspaceName
       );
 
-      if (!callerPort) {
-        this.logger.debug("Cannot determine model: no OpenCode server running", {
+      if (!session) {
+        this.logger.debug("Cannot determine model: no OpenCode session running", {
           projectId: resolved.projectId,
           workspaceName: resolved.workspaceName,
         });
@@ -576,7 +577,7 @@ export class McpServer implements IMcpServer {
       }
 
       // Query caller's OpenCode for current session's model
-      const sdk = createOpencodeClient({ baseUrl: `http://127.0.0.1:${callerPort}` });
+      const sdk = createOpencodeClient({ baseUrl: `http://127.0.0.1:${session.port}` });
       const sessions = await sdk.session.list();
       const activeSession = sessions.data?.[0];
 

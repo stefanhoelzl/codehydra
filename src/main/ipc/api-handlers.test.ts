@@ -27,7 +27,7 @@ function createMockApi(): ICodeHydraApi {
       forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-      getOpencodePort: vi.fn().mockResolvedValue(null),
+      getOpenCodeSession: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn(),
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
       executeCommand: vi.fn().mockResolvedValue(undefined),

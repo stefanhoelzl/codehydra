@@ -4,7 +4,7 @@
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
  * - Workspace operations: create, remove, forceRemove, get, getStatus,
- *   getOpencodePort, setMetadata, getMetadata
+ *   getOpenCodeSession, setMetadata, getMetadata
  *
  * Created in startServices() after setup is complete.
  */
@@ -33,6 +33,7 @@ import type {
   DeletionOperation,
   DeletionOperationId,
   BlockingProcess,
+  OpenCodeSession,
 } from "../../../shared/api/types";
 import { normalizeInitialPrompt } from "../../../shared/api/types";
 import type { WorkspacePath } from "../../../shared/ipc";
@@ -174,9 +175,13 @@ export class CoreModule implements IApiModule {
     this.api.register("workspaces.getStatus", this.workspaceGetStatus.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET_STATUS,
     });
-    this.api.register("workspaces.getOpencodePort", this.workspaceGetOpencodePort.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_GET_OPENCODE_PORT,
-    });
+    this.api.register(
+      "workspaces.getOpenCodeSession",
+      this.workspaceGetOpenCodeSession.bind(this),
+      {
+        ipc: ApiIpcChannels.WORKSPACE_GET_OPENCODE_SESSION,
+      }
+    );
     this.api.register(
       "workspaces.restartOpencodeServer",
       this.workspaceRestartOpencodeServer.bind(this),
@@ -411,12 +416,13 @@ export class CoreModule implements IApiModule {
     };
   }
 
-  private async workspaceGetOpencodePort(payload: WorkspaceRefPayload): Promise<number | null> {
+  private async workspaceGetOpenCodeSession(
+    payload: WorkspaceRefPayload
+  ): Promise<OpenCodeSession | null> {
     const { workspace } = await this.resolveWorkspace(payload);
 
-    const serverManager = this.deps.appState.getServerManager();
-    const port = serverManager?.getPort(workspace.path);
-    return port || null;
+    const agentStatusManager = this.deps.appState.getAgentStatusManager();
+    return agentStatusManager?.getSession(workspace.path as WorkspacePath) ?? null;
   }
 
   private async workspaceRestartOpencodeServer(payload: WorkspaceRefPayload): Promise<number> {

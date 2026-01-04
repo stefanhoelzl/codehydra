@@ -83,6 +83,25 @@ describe("OpenCodeClient", () => {
     });
   }
 
+  /**
+   * Helper to register sessions for event filtering.
+   * Simulates what would happen when sessions are created via createSession() or SSE events.
+   * Root sessions (no parentID) are added to rootSessionIds.
+   * Child sessions are mapped to their root parent.
+   */
+  function registerSessions(
+    c: OpenCodeClient,
+    sessions: Array<{ id: string; parentID?: string }>
+  ): void {
+    for (const session of sessions) {
+      const info: { id: string; parentID?: string } = { id: session.id };
+      if (session.parentID !== undefined) {
+        info.parentID = session.parentID;
+      }
+      c["handleSessionCreated"]({ info });
+    }
+  }
+
   describe("getStatus", () => {
     it("returns idle for empty status response", async () => {
       mockSdk = createSdkWithStatuses({});
@@ -191,14 +210,11 @@ describe("OpenCodeClient", () => {
   });
 
   describe("onStatusChanged", () => {
-    it("fires callback when root session status changes", async () => {
+    it("fires callback when root session status changes", () => {
       // Register root session first
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onStatusChanged(listener);
 
       // Simulate SSE session.status event via handleMessage
@@ -214,17 +230,11 @@ describe("OpenCodeClient", () => {
       expect(listener).toHaveBeenCalledWith("busy");
     });
 
-    it("does not fire callback for child session status changes", async () => {
+    it("does not fire callback for child session status changes", () => {
       // Register parent as root, child has parentID
-      mockSdk = createSdkWithSessions([
-        createTestSession({ id: "parent-1", directory: "/test" }),
-        createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-      ]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
       client.onStatusChanged(listener);
 
       // Simulate status change for child session
@@ -248,7 +258,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onStatusChanged(listener);
 
       // First status change to idle (same as default)
@@ -274,7 +284,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       const unsubscribe = client.onStatusChanged(listener);
 
       unsubscribe();
@@ -304,7 +314,7 @@ describe("OpenCodeClient", () => {
       mockFactory = createSdkFactoryMock(mockSdk);
 
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
 
       const event = {
         data: JSON.stringify({
@@ -326,7 +336,7 @@ describe("OpenCodeClient", () => {
       mockFactory = createSdkFactoryMock(mockSdk);
 
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
 
       // Child session goes busy - should NOT update currentStatus
       const event = {
@@ -347,7 +357,7 @@ describe("OpenCodeClient", () => {
       mockFactory = createSdkFactoryMock(mockSdk);
 
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
 
       // First set to busy
       const busyEvent = {
@@ -380,7 +390,8 @@ describe("OpenCodeClient", () => {
       mockFactory = createSdkFactoryMock(mockSdk);
 
       client = createClient(8080);
-      await client.fetchRootSessions();
+      // Register parent as root, child mapped to parent
+      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
 
       // Set parent to busy first
       const busyEvent = {
@@ -411,7 +422,7 @@ describe("OpenCodeClient", () => {
       mockFactory = createSdkFactoryMock(mockSdk);
 
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
 
       const event = {
         data: JSON.stringify({
@@ -427,7 +438,6 @@ describe("OpenCodeClient", () => {
 
   describe("event handling", () => {
     it("emits session.status events for root sessions", async () => {
-      // Register root session first
       mockSdk = createSdkWithSessions([
         createTestSession({ id: "test-session", directory: "/test" }),
       ]);
@@ -435,7 +445,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "test-session" }]);
       client.onSessionEvent(listener);
 
       // Simulate receiving an SSE event via the internal handler
@@ -455,7 +465,11 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      // Register parent as root, child mapped to parent
+      registerSessions(client, [
+        { id: "parent-session" },
+        { id: "child-session", parentID: "parent-session" },
+      ]);
       client.onSessionEvent(listener);
 
       // Try to emit event for child session
@@ -479,7 +493,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "test-session" }]);
       client.onSessionEvent(listener);
 
       const event: OurSessionStatus = { type: "deleted", sessionId: "test-session" };
@@ -498,7 +512,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "test-session" }]);
       client.onSessionEvent(listener);
 
       const event: OurSessionStatus = { type: "idle", sessionId: "test-session" };
@@ -515,7 +529,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       const unsubscribe = client.onSessionEvent(listener);
 
       unsubscribe();
@@ -665,52 +679,6 @@ describe("OpenCodeClient", () => {
     });
   });
 
-  describe("fetchRootSessions", () => {
-    it("returns only root sessions", async () => {
-      mockSdk = createSdkWithSessions([
-        createTestSession({ id: "root-1", directory: "/test" }),
-        createTestSession({ id: "child-1", directory: "/test", parentID: "root-1" }),
-        createTestSession({ id: "root-2", directory: "/test" }),
-      ]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      client = createClient(8080);
-      const result = await client.fetchRootSessions();
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toHaveLength(2);
-        expect(result.value.map((s) => s.id)).toEqual(["root-1", "root-2"]);
-      }
-    });
-
-    it("registers root sessions for filtering", async () => {
-      mockSdk = createSdkWithSessions([
-        createTestSession({ id: "root-1", directory: "/test" }),
-        createTestSession({ id: "child-1", directory: "/test", parentID: "root-1" }),
-      ]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      client = createClient(8080);
-      await client.fetchRootSessions();
-
-      expect(client.isRootSession("root-1")).toBe(true);
-      expect(client.isRootSession("child-1")).toBe(false);
-    });
-
-    it("returns error on SDK failure", async () => {
-      mockSdk = createSdkClientMock({
-        sessionListError: new Error("Network error"),
-      });
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      client = createClient(8080);
-      const result = await client.fetchRootSessions();
-
-      expect(result.ok).toBe(false);
-    });
-  });
-
   describe("handleSessionCreated", () => {
     it("adds new root session to tracking set", async () => {
       // Initialize with empty session list
@@ -719,7 +687,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onSessionEvent(listener);
 
       // Simulate session.created event for root session
@@ -737,7 +705,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onSessionEvent(listener);
 
       // Simulate session.created event for child session
@@ -753,7 +721,7 @@ describe("OpenCodeClient", () => {
 
       const listener = vi.fn();
       client = createClient(8080);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onSessionEvent(listener);
 
       // Missing info
@@ -773,7 +741,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         // Simulate SSE event in OpenCode wire format
@@ -795,7 +763,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -816,7 +784,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -840,7 +808,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -861,7 +829,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -882,7 +850,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -905,7 +873,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -928,7 +896,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -952,7 +920,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -976,7 +944,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -999,7 +967,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         expect(client.isRootSession("ses-123")).toBe(true);
@@ -1025,7 +993,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1062,7 +1030,8 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        // Register parent as root and child mapped to parent
+        registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1099,7 +1068,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "other-session" }]); // Different session
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1125,7 +1094,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onPermissionEvent(listener);
 
         // Missing required fields
@@ -1149,7 +1118,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1181,7 +1150,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1213,7 +1182,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1248,7 +1217,8 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        // Register parent as root and child mapped to parent
+        registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1283,7 +1253,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "other-session" }]); // Different session
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1308,7 +1278,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onPermissionEvent(listener);
 
         const event = {
@@ -1335,7 +1305,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = { data: "not valid json" } as MessageEvent;
@@ -1351,7 +1321,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -1372,7 +1342,7 @@ describe("OpenCodeClient", () => {
 
         const listener = vi.fn();
         client = createClient(8080);
-        await client.fetchRootSessions();
+        registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
         const event = {
@@ -1647,6 +1617,22 @@ describe("Permission Event Emission", () => {
     );
   }
 
+  /**
+   * Helper to register sessions for event filtering.
+   */
+  function registerSessions(
+    c: OpenCodeClient,
+    sessions: Array<{ id: string; parentID?: string }>
+  ): void {
+    for (const session of sessions) {
+      const info: { id: string; parentID?: string } = { id: session.id };
+      if (session.parentID !== undefined) {
+        info.parentID = session.parentID;
+      }
+      c["handleSessionCreated"]({ info });
+    }
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockSdk = createSdkClientMock();
@@ -1665,7 +1651,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onPermissionEvent(listener);
 
       // Simulate permission.updated event via internal handler
@@ -1696,7 +1682,8 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      // Register parent as root and child mapped to parent
+      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
       client.onPermissionEvent(listener);
 
       // Permission event for tracked child session should be emitted
@@ -1724,7 +1711,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "other-session" }]); // Different session
       client.onPermissionEvent(listener);
 
       // Permission event for unknown session should be ignored
@@ -1744,7 +1731,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onPermissionEvent(listener);
 
       // Send malformed event (missing required fields)
@@ -1759,7 +1746,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onPermissionEvent(listener);
 
       client["handlePermissionUpdated"](undefined);
@@ -1775,7 +1762,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onPermissionEvent(listener);
 
       client["handlePermissionReplied"]({
@@ -1803,7 +1790,8 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      // Register parent as root and child mapped to parent
+      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
       client.onPermissionEvent(listener);
 
       client["handlePermissionReplied"]({
@@ -1828,7 +1816,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "other-session" }]); // Different session
       client.onPermissionEvent(listener);
 
       client["handlePermissionReplied"]({
@@ -1846,7 +1834,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onPermissionEvent(listener);
 
       client["handlePermissionReplied"]({ sessionID: "ses-123" });
@@ -1862,7 +1850,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       const unsubscribe = client.onPermissionEvent(listener);
 
       unsubscribe();
@@ -1883,7 +1871,7 @@ describe("Permission Event Emission", () => {
 
       const listener = vi.fn();
       client = createClient(mockFactory);
-      await client.fetchRootSessions();
+      registerSessions(client, [{ id: "ses-123" }]);
       client.onPermissionEvent(listener);
 
       client.dispose();

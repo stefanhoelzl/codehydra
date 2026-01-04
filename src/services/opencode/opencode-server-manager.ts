@@ -37,7 +37,12 @@ export type ServerStartedCallback = (
   port: number,
   pendingPrompt: PendingPrompt | undefined
 ) => void;
-export type ServerStoppedCallback = (workspacePath: string) => void;
+/**
+ * Callback for server stopped events.
+ * @param workspacePath - Path to the workspace
+ * @param isRestart - True if this stop is part of a restart (will be followed by start)
+ */
+export type ServerStoppedCallback = (workspacePath: string, isRestart: boolean) => void;
 
 /**
  * Server entry in the manager's internal map.
@@ -286,9 +291,10 @@ export class OpenCodeServerManager implements IDisposable {
    * Stop an OpenCode server for a workspace.
    *
    * @param workspacePath - Absolute path to the workspace
+   * @param isRestart - True if this stop is part of a restart operation
    * @returns StopResult indicating success or failure
    */
-  async stopServer(workspacePath: string): Promise<StopServerResult> {
+  async stopServer(workspacePath: string, isRestart = false): Promise<StopServerResult> {
     const entry = this.servers.get(workspacePath);
     if (!entry) {
       return { success: true };
@@ -330,12 +336,12 @@ export class OpenCodeServerManager implements IDisposable {
       this.servers.delete(workspacePath);
     }
 
-    // Fire callback
+    // Fire callback with isRestart flag
     for (const callback of this.stoppedCallbacks) {
-      callback(workspacePath);
+      callback(workspacePath, isRestart);
     }
 
-    this.logger.info("Server stopped", { workspacePath });
+    this.logger.info("Server stopped", { workspacePath, isRestart });
 
     return stopResult;
   }
@@ -405,8 +411,8 @@ export class OpenCodeServerManager implements IDisposable {
    * Internal method to perform the restart.
    */
   private async doRestartServer(workspacePath: string, port: number): Promise<RestartServerResult> {
-    // Stop the server first
-    const stopResult = await this.stopServer(workspacePath);
+    // Stop the server first (with isRestart=true to preserve session ID)
+    const stopResult = await this.stopServer(workspacePath, true);
     if (!stopResult.success) {
       return {
         success: false,

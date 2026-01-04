@@ -66,8 +66,11 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET, { projectId, workspaceName }),
     getStatus: (projectId: string, workspaceName: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, { projectId, workspaceName }),
-    getOpencodePort: (projectId: string, workspaceName: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_OPENCODE_PORT, { projectId, workspaceName }),
+    getOpenCodeSession: (projectId: string, workspaceName: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_OPENCODE_SESSION, {
+        projectId,
+        workspaceName,
+      }),
     setMetadata: (projectId: string, workspaceName: string, key: string, value: string | null) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_SET_METADATA, {
         projectId,
