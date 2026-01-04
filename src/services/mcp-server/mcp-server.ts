@@ -467,14 +467,26 @@ export class McpServer implements IMcpServer {
         "workspace_execute_command",
         {
           description:
-            "Execute a VS Code command in the current workspace. Most commands return undefined.",
+            "Execute a VS Code command in the current workspace. Most commands return undefined. " +
+            "Commands requiring VS Code objects (Uri, Position, Range, Selection, Location) can use " +
+            'the $vscode wrapper format. Example: { "$vscode": "Uri", "value": "file:///path/to/file.ts" }',
           inputSchema: z.object({
             command: z
               .string()
               .min(1)
               .max(256)
               .describe("VS Code command identifier (e.g., 'workbench.action.files.save')"),
-            args: z.array(z.unknown()).optional().describe("Optional command arguments"),
+            args: z
+              .array(z.unknown())
+              .optional()
+              .describe(
+                "Optional command arguments. Supports $vscode wrapper format for VS Code objects:\n" +
+                  '- Uri: { "$vscode": "Uri", "value": "file:///path/to/file.ts" }\n' +
+                  '- Position: { "$vscode": "Position", "line": 10, "character": 5 }\n' +
+                  '- Range: { "$vscode": "Range", "start": <Position>, "end": <Position> }\n' +
+                  '- Selection: { "$vscode": "Selection", "anchor": <Position>, "active": <Position> }\n' +
+                  '- Location: { "$vscode": "Location", "uri": <Uri>, "range": <Range> }'
+              ),
           }),
         },
         this.createWorkspaceHandler(

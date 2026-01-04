@@ -12,6 +12,7 @@ CodeHydra exposes APIs at two levels:
 - [Public API](#public-api) - Workspace-scoped API for external consumers
   - [VS Code Extension Access](#vs-code-extension-access)
   - [WebSocket Access](#websocket-access)
+- [VS Code Object Serialization](#vs-code-object-serialization) - Format for passing VS Code objects through JSON
 - [Private API](#private-api) - Full API for CodeHydra internals
 - [Type Definitions](#type-definitions) - Shared types
 
@@ -606,6 +607,140 @@ socket.on("command", (request: CommandRequest, ack: (result: PluginResult<unknow
 ```
 
 This is used by CodeHydra to send startup commands (close sidebars, open terminal) when a workspace connects.
+
+---
+
+## VS Code Object Serialization
+
+VS Code commands often require class instances (Uri, Position, Range, etc.) that cannot be serialized through JSON. The `executeCommand` method supports a `$vscode` wrapper format to pass these objects through MCP or WebSocket interfaces.
+
+### Supported Types
+
+| Type      | `$vscode` Value | Required Fields     | Field Types            | Reconstruction                  |
+| --------- | --------------- | ------------------- | ---------------------- | ------------------------------- |
+| Uri       | `"Uri"`         | `value`             | `string`               | `Uri.parse(value)`              |
+| Position  | `"Position"`    | `line`, `character` | `number`, `number`     | `new Position(line, character)` |
+| Range     | `"Range"`       | `start`, `end`      | `Position`, `Position` | `new Range(start, end)`         |
+| Selection | `"Selection"`   | `anchor`, `active`  | `Position`, `Position` | `new Selection(anchor, active)` |
+| Location  | `"Location"`    | `uri`, `range`      | `Uri`, `Range`         | `new Location(uri, range)`      |
+
+### JSON Format Examples
+
+#### Uri
+
+```json
+{ "$vscode": "Uri", "value": "file:///path/to/file.ts" }
+```
+
+#### Position
+
+```json
+{ "$vscode": "Position", "line": 10, "character": 5 }
+```
+
+#### Range
+
+```json
+{
+  "$vscode": "Range",
+  "start": { "$vscode": "Position", "line": 10, "character": 5 },
+  "end": { "$vscode": "Position", "line": 10, "character": 20 }
+}
+```
+
+#### Selection
+
+```json
+{
+  "$vscode": "Selection",
+  "anchor": { "$vscode": "Position", "line": 5, "character": 0 },
+  "active": { "$vscode": "Position", "line": 10, "character": 15 }
+}
+```
+
+#### Location (fully nested)
+
+```json
+{
+  "$vscode": "Location",
+  "uri": { "$vscode": "Uri", "value": "file:///path/to/file.ts" },
+  "range": {
+    "$vscode": "Range",
+    "start": { "$vscode": "Position", "line": 10, "character": 5 },
+    "end": { "$vscode": "Position", "line": 10, "character": 20 }
+  }
+}
+```
+
+### Usage Example
+
+```typescript
+// Open a file using vscode.open command with a Uri argument
+await api.workspace.executeCommand("vscode.open", [
+  { $vscode: "Uri", value: "file:///c:/path/to/file.ts" },
+]);
+
+// Go to a specific location
+await api.workspace.executeCommand("editor.action.goToLocations", [
+  { $vscode: "Uri", value: "file:///c:/path/to/file.ts" },
+  { $vscode: "Position", line: 10, character: 0 },
+  [
+    {
+      $vscode: "Location",
+      uri: { $vscode: "Uri", value: "file:///c:/path/to/other.ts" },
+      range: {
+        $vscode: "Range",
+        start: { $vscode: "Position", line: 5, character: 0 },
+        end: { $vscode: "Position", line: 5, character: 10 },
+      },
+    },
+  ],
+]);
+```
+
+### Nested Object Handling
+
+The reconstruction is recursive, processing:
+
+- Arrays: each element is recursively processed
+- Objects: each property value is recursively processed
+- `$vscode` markers: validated and reconstructed using VS Code constructors
+
+Plain objects and primitives pass through unchanged. Mixed objects work correctly:
+
+```json
+{
+  "label": "Go to definition",
+  "location": { "$vscode": "Location", "uri": {...}, "range": {...} }
+}
+```
+
+Result: `{ label: "Go to definition", location: <Location instance> }`
+
+### Error Messages
+
+**Unknown type:**
+
+```
+Unknown VS Code object type: "Unknown". Supported types: Uri, Position, Range, Selection, Location
+```
+
+**Missing field:**
+
+```
+Invalid VS Code Position: missing required field "line"
+```
+
+**Invalid field type:**
+
+```
+Invalid VS Code Position: field "line" must be a number, got string
+```
+
+### Limitations
+
+- **Circular references**: Not supported. Will cause stack overflow.
+- **$vscode key collision**: If your data genuinely contains a `$vscode` key, wrap it in another object: `{ "data": { "$vscode": "literal" } }`.
 
 ---
 

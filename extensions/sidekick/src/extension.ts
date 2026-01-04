@@ -12,6 +12,10 @@ import type {
   InitialPrompt,
   OpenCodeSession,
 } from "./types";
+import {
+  reconstructVscodeObjects,
+  type VscodeFactories,
+} from "../../../src/shared/vscode-serialization";
 
 let socket: TypedSocket | null = null;
 let isConnected = false;
@@ -22,6 +26,21 @@ const API_TIMEOUT_MS = 10000;
 
 /** Timeout for terminal kill operations in milliseconds */
 const TERMINAL_KILL_TIMEOUT_MS = 5000;
+
+/**
+ * Factory functions for reconstructing VS Code objects from JSON wrappers.
+ * Maps $vscode type markers to actual VS Code constructors.
+ */
+const vscodeFactories: VscodeFactories = {
+  Uri: (value: string) => vscode.Uri.parse(value),
+  Position: (line: number, character: number) => new vscode.Position(line, character),
+  Range: (start: unknown, end: unknown) =>
+    new vscode.Range(start as vscode.Position, end as vscode.Position),
+  Selection: (anchor: unknown, active: unknown) =>
+    new vscode.Selection(anchor as vscode.Position, active as vscode.Position),
+  Location: (uri: unknown, range: unknown) =>
+    new vscode.Location(uri as vscode.Uri, range as vscode.Range),
+};
 
 // ============================================================================
 // Development Mode State Variables
@@ -433,7 +452,9 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     codehydraApi.log.debug("Command received", { command: request.command });
 
     try {
-      const args = request.args ?? [];
+      // Reconstruct VS Code objects from $vscode wrappers
+      const rawArgs = request.args ?? [];
+      const args = reconstructVscodeObjects(rawArgs, vscodeFactories) as unknown[];
       const result = await vscode.commands.executeCommand(request.command, ...args);
       codehydraApi.log.debug("Command executed", { command: request.command });
       ack({ success: true, data: result });
