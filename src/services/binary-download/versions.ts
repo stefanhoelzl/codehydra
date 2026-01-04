@@ -12,7 +12,7 @@ export const CODE_SERVER_VERSION = "4.107.0";
 /**
  * Current version of opencode to download.
  */
-export const OPENCODE_VERSION = "1.0.193";
+export const OPENCODE_VERSION = "1.0.223";
 
 /**
  * GitHub repository for Windows code-server builds.
