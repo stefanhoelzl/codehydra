@@ -347,6 +347,53 @@ describe("AgentStatusManager", () => {
     });
   });
 
+  describe("initializeClient with existing sessions", () => {
+    it("registers existing sessions and processes their status events", async () => {
+      // Create mock SDK with an existing session that matches our workspace
+      const existingSessionId = "existing-session-123";
+      const mockSdk = createSdkClientMock({
+        sessions: [
+          createTestSession({
+            id: existingSessionId,
+            directory: "/test/workspace",
+            status: { type: "idle" },
+          }),
+        ],
+      });
+      mockSdkFactory = createSdkFactoryMock(mockSdk);
+      manager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
+
+      const path = "/test/workspace" as WorkspacePath;
+      const provider = new OpenCodeProvider(path, SILENT_LOGGER, asSdkFactory(mockSdkFactory));
+
+      // Initialize the client - this should find the existing session and register it as a root session
+      await provider.initializeClient(8080);
+
+      // Add the provider to the manager and set TUI attached
+      manager.addProvider(path, provider);
+      manager.setTuiAttached(path);
+
+      // Initially should be idle since the session starts as idle
+      let status = manager.getStatus(path);
+      expect(status.status).toBe("idle");
+      expect(status.counts.idle).toBe(1);
+      expect(status.counts.busy).toBe(0);
+
+      // Now emit a status change event for the existing session (simulating SSE)
+      // This tests that the session was properly registered as a root session
+      mockSdk.$.emitEvent(createSessionStatusEvent(existingSessionId, { type: "busy" }));
+
+      // Wait for async processing
+      await Promise.resolve();
+
+      // Verify the status was updated correctly (should show busy)
+      status = manager.getStatus(path);
+      expect(status.status).toBe("busy");
+      expect(status.counts.idle).toBe(0);
+      expect(status.counts.busy).toBe(1);
+    });
+  });
+
   describe("dispose", () => {
     it("clears all state", async () => {
       manager.addProvider(

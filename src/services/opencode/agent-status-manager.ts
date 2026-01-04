@@ -180,6 +180,7 @@ export class OpenCodeProvider implements IDisposable {
         const matchingSession = findMatchingSession(sessionsResult.value, this.workspacePath);
         if (matchingSession) {
           this._primarySessionId = matchingSession.id;
+          client.addRootSession(matchingSession.id);
           this.logger.info("Found existing session", {
             workspacePath: this.workspacePath,
             sessionId: matchingSession.id,
