@@ -9,14 +9,15 @@ reviewers: []
 ## Overview
 
 - **Problem**: CI/merge workflow is hardcoded in the feature agent; uses direct merge instead of PRs; no merge queue
-- **Solution**: Extract to a reusable `/ship` command that creates PRs with auto-merge + merge queue
+- **Solution**: Extract to a reusable `/ship` command that creates PRs with auto-merge + client-side queue
 - **Risks**:
-  - Merge queue requires GitHub repo configuration (documented below)
+  - GitHub merge queue not available for personal repos (solved with client-side queue script)
   - First-time setup needed for branch protection rules
 - **Alternatives Considered**:
   - Keep inline in feature agent → rejected (not reusable by other agents/humans)
   - Manual PR creation → rejected (doesn't fit automated workflow)
-  - Direct merge without PR → rejected (no code review trail, no merge queue benefits)
+  - Direct merge without PR → rejected (no code review trail, no queue benefits)
+  - GitHub merge queue → rejected (not available for personal account repos)
 
 ## Architecture
 
@@ -132,10 +133,9 @@ reviewers: []
 │ /ship (command)                                           Status: COMPLETED │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ 29. Check for existing PR (idempotency)                                     │
-│ 30. If no PR: rebase, push, create PR, enable auto-merge                    │
-│ 31. Poll until merged/failed/timeout (max 15 min for merge queue)           │
-│ 32. Update local target branch                                              │
-│ 33. Report: MERGED | FAILED | TIMEOUT                                       │
+│ 30. If no PR: push, create PR, enable auto-merge                            │
+│ 31. Run ship-wait.ts script (handles queue, rebase, CI wait, merge wait)    │
+│ 32. Report: MERGED | FAILED | TIMEOUT                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
             ┌───────────────────────┼───────────────────────┐
@@ -150,6 +150,36 @@ reviewers: []
 │                   │   │ → back to step 11 │   │                           │
 └───────────────────┘   └───────────────────┘   └───────────────────────────┘
 ```
+
+## Client-Side Queue (ship-wait.ts)
+
+Since GitHub merge queue is not available for personal account repos, we implement a client-side queue:
+
+```
+/ship creates PR + enables auto-merge
+            │
+            ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ npx tsx .opencode/scripts/ship-wait.ts <pr-number>                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 1. List open PRs with auto-merge enabled, created before ours               │
+│ 2. Poll every 30s until all tracked PRs are merged or closed                │
+│    - Print progress: "Waiting for 2 PRs ahead: #42, #43..."                 │
+│ 3. When our turn: rebase onto main, force-push                              │
+│ 4. Wait for CI: gh pr checks <number> --watch --fail-fast                   │
+│ 5. Poll for merge completion (should be near-instant with auto-merge)       │
+│ 6. Update local main branch                                                 │
+│ 7. Exit: 0=merged, 1=failed, 2=timeout                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key behaviors:**
+
+- PRs merge in creation order (FIFO)
+- Each PR is tested against latest main right before merging
+- No merge conflicts at merge time (rebased just before CI runs)
+- Handles concurrent `/ship` from multiple workspaces
+- Uses `gh pr checks --watch` to avoid polling during CI (blocks until complete)
 
 ## Plan Status Transitions
 
@@ -169,7 +199,7 @@ reviewers: []
 | @review-\*             | Review plan, provide letter grade                                                                      |
 | @implementation-review | Review code against plan, provide letter grade                                                         |
 | @general               | Update plan to COMPLETED, commit all changes (using conventional commit types), optional CI validation |
-| /ship                  | Check for existing PR, rebase, push, create PR, enable auto-merge, poll for merge                      |
+| /ship                  | Check for existing PR, push, create PR, enable auto-merge, run ship-wait script                        |
 
 **Note on commit responsibility**: @implement intentionally does NOT commit. This allows @general to commit code changes together with plan status updates atomically, ensuring the plan always reflects the committed state. @general uses conventional commit types (feat, fix, docs, chore, test, infra) matching the PR title format.
 
@@ -184,7 +214,7 @@ Fix bug #123:
 5. @implementation-review checks → Grade A
 6. User tests, says "accept"
 7. @general commits with `fix(auth): resolve session timeout issue`
-8. /ship creates PR, waits for merge queue → MERGED
+8. /ship creates PR, runs ship-wait.ts → MERGED
 9. Workspace deleted
 
 ## Review Rating System
@@ -336,7 +366,6 @@ on:
   push:
     branches-ignore: [main]
   pull_request:
-  merge_group:
 
 jobs:
   ci:
@@ -354,40 +383,13 @@ jobs:
 | PR created from same repo          | `pull_request` | Skipped (push already ran) |
 | PR created from fork               | `pull_request` | Yes                        |
 | PR updated from fork               | `pull_request` | Yes                        |
-| Merge queue candidate              | `merge_group`  | Yes                        |
-| Merge to main                      | -              | No (merge queue validated) |
+| Merge to main                      | -              | No (PR CI already passed)  |
 
 **Known edge cases where duplicate runs may occur:**
 
 - PRs updated via GitHub web UI (no push event)
 - PRs reopened after being closed
 - These are rare and acceptable
-
-### How Merge Queue Works
-
-```
-                                         Merge Queue (temporary refs)
-                                         ┌─────────────────────────────┐
-main: [M]                                │                             │
-       │                                 │  gh-readonly-queue/main/    │
-       │    PR-A added to queue ────────►│  pr-123-abc123              │
-       │                                 │  [M + A] ← CI runs here     │
-       │                                 │                             │
-       │    PR-B added to queue ────────►│  pr-456-def456              │
-       │                                 │  [M + A + B] ← CI runs here │
-       │                                 │                             │
-       │                                 └─────────────────────────────┘
-       │                                              │
-       │                                    CI passes on both
-       │                                              │
-       ▼◄─────────────────────────────────────────────┘
-main: [M + A + B]   (actual merge happens now)
-```
-
-- Temporary merge commits are created in `refs/heads/gh-readonly-queue/main/pr-*`
-- CI runs on the **merged result** (branch + main + other queued PRs)
-- Main is only updated after CI passes
-- If CI fails, PR is removed from queue, main unchanged
 
 ### Separate Pages Workflow
 
@@ -487,18 +489,47 @@ New file: `.github/workflows/pages.yaml`
       - Commit rules (DO NOT COMMIT)
   - Test: Full workflow still works with context passed via invocation
 
+- [x] **Step 8: Add client-side queue script**
+  - **Problem**: GitHub merge queue is not available for personal account repos. The current /ship command has the agent poll manually which is inefficient.
+  - **Solution**: Create a Node.js script that handles queue waiting, rebasing, and merge polling.
+  - Files:
+    - `.opencode/scripts/ship-wait.ts` - New script for queue management
+    - `.opencode/command/ship.md` - Update to use the script
+    - `AGENTS.md` - Update GitHub configuration (remove merge queue references)
+    - `.github/workflows/ci.yaml` - Remove `merge_group` trigger (not needed without merge queue)
+  - Script behavior:
+    1. Accept PR number as argument
+    2. List open PRs with auto-merge enabled, created before ours
+    3. Poll every 30s until all tracked PRs are merged or closed (print progress)
+    4. When our turn: fetch main, rebase onto main, force-push
+    5. Run `gh pr checks <number> --watch --fail-fast` (blocks until CI complete)
+    6. Poll briefly for merge completion (should be near-instant with auto-merge)
+    7. Find main worktree and update local main branch
+    8. Exit with code: 0=merged, 1=failed, 2=timeout (15 min total)
+  - Invocation: `npx tsx .opencode/scripts/ship-wait.ts <pr-number>`
+  - Changes to /ship command:
+    - Remove manual polling loop (steps 6-7 in current spec)
+    - After creating PR + enabling auto-merge, run the script
+    - Report script exit status
+  - Changes to AGENTS.md:
+    - Remove "Require merge queue" (not available for personal repos)
+    - Keep "Require branches to be up to date" (script handles rebasing)
+    - Remove `merge_group` trigger documentation
+    - Document the client-side queue behavior
+  - Test: Multiple concurrent /ship invocations queue and merge in order
+
 ## `/ship` Command Specification
 
 ### File: `.opencode/command/ship.md`
 
 ````markdown
 ---
-description: Create PR with auto-merge, add to merge queue, wait for merge
+description: Create PR with auto-merge, wait for merge via client-side queue
 ---
 
 # /ship Command
 
-Ship the current branch by creating a PR and adding it to the merge queue.
+Ship the current branch by creating a PR with auto-merge and waiting for it to merge.
 
 ## Arguments
 
@@ -555,25 +586,11 @@ gh pr list --head $(git branch --show-current) --json number,url,state
 
 If a PR already exists for this branch:
 
-- If state is OPEN: skip to step 5 (resume polling)
+- If state is OPEN: skip to step 5 (run ship-wait script)
 - If state is MERGED: report MERGED and exit
 - If state is CLOSED: continue to create new PR
 
-### 3. Rebase and Push
-
-```bash
-git fetch origin <target>
-git rebase origin/<target>
-```
-
-If conflicts occur:
-
-- Resolve them using standard merge strategies
-- `git add <resolved-file>`
-- `git rebase --continue`
-- Repeat until complete
-
-Push:
+### 3. Push
 
 ```bash
 git push --force-with-lease origin HEAD
@@ -620,72 +637,33 @@ gh pr merge <number> --auto --merge --delete-branch
 
 This:
 
-- Enables auto-merge (will merge when all checks pass)
+- Enables auto-merge (will merge when all checks pass and branch is up-to-date)
 - Uses **merge** (not squash) to preserve commit history
 - Sets branch to auto-delete after merge
-- Merge queue (if enabled) will pick it up automatically
 
-### 6. Wait for Merge (max 15 minutes)
-
-The 15-minute timeout covers the entire merge queue process, including:
-
-- Waiting for position in queue
-- CI running on merge candidate
-- Actual merge
-
-Poll every 30 seconds:
+### 6. Run ship-wait script
 
 ```bash
-gh pr view <number> --json state,mergeStateStatus
+npx tsx .opencode/scripts/ship-wait.ts <number>
 ```
 
-**Response parsing:**
+The script handles:
 
-```json
-{
-  "state": "OPEN" | "MERGED" | "CLOSED",
-  "mergeStateStatus": "CLEAN" | "BLOCKED" | "BEHIND" | "DIRTY" | "UNSTABLE" | "HAS_HOOKS"
-}
-```
+- Waiting for PRs ahead in queue (created before ours with auto-merge enabled)
+- Rebasing onto main when it's our turn
+- Waiting for CI via `gh pr checks --watch`
+- Waiting for auto-merge to complete
+- Updating local main branch
 
-**State machine:**
+**Exit codes:**
 
-- `state == "MERGED"`: SUCCESS → go to step 7
-- `state == "CLOSED"`: FAILED → report and return
-- `mergeStateStatus == "DIRTY"`: FAILED (conflicts) → report and return
-- `mergeStateStatus == "BLOCKED"`: Waiting for checks/queue → keep polling
-- `mergeStateStatus == "UNSTABLE"`: Some checks failing → keep polling (might recover)
-- After 15 minutes with no resolution: TIMEOUT → report and return
-
-For more detail on failures, check:
-
-```bash
-gh pr checks <number> --json name,state,conclusion
-```
-
-### 7. Cleanup (on success)
-
-GitHub auto-deletes the branch (from --delete-branch flag).
-
-Update local target branch:
-
-```bash
-# Find main worktree (not current dir, not under workspaces/)
-git worktree list
-```
-
-Parse output to find main worktree path, then:
-
-```bash
-git -C <main-worktree> fetch origin <target>
-git -C <main-worktree> pull --ff-only origin <target>
-```
-
-If pull fails (local changes), report warning but continue.
+- 0: MERGED
+- 1: FAILED
+- 2: TIMEOUT
 
 ## Report Formats
 
-### MERGED
+### MERGED (exit code 0)
 
 ```
 PR merged successfully!
@@ -695,31 +673,68 @@ PR merged successfully!
 **Local <target> updated**: <path>
 ```
 
-### FAILED
+### FAILED (exit code 1)
 
 ```
 PR failed to merge.
 
 **PR**: <url>
-**Reason**: <explanation - conflicts, checks failed, etc.>
-**Failed checks**:
-<output from: gh pr checks <number> --json name,state,conclusion | jq '.[] | select(.conclusion == "FAILURE")'>
+**Reason**: <explanation from script output>
 
 Action required: Fix the issue and run `/ship` again.
 ```
 
-### TIMEOUT
+### TIMEOUT (exit code 2)
 
 ```
 PR still processing after 15 minutes.
 
 **PR**: <url>
-**Status**: <current mergeStateStatus>
-**Checks**: <summary from gh pr checks>
+**Status**: <from script output>
 
 Action required: Review the PR status and decide how to proceed.
 ```
 ````
+
+## ship-wait.ts Script Specification
+
+### File: `.opencode/scripts/ship-wait.ts`
+
+```typescript
+#!/usr/bin/env node
+/**
+ * Client-side merge queue for /ship command.
+ *
+ * Waits for PRs ahead in queue, rebases when it's our turn,
+ * waits for CI, and confirms merge completion.
+ *
+ * Usage: npx tsx .opencode/scripts/ship-wait.ts <pr-number>
+ *
+ * Exit codes:
+ *   0 - MERGED: PR successfully merged
+ *   1 - FAILED: PR failed (CI failed, conflicts, closed, etc.)
+ *   2 - TIMEOUT: Still processing after 15 minutes
+ *
+ * Environment:
+ *   Requires `gh` CLI to be authenticated.
+ */
+
+import { execSync, spawnSync } from "node:child_process";
+
+const POLL_INTERVAL_MS = 30_000; // 30 seconds
+const TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+// ... implementation
+```
+
+**Key functions:**
+
+1. `getOpenPRsWithAutoMerge()` - List open PRs with auto-merge, sorted by creation date
+2. `waitForPRsAhead(ourPR, prsAhead)` - Poll until all PRs ahead are merged/closed
+3. `rebaseAndPush()` - Fetch main, rebase, force-push
+4. `waitForCI(prNumber)` - Run `gh pr checks --watch --fail-fast`
+5. `waitForMerge(prNumber)` - Poll PR state until MERGED or failed
+6. `updateLocalMain()` - Find main worktree and pull
 
 ## CI Workflow Specification
 
@@ -732,7 +747,6 @@ on:
   push:
     branches-ignore: [main]
   pull_request:
-  merge_group:
 
 jobs:
   ci:
@@ -816,264 +830,6 @@ jobs:
         uses: actions/deploy-pages@v4
 ```
 
-## Feature Agent Changes
-
-### Updated Workflow States
-
-````markdown
-### State: PLANNING
-
-1. Discuss feature with user, gather information, outline approach
-2. **DO NOT write plan file yet** - wait for user to explicitly request it
-3. When approach is clear, ask: "Ready to create the plan?"
-4. **Only when user says "create plan" / "write plan" / "go ahead"**:
-   - Write plan to `planning/<FEATURE_NAME>.md` with status `REVIEW_PENDING`
-5. Present plan and ask:
-
-   ```
-   Plan written. Ready to review.
-
-   **Reviewers** (default: all):
-   - @review-arch
-   - @review-typescript
-   - @review-testing
-   - @review-docs
-   - @review-platform
-   - @review-ui
-
-   Reply:
-   - "go" or "all" - run all reviewers
-   - "skip <reviewer>" - run all except specified
-   - "only <reviewers>" - run only specified
-   - Or describe changes needed to the plan
-   ```
-
-6. Handle response:
-   - **Changes requested** → revise plan → ask again
-   - **Approved** → immediately invoke reviewers in parallel
-
-### State: REVIEWING
-
-1. All reviewers run in parallel, each providing letter grade (A-F)
-2. Collect results and summarize with:
-   - Grade table showing each reviewer's grade
-   - Consistent numbering across all issue categories
-3. Default: address ALL issues
-4. Update plan with fixes (single write, not multiple edits)
-5. Ask: "Ready to implement? Or request another review round."
-
-### State: IMPLEMENTING
-
-- @implement subagent is working
-- Wait for @implement to report back with one of:
-  - **BLOCKED**: Implementation hit an issue
-  - **IMPLEMENTATION COMPLETE**: All steps done, status is now `IMPLEMENTATION_REVIEW`
-
-#### If BLOCKED:
-
-- Show the issue to user
-- Discuss and update the plan
-- Invoke @implement again
-
-#### If IMPLEMENTATION COMPLETE:
-
-- Plan status is now `IMPLEMENTATION_REVIEW` (set by @implement)
-- Invoke @implementation-review
-
-### State: CODE_REVIEWING
-
-1. **Invoke code review**:
-
-   ```
-   @implementation-review
-   ```
-
-2. **Summarize results** with grade and consistent numbering
-
-3. **Invoke @implement** to fix issues (unless user opts out)
-   - @implement runs validate:fix + test
-   - Back to code review if needed
-
-4. **Proceed to user testing** when no issues remain
-
-### State: USER_TESTING
-
-Ask user: "Please test the implementation. Say 'accept' when satisfied, or describe any issues."
-
-#### If user reports issues:
-
-- Invoke @implement with fix instructions
-- @implement runs validate:fix + test
-- Back to user testing
-
-#### If user says "accept":
-
-- Invoke @general to commit and optionally validate CI
-
-### State: COMMITTING
-
-Invoke @general:
-
-```
-Update plan status to COMPLETED, commit all changes.
-
-Plan file: planning/<FEATURE_NAME>.md
-
-Steps:
-1. Update plan: IMPLEMENTATION_REVIEW → COMPLETED, last_updated to today
-2. Commit all changes (code + plan) with conventional commit message
-3. (If platform-specific changes) Push and wait for CI
-4. Report: READY_TO_SHIP | BLOCKED
-```
-
-#### If BLOCKED (CI failed):
-
-- Report to user
-- User reviews
-- @implement fixes
-- Back to validate:fix + test
-
-#### If READY_TO_SHIP:
-
-- Invoke `/ship`
-
-### State: SHIPPING
-
-Invoke `/ship` command.
-
-#### MERGED:
-
-```
-Feature shipped!
-
-- PR: <url>
-- Commit: <sha> merged to <target>
-
-Deleting workspace...
-```
-
-Delete workspace: `codehydra_workspace_delete(keepBranch=false)`
-
-Exception: If user previously said "keep workspace", skip deletion.
-
-#### FAILED:
-
-```
-Ship failed!
-
-**PR**: <url>
-**Reason**: <from /ship report>
-
-Please review the failure. Once fixed, say "retry" to ship again.
-```
-
-When user confirms fix is ready:
-
-- @implement fixes
-- Back to validate:fix + test
-- Then /ship again
-
-#### TIMEOUT:
-
-```
-PR still processing after 15 minutes.
-
-**PR**: <url>
-
-Please review the PR status:
-- "wait" - continue waiting
-- "abort" - leave PR open, end workflow
-```
-````
-
-### Updated Workflow Diagram
-
-```
-PLANNING
-     │
-     ▼
-Discuss requirements, outline approach
-(DO NOT write plan file yet)
-     │
-     ▼
-Ask: "Ready to create the plan?"
-     │
-     ├─── User has questions ──► continue discussion
-     │
-     └─── User says "create plan" / "go ahead"
-                    │
-                    ▼
-          Write plan (status: REVIEW_PENDING)
-                    │
-                    ▼
-          Ask: "Which reviewers? Or describe changes."
-                    │
-                    ├─── Changes requested ──► revise plan ──► ask again
-                    │
-                    └─── Approved ──► immediately invoke reviewers (parallel)
-                              │
-                              ▼
-                    Reviews complete (with grades)
-                              │
-                              ▼
-                    Summarize with grades + numbering
-                    Default: fix ALL issues (single write)
-                              │
-                              ▼
-                    "Ready to implement?"
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ @implement                                              │
-│ - Set status: APPROVED                                  │
-│ - Implement steps                                       │
-│ - Run validate:fix + test                               │
-│ - Set status: IMPLEMENTATION_REVIEW                     │
-│ - DO NOT COMMIT                                         │
-└─────────────────────────────────────────────────────────┘
-     │
-     ▼
-┌─────────────────────────────────────────────────────────┐
-│ @feature invokes @implementation-review                 │
-│ Summarize with grade + consistent numbering (1, 2, 3...)│
-│ Default: fix ALL issues                                 │
-└─────────────────────────────────────────────────────────┘
-     │
-     ├─── issues ──► @implement fixes ──► back to validate:fix
-     │
-     ▼
-USER TESTING (status: IMPLEMENTATION_REVIEW)
-     │
-     ├─── issues ──► @implement fixes ──► back to validate:fix
-     │
-     ▼ user: "accept"
-┌─────────────────────────────────────────────────────────┐
-│ @general                                                │
-│ - Set status: COMPLETED                                 │
-│ - Commit all (code + plan) with conventional commit     │
-│ - (Optional) push + wait CI                             │
-└─────────────────────────────────────────────────────────┘
-     │
-     ├─── BLOCKED (CI fail) ──► @implement fixes ──► back to validate:fix
-     │
-     ▼ READY_TO_SHIP
-┌─────────────────────────────────────────────────────────┐
-│ /ship                                                   │
-│ - Check for existing PR (idempotency)                   │
-│ - Rebase + push (if needed)                             │
-│ - Create PR (if needed)                                 │
-│ - Enable auto-merge                                     │
-│ - Poll for merge (15 min timeout)                       │
-└─────────────────────────────────────────────────────────┘
-     │
-     ├─── FAILED ──► user reviews ──► @implement fixes ──► back to validate:fix
-     │
-     ├─── TIMEOUT ──► user decides wait/abort
-     │
-     ▼ MERGED
-Delete workspace (default) ──► DONE
-```
-
 ## GitHub Repository Configuration
 
 Add to `AGENTS.md`:
@@ -1112,16 +868,14 @@ Settings → Rules → Rulesets → New ruleset
     - `CI (windows-2025)`
   - ✓ Require branches to be up to date before merging
 - ✓ Block force pushes
-- ✓ Require merge queue
-  - Merge method: Merge commit (preserve history)
-  - Build concurrency: 2
-  - Minimum entries to merge: 1
-  - Maximum entries to build: 5
 
-**Recommended merge queue settings for this project:**
+**Note:** GitHub merge queue is not available for personal account repos.
+The `/ship` command implements a client-side queue via `.opencode/scripts/ship-wait.ts`
+that provides similar functionality:
 
-- Batch size: 1-2 (small project, fast CI)
-- This minimizes wait time when one PR in a batch fails
+- PRs merge in FIFO order
+- Each PR is rebased onto main before CI runs
+- No merge conflicts at merge time
 
 ### 4. Verify CI Workflow Triggers
 
@@ -1132,7 +886,6 @@ on:
   push:
     branches-ignore: [main]
   pull_request:
-  merge_group:
 
 jobs:
   ci:
@@ -1141,7 +894,6 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository
 ```
 
-The `merge_group` trigger is required for merge queue to run CI.
 The `if` condition prevents duplicate CI runs for same-repo PRs.
 ````
 
@@ -1172,63 +924,62 @@ The `if` condition prevents duplicate CI runs for same-repo PRs.
 - [ ] @general uses conventional commit type matching PR title
 - [ ] @general updates plan status to COMPLETED and commits
 - [ ] `/ship` with uncommitted changes fails with clear message
-- [ ] `/ship` detects existing PR and resumes polling (idempotency)
+- [ ] `/ship` detects existing PR and resumes (idempotency)
 - [ ] `/ship` on clean branch creates PR with correct title format
 - [ ] PR uses merge (not squash)
 - [ ] Auto-merge is enabled on created PR
-- [ ] PR enters merge queue
-- [ ] CI runs on merge queue candidate (not on main after merge)
-- [ ] Successful CI results in auto-merge
+- [ ] ship-wait.ts waits for PRs ahead before rebasing
+- [ ] ship-wait.ts rebases onto main when it's our turn
+- [ ] ship-wait.ts uses `gh pr checks --watch` for CI
+- [ ] ship-wait.ts exits 0 on successful merge
+- [ ] ship-wait.ts exits 1 on failure (CI failed, conflicts)
+- [ ] ship-wait.ts exits 2 on timeout
 - [ ] Branch is auto-deleted after merge
 - [ ] Local main branch is updated after merge
 - [ ] Feature agent deletes workspace on MERGED by default
 - [ ] Feature agent requires user review on FAILED
 - [ ] Feature agent requires user review on TIMEOUT
 - [ ] End-to-end workflow completes successfully
+- [ ] Multiple concurrent /ship invocations queue and merge in order
 
 ## Dependencies
 
-None - uses existing `gh` CLI and git.
+None - uses existing `gh` CLI, git, and `npx tsx` (tsx is a dev dependency).
 
 ## Documentation Updates
 
 ### Files to Update
 
-| File                                       | Changes Required                                                                    |
-| ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `AGENTS.md`                                | Add GitHub repo configuration section, agent workflow overview, /ship command usage |
-| `.opencode/agent/feature.md`               | Coordinator role, streamlined review flow, review summary with grades, invoke /ship |
-| `.opencode/agent/implement.md`             | Remove commit step, update plan status transitions, clarify "DO NOT COMMIT"         |
-| `.opencode/agent/review-arch.md`           | Add letter grade requirement (A-F)                                                  |
-| `.opencode/agent/review-typescript.md`     | Add letter grade requirement (A-F)                                                  |
-| `.opencode/agent/review-testing.md`        | Add letter grade requirement (A-F)                                                  |
-| `.opencode/agent/review-docs.md`           | Add letter grade requirement (A-F)                                                  |
-| `.opencode/agent/review-platform.md`       | Add letter grade requirement (A-F)                                                  |
-| `.opencode/agent/review-ui.md`             | Add letter grade requirement (A-F)                                                  |
-| `.opencode/agent/implementation-review.md` | Add letter grade requirement (A-F)                                                  |
-| `.github/workflows/ci.yaml`                | Update triggers, remove pages job, add fork condition                               |
+| File                        | Changes Required                                                      |
+| --------------------------- | --------------------------------------------------------------------- |
+| `AGENTS.md`                 | Update GitHub config (remove merge queue), document client-side queue |
+| `.opencode/command/ship.md` | Update to use ship-wait.ts script                                     |
+| `.github/workflows/ci.yaml` | Remove `merge_group` trigger                                          |
 
 ### New Files
 
-| File                           | Purpose                            |
-| ------------------------------ | ---------------------------------- |
-| `.opencode/command/ship.md`    | The ship command                   |
-| `.github/workflows/pages.yaml` | Separate pages deployment workflow |
+| File                             | Purpose                  |
+| -------------------------------- | ------------------------ |
+| `.opencode/scripts/ship-wait.ts` | Client-side queue script |
 
 ## Definition of Done
 
-- [ ] `.opencode/command/ship.md` created with idempotency (detect existing PR)
-- [ ] `.github/workflows/ci.yaml` updated: triggers changed, pages job removed, fork condition added
-- [ ] `.github/workflows/pages.yaml` created with path triggers for site-related files
-- [ ] `.opencode/agent/feature.md` updated: coordinator role, explicit plan creation trigger, review summary format with grades and numbering, single-write for fixes, /ship invocation
-- [ ] `.opencode/agent/implement.md` updated: no commit, status transitions (APPROVED, IMPLEMENTATION_REVIEW)
-- [ ] `.opencode/agent/review-arch.md` updated: letter grade requirement
-- [ ] `.opencode/agent/review-typescript.md` updated: letter grade requirement
-- [ ] `.opencode/agent/review-testing.md` updated: letter grade requirement
-- [ ] `.opencode/agent/review-docs.md` updated: letter grade requirement
-- [ ] `.opencode/agent/review-platform.md` updated: letter grade requirement
-- [ ] `.opencode/agent/review-ui.md` updated: letter grade requirement
-- [ ] `.opencode/agent/implementation-review.md` updated: letter grade requirement
-- [ ] `AGENTS.md` updated: GitHub configuration, merge queue batch size, agent workflow overview
-- [ ] GitHub repo configured (merge queue, auto-merge, branch protection with "require up-to-date")
+- [x] `.opencode/command/ship.md` created with idempotency (detect existing PR)
+- [x] `.github/workflows/ci.yaml` updated: triggers changed, pages job removed, fork condition added
+- [x] `.github/workflows/pages.yaml` created with path triggers for site-related files
+- [x] `.opencode/agent/feature.md` updated: coordinator role, explicit plan creation trigger, review summary format with grades and numbering, single-write for fixes, /ship invocation
+- [x] `.opencode/agent/implement.md` updated: no commit, status transitions (APPROVED, IMPLEMENTATION_REVIEW)
+- [x] `.opencode/agent/review-arch.md` updated: letter grade requirement
+- [x] `.opencode/agent/review-typescript.md` updated: letter grade requirement
+- [x] `.opencode/agent/review-testing.md` updated: letter grade requirement
+- [x] `.opencode/agent/review-docs.md` updated: letter grade requirement
+- [x] `.opencode/agent/review-platform.md` updated: letter grade requirement
+- [x] `.opencode/agent/review-ui.md` updated: letter grade requirement
+- [x] `.opencode/agent/implementation-review.md` updated: letter grade requirement
+- [x] `AGENTS.md` updated: GitHub configuration, agent workflow overview
+- [x] `.opencode/scripts/ship-wait.ts` created: client-side queue script
+- [x] `.opencode/command/ship.md` updated: use ship-wait.ts script
+- [x] `AGENTS.md` updated: remove merge queue, document client-side queue
+- [x] `.github/workflows/ci.yaml` updated: remove `merge_group` trigger
+- [ ] GitHub repo configured (auto-merge, branch protection with "require up-to-date")
 - [ ] Manual testing checklist completed

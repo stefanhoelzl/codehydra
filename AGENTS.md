@@ -1016,15 +1016,18 @@ PLANNING → Write plan → Ask reviewers → User approves → Invoke reviewers
 
 ### /ship Command
 
-The `/ship` command creates a PR with auto-merge and waits for merge queue:
+The `/ship` command creates a PR with auto-merge and waits for merge via client-side queue:
 
 1. Validates clean working tree (fails if uncommitted changes)
-2. Checks for existing PR (idempotent - resumes polling if PR exists)
-3. Rebases onto target branch
-4. Creates PR with conventional commit title
-5. Enables auto-merge with merge (not squash)
-6. Polls for merge (15 minute timeout for merge queue)
-7. Updates local target branch on success
+2. Checks for existing PR (idempotent - resumes if PR exists)
+3. Pushes branch, creates PR with conventional commit title
+4. Enables auto-merge with merge (not squash)
+5. Runs `ship-wait.ts` script which handles:
+   - Waiting for PRs ahead in queue (FIFO by creation time)
+   - Rebasing onto main when it's our turn
+   - Waiting for CI via `gh pr checks --watch`
+   - Confirming auto-merge completion
+6. Updates local target branch on success
 
 **Outcomes:**
 
@@ -1067,16 +1070,14 @@ Settings → Rules → Rulesets → New ruleset
     - `CI (windows-2025)`
   - ✓ Require branches to be up to date before merging
 - ✓ Block force pushes
-- ✓ Require merge queue
-  - Merge method: Merge commit (preserve history)
-  - Build concurrency: 2
-  - Minimum entries to merge: 1
-  - Maximum entries to build: 5
 
-**Recommended merge queue settings for this project:**
+**Note:** GitHub merge queue is not available for personal account repos.
+The `/ship` command implements a client-side queue via `.opencode/scripts/ship-wait.ts`
+that provides similar functionality:
 
-- Batch size: 1-2 (small project, fast CI)
-- This minimizes wait time when one PR in a batch fails
+- PRs merge in FIFO order (by creation time)
+- Each PR is rebased onto main before CI runs
+- No merge conflicts at merge time
 
 ### 4. Verify CI Workflow Triggers
 
@@ -1087,7 +1088,6 @@ on:
   push:
     branches-ignore: [main]
   pull_request:
-  merge_group:
 
 jobs:
   ci:
@@ -1096,5 +1096,4 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository
 ```
 
-The `merge_group` trigger is required for merge queue to run CI.
 The `if` condition prevents duplicate CI runs for same-repo PRs.
