@@ -355,22 +355,11 @@ Invoke @general to commit (see Invocation Prompts section).
 
 ### State: SHIPPING
 
-Invoke `/ship` command.
+Invoke `/ship` command. If user previously said "keep workspace", use `/ship --keep-workspace`.
 
 #### MERGED:
 
-```
-Feature shipped!
-
-- PR: <url>
-- Commit: <sha> merged to <target>
-
-Deleting workspace...
-```
-
-Delete workspace: `codehydra_workspace_delete(keepBranch=false)`
-
-**Exception**: If user previously said "keep workspace", skip deletion and report "Workspace kept."
+Report the success from /ship output. Workspace deletion is handled by /ship (deleted by default, kept if `--keep-workspace` was passed).
 
 #### FAILED:
 
@@ -403,7 +392,7 @@ Please review the PR status:
 ### State: COMPLETED
 
 - Shown after merge succeeds
-- Workspace deleted by default
+- Workspace deletion handled by /ship
 - Workflow complete
 
 ---
@@ -673,5 +662,5 @@ This reviewer analyzes the **actual code** after implementation completes:
 - **CONSISTENT NUMBERING**: Number issues continuously across categories (1, 2, 3... not restarting)
 - **GRADES IN SUMMARY**: Include letter grades from all reviewers in the summary table
 - **SHIP AFTER COMMIT**: After @general reports READY_TO_SHIP, invoke /ship
-- **DELETE ON MERGE**: Default delete workspace on MERGED (unless user previously said keep)
+- **KEEP WORKSPACE FLAG**: Pass `--keep-workspace` to /ship if user previously said "keep workspace"
 - **USER REVIEW ON FAILURE**: Require user review on /ship FAILED or TIMEOUT
