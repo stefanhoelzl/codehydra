@@ -341,8 +341,19 @@ export class ViewManager implements IViewManager {
     // Set dark background to prevent white flash while VS Code loads
     this.viewLayer.setBackgroundColor(viewHandle, VIEW_BACKGROUND_COLOR);
 
-    // Configure window open handler to open external URLs
+    // Configure window open handler for popup requests from code-server.
+    // By default, we deny popups and open URLs in the system browser via openExternal().
+    // Exception: Extension Development Host windows (for debugging VS Code extensions)
+    // must open as new Electron windows. These are identified by the
+    // "extensionDevelopmentPath=" query parameter in the URL.
     this.viewLayer.setWindowOpenHandler(viewHandle, (details: WindowOpenDetails) => {
+      // Allow Extension Development Host windows for extension debugging
+      if (details.url.includes("extensionDevelopmentPath=")) {
+        this.logger.info("Allowing Extension Development Host window", { url: details.url });
+        return { action: "allow" };
+      }
+
+      // Redirect other URLs to external browser
       openExternal(details.url).catch((error: unknown) => {
         this.logger.warn("Failed to open external URL", {
           url: details.url,
