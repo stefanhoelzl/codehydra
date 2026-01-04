@@ -1,11 +1,13 @@
 {
   "version": "0.2.0",
   "configurations": [
+    
     {
       "name": "Debug Markdown Review Editor",
       "type": "extensionHost",
       "request": "launch",
       "args": [
+        "${workspaceFolder}",
         "--extensionDevelopmentPath=${workspaceFolder}/extensions/markdown-review-editor",
         "--extensionDevelopmentPath=${workspaceFolder}/extensions/sidekick",
         "--log=debug"
@@ -15,25 +17,6 @@
         "${workspaceFolder}/extensions/sidekick/dist/**/*.cjs"
       ],
       "preLaunchTask": "build-extensions-and-start-mock",
-      "env": {
-        "VSCODE_DEBUG_MODE": "true",
-        "CODEHYDRA_PLUGIN_PORT": "51200"
-      }
-    },
-    {
-      "name": "Debug Markdown Review Editor (Watch Mode)",
-      "type": "extensionHost",
-      "request": "launch",
-      "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/extensions/markdown-review-editor",
-        "--extensionDevelopmentPath=${workspaceFolder}/extensions/sidekick",
-        "--log=debug"
-      ],
-      "outFiles": [
-        "${workspaceFolder}/extensions/markdown-review-editor/dist/**/*.cjs",
-        "${workspaceFolder}/extensions/sidekick/dist/**/*.cjs"
-      ],
-      "preLaunchTask": "mock-plugin-server",
       "env": {
         "VSCODE_DEBUG_MODE": "true",
         "CODEHYDRA_PLUGIN_PORT": "51200"
