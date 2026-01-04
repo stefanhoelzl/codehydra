@@ -48,7 +48,7 @@ If on main: ABORT with "Cannot ship from main branch"
 ### 1. Check for existing PR (idempotency)
 
 ```bash
-gh pr list --head <current-branch> --json number,url,state
+gh pr list --repo stefanhoelzl/codehydra --head <current-branch> --json number,url,state
 ```
 
 If a PR already exists for this branch:
@@ -90,7 +90,7 @@ Analyze commits to determine:
 Create PR:
 
 ```bash
-gh pr create --title "<title>" --body "<summary>"
+gh pr create --repo stefanhoelzl/codehydra --title "<title>" --body "<summary>"
 ```
 
 Capture the PR URL and number from output.
@@ -98,7 +98,7 @@ Capture the PR URL and number from output.
 ### 4. Enable Auto-merge
 
 ```bash
-gh pr merge <number> --auto --merge --delete-branch
+gh pr merge --repo stefanhoelzl/codehydra <number> --auto --merge --delete-branch
 ```
 
 This:

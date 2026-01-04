@@ -21,6 +21,7 @@ import { spawn } from "node:child_process";
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const COMMAND_TIMEOUT_MS = 60_000; // 60 seconds per command
+const UPSTREAM_REPO = "stefanhoelzl/codehydra"; // Target repo for PRs (upstream, not origin)
 
 interface PR {
   number: number;
@@ -94,7 +95,7 @@ async function execNoThrow(
 
 async function getOpenPRsWithAutoMerge(): Promise<PR[]> {
   const json = await exec(
-    `gh pr list --state open --json number,createdAt,autoMergeRequest,state,headRefName`
+    `gh pr list --repo ${UPSTREAM_REPO} --state open --json number,createdAt,autoMergeRequest,state,headRefName`
   );
   const prs: PR[] = JSON.parse(json);
   // Filter to PRs with auto-merge enabled
@@ -102,7 +103,9 @@ async function getOpenPRsWithAutoMerge(): Promise<PR[]> {
 }
 
 async function getPRState(prNumber: number): Promise<PRState> {
-  const json = await exec(`gh pr view ${prNumber} --json state,mergeStateStatus`);
+  const json = await exec(
+    `gh pr view --repo ${UPSTREAM_REPO} ${prNumber} --json state,mergeStateStatus`
+  );
   return JSON.parse(json);
 }
 
@@ -166,9 +169,13 @@ async function waitForCI(prNumber: number): Promise<boolean> {
   log("Waiting for CI checks...");
 
   return new Promise((resolve) => {
-    const proc = spawn("gh", ["pr", "checks", String(prNumber), "--watch", "--fail-fast"], {
-      stdio: "inherit",
-    });
+    const proc = spawn(
+      "gh",
+      ["pr", "checks", "--repo", UPSTREAM_REPO, String(prNumber), "--watch", "--fail-fast"],
+      {
+        stdio: "inherit",
+      }
+    );
 
     proc.on("close", (code) => {
       if (code === 0) {
@@ -317,7 +324,9 @@ async function main(): Promise<void> {
   if (!ourPR) {
     log("Warning: Our PR doesn't have auto-merge enabled, proceeding anyway");
     // Create a minimal PR object
-    const json = await exec(`gh pr view ${prNumber} --json number,createdAt,state,headRefName`);
+    const json = await exec(
+      `gh pr view --repo ${UPSTREAM_REPO} ${prNumber} --json number,createdAt,state,headRefName`
+    );
     const pr = JSON.parse(json) as PR;
     pr.autoMergeRequest = { enabledAt: new Date().toISOString() };
 
