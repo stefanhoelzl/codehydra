@@ -16,10 +16,11 @@
  *   Requires `gh` CLI to be authenticated.
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const COMMAND_TIMEOUT_MS = 60_000; // 60 seconds per command
 
 interface PR {
   number: number;
@@ -39,33 +40,60 @@ function log(message: string): void {
   console.log(`[${timestamp}] ${message}`);
 }
 
-function exec(command: string): string {
-  try {
-    return execSync(command, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-  } catch (error) {
-    const err = error as { stderr?: Buffer; stdout?: Buffer; message?: string };
-    const stderr = err.stderr?.toString() || "";
-    const stdout = err.stdout?.toString() || "";
-    throw new Error(`Command failed: ${command}\n${stderr || stdout || err.message}`);
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function execNoThrow(command: string): { success: boolean; stdout: string; stderr: string } {
+async function exec(command: string, timeoutMs = COMMAND_TIMEOUT_MS): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], shell: true });
+
+    let stdout = "";
+    let stderr = "";
+
+    const timeout = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`));
+    }, timeoutMs);
+
+    proc.stdout.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    proc.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    proc.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(new Error(`Command failed: ${command}\n${stderr || stdout}`));
+      }
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(new Error(`Command error: ${command}\n${err.message}`));
+    });
+  });
+}
+
+async function execNoThrow(
+  command: string,
+  timeoutMs = COMMAND_TIMEOUT_MS
+): Promise<{ success: boolean; stdout: string; stderr: string }> {
   try {
-    const stdout = execSync(command, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    const stdout = await exec(command, timeoutMs);
     return { success: true, stdout, stderr: "" };
   } catch (error) {
-    const err = error as { stderr?: Buffer; stdout?: Buffer };
-    return {
-      success: false,
-      stdout: err.stdout?.toString() || "",
-      stderr: err.stderr?.toString() || "",
-    };
+    const err = error as Error;
+    return { success: false, stdout: "", stderr: err.message };
   }
 }
 
-function getOpenPRsWithAutoMerge(): PR[] {
-  const json = exec(
+async function getOpenPRsWithAutoMerge(): Promise<PR[]> {
+  const json = await exec(
     `gh pr list --state open --json number,createdAt,autoMergeRequest,state,headRefName`
   );
   const prs: PR[] = JSON.parse(json);
@@ -73,8 +101,8 @@ function getOpenPRsWithAutoMerge(): PR[] {
   return prs.filter((pr) => pr.autoMergeRequest !== null);
 }
 
-function getPRState(prNumber: number): PRState {
-  const json = exec(`gh pr view ${prNumber} --json state,mergeStateStatus`);
+async function getPRState(prNumber: number): Promise<PRState> {
+  const json = await exec(`gh pr view ${prNumber} --json state,mergeStateStatus`);
   return JSON.parse(json);
 }
 
@@ -86,13 +114,13 @@ function getPRsAhead(ourPR: PR, allPRs: PR[]): PR[] {
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
-function waitForPRsAhead(ourPR: PR, startTime: number): boolean {
+async function waitForPRsAhead(ourPR: PR, startTime: number): Promise<boolean> {
   while (true) {
     if (Date.now() - startTime > TIMEOUT_MS) {
       return false; // Timeout
     }
 
-    const allPRs = getOpenPRsWithAutoMerge();
+    const allPRs = await getOpenPRsWithAutoMerge();
     const prsAhead = getPRsAhead(ourPR, allPRs);
 
     if (prsAhead.length === 0) {
@@ -103,29 +131,29 @@ function waitForPRsAhead(ourPR: PR, startTime: number): boolean {
     const prNumbers = prsAhead.map((pr) => `#${pr.number}`).join(", ");
     log(`Waiting for ${prsAhead.length} PR(s) ahead: ${prNumbers}`);
 
-    sleep(POLL_INTERVAL_MS);
+    await sleep(POLL_INTERVAL_MS);
   }
 }
 
-function rebaseAndPush(): boolean {
+async function rebaseAndPush(): Promise<boolean> {
   log("Fetching latest main...");
-  const fetchResult = execNoThrow("git fetch origin main");
+  const fetchResult = await execNoThrow("git fetch origin main");
   if (!fetchResult.success) {
     log(`Failed to fetch: ${fetchResult.stderr}`);
     return false;
   }
 
   log("Rebasing onto origin/main...");
-  const rebaseResult = execNoThrow("git rebase origin/main");
+  const rebaseResult = await execNoThrow("git rebase origin/main");
   if (!rebaseResult.success) {
     log(`Rebase failed (conflicts?): ${rebaseResult.stderr}`);
     // Abort the rebase
-    execNoThrow("git rebase --abort");
+    await execNoThrow("git rebase --abort");
     return false;
   }
 
   log("Force-pushing...");
-  const pushResult = execNoThrow("git push --force-with-lease origin HEAD");
+  const pushResult = await execNoThrow("git push --force-with-lease origin HEAD");
   if (!pushResult.success) {
     log(`Push failed: ${pushResult.stderr}`);
     return false;
@@ -134,25 +162,35 @@ function rebaseAndPush(): boolean {
   return true;
 }
 
-function waitForCI(prNumber: number): boolean {
+async function waitForCI(prNumber: number): Promise<boolean> {
   log("Waiting for CI checks...");
 
-  // Use gh pr checks --watch which blocks until checks complete
-  const result = spawnSync("gh", ["pr", "checks", String(prNumber), "--watch", "--fail-fast"], {
-    stdio: "inherit",
-    encoding: "utf-8",
-  });
+  return new Promise((resolve) => {
+    const proc = spawn("gh", ["pr", "checks", String(prNumber), "--watch", "--fail-fast"], {
+      stdio: "inherit",
+    });
 
-  if (result.status === 0) {
-    log("All CI checks passed!");
-    return true;
-  } else {
-    log("CI checks failed");
-    return false;
-  }
+    proc.on("close", (code) => {
+      if (code === 0) {
+        log("All CI checks passed!");
+        resolve(true);
+      } else {
+        log("CI checks failed");
+        resolve(false);
+      }
+    });
+
+    proc.on("error", (err) => {
+      log(`CI check error: ${err.message}`);
+      resolve(false);
+    });
+  });
 }
 
-function waitForMerge(prNumber: number, startTime: number): "merged" | "failed" | "timeout" {
+async function waitForMerge(
+  prNumber: number,
+  startTime: number
+): Promise<"merged" | "failed" | "timeout"> {
   log("Waiting for auto-merge to complete...");
 
   // Auto-merge should happen almost immediately after CI passes
@@ -170,7 +208,7 @@ function waitForMerge(prNumber: number, startTime: number): "merged" | "failed" 
       return "timeout";
     }
 
-    const state = getPRState(prNumber);
+    const state = await getPRState(prNumber);
 
     if (state.state === "MERGED") {
       log("PR merged successfully!");
@@ -189,12 +227,12 @@ function waitForMerge(prNumber: number, startTime: number): "merged" | "failed" 
 
     // Still waiting
     log(`PR state: ${state.state}, merge status: ${state.mergeStateStatus}`);
-    sleep(5000); // Check every 5 seconds for merge completion
+    await sleep(5000); // Check every 5 seconds for merge completion
   }
 }
 
-function findMainWorktree(): string | null {
-  const output = exec("git worktree list --porcelain");
+async function findMainWorktree(): Promise<string | null> {
+  const output = await exec("git worktree list --porcelain");
   const worktrees = output.split("\n\n").filter(Boolean);
 
   for (const worktree of worktrees) {
@@ -215,8 +253,8 @@ function findMainWorktree(): string | null {
   return null;
 }
 
-function updateLocalMain(): void {
-  const mainWorktree = findMainWorktree();
+async function updateLocalMain(): Promise<void> {
+  const mainWorktree = await findMainWorktree();
 
   if (!mainWorktree) {
     log("Warning: Could not find main worktree to update");
@@ -225,13 +263,13 @@ function updateLocalMain(): void {
 
   log(`Updating local main branch at ${mainWorktree}...`);
 
-  const fetchResult = execNoThrow(`git -C "${mainWorktree}" fetch origin main`);
+  const fetchResult = await execNoThrow(`git -C "${mainWorktree}" fetch origin main`);
   if (!fetchResult.success) {
     log(`Warning: Failed to fetch in main worktree: ${fetchResult.stderr}`);
     return;
   }
 
-  const pullResult = execNoThrow(`git -C "${mainWorktree}" pull --ff-only origin main`);
+  const pullResult = await execNoThrow(`git -C "${mainWorktree}" pull --ff-only origin main`);
   if (!pullResult.success) {
     log(`Warning: Failed to pull in main worktree (local changes?): ${pullResult.stderr}`);
     return;
@@ -240,11 +278,7 @@ function updateLocalMain(): void {
   log(`Local main updated at ${mainWorktree}`);
 }
 
-function sleep(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function main(): void {
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   if (args.length !== 1) {
@@ -263,11 +297,11 @@ function main(): void {
   log(`Starting ship-wait for PR #${prNumber}`);
 
   // Get current state of our PR
-  const state = getPRState(prNumber);
+  const state = await getPRState(prNumber);
 
   if (state.state === "MERGED") {
     log("PR is already merged!");
-    updateLocalMain();
+    await updateLocalMain();
     process.exit(0);
   }
 
@@ -277,46 +311,46 @@ function main(): void {
   }
 
   // Get our PR details
-  const allPRs = getOpenPRsWithAutoMerge();
+  const allPRs = await getOpenPRsWithAutoMerge();
   const ourPR = allPRs.find((pr) => pr.number === prNumber);
 
   if (!ourPR) {
     log("Warning: Our PR doesn't have auto-merge enabled, proceeding anyway");
     // Create a minimal PR object
-    const json = exec(`gh pr view ${prNumber} --json number,createdAt,state,headRefName`);
+    const json = await exec(`gh pr view ${prNumber} --json number,createdAt,state,headRefName`);
     const pr = JSON.parse(json) as PR;
     pr.autoMergeRequest = { enabledAt: new Date().toISOString() };
 
     // Wait for any PRs ahead
-    if (!waitForPRsAhead(pr, startTime)) {
+    if (!(await waitForPRsAhead(pr, startTime))) {
       log("Timeout waiting for PRs ahead");
       process.exit(2);
     }
   } else {
     // Wait for PRs ahead
-    if (!waitForPRsAhead(ourPR, startTime)) {
+    if (!(await waitForPRsAhead(ourPR, startTime))) {
       log("Timeout waiting for PRs ahead");
       process.exit(2);
     }
   }
 
   // It's our turn - rebase and push
-  if (!rebaseAndPush()) {
+  if (!(await rebaseAndPush())) {
     log("Failed to rebase and push");
     process.exit(1);
   }
 
   // Wait for CI
-  if (!waitForCI(prNumber)) {
+  if (!(await waitForCI(prNumber))) {
     log("CI failed");
     process.exit(1);
   }
 
   // Wait for merge
-  const mergeResult = waitForMerge(prNumber, startTime);
+  const mergeResult = await waitForMerge(prNumber, startTime);
 
   if (mergeResult === "merged") {
-    updateLocalMain();
+    await updateLocalMain();
     process.exit(0);
   } else if (mergeResult === "failed") {
     process.exit(1);
@@ -326,4 +360,18 @@ function main(): void {
   }
 }
 
-main();
+// Graceful shutdown handlers
+process.on("SIGINT", () => {
+  log("Interrupted by user");
+  process.exit(1);
+});
+
+process.on("SIGTERM", () => {
+  log("Terminated");
+  process.exit(1);
+});
+
+main().catch((err) => {
+  log(`Unexpected error: ${err.message}`);
+  process.exit(1);
+});
