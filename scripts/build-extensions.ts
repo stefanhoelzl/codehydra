@@ -27,6 +27,9 @@ const EXTENSIONS_DIR = path.join(process.cwd(), "extensions");
 const DIST_DIR = path.join(process.cwd(), "dist", "extensions");
 const EXTERNAL_JSON = path.join(EXTENSIONS_DIR, "external.json");
 
+/** Verbose mode: enabled by --verbose flag or CI environment */
+const verbose = process.argv.includes("--verbose") || !!process.env.CI;
+
 interface ExtensionPackageJson {
   publisher: string;
   name: string;
@@ -130,7 +133,7 @@ function readExternalExtensions(): ExternalExtension[] {
     return extensions;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      console.log("No external.json found, skipping external extensions");
+      if (verbose) console.log("No external.json found, skipping external extensions");
       return [];
     }
     throw error;
@@ -164,8 +167,10 @@ async function downloadExtension(ext: ExternalExtension): Promise<string> {
   const vsixName = `${ext.id.replace(/\./g, "-")}-${ext.version}.vsix`;
   const outputPath = path.join(DIST_DIR, vsixName);
 
-  console.log(`  Downloading ${ext.id}@${ext.version}...`);
-  console.log(`  URL: ${url}`);
+  if (verbose) {
+    console.log(`  Downloading ${ext.id}@${ext.version}...`);
+    console.log(`  URL: ${url}`);
+  }
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -177,7 +182,9 @@ async function downloadExtension(ext: ExternalExtension): Promise<string> {
   const buffer = await response.arrayBuffer();
   fs.writeFileSync(outputPath, Buffer.from(buffer));
 
-  console.log(`  Downloaded ${vsixName} (${(buffer.byteLength / 1024).toFixed(1)} KB)`);
+  if (verbose) {
+    console.log(`  Downloaded ${vsixName} (${(buffer.byteLength / 1024).toFixed(1)} KB)`);
+  }
   return vsixName;
 }
 
@@ -219,8 +226,11 @@ function readExtensionPackageJson(extDir: string): ExtensionPackageJson {
 
 /**
  * Build and package an extension.
- * Runs: pnpm install && pnpm build && vsce package
+ * Runs: pnpm build && vsce package
  * Version is computed from git history and injected at package time.
+ *
+ * Note: pnpm install is not needed here - extensions are workspace packages
+ * and their dependencies are installed when root pnpm install runs.
  *
  * Note: vsce package modifies package.json in-place when injecting the version.
  * We save and restore the original content to prevent git noise.
@@ -240,17 +250,25 @@ async function buildExtension(
   const vsixName = `${id.replace(/\./g, "-")}-${version}.vsix`;
   const outputPath = path.join(DIST_DIR, vsixName);
 
-  console.log(`\nBuilding ${extDir}...`);
-  console.log(`  Version: ${version}`);
+  if (verbose) {
+    console.log(`\nBuilding ${extDir}...`);
+    console.log(`  Version: ${version}`);
+  } else {
+    process.stdout.write(`Building ${extDir}...`);
+  }
 
-  // Run pnpm install (shell needed for Windows where pnpm may be a .cmd shim)
-  console.log(`  pnpm install...`);
+  // Shell needed for Windows where pnpm may be a .cmd shim
   const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
-  execSync("pnpm install", { cwd: extPath, stdio: "inherit", shell });
+  const stdio = verbose ? "inherit" : "pipe";
 
   // Run pnpm build
-  console.log(`  pnpm build...`);
-  execSync("pnpm build", { cwd: extPath, stdio: "inherit", shell });
+  if (verbose) console.log(`  pnpm build...`);
+  try {
+    execSync("pnpm build", { cwd: extPath, stdio, shell });
+  } catch (error) {
+    if (!verbose) console.log(" failed");
+    throw error;
+  }
 
   // Save original package.json and package-lock.json before vsce modifies them
   const originalPackageJson = await fsp.readFile(packageJsonPath, "utf-8");
@@ -264,16 +282,25 @@ async function buildExtension(
 
   try {
     // Package with vsce, injecting the computed version
-    console.log(`  vsce package...`);
-    execSync(
-      `npx vsce package --no-dependencies --no-git-tag-version "${version}" -o "${outputPath}"`,
-      {
-        cwd: extPath,
-        stdio: "inherit",
-      }
-    );
+    if (verbose) console.log(`  vsce package...`);
+    try {
+      execSync(
+        `npx vsce package --no-dependencies --no-git-tag-version "${version}" -o "${outputPath}"`,
+        {
+          cwd: extPath,
+          stdio,
+        }
+      );
+    } catch (error) {
+      if (!verbose) console.log(" failed");
+      throw error;
+    }
 
-    console.log(`  Created ${vsixName}`);
+    if (verbose) {
+      console.log(`  Created ${vsixName}`);
+    } else {
+      console.log(" done");
+    }
     return { vsix: vsixName, version };
   } finally {
     // Restore original package.json and package-lock.json to prevent git noise
@@ -292,20 +319,24 @@ async function buildExtension(
 }
 
 async function main(): Promise<void> {
-  console.log("Building VS Code extensions...\n");
+  if (verbose) console.log("Building VS Code extensions...\n");
 
   // Create dist/extensions/ directory
   fs.mkdirSync(DIST_DIR, { recursive: true });
 
   // Read external extensions (will be downloaded from marketplace)
   const externalExtensions = readExternalExtensions();
-  console.log(
-    `External extensions: ${externalExtensions.length > 0 ? externalExtensions.map((e) => `${e.id}@${e.version}`).join(", ") : "(none)"}`
-  );
+  if (verbose) {
+    console.log(
+      `External extensions: ${externalExtensions.length > 0 ? externalExtensions.map((e) => `${e.id}@${e.version}`).join(", ") : "(none)"}`
+    );
+  }
 
   // Find and build all extension directories
   const extDirs = findExtensionDirs();
-  console.log(`Extension directories: ${extDirs.length > 0 ? extDirs.join(", ") : "(none)"}`);
+  if (verbose) {
+    console.log(`Extension directories: ${extDirs.length > 0 ? extDirs.join(", ") : "(none)"}`);
+  }
 
   const manifest: BundledExtension[] = [];
 
@@ -326,16 +357,19 @@ async function main(): Promise<void> {
 
   // Download external extensions from marketplace
   if (externalExtensions.length > 0) {
-    console.log("\nDownloading external extensions from marketplace...");
+    if (verbose) console.log("\nDownloading external extensions from marketplace...");
     for (const ext of externalExtensions) {
+      if (!verbose) process.stdout.write(`Downloading ${ext.id}...`);
       try {
         const vsix = await downloadExtension(ext);
+        if (!verbose) console.log(" done");
         manifest.push({
           id: ext.id,
           version: ext.version,
           vsix,
         });
       } catch (error) {
+        if (!verbose) console.log(" failed");
         // Build must fail if external extension cannot be downloaded
         console.error(`\nFailed to download extension: ${ext.id}@${ext.version}`);
         throw error;
@@ -346,10 +380,13 @@ async function main(): Promise<void> {
   // Write manifest.json as a flat array (new format)
   const manifestPath = path.join(DIST_DIR, "manifest.json");
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-  console.log(`\nGenerated manifest.json:`);
-  console.log(JSON.stringify(manifest, null, 2));
+  if (verbose) {
+    console.log(`\nGenerated manifest.json:`);
+    console.log(JSON.stringify(manifest, null, 2));
+  }
 
-  console.log("\nExtension build complete!");
+  const totalCount = manifest.length;
+  console.log(`Built ${totalCount} extensions`);
 }
 
 main().catch((error) => {

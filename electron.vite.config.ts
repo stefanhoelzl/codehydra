@@ -30,6 +30,7 @@ const appVersion = getAppVersion();
 export default defineConfig({
   main: {
     build: {
+      reportCompressedSize: false,
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main/index.ts"),
@@ -55,6 +56,7 @@ export default defineConfig({
   preload: {
     plugins: [codehydraDefaults()],
     build: {
+      reportCompressedSize: false,
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/preload/index.ts"),
@@ -69,6 +71,7 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, "src/renderer"),
     build: {
+      reportCompressedSize: false,
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/renderer/index.html"),

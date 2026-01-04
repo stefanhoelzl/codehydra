@@ -56,5 +56,7 @@ export default defineConfig({
     outDir: "dist/bin",
     // Clear dist/bin on each build
     emptyOutDir: true,
+    // Don't report gzip sizes (not relevant for CLI scripts)
+    reportCompressedSize: false,
   },
 });
