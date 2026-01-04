@@ -5,6 +5,10 @@
 	"version": "0.1.0-dev.6686f318",
 	"type": "module",
 	"publisher": "codehydra",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/stefanhoelzl/codehydra"
+	},
 	"engines": {
 		"vscode": "^1.85.0"
 	},
