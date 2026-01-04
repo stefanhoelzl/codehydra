@@ -87,6 +87,7 @@ describe("VscodeSetupService Integration", () => {
     await writeFile(join(binAssetsDir, "opencode"), "#!/bin/sh\nexec opencode.cjs");
     await writeFile(join(binAssetsDir, "opencode.cmd"), "@echo off\ncall opencode.cjs");
     await writeFile(join(binAssetsDir, "opencode.cjs"), "// opencode wrapper");
+    await writeFile(join(binAssetsDir, "opencode.codehydra.json"), "mock-opencode-config-content");
   }
 
   /**
@@ -143,7 +144,7 @@ describe("VscodeSetupService Integration", () => {
       vscodeAssetsDir: mockPaths.assetsDir,
       binDir: mockPaths.binDir,
       binAssetsDir: join(mockPaths.assetsDir, "bin"),
-      mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
+      opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
     });
   });
 
@@ -367,7 +368,7 @@ describe("VscodeSetupService Integration", () => {
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
         binAssetsDir: join(mockPaths.assetsDir, "bin"),
-        mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
+        opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
       });
 
       const processRunner = createTestProcessRunner();
@@ -399,7 +400,7 @@ describe("VscodeSetupService Integration", () => {
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
         binAssetsDir: join(mockPaths.assetsDir, "bin"),
-        mcpConfigPath: join(tempDir, "opencode", "codehydra-mcp.json"),
+        opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
       });
 
       const processRunner = createTestProcessRunner();

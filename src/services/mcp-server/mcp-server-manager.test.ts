@@ -197,15 +197,6 @@ describe("McpServerManager", () => {
     });
   });
 
-  describe("getConfigPath", () => {
-    it("returns config path from PathProvider", () => {
-      const manager = new McpServerManager(portManager, pathProvider, api, appState, logger);
-
-      // Config path is always available from PathProvider
-      expect(manager.getConfigPath()).toContain("codehydra-mcp.json");
-    });
-  });
-
   describe("isRunning", () => {
     it("returns false before start", () => {
       const manager = new McpServerManager(portManager, pathProvider, api, appState, logger);
