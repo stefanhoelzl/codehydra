@@ -224,6 +224,14 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
+   * Add a session to the root sessions set (for existing sessions found via listSessions).
+   * This ensures status events for existing sessions are properly processed.
+   */
+  addRootSession(sessionId: string): void {
+    this.rootSessionIds.add(sessionId);
+  }
+
+  /**
    * Get current status from the API.
    * Fetches session status and aggregates to a single ClientStatus.
    * Empty or all idle → "idle", any busy/retry → "busy"
