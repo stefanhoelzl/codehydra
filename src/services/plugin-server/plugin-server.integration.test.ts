@@ -212,7 +212,7 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
         forceRemove: vi.fn(),
         get: vi.fn(),
         getStatus: vi.fn(),
-        getOpencodePort: vi.fn(),
+        getOpenCodeSession: vi.fn(),
         restartOpencodeServer: vi.fn(),
         setMetadata: vi.fn(),
         getMetadata: vi.fn(),

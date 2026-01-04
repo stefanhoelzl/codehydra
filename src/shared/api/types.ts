@@ -384,3 +384,18 @@ export const initialPromptSchema = z.union([
     model: promptModelSchema.optional(),
   }),
 ]);
+
+// =============================================================================
+// OpenCode Session Types
+// =============================================================================
+
+/**
+ * OpenCode session information for a workspace.
+ * Used to track the primary session created/found when the OpenCode server starts.
+ */
+export interface OpenCodeSession {
+  /** Port of the OpenCode server */
+  readonly port: number;
+  /** Session ID of the primary session */
+  readonly sessionId: string;
+}

@@ -133,7 +133,7 @@ function createToolHandlers(api: ICoreApi) {
         return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
       }
       try {
-        const port = await api.workspaces.getOpencodePort(
+        const port = await api.workspaces.getOpenCodeSession(
           context.resolved.projectId,
           context.resolved.workspaceName
         );
@@ -449,10 +449,12 @@ describe("MCP Tools", () => {
     });
   });
 
-  describe("workspace_get_opencode_port", () => {
-    it("returns port number on success", async () => {
+  describe("workspace_get_opencode_session", () => {
+    it("returns session info on success", async () => {
       const workspaceApi = createMockWorkspaceApi({
-        getOpencodePort: vi.fn().mockResolvedValue(14001),
+        getOpenCodeSession: vi
+          .fn()
+          .mockResolvedValue({ port: 14001, sessionId: "test-session-id" }),
       });
 
       const api: ICoreApi = {
@@ -466,17 +468,17 @@ describe("MCP Tools", () => {
       const context = createResolvedContext();
 
       const result = await handlers.workspace_get_opencode_port(context);
-      const parsed = parseToolResult<number>(result);
+      const parsed = parseToolResult<{ port: number; sessionId: string }>(result);
 
       expect(parsed.success).toBe(true);
       if (parsed.success) {
-        expect(parsed.data).toBe(14001);
+        expect(parsed.data).toEqual({ port: 14001, sessionId: "test-session-id" });
       }
     });
 
     it("returns null when server not running", async () => {
       const workspaceApi = createMockWorkspaceApi({
-        getOpencodePort: vi.fn().mockResolvedValue(null),
+        getOpenCodeSession: vi.fn().mockResolvedValue(null),
       });
 
       const api: ICoreApi = {
@@ -490,7 +492,7 @@ describe("MCP Tools", () => {
       const context = createResolvedContext();
 
       const result = await handlers.workspace_get_opencode_port(context);
-      const parsed = parseToolResult<number | null>(result);
+      const parsed = parseToolResult<{ port: number; sessionId: string } | null>(result);
 
       expect(parsed.success).toBe(true);
       if (parsed.success) {

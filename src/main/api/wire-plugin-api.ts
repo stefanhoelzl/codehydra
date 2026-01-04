@@ -109,9 +109,9 @@ export function wirePluginApi(
       });
     },
 
-    async getOpencodePort(workspacePath: string) {
-      return handleApiCall(workspacePath, "getOpencodePort", (projectId, workspaceName) =>
-        api.workspaces.getOpencodePort(projectId, workspaceName)
+    async getOpenCodeSession(workspacePath: string) {
+      return handleApiCall(workspacePath, "getOpenCodeSession", (projectId, workspaceName) =>
+        api.workspaces.getOpenCodeSession(projectId, workspaceName)
       );
     },
 

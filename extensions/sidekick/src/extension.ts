@@ -10,6 +10,7 @@ import type {
   LogContext,
   WorkspaceCreateRequest,
   InitialPrompt,
+  OpenCodeSession,
 } from "./types";
 
 let socket: TypedSocket | null = null;
@@ -137,8 +138,8 @@ const codehydraApi = {
       return emitApiCall("api:workspace:getStatus");
     },
 
-    getOpencodePort() {
-      return emitApiCall<number | null>("api:workspace:getOpencodePort");
+    getOpenCodeSession() {
+      return emitApiCall<OpenCodeSession | null>("api:workspace:getOpenCodeSession");
     },
 
     restartOpencodeServer() {
@@ -269,10 +270,12 @@ function registerDebugCommands(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Debug: Get OpenCode Port
+  // Debug: Get OpenCode Session
   context.subscriptions.push(
-    vscode.commands.registerCommand("codehydra.debug.getOpencodePort", async () => {
-      await runDebugCommand("getOpencodePort", () => codehydraApi.workspace.getOpencodePort());
+    vscode.commands.registerCommand("codehydra.debug.getOpenCodeSession", async () => {
+      await runDebugCommand("getOpenCodeSession", () =>
+        codehydraApi.workspace.getOpenCodeSession()
+      );
     })
   );
 
@@ -394,19 +397,26 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     }
 
     codehydraApi.workspace
-      .getOpencodePort()
-      .then((port) => {
-        if (port !== null && extensionContext) {
+      .getOpenCodeSession()
+      .then((session) => {
+        if (session !== null && extensionContext) {
           extensionContext.environmentVariableCollection.replace(
             "CODEHYDRA_OPENCODE_PORT",
-            String(port)
+            String(session.port)
           );
-          codehydraApi.log.debug("Set CODEHYDRA_OPENCODE_PORT", { port });
+          extensionContext.environmentVariableCollection.replace(
+            "CODEHYDRA_OPENCODE_SESSION_ID",
+            session.sessionId
+          );
+          codehydraApi.log.debug("Set OpenCode env vars", {
+            port: session.port,
+            sessionId: session.sessionId,
+          });
         }
       })
       .catch((err: unknown) => {
         const error = err instanceof Error ? err.message : String(err);
-        codehydraApi.log.warn("Failed to get opencode port", { error });
+        codehydraApi.log.warn("Failed to get opencode session", { error });
       });
   });
 

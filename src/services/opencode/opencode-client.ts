@@ -177,55 +177,23 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Get all sessions and identify root sessions (those without parentID).
-   * Must be called before connect() to properly filter events.
+   * Lists all sessions from the OpenCode server.
+   * Returns all sessions without filtering (caller can filter as needed).
    */
-  async fetchRootSessions(): Promise<Result<Session[], OpenCodeError>> {
+  async listSessions(): Promise<Result<Session[], OpenCodeError>> {
+    this.logger.debug("Listing sessions");
     try {
       const result = await this.sdk.session.list();
       const sessions = result.data as SdkSession[];
-
-      // Clear and rebuild session tracking
-      this.rootSessionIds.clear();
-      this.childToRootSession.clear();
-
-      // First pass: identify root sessions
-      for (const session of sessions) {
-        if (!session.parentID) {
-          this.rootSessionIds.add(session.id);
-        }
-      }
-
-      // Second pass: map children to their root (supports arbitrary nesting)
-      for (const session of sessions) {
-        if (session.parentID) {
-          const rootId = this.findRootSessionId(session.parentID, sessions);
-          if (rootId) {
-            this.childToRootSession.set(session.id, rootId);
-          }
-        }
-      }
-
-      // Return only root sessions, mapped to our Session type
-      const rootSessions = sessions.filter((s) => !s.parentID).map((s) => this.mapSdkSession(s));
-      return ok(rootSessions);
+      return ok(sessions.map((s) => this.mapSdkSession(s)));
     } catch (error) {
       return err(this.mapSdkError(error));
     }
   }
 
   /**
-   * Find the root session ID by walking up the parent chain.
-   */
-  private findRootSessionId(sessionId: string, sessions: SdkSession[]): string | undefined {
-    const session = sessions.find((s) => s.id === sessionId);
-    if (!session) return undefined;
-    if (!session.parentID) return session.id; // This is the root
-    return this.findRootSessionId(session.parentID, sessions);
-  }
-
-  /**
    * Check if a session ID is a root session.
+   * Used internally for event filtering.
    */
   isRootSession(sessionId: string): boolean {
     return this.rootSessionIds.has(sessionId);
@@ -280,23 +248,23 @@ export class OpenCodeClient implements IDisposable {
    * The session is immediately tracked in rootSessionIds before SSE events arrive.
    * This ensures proper status tracking even if session.status arrives before session.created.
    *
-   * @returns The session ID on success, or an error
+   * @returns The full session object on success, or an error
    */
-  async createSession(): Promise<Result<string, OpenCodeError>> {
+  async createSession(): Promise<Result<Session, OpenCodeError>> {
     try {
       const result = await this.sdk.session.create({ body: {} });
       if (!result.data) {
         return err(new OpenCodeError("Session creation returned no data", "REQUEST_FAILED"));
       }
 
-      const sessionId = result.data.id;
+      const session = this.mapSdkSession(result.data);
 
       // Track immediately - don't wait for SSE session.created event
       // This ensures session.status events are handled correctly
-      this.rootSessionIds.add(sessionId);
+      this.rootSessionIds.add(session.id);
 
-      this.logger.debug("Session created", { port: this.port, sessionId });
-      return ok(sessionId);
+      this.logger.debug("Session created", { port: this.port, sessionId: session.id });
+      return ok(session);
     } catch (error) {
       return err(this.mapSdkError(error));
     }
@@ -391,6 +359,14 @@ export class OpenCodeClient implements IDisposable {
 
   /**
    * Disconnect from SSE event stream.
+   *
+   * This method closes the SSE subscription but keeps the SDK client instance.
+   * Used during server restart flow to temporarily disconnect while preserving
+   * session tracking state. After restart, create a new OpenCodeClient and
+   * call connect() to resume event streaming.
+   *
+   * Note: For permanent cleanup, use dispose() instead which also clears
+   * all listeners and session tracking.
    */
   disconnect(): void {
     this.eventSubscription = null;

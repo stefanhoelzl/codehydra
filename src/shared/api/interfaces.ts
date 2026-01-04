@@ -14,6 +14,7 @@ import type {
   SetupResult,
   AppState,
   InitialPrompt,
+  OpenCodeSession,
 } from "./types";
 import type { UIMode, UIModeChangedEvent } from "../ipc";
 import type { IDisposable, Unsubscribe } from "../types";
@@ -83,13 +84,16 @@ export interface IWorkspaceApi {
   get(projectId: ProjectId, workspaceName: WorkspaceName): Promise<Workspace | undefined>;
   getStatus(projectId: ProjectId, workspaceName: WorkspaceName): Promise<WorkspaceStatus>;
   /**
-   * Get the OpenCode server port for a workspace.
+   * Get the OpenCode session info for a workspace.
    * @param projectId Project containing the workspace
    * @param workspaceName Name of the workspace
-   * @returns Port number if server is running, null if not running or not initialized
+   * @returns Session info (port and sessionId) if available, null if not running or not initialized
    * @throws Error if project or workspace not found
    */
-  getOpencodePort(projectId: ProjectId, workspaceName: WorkspaceName): Promise<number | null>;
+  getOpenCodeSession(
+    projectId: ProjectId,
+    workspaceName: WorkspaceName
+  ): Promise<OpenCodeSession | null>;
   /**
    * Set a metadata value for a workspace.
    * @param projectId Project containing the workspace

@@ -31,9 +31,10 @@ import {
  */
 async function createAndInitializeProvider(
   port: number,
-  sdkFactory: SdkClientFactory
+  sdkFactory: SdkClientFactory,
+  workspacePath = "/test/workspace"
 ): Promise<OpenCodeProvider> {
-  const provider = new OpenCodeProvider(SILENT_LOGGER, asSdkFactory(sdkFactory));
+  const provider = new OpenCodeProvider(workspacePath, SILENT_LOGGER, asSdkFactory(sdkFactory));
   await provider.initializeClient(port);
   await provider.fetchStatus();
   return provider;
@@ -124,8 +125,8 @@ describe("OpenCodeServerManager integration", () => {
       await serverManager.startServer("/workspace/feature-a");
       await serverManager.stopServer("/workspace/feature-a");
 
-      // Callback should have been fired
-      expect(stoppedCallback).toHaveBeenCalledWith("/workspace/feature-a");
+      // Callback should have been fired with isRestart=false
+      expect(stoppedCallback).toHaveBeenCalledWith("/workspace/feature-a", false);
     });
 
     it("AgentStatusManager receives stop event via callback wiring", async () => {

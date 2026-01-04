@@ -242,41 +242,50 @@ describe("preload API", () => {
       expect(result).toEqual(mockStatus);
     });
 
-    it("workspaces.getOpencodePort should invoke WORKSPACE_GET_OPENCODE_PORT IPC channel", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue(12345);
+    it("workspaces.getOpenCodeSession should invoke WORKSPACE_GET_OPENCODE_SESSION IPC channel", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue({ port: 12345, sessionId: "ses-123" });
 
       const workspaces = exposedApi.workspaces as {
-        getOpencodePort: (projectId: string, workspaceName: string) => Promise<number | null>;
+        getOpenCodeSession: (
+          projectId: string,
+          workspaceName: string
+        ) => Promise<{ port: number; sessionId: string } | null>;
       };
-      await workspaces.getOpencodePort("my-app-12345678", "feature");
+      await workspaces.getOpenCodeSession("my-app-12345678", "feature");
 
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-opencode-port", {
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-opencode-session", {
         projectId: "my-app-12345678",
         workspaceName: "feature",
       });
     });
 
-    it("workspaces.getOpencodePort should pass projectId and workspaceName parameters", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue(54321);
+    it("workspaces.getOpenCodeSession should pass projectId and workspaceName parameters", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue({ port: 54321, sessionId: "ses-456" });
 
       const workspaces = exposedApi.workspaces as {
-        getOpencodePort: (projectId: string, workspaceName: string) => Promise<number | null>;
+        getOpenCodeSession: (
+          projectId: string,
+          workspaceName: string
+        ) => Promise<{ port: number; sessionId: string } | null>;
       };
-      await workspaces.getOpencodePort("other-project-aaaabbbb", "main-workspace");
+      await workspaces.getOpenCodeSession("other-project-aaaabbbb", "main-workspace");
 
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-opencode-port", {
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-opencode-session", {
         projectId: "other-project-aaaabbbb",
         workspaceName: "main-workspace",
       });
     });
 
-    it("workspaces.getOpencodePort should return IPC result", async () => {
+    it("workspaces.getOpenCodeSession should return IPC result", async () => {
       mockIpcRenderer.invoke.mockResolvedValue(null);
 
       const workspaces = exposedApi.workspaces as {
-        getOpencodePort: (projectId: string, workspaceName: string) => Promise<number | null>;
+        getOpenCodeSession: (
+          projectId: string,
+          workspaceName: string
+        ) => Promise<{ port: number; sessionId: string } | null>;
       };
-      const result = await workspaces.getOpencodePort("my-app-12345678", "feature");
+      const result = await workspaces.getOpenCodeSession("my-app-12345678", "feature");
 
       expect(result).toBeNull();
     });

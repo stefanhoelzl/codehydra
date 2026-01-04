@@ -345,25 +345,25 @@ During VS Code setup, CLI wrapper scripts are copied from bundled assets to `<ap
 ```
 opencode (shell) → opencode.cjs (Node.js) → opencode binary
                         ├─ Reads $CODEHYDRA_OPENCODE_PORT (set by sidekick extension)
+                        ├─ Reads $CODEHYDRA_OPENCODE_SESSION_ID (set by sidekick extension)
                         ├─ Reads $CODEHYDRA_OPENCODE_DIR (set by CodeServerManager)
-                        └─ Runs `opencode attach http://127.0.0.1:<port>`
+                        └─ Runs `opencode attach http://127.0.0.1:<port> --session <id>`
 ```
 
 **Environment Variables (set by CodeServerManager when spawning code-server):**
 
-| Variable                    | Set By             | Purpose                                       |
-| --------------------------- | ------------------ | --------------------------------------------- |
-| `CODEHYDRA_CODE_SERVER_DIR` | CodeServerManager  | Directory containing code-server installation |
-| `CODEHYDRA_OPENCODE_DIR`    | CodeServerManager  | Directory containing opencode binary          |
-| `CODEHYDRA_OPENCODE_PORT`   | sidekick extension | Port of running OpenCode server               |
+| Variable                        | Set By             | Purpose                                       |
+| ------------------------------- | ------------------ | --------------------------------------------- |
+| `CODEHYDRA_CODE_SERVER_DIR`     | CodeServerManager  | Directory containing code-server installation |
+| `CODEHYDRA_OPENCODE_DIR`        | CodeServerManager  | Directory containing opencode binary          |
+| `CODEHYDRA_OPENCODE_PORT`       | sidekick extension | Port of running OpenCode server               |
+| `CODEHYDRA_OPENCODE_SESSION_ID` | sidekick extension | Primary session ID for the workspace          |
 
 - Uses bundled Node.js from code-server (`$CODEHYDRA_CODE_SERVER_DIR/lib/node`)
-- **Only works in managed terminals**: The sidekick extension sets `CODEHYDRA_OPENCODE_PORT` for all new terminals
+- **Only works in managed terminals**: The sidekick extension sets `CODEHYDRA_OPENCODE_PORT` and `CODEHYDRA_OPENCODE_SESSION_ID` for all new terminals
 - Thin shell wrappers (`opencode` / `opencode.cmd`) delegate all logic to the cross-platform `opencode.cjs` script (compiled from TypeScript at build time)
 
-**Session Restoration**: The wrapper automatically queries the OpenCode server for existing
-sessions, filters by the current workspace directory, and restores the most recently updated
-session. If no session is found or the request fails, a new session is started with the default agent.
+**Session Restoration**: The wrapper reads the session ID from `CODEHYDRA_OPENCODE_SESSION_ID` (set by the sidekick extension on connect) and passes it to the `opencode attach` command with `--session <id>`. This eliminates SDK calls and provides instant session attachment.
 
 These scripts are available in the integrated terminal because:
 

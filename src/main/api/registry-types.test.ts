@@ -40,6 +40,7 @@ import type {
   BaseInfo,
   SetupResult,
   AppState,
+  OpenCodeSession,
 } from "../../shared/api/types";
 import type { UIMode } from "../../shared/ipc";
 
@@ -85,7 +86,7 @@ describe("registry-types.paths", () => {
     expectTypeOf<"workspaces.forceRemove">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.get">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.getStatus">().toExtend<WorkspacePath>();
-    expectTypeOf<"workspaces.getOpencodePort">().toExtend<WorkspacePath>();
+    expectTypeOf<"workspaces.getOpenCodeSession">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.setMetadata">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.getMetadata">().toExtend<WorkspacePath>();
 
@@ -149,7 +150,7 @@ describe("registry-types.payload", () => {
     expectTypeOf<MethodPayload<"workspaces.get">>().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<MethodPayload<"workspaces.getStatus">>().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<
-      MethodPayload<"workspaces.getOpencodePort">
+      MethodPayload<"workspaces.getOpenCodeSession">
     >().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<MethodPayload<"workspaces.getMetadata">>().toEqualTypeOf<WorkspaceRefPayload>();
   });
@@ -225,7 +226,9 @@ describe("registry-types.result", () => {
     expectTypeOf<MethodResult<"workspaces.forceRemove">>().toEqualTypeOf<void>();
     expectTypeOf<MethodResult<"workspaces.get">>().toEqualTypeOf<Workspace | undefined>();
     expectTypeOf<MethodResult<"workspaces.getStatus">>().toEqualTypeOf<WorkspaceStatus>();
-    expectTypeOf<MethodResult<"workspaces.getOpencodePort">>().toEqualTypeOf<number | null>();
+    expectTypeOf<
+      MethodResult<"workspaces.getOpenCodeSession">
+    >().toEqualTypeOf<OpenCodeSession | null>();
     expectTypeOf<MethodResult<"workspaces.setMetadata">>().toEqualTypeOf<void>();
     expectTypeOf<MethodResult<"workspaces.getMetadata">>().toEqualTypeOf<
       Readonly<Record<string, string>>

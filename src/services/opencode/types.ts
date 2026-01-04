@@ -44,9 +44,13 @@ export type ClientStatus = "idle" | "busy";
  */
 export interface Session {
   readonly id: string;
-  readonly parentID?: string;
+  readonly parentID?: string | null | undefined;
   readonly directory: string;
   readonly title?: string;
+  readonly time?: {
+    readonly created?: string;
+    readonly updated?: number;
+  };
 }
 
 // ============ Session Status ============

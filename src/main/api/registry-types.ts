@@ -14,6 +14,7 @@ import type {
   SetupResult,
   AppState,
   InitialPrompt,
+  OpenCodeSession,
 } from "../../shared/api/types";
 import type { UIMode } from "../../shared/ipc";
 import type { ApiEvents, Unsubscribe, ICodeHydraApi } from "../../shared/api/interfaces";
@@ -126,7 +127,9 @@ export interface MethodRegistry {
   "workspaces.forceRemove": (payload: WorkspaceRefPayload) => Promise<void>;
   "workspaces.get": (payload: WorkspaceRefPayload) => Promise<Workspace | undefined>;
   "workspaces.getStatus": (payload: WorkspaceRefPayload) => Promise<WorkspaceStatus>;
-  "workspaces.getOpencodePort": (payload: WorkspaceRefPayload) => Promise<number | null>;
+  "workspaces.getOpenCodeSession": (
+    payload: WorkspaceRefPayload
+  ) => Promise<OpenCodeSession | null>;
   "workspaces.restartOpencodeServer": (payload: WorkspaceRefPayload) => Promise<number>;
   "workspaces.setMetadata": (payload: WorkspaceSetMetadataPayload) => Promise<void>;
   "workspaces.getMetadata": (
@@ -174,7 +177,7 @@ export type WorkspacePath =
   | "workspaces.forceRemove"
   | "workspaces.get"
   | "workspaces.getStatus"
-  | "workspaces.getOpencodePort"
+  | "workspaces.getOpenCodeSession"
   | "workspaces.restartOpencodeServer"
   | "workspaces.setMetadata"
   | "workspaces.getMetadata"
@@ -220,7 +223,7 @@ export const ALL_METHOD_PATHS = [
   "workspaces.forceRemove",
   "workspaces.get",
   "workspaces.getStatus",
-  "workspaces.getOpencodePort",
+  "workspaces.getOpenCodeSession",
   "workspaces.restartOpencodeServer",
   "workspaces.setMetadata",
   "workspaces.getMetadata",

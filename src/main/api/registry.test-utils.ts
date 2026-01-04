@@ -216,8 +216,8 @@ function createMockCodeHydraApi(
       get: (projectId, workspaceName) => get("workspaces.get")({ projectId, workspaceName }),
       getStatus: (projectId, workspaceName) =>
         get("workspaces.getStatus")({ projectId, workspaceName }),
-      getOpencodePort: (projectId, workspaceName) =>
-        get("workspaces.getOpencodePort")({ projectId, workspaceName }),
+      getOpenCodeSession: (projectId, workspaceName) =>
+        get("workspaces.getOpenCodeSession")({ projectId, workspaceName }),
       restartOpencodeServer: (projectId, workspaceName) =>
         get("workspaces.restartOpencodeServer")({ projectId, workspaceName }),
       setMetadata: (projectId, workspaceName, key, value) =>
@@ -277,7 +277,7 @@ export function registerAllMethodsWithStubs(
     "workspaces.forceRemove": async () => {},
     "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" as const } }),
-    "workspaces.getOpencodePort": async () => null,
+    "workspaces.getOpenCodeSession": async () => null,
     "workspaces.restartOpencodeServer": async () => 12345,
     "workspaces.setMetadata": async () => {},
     "workspaces.getMetadata": async () => ({}),

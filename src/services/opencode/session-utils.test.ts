@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Focused tests for findMatchingSession in the opencode wrapper.
+ * Focused tests for findMatchingSession utility function.
  *
  * Tests the pure logic of session matching:
  * - Filters by directory match
@@ -10,13 +10,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { findMatchingSession } from "../services/opencode/session-utils";
-import type { Session as OpenCodeSession } from "../services/opencode/types";
+import { findMatchingSession } from "./session-utils";
+import type { Session } from "./types";
 
 describe("findMatchingSession", () => {
   describe("filters by directory match", () => {
     it("returns session matching directory", () => {
-      const sessions: OpenCodeSession[] = [
+      const sessions: Session[] = [
         { id: "ses-1", directory: "/foo/bar", time: { updated: 1000 } },
         { id: "ses-2", directory: "/other/dir", time: { updated: 2000 } },
       ];
@@ -28,9 +28,7 @@ describe("findMatchingSession", () => {
     });
 
     it("returns null when no match", () => {
-      const sessions: OpenCodeSession[] = [
-        { id: "ses-1", directory: "/foo/bar", time: { updated: 1000 } },
-      ];
+      const sessions: Session[] = [{ id: "ses-1", directory: "/foo/bar", time: { updated: 1000 } }];
 
       const result = findMatchingSession(sessions, "/other/path");
 
@@ -45,7 +43,7 @@ describe("findMatchingSession", () => {
 
     it("handles session with missing directory", () => {
       const sessions = [
-        { id: "ses-1", directory: "", time: { updated: 1000 } } as OpenCodeSession,
+        { id: "ses-1", directory: "", time: { updated: 1000 } } as Session,
         { id: "ses-2", directory: "/foo/bar", time: { updated: 500 } },
       ];
 
@@ -58,8 +56,8 @@ describe("findMatchingSession", () => {
 
   describe("excludes sub-agents", () => {
     it("excludes sessions with parentID", () => {
-      const sessions: OpenCodeSession[] = [
-        { id: "ses-parent", directory: "/foo/bar", parentID: null, time: { updated: 1000 } },
+      const sessions: Session[] = [
+        { id: "ses-parent", directory: "/foo/bar", time: { updated: 1000 } },
         { id: "ses-child", directory: "/foo/bar", parentID: "ses-parent", time: { updated: 2000 } },
       ];
 
@@ -70,7 +68,7 @@ describe("findMatchingSession", () => {
     });
 
     it("returns null when all sessions have parentID", () => {
-      const sessions: OpenCodeSession[] = [
+      const sessions: Session[] = [
         { id: "ses-1", directory: "/foo/bar", parentID: "parent", time: { updated: 1000 } },
         { id: "ses-2", directory: "/foo/bar", parentID: "parent", time: { updated: 2000 } },
       ];
@@ -80,9 +78,18 @@ describe("findMatchingSession", () => {
       expect(result).toBeNull();
     });
 
-    it("treats undefined parentID as null (not a sub-agent)", () => {
-      const sessions: OpenCodeSession[] = [
-        { id: "ses-1", directory: "/foo/bar", parentID: undefined, time: { updated: 1000 } },
+    it("treats missing parentID as root session (not a sub-agent)", () => {
+      const sessions: Session[] = [{ id: "ses-1", directory: "/foo/bar", time: { updated: 1000 } }];
+
+      const result = findMatchingSession(sessions, "/foo/bar");
+
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe("ses-1");
+    });
+
+    it("treats null parentID as root session (not a sub-agent)", () => {
+      const sessions: Session[] = [
+        { id: "ses-1", directory: "/foo/bar", parentID: null, time: { updated: 1000 } },
       ];
 
       const result = findMatchingSession(sessions, "/foo/bar");
@@ -94,7 +101,7 @@ describe("findMatchingSession", () => {
 
   describe("returns most recent match", () => {
     it("returns session with highest time.updated", () => {
-      const sessions: OpenCodeSession[] = [
+      const sessions: Session[] = [
         { id: "ses-old", directory: "/foo/bar", time: { updated: 1000 } },
         { id: "ses-new", directory: "/foo/bar", time: { updated: 3000 } },
         { id: "ses-mid", directory: "/foo/bar", time: { updated: 2000 } },
@@ -107,7 +114,7 @@ describe("findMatchingSession", () => {
     });
 
     it("returns first session when time.updated values are equal", () => {
-      const sessions: OpenCodeSession[] = [
+      const sessions: Session[] = [
         { id: "ses-first", directory: "/foo/bar", time: { updated: 1000 } },
         { id: "ses-second", directory: "/foo/bar", time: { updated: 1000 } },
       ];
@@ -122,7 +129,7 @@ describe("findMatchingSession", () => {
   describe("handles missing time.updated", () => {
     it("treats missing time as 0", () => {
       const sessions = [
-        { id: "ses-no-time", directory: "/foo/bar" } as OpenCodeSession,
+        { id: "ses-no-time", directory: "/foo/bar" } as Session,
         { id: "ses-with-time", directory: "/foo/bar", time: { updated: 1000 } },
       ];
 
@@ -134,7 +141,7 @@ describe("findMatchingSession", () => {
 
     it("treats undefined time.updated as 0", () => {
       const sessions = [
-        { id: "ses-undefined", directory: "/foo/bar", time: {} } as OpenCodeSession,
+        { id: "ses-undefined", directory: "/foo/bar", time: {} } as Session,
         { id: "ses-defined", directory: "/foo/bar", time: { updated: 1000 } },
       ];
 
@@ -147,7 +154,7 @@ describe("findMatchingSession", () => {
 
   describe.skipIf(process.platform !== "win32")("cross-platform path matching (Windows)", () => {
     it("matches C:/foo with C:\\foo", () => {
-      const sessions: OpenCodeSession[] = [
+      const sessions: Session[] = [
         { id: "ses-1", directory: "C:/Users/test/project", time: { updated: 1000 } },
       ];
 
@@ -158,7 +165,7 @@ describe("findMatchingSession", () => {
     });
 
     it("matches case-insensitively on Windows", () => {
-      const sessions: OpenCodeSession[] = [
+      const sessions: Session[] = [
         { id: "ses-1", directory: "C:/USERS/TEST/PROJECT", time: { updated: 1000 } },
       ];
 
@@ -171,9 +178,7 @@ describe("findMatchingSession", () => {
 
   describe("handles invalid input", () => {
     it("returns null for invalid directory", () => {
-      const sessions: OpenCodeSession[] = [
-        { id: "ses-1", directory: "/foo/bar", time: { updated: 1000 } },
-      ];
+      const sessions: Session[] = [{ id: "ses-1", directory: "/foo/bar", time: { updated: 1000 } }];
 
       // Relative path is invalid for Path class
       const result = findMatchingSession(sessions, "relative/path");
@@ -183,7 +188,7 @@ describe("findMatchingSession", () => {
 
     it("returns null for non-array input", () => {
       // TypeScript wouldn't allow this, but at runtime it could happen
-      const result = findMatchingSession(null as unknown as OpenCodeSession[], "/foo/bar");
+      const result = findMatchingSession(null as unknown as Session[], "/foo/bar");
 
       expect(result).toBeNull();
     });

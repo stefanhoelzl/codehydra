@@ -23,6 +23,7 @@ import type {
   BaseInfo,
   SetupResult,
   AppState,
+  OpenCodeSession,
 } from "./types";
 import type { UIMode, UIModeChangedEvent } from "../ipc";
 
@@ -117,10 +118,10 @@ describe("IWorkspaceApi Interface", () => {
         void workspaceName;
         return { base: "main" };
       },
-      async getOpencodePort(
+      async getOpenCodeSession(
         projectId: ProjectId,
         workspaceName: WorkspaceName
-      ): Promise<number | null> {
+      ): Promise<OpenCodeSession | null> {
         void projectId;
         void workspaceName;
         return null;
@@ -155,7 +156,7 @@ describe("IWorkspaceApi Interface", () => {
     expect(typeof api.getStatus).toBe("function");
     expect(typeof api.setMetadata).toBe("function");
     expect(typeof api.getMetadata).toBe("function");
-    expect(typeof api.getOpencodePort).toBe("function");
+    expect(typeof api.getOpenCodeSession).toBe("function");
     expect(typeof api.restartOpencodeServer).toBe("function");
     expect(typeof api.executeCommand).toBe("function");
   });

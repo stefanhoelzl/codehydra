@@ -121,9 +121,15 @@ export class AppState {
       void this.handleServerStarted(workspacePath as WorkspacePath, port, pendingPrompt);
     });
 
-    manager.onServerStopped((workspacePath) => {
+    manager.onServerStopped((workspacePath, isRestart) => {
       if (this.agentStatusManager) {
-        this.agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
+        if (isRestart) {
+          // For restart: disconnect but keep provider
+          this.agentStatusManager.disconnectWorkspace(workspacePath as WorkspacePath);
+        } else {
+          // For permanent stop: remove workspace completely
+          this.agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
+        }
       }
       // Clear from MCP seen set so onFirstRequest fires again after restart
       if (this.mcpServerManager) {
@@ -134,7 +140,9 @@ export class AppState {
 
   /**
    * Handle server started event.
-   * Creates provider, registers with AgentStatusManager, and sends initial prompt if provided.
+   * For restart: reconnects existing provider.
+   * For first start: creates provider, registers with AgentStatusManager.
+   * Sends initial prompt if provided.
    */
   private async handleServerStarted(
     workspacePath: WorkspacePath,
@@ -145,8 +153,25 @@ export class AppState {
       return;
     }
 
-    // Create provider using AgentStatusManager's factory and logger
+    // Check if this is a restart (provider already exists from disconnect)
+    if (this.agentStatusManager.hasProvider(workspacePath)) {
+      // Restart: reconnect existing provider
+      try {
+        await this.agentStatusManager.reconnectWorkspace(workspacePath);
+        this.logger.info("Reconnected OpenCode provider after restart", { workspacePath, port });
+      } catch (error) {
+        this.logger.error(
+          "Failed to reconnect OpenCode provider",
+          { workspacePath, port },
+          error instanceof Error ? error : undefined
+        );
+      }
+      return;
+    }
+
+    // First start: create new provider
     const provider = new OpenCodeProvider(
+      workspacePath,
       this.agentStatusManager.getLogger(),
       this.agentStatusManager.getSdkFactory()
     );
@@ -166,7 +191,7 @@ export class AppState {
         const sessionResult = await provider.createSession();
         if (sessionResult.ok) {
           const promptResult = await provider.sendPrompt(
-            sessionResult.value,
+            sessionResult.value.id,
             pendingPrompt.prompt,
             {
               ...(pendingPrompt.agent !== undefined && { agent: pendingPrompt.agent }),

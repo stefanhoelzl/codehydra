@@ -6,9 +6,17 @@
  */
 
 import type { WorkspacePath, InternalAgentCounts, AggregatedAgentStatus } from "../../shared/ipc";
-import { type IDisposable, type Unsubscribe, type ClientStatus, type Result, err } from "./types";
+import {
+  type IDisposable,
+  type Unsubscribe,
+  type ClientStatus,
+  type Result,
+  type Session,
+  err,
+} from "./types";
 import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./opencode-client";
 import { OpenCodeError } from "../errors";
+import { findMatchingSession } from "./session-utils";
 import type { Logger } from "../logging";
 
 /**
@@ -18,6 +26,14 @@ export type StatusChangedCallback = (
   workspacePath: WorkspacePath,
   status: AggregatedAgentStatus
 ) => void;
+
+/**
+ * Session info returned by getSession().
+ */
+export interface OpenCodeSessionInfo {
+  readonly port: number;
+  readonly sessionId: string;
+}
 
 /**
  * Per-workspace provider that manages a single OpenCode client connection.
@@ -30,6 +46,20 @@ export class OpenCodeProvider implements IDisposable {
   private clientStatus: ClientStatus = "idle";
   private readonly sdkFactory: SdkClientFactory | undefined;
   private readonly logger: Logger;
+  private readonly workspacePath: string;
+
+  /**
+   * Port of the OpenCode server for this workspace.
+   * Set during initializeClient(), preserved during restart.
+   */
+  private _port: number | null = null;
+
+  /**
+   * Primary session ID for this workspace.
+   * Created or found during initializeClient(), preserved during restart.
+   */
+  private _primarySessionId: string | null = null;
+
   /**
    * Whether TUI has attached (first MCP request received).
    * Used to determine when to show status vs "none".
@@ -52,9 +82,21 @@ export class OpenCodeProvider implements IDisposable {
    */
   private readonly statusChangeListeners = new Set<() => void>();
 
-  constructor(logger: Logger, sdkFactory: SdkClientFactory | undefined) {
+  constructor(workspacePath: string, logger: Logger, sdkFactory: SdkClientFactory | undefined) {
+    this.workspacePath = workspacePath;
     this.logger = logger;
     this.sdkFactory = sdkFactory;
+  }
+
+  /**
+   * Returns the primary session info for this workspace.
+   * Returns null if not initialized or if session creation failed.
+   */
+  getSession(): OpenCodeSessionInfo | null {
+    if (this._port === null || this._primarySessionId === null) {
+      return null;
+    }
+    return { port: this._port, sessionId: this._primarySessionId };
   }
 
   /**
@@ -110,12 +152,15 @@ export class OpenCodeProvider implements IDisposable {
 
   /**
    * Initialize client with the given port.
-   * Creates OpenCodeClient, fetches root sessions, and connects to SSE.
+   * Creates OpenCodeClient, finds or creates a session, and connects to SSE.
    * Handles connection failures gracefully - client will still be created
    * but may not receive real-time updates.
    */
   async initializeClient(port: number): Promise<void> {
     if (this.client) return;
+
+    // Store the port
+    this._port = port;
 
     const client = new OpenCodeClient(port, this.logger, this.sdkFactory);
 
@@ -129,14 +174,63 @@ export class OpenCodeProvider implements IDisposable {
     this.client = client;
 
     try {
-      // Fetch root sessions first to identify which sessions to track
-      await client.fetchRootSessions();
-      // Then connect to SSE for real-time updates
+      // List existing sessions to find a matching one
+      const sessionsResult = await client.listSessions();
+      if (sessionsResult.ok) {
+        const matchingSession = findMatchingSession(sessionsResult.value, this.workspacePath);
+        if (matchingSession) {
+          this._primarySessionId = matchingSession.id;
+          this.logger.info("Found existing session", {
+            workspacePath: this.workspacePath,
+            sessionId: matchingSession.id,
+          });
+        } else {
+          // No matching session found, create a new one
+          const createResult = await client.createSession();
+          if (createResult.ok) {
+            this._primarySessionId = createResult.value.id;
+            this.logger.info("Created new session", {
+              workspacePath: this.workspacePath,
+              sessionId: createResult.value.id,
+            });
+          } else {
+            this.logger.error("Failed to create session", {
+              workspacePath: this.workspacePath,
+              error: createResult.error.message,
+            });
+          }
+        }
+      } else {
+        // listSessions failed, try to create a new session instead
+        this.logger.warn("Failed to list sessions, creating new session", {
+          workspacePath: this.workspacePath,
+          error: sessionsResult.error.message,
+        });
+        const createResult = await client.createSession();
+        if (createResult.ok) {
+          this._primarySessionId = createResult.value.id;
+          this.logger.info("Created new session", {
+            workspacePath: this.workspacePath,
+            sessionId: createResult.value.id,
+          });
+        } else {
+          this.logger.error("Failed to create session", {
+            workspacePath: this.workspacePath,
+            error: createResult.error.message,
+          });
+        }
+      }
+
+      // Connect to SSE for real-time updates
       await client.connect();
-    } catch {
+    } catch (error) {
       // Connection failed - client is still created but may not have real-time updates
       // This can happen if the server is not ready yet or network issues
       // The client can retry later or will receive updates when connection is established
+      this.logger.warn("Failed to initialize client", {
+        workspacePath: this.workspacePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -166,8 +260,10 @@ export class OpenCodeProvider implements IDisposable {
   /**
    * Create a new session.
    * The session is immediately tracked before SSE events arrive.
+   *
+   * @returns The full session object on success, or an error
    */
-  async createSession(): Promise<Result<string, OpenCodeError>> {
+  async createSession(): Promise<Result<Session, OpenCodeError>> {
     if (!this.client) {
       return err(new OpenCodeError("Not connected", "NOT_CONNECTED"));
     }
@@ -188,11 +284,75 @@ export class OpenCodeProvider implements IDisposable {
     return this.client.sendPrompt(sessionId, prompt, options);
   }
 
+  /**
+   * Disconnect from the OpenCode server for restart.
+   * Disposes the client but keeps port and sessionId for reconnection.
+   * Call reconnect() after the server has restarted.
+   */
+  disconnect(): void {
+    this.logger.info("Disconnecting for restart", { workspacePath: this.workspacePath });
+    if (this.client) {
+      this.client.dispose();
+      this.client = null;
+    }
+    this.clientStatus = "idle";
+    this.sessionToPort.clear();
+    this.pendingPermissions.clear();
+    // Note: _port and _primarySessionId are preserved for reconnect
+    // tuiAttached is preserved so we don't lose status visibility
+  }
+
+  /**
+   * Reconnect to the OpenCode server after restart.
+   * Creates a new client using the preserved port and sessionId.
+   * Call disconnect() before server restart, then reconnect() after.
+   */
+  async reconnect(): Promise<void> {
+    if (this._port === null) {
+      this.logger.error("Cannot reconnect: no port stored", {
+        workspacePath: this.workspacePath,
+      });
+      return;
+    }
+
+    this.logger.info("Reconnecting after restart", {
+      workspacePath: this.workspacePath,
+      port: this._port,
+      sessionId: this._primarySessionId,
+    });
+
+    const client = new OpenCodeClient(this._port, this.logger, this.sdkFactory);
+
+    // Subscribe to events
+    client.onStatusChanged((status) => this.handleStatusChanged(status));
+    client.onSessionEvent((event) => this.handleSessionEvent(this._port!, event));
+    client.onPermissionEvent((event) => this.handlePermissionEvent(event));
+
+    this.client = client;
+
+    try {
+      // Connect to SSE for real-time updates
+      await client.connect();
+    } catch (error) {
+      this.logger.warn("Failed to reconnect", {
+        workspacePath: this.workspacePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Dispose the provider completely.
+   * Clears all state including port and sessionId.
+   * Use for workspace deletion, not server restart.
+   */
   dispose(): void {
     if (this.client) {
       this.client.dispose();
       this.client = null;
     }
+    this._port = null;
+    this._primarySessionId = null;
     this.clientStatus = "idle";
     this.tuiAttached = false;
     this.sessionToPort.clear();
@@ -335,6 +495,14 @@ export class AgentStatusManager implements IDisposable {
   }
 
   /**
+   * Check if a provider exists for a workspace.
+   * Used to detect restart vs first start.
+   */
+  hasProvider(path: WorkspacePath): boolean {
+    return this.providers.has(path);
+  }
+
+  /**
    * Remove a workspace from agent tracking.
    * Called by AppState when OpenCodeServerManager reports server stopped.
    */
@@ -359,6 +527,39 @@ export class AgentStatusManager implements IDisposable {
     if (provider) {
       provider.setTuiAttached();
     }
+  }
+
+  /**
+   * Disconnect a workspace for server restart.
+   * Keeps the provider and session ID, only disconnects the client.
+   * Call reconnectWorkspace() after the server has restarted.
+   */
+  disconnectWorkspace(path: WorkspacePath): void {
+    const provider = this.providers.get(path);
+    if (provider) {
+      provider.disconnect();
+    }
+  }
+
+  /**
+   * Reconnect a workspace after server restart.
+   * Uses the preserved port and session ID from disconnect.
+   */
+  async reconnectWorkspace(path: WorkspacePath): Promise<void> {
+    const provider = this.providers.get(path);
+    if (provider) {
+      await provider.reconnect();
+      this.updateStatus(path);
+    }
+  }
+
+  /**
+   * Get the session info for a workspace.
+   * Returns port and sessionId for the primary session.
+   */
+  getSession(path: WorkspacePath): OpenCodeSessionInfo | null {
+    const provider = this.providers.get(path);
+    return provider?.getSession() ?? null;
   }
 
   /**

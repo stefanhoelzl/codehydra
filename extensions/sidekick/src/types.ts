@@ -6,10 +6,17 @@
  * version (which uses native WebSocket unavailable in VS Code extension host).
  */
 import type { Socket } from "socket.io-client";
-import type { WorkspaceStatus, AgentStatus, Workspace, LogContext, InitialPrompt } from "../api";
+import type {
+  WorkspaceStatus,
+  AgentStatus,
+  Workspace,
+  LogContext,
+  InitialPrompt,
+  OpenCodeSession,
+} from "../api";
 
 // Re-export types from api.d.ts that are used internally
-export type { WorkspaceStatus, AgentStatus, Workspace, LogContext, InitialPrompt };
+export type { WorkspaceStatus, AgentStatus, Workspace, LogContext, InitialPrompt, OpenCodeSession };
 
 // API response types
 export type PluginResult<T = unknown> =
@@ -59,7 +66,9 @@ export interface ClientToServerEvents {
     request: SetMetadataRequest,
     ack: (result: PluginResult<void>) => void
   ) => void;
-  "api:workspace:getOpencodePort": (ack: (result: PluginResult<number | null>) => void) => void;
+  "api:workspace:getOpenCodeSession": (
+    ack: (result: PluginResult<OpenCodeSession | null>) => void
+  ) => void;
   "api:workspace:restartOpencodeServer": (ack: (result: PluginResult<number>) => void) => void;
   "api:workspace:executeCommand": (
     request: CommandRequest,

@@ -503,7 +503,7 @@ function registerAllMethodsWithStubs(
     "workspaces.forceRemove": async () => {},
     "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" } }),
-    "workspaces.getOpencodePort": async () => null,
+    "workspaces.getOpenCodeSession": async () => null,
     "workspaces.restartOpencodeServer": async () => 12345,
     "workspaces.setMetadata": async () => {},
     "workspaces.getMetadata": async () => ({}),

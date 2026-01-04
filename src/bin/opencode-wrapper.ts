@@ -6,89 +6,16 @@
  *
  * It:
  * 1. Reads environment variables for configuration
- * 2. Queries the OpenCode server for existing sessions
- * 3. Finds a matching session for the current directory
- * 4. Spawns the opencode binary with appropriate arguments
+ * 2. Spawns the opencode binary with the session ID from environment
  */
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { createOpencodeClient } from "@opencode-ai/sdk";
-import { Path } from "../services/platform/path";
 
 // Exit codes
 const EXIT_ENV_ERROR = 1;
 const EXIT_SPAWN_FAILED = 2;
-
-/**
- * Session data from OpenCode API.
- */
-export interface OpenCodeSession {
-  id: string;
-  directory: string;
-  parentID?: string | null;
-  time?: { updated: number };
-}
-
-/**
- * Find the most recent matching session for a directory.
- *
- * Filters by:
- * - Directory match (using Path comparison for cross-platform)
- * - Excludes sub-agent sessions (those with parentID)
- * - Returns most recently updated session
- *
- * @param sessions - Array of sessions from OpenCode API
- * @param directory - Current working directory to match
- * @returns Most recent matching session or null
- */
-export function findMatchingSession(
-  sessions: OpenCodeSession[],
-  directory: string
-): OpenCodeSession | null {
-  if (!Array.isArray(sessions) || sessions.length === 0) {
-    return null;
-  }
-
-  // Create a Path object for the target directory
-  let targetPath: Path;
-  try {
-    targetPath = new Path(directory);
-  } catch {
-    // Invalid directory path - no match possible
-    return null;
-  }
-
-  // Filter and find matching sessions
-  const matching = sessions.filter((session) => {
-    // Exclude sub-agent sessions (have parentID)
-    if (session.parentID !== null && session.parentID !== undefined) {
-      return false;
-    }
-
-    // Match directory using Path.equals() for cross-platform comparison
-    if (!session.directory) {
-      return false;
-    }
-
-    return targetPath.equals(session.directory);
-  });
-
-  if (matching.length === 0) {
-    return null;
-  }
-
-  // Sort by time.updated descending (most recent first)
-  // Missing time.updated is treated as 0
-  matching.sort((a, b) => {
-    const timeA = a.time?.updated ?? 0;
-    const timeB = b.time?.updated ?? 0;
-    return timeB - timeA;
-  });
-
-  return matching[0] ?? null;
-}
 
 /**
  * Main entry point for the wrapper script.
@@ -129,26 +56,11 @@ async function main(): Promise<never> {
     binaryPath = join(opencodeDir, "opencode");
   }
 
-  // 4. Build base URL and get current directory
+  // 4. Build base URL
   const baseUrl = `http://127.0.0.1:${port}`;
-  const cwd = process.cwd();
 
-  // 5. Try to find a matching session
-  let sessionId: string | null = null;
-
-  try {
-    const client = createOpencodeClient({ baseUrl });
-    const response = await client.session.list();
-    if (response.data) {
-      const sessions = response.data as unknown as OpenCodeSession[];
-      const matchingSession = findMatchingSession(sessions, cwd);
-      if (matchingSession) {
-        sessionId = matchingSession.id;
-      }
-    }
-  } catch {
-    // Session fetch failed - continue without session restoration
-  }
+  // 5. Read session ID from environment (set by sidekick extension)
+  const sessionId = process.env.CODEHYDRA_OPENCODE_SESSION_ID;
 
   // 6. Build spawn arguments
   const args = ["attach", baseUrl];

@@ -1278,7 +1278,7 @@ The OpenCode integration provides real-time agent status monitoring for AI agent
 
 ### Port Discovery for CLI
 
-The sidekick extension calls `api.workspace.getOpencodePort()` on connect and sets the `CODEHYDRA_OPENCODE_PORT` environment variable for all new terminals. The wrapper script (`<app-data>/bin/opencode`) reads this env var to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT`.
+The sidekick extension calls `api.workspace.getOpenCodeSession()` on connect and sets the `CODEHYDRA_OPENCODE_PORT` and `CODEHYDRA_OPENCODE_SESSION_ID` environment variables for all new terminals. The wrapper script (`<app-data>/bin/opencode`) reads these env vars to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID`.
 
 ### MCP Integration
 

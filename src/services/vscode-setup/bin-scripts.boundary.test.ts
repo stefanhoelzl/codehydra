@@ -15,11 +15,6 @@ import { spawn } from "node:child_process";
 import { writeFile, mkdir, chmod, access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createTempDir } from "../test-utils";
-import {
-  createMockOpencodeServer,
-  type MockOpencodeServer,
-  type MockSession,
-} from "./bin-scripts.boundary-test-utils";
 
 const isWindows = process.platform === "win32";
 
@@ -250,21 +245,13 @@ describe("opencode.cjs boundary tests", () => {
   });
 
   describe("binary spawning", () => {
-    let mockServer: MockOpencodeServer;
-
-    afterEach(async () => {
-      if (mockServer) {
-        await mockServer.stop();
-      }
-    });
+    // Note: Wrapper no longer queries the SDK for sessions.
+    // It just reads CODEHYDRA_OPENCODE_SESSION_ID from the environment.
 
     it("spawns opencode attach with correct URL", async () => {
-      mockServer = createMockOpencodeServer({ sessions: [] });
-      await mockServer.start();
-
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
+          CODEHYDRA_OPENCODE_PORT: "14001",
           CODEHYDRA_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
@@ -274,33 +261,30 @@ describe("opencode.cjs boundary tests", () => {
       const output = parseFakeOpencodeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args).toContain("attach");
-      expect(output!.args).toContain(`http://127.0.0.1:${mockServer.port}`);
+      expect(output!.args).toContain("http://127.0.0.1:14001");
     });
 
-    it("uses 127.0.0.1 (not localhost) for SDK connection", async () => {
-      mockServer = createMockOpencodeServer({ sessions: [] });
-      await mockServer.start();
-
+    it("uses 127.0.0.1 (not localhost) in URL", async () => {
+      // This test verifies the URL format uses 127.0.0.1
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
+          CODEHYDRA_OPENCODE_PORT: "14001",
           CODEHYDRA_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
       );
 
       expect(result.status).toBe(0);
-      // Verify the server was called (meaning SDK connected to 127.0.0.1)
-      expect(mockServer.requests).toContainEqual({ method: "GET", url: "/session" });
+      const output = parseFakeOpencodeOutput(result.stdout);
+      expect(output).not.toBeNull();
+      // Verify URL uses 127.0.0.1, not localhost
+      expect(output!.args).toContain("http://127.0.0.1:14001");
     });
 
     it("propagates exit code from opencode binary", async () => {
-      mockServer = createMockOpencodeServer({ sessions: [] });
-      await mockServer.start();
-
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
+          CODEHYDRA_OPENCODE_PORT: "14001",
           CODEHYDRA_OPENCODE_DIR: opencodeDir,
           OPENCODE_EXIT_CODE: "42",
         },
@@ -309,149 +293,35 @@ describe("opencode.cjs boundary tests", () => {
 
       expect(result.status).toBe(42);
     });
-
-    it("handles connection refused gracefully", async () => {
-      // Start server to get a port, then stop it
-      mockServer = createMockOpencodeServer({});
-      await mockServer.start();
-      const closedPort = mockServer.port;
-      await mockServer.stop();
-
-      const result = await executeScript(
-        {
-          CODEHYDRA_OPENCODE_PORT: String(closedPort),
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-        },
-        tempDir.path
-      );
-
-      // Should still spawn opencode (just without --session flag)
-      expect(result.status).toBe(0);
-      const output = parseFakeOpencodeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).not.toContain("--session");
-    });
   });
 
   describe("session restoration", () => {
-    let mockServer: MockOpencodeServer;
+    // Session restoration now uses CODEHYDRA_OPENCODE_SESSION_ID env var
+    // The wrapper no longer queries the SDK for sessions
 
-    afterEach(async () => {
-      if (mockServer) {
-        await mockServer.stop();
-      }
-    });
-
-    it("restores session with --session flag when matching session found", async () => {
-      const workspaceDir = tempDir.path;
-      const sessions: MockSession[] = [
-        { id: "ses-1", directory: workspaceDir, parentID: null, time: { updated: 1000 } },
-      ];
-
-      mockServer = createMockOpencodeServer({ sessions });
-      await mockServer.start();
-
+    it("includes --session flag when CODEHYDRA_OPENCODE_SESSION_ID is set", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
+          CODEHYDRA_OPENCODE_PORT: "14001",
           CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          CODEHYDRA_OPENCODE_SESSION_ID: "ses-abc123",
         },
-        workspaceDir
+        tempDir.path
       );
 
       expect(result.status).toBe(0);
       const output = parseFakeOpencodeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args).toContain("--session");
-      expect(output!.args).toContain("ses-1");
+      expect(output!.args).toContain("ses-abc123");
     });
 
-    it("does not include --session when no matching session", async () => {
-      const workspaceDir = tempDir.path;
-      const sessions: MockSession[] = [
-        { id: "ses-1", directory: "/other/directory", parentID: null, time: { updated: 1000 } },
-      ];
-
-      mockServer = createMockOpencodeServer({ sessions });
-      await mockServer.start();
-
+    it("does not include --session when CODEHYDRA_OPENCODE_SESSION_ID is not set", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
+          CODEHYDRA_OPENCODE_PORT: "14001",
           CODEHYDRA_OPENCODE_DIR: opencodeDir,
-        },
-        workspaceDir
-      );
-
-      expect(result.status).toBe(0);
-      const output = parseFakeOpencodeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).not.toContain("--session");
-    });
-
-    it("excludes sub-agent sessions (with parentID)", async () => {
-      const workspaceDir = tempDir.path;
-      const sessions: MockSession[] = [
-        { id: "ses-parent", directory: workspaceDir, parentID: null, time: { updated: 1000 } },
-        {
-          id: "ses-child",
-          directory: workspaceDir,
-          parentID: "ses-parent",
-          time: { updated: 2000 },
-        },
-      ];
-
-      mockServer = createMockOpencodeServer({ sessions });
-      await mockServer.start();
-
-      const result = await executeScript(
-        {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-        },
-        workspaceDir
-      );
-
-      expect(result.status).toBe(0);
-      const output = parseFakeOpencodeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).toContain("ses-parent");
-      expect(output!.args).not.toContain("ses-child");
-    });
-
-    it("selects most recently updated session", async () => {
-      const workspaceDir = tempDir.path;
-      const sessions: MockSession[] = [
-        { id: "ses-old", directory: workspaceDir, parentID: null, time: { updated: 1000 } },
-        { id: "ses-new", directory: workspaceDir, parentID: null, time: { updated: 3000 } },
-        { id: "ses-mid", directory: workspaceDir, parentID: null, time: { updated: 2000 } },
-      ];
-
-      mockServer = createMockOpencodeServer({ sessions });
-      await mockServer.start();
-
-      const result = await executeScript(
-        {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-        },
-        workspaceDir
-      );
-
-      expect(result.status).toBe(0);
-      const output = parseFakeOpencodeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).toContain("ses-new");
-    });
-
-    it("handles empty sessions array", async () => {
-      mockServer = createMockOpencodeServer({ sessions: [] });
-      await mockServer.start();
-
-      const result = await executeScript(
-        {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          // CODEHYDRA_OPENCODE_SESSION_ID not set
         },
         tempDir.path
       );
@@ -462,23 +332,45 @@ describe("opencode.cjs boundary tests", () => {
       expect(output!.args).not.toContain("--session");
     });
 
-    it("handles HTTP 500 from /session endpoint", async () => {
-      mockServer = createMockOpencodeServer({ sessions: [], sessionStatusCode: 500 });
-      await mockServer.start();
-
+    it("does not include --session when CODEHYDRA_OPENCODE_SESSION_ID is empty", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: String(mockServer.port),
+          CODEHYDRA_OPENCODE_PORT: "14001",
           CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          CODEHYDRA_OPENCODE_SESSION_ID: "",
         },
         tempDir.path
       );
 
-      // Should still work, just without session restoration
       expect(result.status).toBe(0);
       const output = parseFakeOpencodeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args).not.toContain("--session");
+    });
+
+    // Note: Session selection logic (filtering by directory, excluding sub-agents,
+    // selecting most recent) is now handled by OpenCodeProvider, not the wrapper.
+    // Those behaviors are tested in session-utils.test.ts and agent-status-manager.test.ts.
+
+    it("handles connection refused gracefully (still spawns opencode)", async () => {
+      // Even if the server isn't running, the wrapper should still spawn opencode
+      // The session ID comes from the environment, not from querying the server
+      const result = await executeScript(
+        {
+          CODEHYDRA_OPENCODE_PORT: "59999", // Unlikely to be in use
+          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          CODEHYDRA_OPENCODE_SESSION_ID: "ses-123",
+        },
+        tempDir.path
+      );
+
+      expect(result.status).toBe(0);
+      const output = parseFakeOpencodeOutput(result.stdout);
+      expect(output).not.toBeNull();
+      expect(output!.args).toContain("attach");
+      expect(output!.args).toContain("http://127.0.0.1:59999");
+      expect(output!.args).toContain("--session");
+      expect(output!.args).toContain("ses-123");
     });
   });
 });
