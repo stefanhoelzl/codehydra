@@ -62,8 +62,8 @@ export interface PathProvider {
   /** Absolute path to bundled Node.js executable from code-server */
   readonly bundledNodePath: Path;
 
-  /** Path to MCP config file: `<dataRoot>/opencode/codehydra-mcp.json` */
-  readonly mcpConfigPath: Path;
+  /** Path to OpenCode config file: `<dataRoot>/opencode/opencode.codehydra.json` */
+  readonly opencodeConfig: Path;
 
   /** Directory for CLI wrapper script assets: `<appPath>/out/main/assets/bin/` */
   readonly binAssetsDir: Path;
@@ -104,7 +104,7 @@ export class DefaultPathProvider implements PathProvider {
   readonly codeServerBinaryPath: Path;
   readonly opencodeBinaryPath: Path;
   readonly bundledNodePath: Path;
-  readonly mcpConfigPath: Path;
+  readonly opencodeConfig: Path;
   readonly binAssetsDir: Path;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
@@ -144,8 +144,8 @@ export class DefaultPathProvider implements PathProvider {
       platform === "win32" ? "node.exe" : "node"
     );
 
-    // MCP config file path
-    this.mcpConfigPath = new Path(this.dataRootDir, "opencode", "codehydra-mcp.json");
+    // OpenCode config file path
+    this.opencodeConfig = new Path(this.dataRootDir, "opencode", "opencode.codehydra.json");
 
     // Bin wrapper assets directory
     this.binAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets", "bin");

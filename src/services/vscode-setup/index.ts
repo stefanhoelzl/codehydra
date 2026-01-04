@@ -3,7 +3,6 @@
  */
 
 export { VscodeSetupService } from "./vscode-setup-service";
-export { generateOpencodeConfigContent } from "./bin-scripts";
 export {
   CURRENT_SETUP_VERSION,
   type IVscodeSetup,

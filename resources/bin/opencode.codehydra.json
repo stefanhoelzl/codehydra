@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "codehydra": {
+      "type": "remote",
+      "url": "http://127.0.0.1:{env:CODEHYDRA_MCP_PORT}/mcp",
+      "headers": {
+        "X-Workspace-Path": "{env:CODEHYDRA_WORKSPACE_PATH}"
+      },
+      "enabled": true
+    }
+  }
+}

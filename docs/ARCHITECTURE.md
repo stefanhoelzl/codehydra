@@ -1284,13 +1284,13 @@ The sidekick extension calls `api.workspace.getOpenCodeSession()` on connect and
 
 OpenCode servers are configured to connect to CodeHydra's MCP server for workspace API access. When spawning `opencode serve`, the following environment variables are set:
 
-| Variable                   | Purpose                                                            |
-| -------------------------- | ------------------------------------------------------------------ |
-| `OPENCODE_CONFIG`          | Path to MCP config file (`<app-data>/opencode/codehydra-mcp.json`) |
-| `CODEHYDRA_WORKSPACE_PATH` | Absolute path to the workspace (for X-Workspace-Path header)       |
-| `CODEHYDRA_MCP_PORT`       | Port of CodeHydra's MCP server                                     |
+| Variable                   | Purpose                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `OPENCODE_CONFIG`          | Path to OpenCode config file (`<app-data>/opencode/opencode.codehydra.json`) |
+| `CODEHYDRA_WORKSPACE_PATH` | Absolute path to the workspace (for X-Workspace-Path header)                 |
+| `CODEHYDRA_MCP_PORT`       | Port of CodeHydra's MCP server                                               |
 
-The MCP config file (`codehydra-mcp.json`) is generated on startup and uses environment variable substitution:
+The OpenCode config file (`opencode.codehydra.json`) is copied from a static template during setup and uses environment variable substitution:
 
 ```json
 {

@@ -20,7 +20,7 @@ import {
   type BinaryType,
   validateExtensionsManifest,
 } from "./types";
-import { generateOpencodeConfigContent } from "./bin-scripts";
+
 import { listInstalledExtensions, removeFromExtensionsJson } from "./extension-utils";
 import type { BinaryDownloadService } from "../binary-download/binary-download-service";
 
@@ -384,17 +384,17 @@ export class VscodeSetupService implements IVscodeSetup {
    * @param onProgress Optional callback for progress updates
    */
   async writeMcpConfig(onProgress?: ProgressCallback): Promise<void> {
-    onProgress?.({ step: "config", message: "Writing MCP config..." });
+    onProgress?.({ step: "config", message: "Writing OpenCode config..." });
 
-    const configPath = this.pathProvider.mcpConfigPath;
+    const configPath = this.pathProvider.opencodeConfig;
     const configDir = configPath.dirname;
+    const templatePath = new Path(this.pathProvider.binAssetsDir, "opencode.codehydra.json");
 
     // Ensure directory exists
     await this.fs.mkdir(configDir);
 
-    // Generate and write config content
-    const configContent = generateOpencodeConfigContent();
-    await this.fs.writeFile(configPath, configContent);
+    // Copy template to final location
+    await this.fs.copyTree(templatePath, configPath);
   }
 
   /**

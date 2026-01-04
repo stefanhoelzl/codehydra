@@ -481,7 +481,7 @@ async function startServices(): Promise<void> {
     const mcpPort = await mcpServerManager.start();
     loggingService.createLogger("app").info("MCP server started", {
       port: mcpPort,
-      configPath: mcpServerManager.getConfigPath(),
+      configPath: pathProvider.opencodeConfig.toString(),
     });
 
     // Register callback for first MCP request per workspace
@@ -498,7 +498,7 @@ async function startServices(): Promise<void> {
     // Configure OpenCode servers to connect to MCP
     if (serverManager) {
       serverManager.setMcpConfig({
-        configPath: mcpServerManager.getConfigPath(),
+        configPath: pathProvider.opencodeConfig.toString(),
         port: mcpServerManager.getPort()!,
       });
     }

@@ -235,7 +235,7 @@ Agent in OpenCode ──► "call workspace_get_status"
 
 - [x] **Step 7: Generate OpenCode MCP config**
   - Create config generator using `FileSystemLayer` and `PathProvider`
-  - Config generated at `pathProvider.dataRootDir/opencode/codehydra-mcp.json`
+  - Config copied from template to `pathProvider.dataRootDir/opencode/opencode.codehydra.json`
   - Config regenerated each time McpServerManager starts (port may change)
   - Files affected:
     - `src/services/mcp-server/config-generator.ts`
@@ -426,7 +426,7 @@ type McpToolResult<T> = { success: true; data: T } | { success: false; error: Mc
 
 ```typescript
 interface OpenCodeSpawnEnv {
-  OPENCODE_CONFIG: string; // File path to codehydra-mcp.json
+  OPENCODE_CONFIG: string; // File path to opencode.codehydra.json
   CODEHYDRA_WORKSPACE_PATH: string; // Absolute workspace path
   CODEHYDRA_MCP_PORT: string; // Port number as string
 }
@@ -550,7 +550,7 @@ interface OpenCodeSpawnEnv {
 
 ## OpenCode Config Format
 
-Generated at `<app-data>/opencode/codehydra-mcp.json` (regenerated on each McpServerManager start):
+Copied from static template to `<app-data>/opencode/opencode.codehydra.json` during VS Code setup:
 
 ```json
 {
