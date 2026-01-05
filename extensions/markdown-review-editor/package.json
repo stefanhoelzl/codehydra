@@ -2,7 +2,7 @@
 	"name": "markdown-review-editor",
 	"displayName": "Markdown Review Editor",
 	"description": "AI-assisted collaborative markdown document editor",
-	"version": "0.1.0-dev.6686f318",
+	"version": "0.1.1",
 	"type": "module",
 	"publisher": "codehydra",
 	"repository": {
