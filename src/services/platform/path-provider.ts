@@ -47,10 +47,10 @@ export interface PathProvider {
   /** Directory for CLI wrapper scripts: `<dataRoot>/bin/` */
   readonly binDir: Path;
 
-  /** Directory for code-server binary: `<dataRoot>/code-server/<version>/` */
+  /** Directory for code-server binary: `<bundlesRoot>/code-server/<version>/` */
   readonly codeServerDir: Path;
 
-  /** Directory for opencode binary: `<dataRoot>/opencode/<version>/` */
+  /** Directory for opencode binary: `<bundlesRoot>/opencode/<version>/` */
   readonly opencodeDir: Path;
 
   /** Absolute path to code-server binary executable */
@@ -120,23 +120,35 @@ export class DefaultPathProvider implements PathProvider {
   readonly claudeCodeWrapperPath: Path;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
+    // Compute different roots for different types of data
+    const bundlesRootDirStr = this.computeBundlesRootDir(platformInfo);
     const dataRootDirStr = this.computeDataRootDir(buildInfo, platformInfo);
+
+    // Bundles root for binary paths (always production paths)
+    const bundlesRoot = new Path(bundlesRootDirStr);
+
+    // Data root for everything else (dev/prod logic)
     this.dataRootDir = new Path(dataRootDirStr);
+
+    // Data paths - use dataRoot
     this.projectsDir = new Path(this.dataRootDir, "projects");
     this.vscodeDir = new Path(this.dataRootDir, "vscode");
     this.vscodeExtensionsDir = new Path(this.vscodeDir, "extensions");
     this.vscodeUserDataDir = new Path(this.vscodeDir, "user-data");
     this.setupMarkerPath = new Path(this.dataRootDir, ".setup-completed");
     this.electronDataDir = new Path(this.dataRootDir, "electron");
+    this.binDir = new Path(this.dataRootDir, "bin");
+    this.opencodeConfig = new Path(this.dataRootDir, "opencode", "opencode.codehydra.json");
+
     // Assets are bundled at out/main/assets/ (same path in dev and prod)
     this.vscodeAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets");
     this.scriptsDir = new Path(buildInfo.appPath, "out", "main", "assets", "scripts");
     this.appIconPath = this.computeAppIconPath(buildInfo);
-    this.binDir = new Path(this.dataRootDir, "bin");
+    this.binAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets", "bin");
 
-    // Binary directories with version
-    this.codeServerDir = new Path(this.dataRootDir, "code-server", CODE_SERVER_VERSION);
-    this.opencodeDir = new Path(this.dataRootDir, "opencode", OPENCODE_VERSION);
+    // Binary paths - use bundlesRoot (always production paths)
+    this.codeServerDir = new Path(bundlesRoot, "code-server", CODE_SERVER_VERSION);
+    this.opencodeDir = new Path(bundlesRoot, "opencode", OPENCODE_VERSION);
 
     // Binary paths (platform-specific)
     const platform = platformInfo.platform as "darwin" | "linux" | "win32";
@@ -155,12 +167,6 @@ export class DefaultPathProvider implements PathProvider {
       "lib",
       platform === "win32" ? "node.exe" : "node"
     );
-
-    // OpenCode config file path
-    this.opencodeConfig = new Path(this.dataRootDir, "opencode", "opencode.codehydra.json");
-
-    // Bin wrapper assets directory
-    this.binAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets", "bin");
 
     // Claude Code paths
     this.claudeCodeConfigDir = new Path(this.dataRootDir, "claude-code");
@@ -200,13 +206,9 @@ export class DefaultPathProvider implements PathProvider {
   }
 
   /**
-   * Compute the data root directory based on build mode and platform.
+   * Compute the bundles root directory (always production paths for binaries).
    */
-  private computeDataRootDir(buildInfo: BuildInfo, platformInfo: PlatformInfo): string {
-    if (buildInfo.isDevelopment) {
-      return join(process.cwd(), "app-data");
-    }
-
+  private computeBundlesRootDir(platformInfo: PlatformInfo): string {
     const { platform, homeDir } = platformInfo;
 
     switch (platform) {
@@ -218,5 +220,17 @@ export class DefaultPathProvider implements PathProvider {
       default:
         return join(homeDir, ".local", "share", "codehydra");
     }
+  }
+
+  /**
+   * Compute the data root directory based on build mode and platform.
+   */
+  private computeDataRootDir(buildInfo: BuildInfo, platformInfo: PlatformInfo): string {
+    if (buildInfo.isDevelopment) {
+      return join(process.cwd(), "app-data");
+    }
+
+    // In production, use the same bundles root for consistency
+    return this.computeBundlesRootDir(platformInfo);
   }
 }

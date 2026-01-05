@@ -5,7 +5,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import { BinaryDownloadError, getErrorMessage } from "./errors.js";
-import { BINARY_CONFIGS, CODE_SERVER_VERSION, OPENCODE_VERSION } from "./versions.js";
+import { BINARY_CONFIGS } from "./versions.js";
 import type { BinaryType, DownloadProgressCallback, SupportedPlatform } from "./types.js";
 import type { ArchiveExtractor } from "./archive-extractor.js";
 import type { HttpClient } from "../platform/network.js";
@@ -157,8 +157,9 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
    * Get the directory where a binary is installed.
    */
   private getBinaryDir(binary: BinaryType): string {
-    const version = binary === "code-server" ? CODE_SERVER_VERSION : OPENCODE_VERSION;
-    return path.join(this.pathProvider.dataRootDir.toString(), binary, version);
+    return binary === "code-server"
+      ? this.pathProvider.codeServerDir.toString()
+      : this.pathProvider.opencodeDir.toString();
   }
 
   /**
