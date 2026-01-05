@@ -1,7 +1,6 @@
 ---
 description: Reviews Svelte/UI/CSS/HTML for best practices, usability, and maintainability
 mode: subagent
-model: anthropic/claude-sonnet-4-5-20250514
 thinking:
   type: enabled
   budgetTokens: 4000
