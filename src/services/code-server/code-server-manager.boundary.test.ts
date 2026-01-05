@@ -16,25 +16,39 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { join } from "node:path";
+import * as os from "node:os";
 import { CodeServerManager } from "./code-server-manager";
 import { ExecaProcessRunner } from "../platform/process";
 import { DefaultNetworkLayer } from "../platform/network";
 import { createTempDir } from "../test-utils";
 import { delay } from "@shared/test-fixtures";
-import { CODE_SERVER_VERSION } from "../binary-download/versions";
+import { DefaultPathProvider } from "../platform/path-provider";
+import type { BuildInfo } from "../platform/build-info";
+import type { PlatformInfo, SupportedArch } from "../platform/platform-info";
 import type { CodeServerConfig } from "./types";
 
 /**
  * Get the path to the installed code-server binary.
- * Uses the app-data directory structure from npm postinstall.
+ * Uses DefaultPathProvider to compute the correct path based on environment.
  */
 function getCodeServerBinaryPath(): string {
-  // In development/test, binaries are downloaded to ./app-data/ via postinstall
-  // The structure is: app-data/code-server/<version>/bin/code-server
-  const appDataDir = join(process.cwd(), "app-data");
-  const binaryName = process.platform === "win32" ? "code-server.cmd" : "code-server";
-  return join(appDataDir, "code-server", CODE_SERVER_VERSION, "bin", binaryName);
+  // Create build info for development mode
+  const buildInfo: BuildInfo = {
+    version: "dev",
+    isDevelopment: true,
+    appPath: process.cwd(),
+  };
+
+  // Create platform info
+  const arch = process.arch as SupportedArch;
+  const platformInfo: PlatformInfo = {
+    platform: process.platform,
+    arch,
+    homeDir: os.homedir(),
+  };
+
+  const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+  return pathProvider.codeServerBinaryPath.toNative();
 }
 
 // Platform detection for signal tests

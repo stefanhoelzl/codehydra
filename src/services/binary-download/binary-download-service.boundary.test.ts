@@ -11,7 +11,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { DefaultArchiveExtractor } from "./archive-extractor";
-import { BINARY_CONFIGS, CODE_SERVER_VERSION } from "./versions";
+import { BINARY_CONFIGS, CODE_SERVER_VERSION, OPENCODE_VERSION } from "./versions";
 import { DefaultNetworkLayer } from "../platform/network";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { SILENT_LOGGER } from "../logging";
@@ -123,6 +123,8 @@ describe("BinaryDownloadService (boundary)", () => {
       };
 
       const mockPathProvider = createMockPathProvider({
+        codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
+        opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
         dataRootDir: tempDir,
         binDir: path.join(tempDir, "bin"),
       });
@@ -186,6 +188,8 @@ describe("BinaryDownloadService (boundary)", () => {
       };
 
       const mockPathProvider = createMockPathProvider({
+        codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
+        opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
         dataRootDir: tempDir,
         binDir: path.join(tempDir, "bin"),
       });

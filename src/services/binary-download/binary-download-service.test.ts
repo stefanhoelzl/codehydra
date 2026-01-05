@@ -23,6 +23,7 @@ describe("DefaultBinaryDownloadService", () => {
   const mockHttpClient = createMockHttpClient();
   const mockFs = createFileSystemMock();
   const mockPathProvider = createMockPathProvider({
+    bundlesRootDir: "/app-data",
     dataRootDir: "/app-data",
     binDir: "/app-data/bin",
   });

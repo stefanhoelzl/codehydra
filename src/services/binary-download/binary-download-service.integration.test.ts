@@ -62,6 +62,8 @@ describe("BinaryDownloadService (integration)", () => {
 
         // Create PathProvider pointing to temp directory
         const pathProvider = createMockPathProvider({
+          codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
+          opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
           dataRootDir: tempDir,
         });
 
@@ -124,6 +126,8 @@ describe("BinaryDownloadService (integration)", () => {
           const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
           const archiveExtractor = new DefaultArchiveExtractor();
           const pathProvider = createMockPathProvider({
+            codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
+            opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
             dataRootDir: tempDir,
           });
           const platformInfo = createMockPlatformInfo({
@@ -173,6 +177,8 @@ describe("BinaryDownloadService (integration)", () => {
         const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
         const archiveExtractor = new DefaultArchiveExtractor();
         const pathProvider = createMockPathProvider({
+          codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
+          opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
           dataRootDir: tempDir,
         });
         const platformInfo = createMockPlatformInfo({
@@ -223,6 +229,8 @@ describe("BinaryDownloadService (integration)", () => {
         const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
         const archiveExtractor = new DefaultArchiveExtractor();
         const pathProvider = createMockPathProvider({
+          codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
+          opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
           dataRootDir: tempDir,
         });
         const platformInfo = createMockPlatformInfo({

@@ -12,6 +12,15 @@ import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versio
  * getProjectWorkspacesDir can be overridden with a custom function.
  */
 export interface MockPathProviderOptions {
+  // Bundle paths (binaries) - use bundlesRootDir
+  bundlesRootDir?: Path | string;
+  codeServerDir?: Path | string;
+  opencodeDir?: Path | string;
+  codeServerBinaryPath?: Path | string;
+  opencodeBinaryPath?: Path | string;
+  bundledNodePath?: Path | string;
+
+  // Data paths - use dataRootDir
   dataRootDir?: Path | string;
   projectsDir?: Path | string;
   vscodeDir?: Path | string;
@@ -19,16 +28,13 @@ export interface MockPathProviderOptions {
   vscodeUserDataDir?: Path | string;
   setupMarkerPath?: Path | string;
   electronDataDir?: Path | string;
+  binDir?: Path | string;
+  opencodeConfig?: Path | string;
+
+  // Shared paths
   vscodeAssetsDir?: Path | string;
   scriptsDir?: Path | string;
   appIconPath?: Path | string;
-  binDir?: Path | string;
-  codeServerDir?: Path | string;
-  opencodeDir?: Path | string;
-  codeServerBinaryPath?: Path | string;
-  opencodeBinaryPath?: Path | string;
-  bundledNodePath?: Path | string;
-  opencodeConfig?: Path | string;
   binAssetsDir?: Path | string;
   claudeCodeConfigDir?: Path | string;
   claudeCodeHookHandlerPath?: Path | string;
@@ -48,29 +54,32 @@ function ensurePath(value: Path | string | undefined, defaultValue: string): Pat
 
 /**
  * Create a mock PathProvider with controllable behavior.
- * Defaults to test paths under `/test/app-data/`.
+ * Defaults to test paths: bundles under `/test/bundles/`, data under `/test/app-data/`.
  *
  * @param overrides - Optional overrides for PathProvider properties
  * @returns Mock PathProvider object
  */
 export function createMockPathProvider(overrides?: MockPathProviderOptions): PathProvider {
+  // Bundle paths (binaries) - use bundlesRootDir
+  const bundlesRootDir = ensurePath(overrides?.bundlesRootDir, "/test/bundles");
+  const codeServerDir = ensurePath(
+    overrides?.codeServerDir,
+    `${bundlesRootDir.toString()}/code-server/${CODE_SERVER_VERSION}`
+  );
+  const opencodeDir = ensurePath(
+    overrides?.opencodeDir,
+    `${bundlesRootDir.toString()}/opencode/${OPENCODE_VERSION}`
+  );
+
+  // Data paths - use dataRootDir
   const dataRootDir = ensurePath(overrides?.dataRootDir, "/test/app-data");
-  const projectsDir = ensurePath(overrides?.projectsDir, "/test/app-data/projects");
-  const vscodeDir = ensurePath(overrides?.vscodeDir, "/test/app-data/vscode");
+  const projectsDir = ensurePath(overrides?.projectsDir, `${dataRootDir.toString()}/projects`);
+  const vscodeDir = ensurePath(overrides?.vscodeDir, `${dataRootDir.toString()}/vscode`);
 
   const defaultGetProjectWorkspacesDir = (projectPath: string | Path): Path => {
     const pathStr = projectPath instanceof Path ? projectPath.toString() : projectPath;
     return new Path(projectsDir, projectDirName(pathStr), "workspaces");
   };
-
-  const codeServerDir = ensurePath(
-    overrides?.codeServerDir,
-    `/test/app-data/code-server/${CODE_SERVER_VERSION}`
-  );
-  const opencodeDir = ensurePath(
-    overrides?.opencodeDir,
-    `/test/app-data/opencode/${OPENCODE_VERSION}`
-  );
 
   return {
     dataRootDir,
@@ -78,15 +87,24 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     vscodeDir,
     vscodeExtensionsDir: ensurePath(
       overrides?.vscodeExtensionsDir,
-      "/test/app-data/vscode/extensions"
+      `${vscodeDir.toString()}/extensions`
     ),
-    vscodeUserDataDir: ensurePath(overrides?.vscodeUserDataDir, "/test/app-data/vscode/user-data"),
-    setupMarkerPath: ensurePath(overrides?.setupMarkerPath, "/test/app-data/.setup-completed"),
-    electronDataDir: ensurePath(overrides?.electronDataDir, "/test/app-data/electron"),
-    vscodeAssetsDir: ensurePath(overrides?.vscodeAssetsDir, "/mock/assets"),
-    scriptsDir: ensurePath(overrides?.scriptsDir, "/mock/assets/scripts"),
-    appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
-    binDir: ensurePath(overrides?.binDir, "/test/app-data/bin"),
+    vscodeUserDataDir: ensurePath(
+      overrides?.vscodeUserDataDir,
+      `${vscodeDir.toString()}/user-data`
+    ),
+    setupMarkerPath: ensurePath(
+      overrides?.setupMarkerPath,
+      `${dataRootDir.toString()}/.setup-completed`
+    ),
+    electronDataDir: ensurePath(overrides?.electronDataDir, `${dataRootDir.toString()}/electron`),
+    binDir: ensurePath(overrides?.binDir, `${dataRootDir.toString()}/bin`),
+    opencodeConfig: ensurePath(
+      overrides?.opencodeConfig,
+      `${dataRootDir.toString()}/opencode/opencode.codehydra.json`
+    ),
+
+    // Bundle paths
     codeServerDir,
     opencodeDir,
     codeServerBinaryPath: ensurePath(
@@ -98,10 +116,11 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
       `${opencodeDir.toString()}/opencode`
     ),
     bundledNodePath: ensurePath(overrides?.bundledNodePath, `${codeServerDir.toString()}/lib/node`),
-    opencodeConfig: ensurePath(
-      overrides?.opencodeConfig,
-      "/test/app-data/opencode/opencode.codehydra.json"
-    ),
+
+    // Shared paths
+    vscodeAssetsDir: ensurePath(overrides?.vscodeAssetsDir, "/mock/assets"),
+    scriptsDir: ensurePath(overrides?.scriptsDir, "/mock/assets/scripts"),
+    appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
     binAssetsDir: ensurePath(overrides?.binAssetsDir, "/mock/assets/bin"),
     claudeCodeConfigDir: ensurePath(overrides?.claudeCodeConfigDir, "/test/app-data/claude-code"),
     claudeCodeHookHandlerPath: ensurePath(
