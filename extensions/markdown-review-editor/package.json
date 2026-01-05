@@ -45,10 +45,12 @@
 		"test:e2e": "playwright test",
 		"format": "prettier --write .",
 		"lint": "eslint . && prettier --check .",
-		"lint:fix": "eslint . --fix && prettier --write ."
+		"lint:fix": "eslint . --fix && prettier --write .",
+		"mock-server": "tsx scripts/mock-plugin-server.ts"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.49.0",
+		"@types/ws": "^8.5.14",
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
 		"@types/diff-match-patch": "^1.0.36",
 		"@types/marked": "^5.0.2",
@@ -63,8 +65,10 @@
 		"prettier-plugin-svelte": "^3.3.2",
 		"svelte": "^5.12.0",
 		"svelte-check": "^4.1.0",
+		"tsx": "^4.19.2",
 		"typescript": "^5.7.2",
 		"typescript-eslint": "^8.17.0",
+		"socket.io": "^4.8.1",
 		"vite": "^6.0.0",
 		"vitest": "^2.1.0"
 	},
