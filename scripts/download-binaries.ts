@@ -141,6 +141,5 @@ main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.log(`\nBinary download skipped: ${message}`);
   console.log("Run 'pnpm postinstall' to retry, or binaries will download on first app launch.");
-  // Exit successfully - missing dev binaries shouldn't fail pnpm install
-  process.exit(0);
+  process.exit(1);
 });
