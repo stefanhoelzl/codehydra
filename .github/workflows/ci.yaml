@@ -24,6 +24,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
 
+      # Ensure binaries are available for boundary tests
+      - run: pnpm exec tsx scripts/download-binaries.ts
+
       - run: pnpm validate
       - run: pnpm test:boundary
 

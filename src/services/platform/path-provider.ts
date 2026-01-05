@@ -209,6 +209,12 @@ export class DefaultPathProvider implements PathProvider {
    * Compute the bundles root directory (always production paths for binaries).
    */
   private computeBundlesRootDir(platformInfo: PlatformInfo): string {
+    // Allow override via environment variable (for CI/testing)
+    const override = process.env.CODEHYDRA_BUNDLE_DIR;
+    if (override) {
+      return override;
+    }
+
     const { platform, homeDir } = platformInfo;
 
     switch (platform) {
