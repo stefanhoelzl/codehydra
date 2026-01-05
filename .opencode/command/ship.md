@@ -12,6 +12,9 @@ $ARGUMENTS
 
 - Empty: Auto-generate PR title and summary from commits
 - `--keep-workspace`: Keep workspace after successful merge (default: delete)
+- `--resolves <issue>`: Link PR to a GitHub issue
+  - `--resolves #123` or `--resolves 123`: Links to issue #123
+  - `--resolves ?`: List all open issues and prompt for selection
 
 ## Execution
 
@@ -45,6 +48,33 @@ git branch --show-current
 
 If on main: ABORT with "Cannot ship from main branch"
 
+### 0.5. Resolve issue selection (if --resolves ? was passed)
+
+If `--resolves ?` was provided:
+
+1. Fetch open issues:
+   ```bash
+   gh issue list --repo stefanhoelzl/codehydra --state open --json number,title --limit 100
+   ```
+
+2. If no open issues exist: ABORT with "No open issues found on stefanhoelzl/codehydra"
+
+3. Display the list to the user:
+   ```
+   Open issues on stefanhoelzl/codehydra:
+
+   #<number> <title>
+   #<number> <title>
+   ...
+   ```
+
+4. Ask the user explicitly:
+   ```
+   Which issue does this PR resolve? Enter the issue number (e.g., 123):
+   ```
+
+5. Wait for user response and store the issue number for step 3.
+
 ### 1. Check for existing PR (idempotency)
 
 ```bash
@@ -75,6 +105,15 @@ Analyze commits to determine:
 
 - **PR title**: `<type>(<scope>): <description>` (from primary commit or summarized)
 - **PR body**: Bullet-point summary of changes
+  - If `--resolves <number>` was provided (directly or via `?` selection), append an empty line followed by `resolves #<number>`
+
+**Example PR body with resolves:**
+```
+- Added feature X
+- Fixed bug Y
+
+resolves #123
+```
 
 **Commit types:**
 
@@ -90,7 +129,7 @@ Analyze commits to determine:
 Create PR:
 
 ```bash
-gh pr create --repo stefanhoelzl/codehydra --title "<title>" --body "<summary>"
+gh pr create --repo stefanhoelzl/codehydra --title "<title>" --body "<body>"
 ```
 
 Capture the PR URL and number from output.
