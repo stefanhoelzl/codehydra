@@ -1,14 +1,8 @@
 ---
-description: Reviews testing strategy for behavior-driven tests with behavioral mocks
-mode: subagent
-thinking:
-  type: enabled
-  budgetTokens: 4000
-tools:
-  write: false
-  edit: false
-  patch: false
-  webfetch: true
+name: review-testing
+description: Reviews testing strategy for behavior-driven tests with behavioral mocks. Use this agent to review plans for testing concerns.
+tools: Read, Glob, Grep, WebFetch
+model: inherit
 ---
 
 # Testing Review Agent
@@ -28,7 +22,7 @@ The feature agent provides output format requirements when invoking you.
 
 ## Review Focus
 
-### 1. Integration Tests (*.integration.test.ts)
+### 1. Integration Tests (\*.integration.test.ts)
 
 Review for behavior-driven approach:
 
@@ -60,7 +54,7 @@ Review for correct categorization:
 - **Pure-UI tests**: Verify UI behavior without API involvement
 - Entry point includes component + action?
 
-### 3. Boundary Tests (*.boundary.test.ts)
+### 3. Boundary Tests (\*.boundary.test.ts)
 
 Review for proper isolation:
 
@@ -71,7 +65,7 @@ Review for proper isolation:
 - **Do behavioral mocks match boundary test assertions?**
   - If boundary test verifies error X, behavioral mock must throw same error
 
-### 4. Focused Tests (*.test.ts - pure functions only)
+### 4. Focused Tests (\*.test.ts - pure functions only)
 
 Review for appropriate scope:
 

@@ -1,14 +1,8 @@
 ---
-description: Reviews architecture, integration patterns, system design, and documentation quality
-mode: subagent
-thinking:
-  type: enabled
-  budgetTokens: 6000
-tools:
-  write: false
-  edit: false
-  patch: false
-  webfetch: true
+name: review-arch
+description: Reviews architecture, integration patterns, system design, and documentation quality. Use this agent to review plans for architectural concerns.
+tools: Read, Glob, Grep, WebFetch
+model: inherit
 ---
 
 # Architecture & Documentation Review Agent
@@ -41,7 +35,7 @@ Before reviewing, examine:
 - `docs/PATTERNS.md` - Implementation patterns to check for consistency
 - `docs/USER_INTERFACE.md` - UI layout, user flows, dialogs, shortcuts
 - `docs/API.md` - Private/Public API reference
-- `AGENTS.md` - Project overview, goals, and AI agent instructions
+- `CLAUDE.md` - Project overview, goals, and AI agent instructions
 - `package.json` - Existing dependencies
 
 ## Review Focus
@@ -132,7 +126,7 @@ Before reviewing, examine:
 
 - Does the plan change any behavior documented in `docs/ARCHITECTURE.md`?
 - Does the plan change any behavior documented in `docs/USER_INTERFACE.md`?
-- Does the plan introduce patterns/conventions that should be in `AGENTS.md`?
+- Does the plan introduce patterns/conventions that should be in `CLAUDE.md`?
 - Does the plan change any API methods, events, types, or access patterns documented in `docs/API.md`?
 
 **If ANY is YES:**
@@ -147,13 +141,13 @@ Before reviewing, examine:
 - New keyboard shortcuts -> `docs/USER_INTERFACE.md` Keyboard Navigation section
 - New components -> `docs/ARCHITECTURE.md` Component Architecture section
 - New user flows/dialogs -> `docs/USER_INTERFACE.md` User Flows section
-- New code patterns -> `AGENTS.md` relevant section
+- New code patterns -> `CLAUDE.md` relevant section
 - New public API method -> `docs/API.md` Public API section
 - New IPC channel/event -> `docs/API.md` Private API Events table
 
-### 12. AGENTS.md Sync Verification
+### 12. CLAUDE.md Sync Verification
 
-`AGENTS.md` is the primary instruction file for AI agents working on this project.
+`CLAUDE.md` is the primary instruction file for AI agents working on this project.
 
 **Must be updated when the plan introduces:**
 
@@ -164,7 +158,7 @@ Before reviewing, examine:
 - New components or services
 - Changes to development workflow
 
-**If the plan introduces any of the above, it MUST include a step to update `AGENTS.md`.**
+**If the plan introduces any of the above, it MUST include a step to update `CLAUDE.md`.**
 
 ## Review Process
 
@@ -174,7 +168,7 @@ Before reviewing, examine:
 4. Focus on high-level design and project integration, not implementation details
 5. Identify issues at three severity levels
 6. Provide actionable recommendations
-7. Use webfetch to check dependency status or architecture patterns if needed
+7. Use WebFetch to check dependency status or architecture patterns if needed
 
 ## Severity Definitions
 

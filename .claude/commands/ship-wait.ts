@@ -5,7 +5,7 @@
  * Waits for PRs ahead in queue, rebases when it's our turn,
  * waits for CI, and confirms merge completion.
  *
- * Usage: npx tsx .opencode/scripts/ship-wait.ts <pr-number>
+ * Usage: npx tsx .claude/commands/ship-wait.ts <pr-number>
  *
  * Exit codes:
  *   0 - MERGED: PR successfully merged

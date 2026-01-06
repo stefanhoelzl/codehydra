@@ -1,27 +1,29 @@
 ---
 description: Scan codebase for quality issues across 8 topics
+allowed-tools: Read, Glob, Grep, Task, WebFetch
 ---
 
 You are orchestrating a quality review of the CodeHydra codebase.
 
 ## Available Topics
 
-| Topic          | Description                                                        |
-| -------------- | ------------------------------------------------------------------ |
-| architecture   | Layer violations, circular deps, boundary violations, god modules  |
-| code-quality   | Duplication, complexity, dead code, scattered responsibilities     |
-| consistency    | Pattern deviations, naming, error handling, async patterns         |
-| documentation  | Completeness, accuracy, AI-readability, structure                  |
-| type-safety    | tsconfig strictness, API type design, type-driven correctness      |
-| testing        | TESTING.md enforcement, test type compliance, behavioral mocks     |
-| infrastructure | Dependencies, project layout, tooling, CI/CD, scripts              |
-| ux             | Accessibility, UI patterns, user flows, keyboard navigation        |
+| Topic          | Description                                                       |
+| -------------- | ----------------------------------------------------------------- |
+| architecture   | Layer violations, circular deps, boundary violations, god modules |
+| code-quality   | Duplication, complexity, dead code, scattered responsibilities    |
+| consistency    | Pattern deviations, naming, error handling, async patterns        |
+| documentation  | Completeness, accuracy, AI-readability, structure                 |
+| type-safety    | tsconfig strictness, API type design, type-driven correctness     |
+| testing        | TESTING.md enforcement, test type compliance, behavioral mocks    |
+| infrastructure | Dependencies, project layout, tooling, CI/CD, scripts             |
+| ux             | Accessibility, UI patterns, user flows, keyboard navigation       |
 
 ## Parse User Intent
 
 $ARGUMENTS
 
 Interpret naturally:
+
 - Empty or "all": run all 8 topics
 - "only X and Y" or "focus on X": whitelist those topics
 - "skip X" or "except X": blacklist those topics
@@ -30,9 +32,10 @@ Interpret naturally:
 
 ## Execution
 
-Invoke @plan **in parallel** for each selected topic using the prompts below.
+Launch Plan agents **in parallel** for each selected topic using the prompts below.
 
-Each @plan invocation MUST:
+Each agent invocation MUST:
+
 1. Read docs/QUALITY.md first (their topic section + Accepted Patterns)
 2. Read the reference docs listed for that topic
 3. Explore the ENTIRE codebase systematically
@@ -48,15 +51,17 @@ Each @plan invocation MUST:
 
 ### architecture
 
-@plan Review CodeHydra for ARCHITECTURE quality issues.
+Review CodeHydra for ARCHITECTURE quality issues.
 
 **Read first:**
+
 - docs/QUALITY.md (Architecture section + Accepted Patterns)
 - docs/ARCHITECTURE.md
-- AGENTS.md (External System Access Rules, Path Handling)
+- CLAUDE.md (External System Access Rules, Path Handling)
 
 **Look for codebase-wide issues:**
-- Layer violations (platform ↔ shell, renderer ↔ main process)
+
+- Layer violations (platform <-> shell, renderer <-> main process)
 - Circular dependencies between modules
 - God modules (>500 lines, >10 exports, too many responsibilities)
 - Boundary interface violations (direct fs/fetch/execa bypassing abstractions)
@@ -71,13 +76,15 @@ Each @plan invocation MUST:
 
 ### code-quality
 
-@plan Review CodeHydra for CODE QUALITY issues.
+Review CodeHydra for CODE QUALITY issues.
 
 **Read first:**
+
 - docs/QUALITY.md (Code Quality section + Accepted Patterns)
-- AGENTS.md (Code Quality Standards)
+- CLAUDE.md (Code Quality Standards)
 
 **Look for codebase-wide patterns (NOT localized issues):**
+
 - Duplicated logic across multiple modules
 - Inconsistent abstraction levels across similar code
 - Scattered feature responsibilities (logic spread across unrelated files)
@@ -93,13 +100,15 @@ Each @plan invocation MUST:
 
 ### consistency
 
-@plan Review CodeHydra for CONSISTENCY issues.
+Review CodeHydra for CONSISTENCY issues.
 
 **Read first:**
+
 - docs/QUALITY.md (Consistency section + Accepted Patterns)
 - docs/PATTERNS.md (all patterns)
 
 **Look for deviations from established patterns:**
+
 - Deviations from docs/PATTERNS.md across the codebase
 - Inconsistent error handling (throw vs return vs log)
 - Naming convention violations (Service vs Manager vs Client)
@@ -114,14 +123,16 @@ Each @plan invocation MUST:
 
 ### documentation
 
-@plan Review CodeHydra for DOCUMENTATION quality issues.
+Review CodeHydra for DOCUMENTATION quality issues.
 
 **Read first:**
+
 - docs/QUALITY.md (Documentation section + Accepted Patterns)
 - All files in docs/ directory
-- AGENTS.md
+- CLAUDE.md
 
 **Assess documentation for:**
+
 - **Completeness**: Are all public APIs documented? Missing sections?
 - **AI-agent readability**: Clear structure, decision trees, actionable guidance?
 - **Accuracy**: Does documentation match actual code behavior?
@@ -137,14 +148,16 @@ Each @plan invocation MUST:
 
 ### type-safety
 
-@plan Review CodeHydra for TYPE SAFETY issues.
+Review CodeHydra for TYPE SAFETY issues.
 
 **Read first:**
+
 - docs/QUALITY.md (Type Safety section + Accepted Patterns)
 - tsconfig.json, tsconfig.node.json, tsconfig.web.json
-- AGENTS.md (Code Quality Standards)
+- CLAUDE.md (Code Quality Standards)
 
 **Assess TypeScript configuration and usage:**
+
 - **tsconfig review**: Is strict mode fully enabled? All strict flags on?
 - **API type design**: Do types guide correct usage and prevent misuse?
   - Can you call an API incorrectly and have it compile?
@@ -162,14 +175,16 @@ Each @plan invocation MUST:
 
 ### testing
 
-@plan Review CodeHydra for TESTING strategy compliance.
+Review CodeHydra for TESTING strategy compliance.
 
 **Read first:**
+
 - docs/QUALITY.md (Testing section + Accepted Patterns)
 - docs/TESTING.md (complete document)
 - vitest.config.ts
 
 **Verify TESTING.md enforcement:**
+
 - Are boundary tests used for external interfaces (git, fs, http, processes)?
 - Are integration tests used instead of deprecated unit tests?
 - Are behavioral mocks used (not structural mocks)?
@@ -186,16 +201,18 @@ Each @plan invocation MUST:
 
 ### infrastructure
 
-@plan Review CodeHydra for INFRASTRUCTURE quality.
+Review CodeHydra for INFRASTRUCTURE quality.
 
 **Read first:**
+
 - docs/QUALITY.md (Infrastructure section + Accepted Patterns)
 - package.json, pnpm-workspace.yaml
 - eslint.config.js, .prettierrc
-- .github/workflows/*.yaml
-- scripts/*.ts
+- .github/workflows/\*.yaml
+- scripts/\*.ts
 
 **Assess project health:**
+
 - **Dependencies**: Unused deps? Duplicate deps? Significantly outdated?
 - **Project layout**: Files in wrong directories? Orphaned files?
 - **Tooling config**: ESLint, Prettier, TypeScript configs aligned?
@@ -211,15 +228,17 @@ Each @plan invocation MUST:
 
 ### ux
 
-@plan Review CodeHydra for UX quality.
+Review CodeHydra for UX quality.
 
 **Read first:**
+
 - docs/QUALITY.md (UX section + Accepted Patterns)
 - docs/USER_INTERFACE.md
 - docs/PATTERNS.md (UI Patterns, VSCode Elements, CSS Theming)
 - src/renderer/ directory
 
 **Assess user experience quality:**
+
 - **Accessibility**: ARIA attributes, keyboard navigation, screen reader support
 - **UI pattern adherence**: Consistent with docs/USER_INTERFACE.md?
 - **User flow completeness**: Are flows complete and intuitive?
@@ -235,7 +254,7 @@ Each @plan invocation MUST:
 
 ## Aggregation
 
-After all @plan invocations complete:
+After all agent invocations complete:
 
 1. Collect all findings from each topic
 2. **Deduplicate**: Combine issues that describe the same or overlapping problems
@@ -262,6 +281,7 @@ After all @plan invocations complete:
 <2-3 sentence description explaining the codebase-wide issue, its impact on maintainability/correctness, and why it matters. When combined from multiple topics, explain how the issue manifests across different quality dimensions.>
 
 **Affected locations:**
+
 - path/to/file1.ts
 - path/to/file2.ts
 - ... (N total)
@@ -277,8 +297,9 @@ After all @plan invocations complete:
 <description>
 
 **Affected locations:**
+
 - ...
 
 ---
 
-*Report limited to 10 most severe issues. Run `/review-quality only <topic>` for focused analysis of a specific area.*
+_Report limited to 10 most severe issues. Run `/review-quality only <topic>` for focused analysis of a specific area._

@@ -1,18 +1,8 @@
 ---
-description: Reviews implementation to verify it followed the approved plan
-mode: subagent
-thinking:
-  type: enabled
-  budgetTokens: 6000
-tools:
-  write: false
-  edit: false
-  patch: false
-  webfetch: true
-permission:
-  bash:
-    "pnpm validate*": allow
-    "pnpm test*": allow
+name: code-review
+description: Reviews implementation to verify it followed the approved plan. Use this agent after implementation completes to verify plan adherence.
+tools: Read, Bash, Glob, Grep, WebFetch
+model: inherit
 ---
 
 # Code Review Agent
@@ -23,7 +13,7 @@ You verify that implementation matches the approved plan. The feature agent prov
 
 1. **Plan Adherence**: Verify each implementation step was completed as specified
 2. **Test Coverage**: Verify tests exist and cover the test criteria in each step
-3. **Test Naming**: Verify test files follow naming conventions (*.test.ts, *.integration.test.ts, *.boundary.test.ts)
+3. **Test Naming**: Verify test files follow naming conventions (_.test.ts, _.integration.test.ts, \*.boundary.test.ts)
 4. **File Scope**: Flag any files modified that weren't listed in the plan
 5. **Dependency Compliance**: Verify only approved dependencies were added
 6. **Code Quality**: Catch obvious quality issues (type safety, error handling, etc.)
@@ -97,7 +87,7 @@ Include this checklist in your output:
 
 - [ ] All implementation steps match plan specification
 - [ ] Tests exist for all test cases specified in plan
-- [ ] Test files follow naming conventions (*.integration.test.ts, *.boundary.test.ts)
+- [ ] Test files follow naming conventions (_.integration.test.ts, _.boundary.test.ts)
 - [ ] Only planned files were modified
 - [ ] Only approved dependencies were added
 - [ ] No undocumented deviations from plan

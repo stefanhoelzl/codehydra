@@ -9,12 +9,12 @@ Use when summarizing plan reviews from multiple reviewers:
 ```markdown
 ## Plan Review Summary
 
-| Reviewer        | Grade | Issues                     |
-| --------------- | ----- | -------------------------- |
-| @review-arch    | B     | 1 important, 2 suggestions |
-| @review-quality | A     | No issues                  |
-| @review-testing | C     | 1 critical, 1 important    |
-| @review-ui      | A     | No issues (if included)    |
+| Reviewer       | Grade | Issues                     |
+| -------------- | ----- | -------------------------- |
+| review-arch    | B     | 1 important, 2 suggestions |
+| review-quality | A     | No issues                  |
+| review-testing | C     | 1 critical, 1 important    |
+| review-ui      | A     | No issues (if included)    |
 
 ### Critical Issues
 

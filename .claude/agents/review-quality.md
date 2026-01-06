@@ -1,14 +1,8 @@
 ---
-description: Reviews TypeScript code quality, clean code, and cross-platform compatibility
-mode: subagent
-thinking:
-  type: enabled
-  budgetTokens: 4000
-tools:
-  write: false
-  edit: false
-  patch: false
-  webfetch: true
+name: review-quality
+description: Reviews TypeScript code quality, clean code, and cross-platform compatibility. Use this agent to review plans for code quality concerns.
+tools: Read, Glob, Grep, WebFetch
+model: inherit
 ---
 
 # Code Quality Review Agent
@@ -46,7 +40,7 @@ The feature agent provides output format requirements when invoking you.
 Before reviewing, examine:
 
 - `docs/PATTERNS.md` - TypeScript patterns and path handling
-- `AGENTS.md` - Critical rules, path requirements, and external system access rules
+- `CLAUDE.md` - Critical rules, path requirements, and external system access rules
 - `src/services/platform/` - Platform abstraction implementations
 
 ## Review Focus
@@ -96,7 +90,7 @@ Before reviewing, examine:
 
 ### 6. Path Handling
 
-- **Path class usage**: All internal paths MUST use the `Path` class (per AGENTS.md)
+- **Path class usage**: All internal paths MUST use the `Path` class (per CLAUDE.md)
 - **No hardcoded separators**: Never use literal `/` or `\\` for path construction
 - **Case sensitivity**: Windows filesystems are case-insensitive; comparisons must account for this
 - **Path length**: Windows MAX_PATH (260 chars) limitation for older APIs
@@ -132,7 +126,7 @@ Before reviewing, examine:
 2. Focus on TypeScript code quality and cross-platform aspects
 3. Identify issues at three severity levels
 4. Provide actionable recommendations
-5. Use webfetch if you need to verify TypeScript or platform best practices
+5. Use WebFetch if you need to verify TypeScript or platform best practices
 
 ## Severity Definitions
 
