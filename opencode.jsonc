@@ -37,6 +37,10 @@
     },
     "plan": {
       "color": "#3B82F6", // blue
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+      },
     },
   },
 }
