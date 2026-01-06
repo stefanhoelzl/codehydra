@@ -5,6 +5,7 @@
 
 // join import removed - no longer needed for bin script generation
 import type { PathProvider } from "../platform/path-provider";
+import mcpConfigTemplate from "../../agents/opencode/opencode.codehydra.json";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
 import type { Logger } from "../logging/index";
@@ -388,13 +389,12 @@ export class VscodeSetupService implements IVscodeSetup {
 
     const configPath = this.pathProvider.opencodeConfig;
     const configDir = configPath.dirname;
-    const templatePath = new Path(this.pathProvider.binAssetsDir, "opencode.codehydra.json");
 
     // Ensure directory exists
     await this.fs.mkdir(configDir);
 
-    // Copy template to final location
-    await this.fs.copyTree(templatePath, configPath);
+    // Write config from imported template
+    await this.fs.writeFile(configPath, JSON.stringify(mcpConfigTemplate, null, 2));
   }
 
   /**

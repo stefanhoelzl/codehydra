@@ -58,7 +58,6 @@ function createBinAssetsEntries() {
     "/mock/assets/bin/opencode": file("#!/bin/sh\nexec opencode.cjs"),
     "/mock/assets/bin/opencode.cmd": file("@echo off\ncall opencode.cjs"),
     "/mock/assets/bin/opencode.cjs": file("// opencode wrapper"),
-    "/mock/assets/bin/opencode.codehydra.json": file("mock-opencode-config-content"),
   };
 }
 

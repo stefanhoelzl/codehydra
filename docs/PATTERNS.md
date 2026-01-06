@@ -1452,7 +1452,60 @@ const mockPathProvider = createMockPathProvider({
 
 ---
 
-## OpenCode Integration
+## Agent Integration
+
+This section covers patterns for integrating AI agent backends (currently OpenCode, extensible to other agents).
+
+### Agent Factory Pattern
+
+Use factory functions to create agent components without tight coupling:
+
+```typescript
+import {
+  getAgentSetupInfo,
+  createAgentServerManager,
+  createAgentProvider,
+  type AgentType,
+} from "../agents";
+
+// Type-safe creation with exhaustive switch
+function createAgentComponents(type: AgentType, deps: Deps) {
+  const setupInfo = getAgentSetupInfo(type, setupDeps);
+  const serverManager = createAgentServerManager(type, serverDeps);
+  return { setupInfo, serverManager };
+}
+```
+
+### Extending for New Agent Types
+
+To add a new agent type (e.g., "claude"):
+
+1. Add type to `AgentType` union in `src/agents/types.ts`:
+
+   ```typescript
+   export type AgentType = "opencode" | "claude";
+   ```
+
+2. Create implementation directory `src/agents/claude/`:
+
+   ```
+   src/agents/claude/
+     setup-info.ts     # ClaudeSetupInfo implementing AgentSetupInfo
+     server-manager.ts # ClaudeServerManager implementing AgentServerManager
+     provider.ts       # ClaudeProvider implementing AgentProvider
+   ```
+
+3. Add case to factory functions in `src/agents/index.ts`:
+   ```typescript
+   export function createAgentServerManager(type: AgentType, deps: ServerManagerDeps) {
+     switch (type) {
+       case "opencode":
+         return new OpenCodeServerManager(...);
+       case "claude":
+         return new ClaudeServerManager(...);
+     }
+   }
+   ```
 
 ### Agent Status Store (Svelte 5 Runes)
 

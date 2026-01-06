@@ -34,7 +34,8 @@ import {
   DefaultArchiveExtractor,
   type BinaryDownloadService,
 } from "../services/binary-download";
-import { AgentStatusManager, OpenCodeServerManager } from "../agents/opencode";
+import { AgentStatusManager } from "../agents";
+import { OpenCodeServerManager } from "../agents/opencode";
 import { PluginServer, sendStartupCommands } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { wirePluginApi } from "./api/wire-plugin-api";
@@ -486,13 +487,13 @@ async function startServices(): Promise<void> {
 
     // Register callback for first MCP request per workspace
     // This is the primary signal for TUI attachment (marks workspace as loaded)
-    // Also signals AgentStatusManager that TUI is attached (for status indicator)
+    // Also signals AgentStatusManager that agent is active (for status indicator)
     const agentStatusManagerRef = agentStatusManager;
     mcpFirstRequestCleanup = mcpServerManager.onFirstRequest((workspacePath) => {
       // setWorkspaceLoaded is idempotent (guards internally), no need to check isWorkspaceLoading
       viewManagerRef.setWorkspaceLoaded(workspacePath);
-      // Mark TUI as attached for status indicator (shows green when TUI attaches)
-      agentStatusManagerRef.setTuiAttached(workspacePath as import("../shared/ipc").WorkspacePath);
+      // Mark agent as active for status indicator (shows green when TUI attaches)
+      agentStatusManagerRef.markActive(workspacePath as import("../shared/ipc").WorkspacePath);
     });
 
     // Configure OpenCode servers to connect to MCP

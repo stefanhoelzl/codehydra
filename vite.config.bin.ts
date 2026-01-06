@@ -4,43 +4,48 @@
  * Compiles src/agents/opencode/wrapper.ts to out/main/agents/opencode-wrapper.cjs
  * as a self-contained CJS bundle.
  *
- * Also copies wrapper scripts to ./app-data/bin/ for development use.
+ * Also copies wrapper scripts to ./app-data/bin/ (development) and ./dist/bin/ (production).
  */
 
 import { defineConfig } from "vite";
 import { resolve } from "path";
 import { viteStaticCopy } from "vite-plugin-static-copy";
-import { chmod } from "node:fs/promises";
+import { chmod, copyFile, mkdir } from "node:fs/promises";
 import { codehydraDefaults } from "./vite.defaults";
 
 export default defineConfig({
   plugins: [
     codehydraDefaults({ nodeBuiltins: true }),
-    // Copy wrapper scripts to app-data/bin/ for development
+    // Copy shell scripts from resources/bin/ (these exist before build)
     viteStaticCopy({
       targets: [
-        // Shell scripts from resources/bin/
         {
           src: "resources/bin/*",
           dest: "../app-data/bin",
         },
-        // Compiled opencode.cjs (built to out/main/agents/)
-        {
-          src: "out/main/agents/opencode-wrapper.cjs",
-          dest: "../app-data/bin",
-          rename: "opencode.cjs",
-        },
       ],
     }),
-    // Make shell scripts executable after copy
+    // Copy compiled wrapper and set permissions after build completes
     {
-      name: "chmod-scripts",
+      name: "copy-wrapper-scripts",
       closeBundle: async () => {
-        const binDir = resolve(__dirname, "app-data/bin");
+        const wrapperSrc = resolve(__dirname, "out/main/agents/opencode-wrapper.cjs");
+        const appDataBin = resolve(__dirname, "app-data/bin");
+        const distBin = resolve(__dirname, "dist/bin");
+
+        // Ensure directories exist
+        await mkdir(appDataBin, { recursive: true });
+        await mkdir(distBin, { recursive: true });
+
+        // Copy wrapper to both locations
+        await copyFile(wrapperSrc, resolve(appDataBin, "opencode.cjs"));
+        await copyFile(wrapperSrc, resolve(distBin, "opencode.cjs"));
+
+        // Make shell scripts executable
         const scripts = ["code", "opencode"];
         for (const script of scripts) {
           try {
-            await chmod(resolve(binDir, script), 0o755);
+            await chmod(resolve(appDataBin, script), 0o755);
           } catch {
             // Ignore errors (file might not exist on Windows)
           }

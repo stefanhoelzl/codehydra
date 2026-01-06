@@ -19,6 +19,7 @@ import type { IDisposable, Unsubscribe } from "./types";
 import { waitForHealthy } from "../../services/platform/health-check";
 import { Path } from "../../services/platform/path";
 import type { PromptModel } from "../../shared/api/types";
+import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
 
 /**
  * Pending initial prompt to send when server becomes healthy.
@@ -90,26 +91,16 @@ export interface McpConfig {
   readonly port: number;
 }
 
-/**
- * Result of stopping an OpenCode server.
- */
-export interface StopServerResult {
-  success: boolean;
-  error?: string;
-}
-
-/**
- * Result of restarting an OpenCode server.
- */
-export type RestartServerResult =
-  | { readonly success: true; readonly port: number }
-  | { readonly success: false; readonly error: string; readonly serverStopped: boolean };
+// Re-export result types from agent types for backward compatibility
+export type { StopServerResult, RestartServerResult } from "../types";
 
 /**
  * Manages OpenCode server instances for workspaces.
  * One server per workspace, with health check. Port stored in memory only.
+ *
+ * Implements AgentServerManager interface for use in the agent abstraction layer.
  */
-export class OpenCodeServerManager implements IDisposable {
+export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   private readonly processRunner: ProcessRunner;
   private readonly portManager: PortManager;
   private readonly httpClient: HttpClient;
@@ -482,6 +473,17 @@ export class OpenCodeServerManager implements IDisposable {
       return entry.port;
     }
     return undefined;
+  }
+
+  /**
+   * Check if server is running for a workspace.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @returns True if server is running (including during restart)
+   */
+  isRunning(workspacePath: string): boolean {
+    const entry = this.servers.get(workspacePath);
+    return entry?.state === "running" || entry?.state === "restarting";
   }
 
   /**
