@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AgentStatusManager, OpenCodeProvider } from "./agent-status-manager";
+import { AgentStatusManager, OpenCodeProvider } from "./status-manager";
 import type { WorkspacePath } from "../../shared/ipc";
 import {
   createSdkClientMock,
@@ -21,7 +21,7 @@ import {
   type MockSdkClient,
 } from "./sdk-client.state-mock";
 import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
-import { SILENT_LOGGER } from "../logging";
+import { SILENT_LOGGER } from "../../services/logging";
 
 /**
  * Helper to create and initialize a provider for testing.

@@ -1,7 +1,7 @@
 /**
  * Vite config for building CLI wrapper scripts.
  *
- * Compiles src/bin/opencode-wrapper.ts to dist/bin/opencode.cjs
+ * Compiles src/agents/opencode/wrapper.ts to out/main/agents/opencode-wrapper.cjs
  * as a self-contained CJS bundle.
  *
  * Also copies wrapper scripts to ./app-data/bin/ for development use.
@@ -24,10 +24,11 @@ export default defineConfig({
           src: "resources/bin/*",
           dest: "../app-data/bin",
         },
-        // Compiled opencode.cjs (built to dist/bin/)
+        // Compiled opencode.cjs (built to out/main/agents/)
         {
-          src: "dist/bin/opencode.cjs",
+          src: "out/main/agents/opencode-wrapper.cjs",
           dest: "../app-data/bin",
+          rename: "opencode.cjs",
         },
       ],
     }),
@@ -49,12 +50,12 @@ export default defineConfig({
   ],
   build: {
     lib: {
-      entry: resolve(__dirname, "src/bin/opencode-wrapper.ts"),
+      entry: resolve(__dirname, "src/agents/opencode/wrapper.ts"),
       formats: ["cjs"],
-      fileName: () => "opencode.cjs",
+      fileName: () => "opencode-wrapper.cjs",
     },
-    outDir: "dist/bin",
-    // Clear dist/bin on each build
+    outDir: "out/main/agents",
+    // Clear out/main/agents on each build
     emptyOutDir: true,
     // Don't report gzip sizes (not relevant for CLI scripts)
     reportCompressedSize: false,

@@ -10,14 +10,20 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { OpenCodeServerManager } from "./opencode-server-manager";
-import { AgentStatusManager, OpenCodeProvider } from "./agent-status-manager";
-import { createMockProcessRunner, type MockProcessRunner } from "../platform/process.state-mock";
-import { createMockPathProvider } from "../platform/path-provider.test-utils";
-import { createPortManagerMock, type MockPortManager } from "../platform/network.test-utils";
-import { SILENT_LOGGER } from "../logging";
-import type { HttpClient } from "../platform/network";
-import type { PathProvider } from "../platform/path-provider";
+import { OpenCodeServerManager } from "./server-manager";
+import { AgentStatusManager, OpenCodeProvider } from "./status-manager";
+import {
+  createMockProcessRunner,
+  type MockProcessRunner,
+} from "../../services/platform/process.state-mock";
+import { createMockPathProvider } from "../../services/platform/path-provider.test-utils";
+import {
+  createPortManagerMock,
+  type MockPortManager,
+} from "../../services/platform/network.test-utils";
+import { SILENT_LOGGER } from "../../services/logging";
+import type { HttpClient } from "../../services/platform/network";
+import type { PathProvider } from "../../services/platform/path-provider";
 import type { WorkspacePath } from "../../shared/ipc";
 import {
   createSdkClientMock,

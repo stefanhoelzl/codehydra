@@ -12,7 +12,7 @@ import {
 } from "../../services/platform/image.state-mock";
 import type { WindowManager } from "./window-manager";
 import type { ImageHandle } from "../../services/platform/types";
-import type { AgentStatusManager, StatusChangedCallback } from "../../services/opencode";
+import type { AgentStatusManager, StatusChangedCallback } from "../../agents/opencode";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 
 /**

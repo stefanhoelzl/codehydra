@@ -34,7 +34,7 @@ import {
   DefaultArchiveExtractor,
   type BinaryDownloadService,
 } from "../services/binary-download";
-import { AgentStatusManager, OpenCodeServerManager } from "../services/opencode";
+import { AgentStatusManager, OpenCodeServerManager } from "../agents/opencode";
 import { PluginServer, sendStartupCommands } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { wirePluginApi } from "./api/wire-plugin-api";

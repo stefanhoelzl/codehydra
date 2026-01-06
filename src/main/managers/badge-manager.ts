@@ -12,7 +12,7 @@ import type { ImageLayer } from "../../services/platform/image";
 import type { ImageHandle } from "../../services/platform/types";
 import type { WindowManager } from "./window-manager";
 import type { Logger } from "../../services/logging";
-import type { AgentStatusManager } from "../../services/opencode/agent-status-manager";
+import type { AgentStatusManager } from "../../agents/opencode/status-manager";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 
 /**

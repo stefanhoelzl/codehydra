@@ -14,10 +14,10 @@ import {
   type Session,
   err,
 } from "./types";
-import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./opencode-client";
-import { OpenCodeError } from "../errors";
+import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./client";
+import { OpenCodeError } from "../../services/errors";
 import { findMatchingSession } from "./session-utils";
-import type { Logger } from "../logging";
+import type { Logger } from "../../services/logging";
 
 /**
  * Callback for status changes.

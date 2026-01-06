@@ -365,7 +365,7 @@ describe("BadgeManager", () => {
         getAllStatuses: () => new Map(),
       };
       manager.connectToStatusManager(
-        mockStatusManager as unknown as import("../../services/opencode").AgentStatusManager
+        mockStatusManager as unknown as import("../../agents/opencode").AgentStatusManager
       );
 
       // Show an overlay

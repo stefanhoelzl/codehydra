@@ -9,5 +9,13 @@
     },
     "types": ["node"]
   },
-  "include": ["env.d.ts", "main/**/*", "preload/**/*", "services/**/*", "shared/**/*", "test/**/*"]
+  "include": [
+    "env.d.ts",
+    "main/**/*",
+    "preload/**/*",
+    "services/**/*",
+    "shared/**/*",
+    "test/**/*",
+    "agents/**/*"
+  ]
 }
