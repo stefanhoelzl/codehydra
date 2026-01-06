@@ -37,6 +37,29 @@
     },
     "plan": {
       "color": "#3B82F6", // blue
+      "permission": {
+        "bash": {
+          "*": "deny",
+          // Standard read-only commands
+          "git log*": "allow",
+          "git diff*": "allow",
+          "git show*": "allow",
+          "git status": "allow",
+          "ls*": "allow",
+          "tree*": "allow",
+          "cat*": "allow",
+          "head*": "allow",
+          "tail*": "allow",
+          "wc*": "allow",
+          "pwd": "allow",
+          // Plan-specific GH allowed commands
+          "gh workflow list*": "allow",
+          "gh workflow view*": "allow",
+          "gh run list*": "allow",
+          "gh run view*": "allow",
+          "gh run watch*": "allow",
+        },
+      },
     },
   },
 }
