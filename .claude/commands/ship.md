@@ -1,5 +1,6 @@
 ---
 description: Create PR with auto-merge, wait for merge via client-side queue
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(npx:*)
 ---
 
 # /ship Command
@@ -53,6 +54,7 @@ If on main: ABORT with "Cannot ship from main branch"
 If `--resolves ?` was provided:
 
 1. Fetch open issues:
+
    ```bash
    gh issue list --repo stefanhoelzl/codehydra --state open --json number,title --limit 100
    ```
@@ -60,6 +62,7 @@ If `--resolves ?` was provided:
 2. If no open issues exist: ABORT with "No open issues found on stefanhoelzl/codehydra"
 
 3. Display the list to the user:
+
    ```
    Open issues on stefanhoelzl/codehydra:
 
@@ -69,6 +72,7 @@ If `--resolves ?` was provided:
    ```
 
 4. Ask the user explicitly:
+
    ```
    Which issue does this PR resolve? Enter the issue number (e.g., 123):
    ```
@@ -108,6 +112,7 @@ Analyze commits to determine:
   - If `--resolves <number>` was provided (directly or via `?` selection), append an empty line followed by `resolves #<number>`
 
 **Example PR body with resolves:**
+
 ```
 - Added feature X
 - Fixed bug Y
@@ -149,7 +154,7 @@ This:
 ### 5. Run ship-wait script
 
 ```bash
-npx tsx .opencode/scripts/ship-wait.ts <number>
+npx tsx .claude/commands/ship-wait.ts <number>
 ```
 
 The script handles:

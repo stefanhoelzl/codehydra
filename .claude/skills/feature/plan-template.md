@@ -51,27 +51,27 @@ reviewers: []
 
 Test behavior through high-level entry points with behavioral mocks.
 
-| # | Test Case | Entry Point | Boundary Mocks | Behavior Verified |
-|---|-----------|-------------|----------------|-------------------|
-| 1 | test name | `CodeHydraApi.method()` | GitClient, FileSystem | `expect(result).toContain(...)` |
+| #   | Test Case | Entry Point             | Boundary Mocks        | Behavior Verified               |
+| --- | --------- | ----------------------- | --------------------- | ------------------------------- |
+| 1   | test name | `CodeHydraApi.method()` | GitClient, FileSystem | `expect(result).toContain(...)` |
 
 ### UI Integration Tests (if applicable)
 
-| # | Test Case | Category | Component | Behavior Verified |
-|---|-----------|----------|-----------|-------------------|
-| 1 | test name | API-call / UI-state / Pure-UI | ComponentName | what it verifies |
+| #   | Test Case | Category                      | Component     | Behavior Verified |
+| --- | --------- | ----------------------------- | ------------- | ----------------- |
+| 1   | test name | API-call / UI-state / Pure-UI | ComponentName | what it verifies  |
 
 ### Boundary Tests (only for new external interfaces)
 
-| # | Test Case | Interface | External System | Behavior Verified |
-|---|-----------|-----------|-----------------|-------------------|
-| 1 | test name | InterfaceName | Git/HTTP/FS/etc | real system behavior |
+| #   | Test Case | Interface     | External System | Behavior Verified    |
+| --- | --------- | ------------- | --------------- | -------------------- |
+| 1   | test name | InterfaceName | Git/HTTP/FS/etc | real system behavior |
 
 ### Focused Tests (only for pure utility functions)
 
-| # | Test Case | Function | Input/Output |
-|---|-----------|----------|--------------|
-| 1 | test name | functionName | input -> expected output |
+| #   | Test Case | Function     | Input/Output             |
+| --- | --------- | ------------ | ------------------------ |
+| 1   | test name | functionName | input -> expected output |
 
 ### Manual Testing Checklist
 
@@ -113,9 +113,9 @@ Test behavior through high-level entry points with behavioral mocks.
 
 ## Status Values
 
-| Status                  | Set By     | When                                                |
-| ----------------------- | ---------- | --------------------------------------------------- |
-| `REVIEW_PENDING`        | @feature   | Plan created                                        |
-| `APPROVED`              | @implement | Starting implementation                             |
-| `IMPLEMENTATION_REVIEW` | @implement | Implementation complete, ready for review & testing |
-| `COMPLETED`             | @general   | User accepted, committed                            |
+| Status                  | Set By    | When                                                |
+| ----------------------- | --------- | --------------------------------------------------- |
+| `REVIEW_PENDING`        | feature   | Plan created                                        |
+| `APPROVED`              | implement | Starting implementation                             |
+| `IMPLEMENTATION_REVIEW` | implement | Implementation complete, ready for review & testing |
+| `COMPLETED`             | general   | User accepted, committed                            |

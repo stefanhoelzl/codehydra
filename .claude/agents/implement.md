@@ -1,19 +1,8 @@
 ---
-description: Implements approved plans with TDD, reports to feature agent
-mode: subagent
-thinking:
-  type: enabled
-  budgetTokens: 8000
-tools:
-  webfetch: true
-permission:
-  edit: allow
-  webfetch: allow
-  bash:
-    "git commit*": deny
-    "git add*": deny
-    "git push*": deny
-    "*": allow
+name: implement
+description: Implements approved plans with TDD, reports to feature agent. Use this agent when you need to execute implementation steps from an approved plan.
+tools: Read, Write, Edit, Bash, Glob, Grep, WebFetch
+model: inherit
 ---
 
 # Implementation Agent
