@@ -25,7 +25,8 @@ import {
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspacePath } from "../shared/ipc";
 import type { Project, ProjectId } from "../shared/api/types";
-import { OpenCodeProvider, type AgentStatusManager } from "../agents/opencode/status-manager";
+import { OpenCodeProvider } from "../agents/opencode/provider";
+import type { AgentStatusManager } from "../agents";
 import type { OpenCodeServerManager, PendingPrompt } from "../agents/opencode/server-manager";
 import type { McpServerManager } from "../services/mcp-server";
 import { getErrorMessage } from "../shared/error-utils";
@@ -171,8 +172,8 @@ export class AppState {
     );
 
     try {
-      // Initialize client (connects SSE)
-      await provider.initializeClient(port);
+      // Connect to server (connects SSE)
+      await provider.connect(port);
 
       // Fetch initial status
       await provider.fetchStatus();

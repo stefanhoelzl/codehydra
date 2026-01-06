@@ -11,12 +11,14 @@ These rules MUST be followed. Violations require explicit user approval.
 ### No Ignore Comments
 
 **NEVER add without explicit user approval:**
+
 - `// @ts-ignore`, `// @ts-expect-error`, `// eslint-disable*`, `any` type assertions
 - Modifications to `.eslintignore`, `.prettierignore`
 
 ### API/IPC Interface Changes
 
 **NEVER modify without explicit user approval:**
+
 - IPC channel names/signatures (`api:project:*`, `api:workspace:*`)
 - API interface definitions (`ICodeHydraApi`, `ElectronApi`, etc.)
 - Preload script exposed APIs, event names/payloads, shared types in `src/shared/`
@@ -26,6 +28,7 @@ These rules MUST be followed. Violations require explicit user approval.
 ### New Boundary Interfaces
 
 **NEVER add without explicit user approval:**
+
 - New abstraction interfaces (`*Layer`, `*Client`, `*Provider`)
 - New boundary types (I/O, network, filesystem, process abstractions)
 - Entries to External System Access Rules table
@@ -36,31 +39,33 @@ These rules MUST be followed. Violations require explicit user approval.
 
 All external access MUST use abstraction interfaces:
 
-| External System | Required Interface | Forbidden Direct Access |
-|----------------|-------------------|------------------------|
-| Filesystem | `FileSystemLayer` | `node:fs/promises` |
-| HTTP requests | `HttpClient` | `fetch()` |
-| Port operations | `PortManager` | `net` module |
-| Process spawning | `ProcessRunner` | `execa` |
-| OpenCode API | `OpenCodeClient` | Direct HTTP/SSE |
-| Git operations | `GitClient` | `simple-git` |
-| Electron Window | `WindowLayer` | `BaseWindow` |
-| Electron View | `ViewLayer` | `WebContentsView` |
-| Electron Session | `SessionLayer` | `session` |
-| Electron IPC | `IpcLayer` | `ipcMain` |
-| Electron Dialog | `DialogLayer` | `dialog` |
-| Electron Image | `ImageLayer` | `nativeImage` |
-| Electron App | `AppLayer` | `app` |
-| Electron Menu | `MenuLayer` | `Menu` |
+| External System  | Required Interface                    | Forbidden Direct Access |
+| ---------------- | ------------------------------------- | ----------------------- |
+| Filesystem       | `FileSystemLayer`                     | `node:fs/promises`      |
+| HTTP requests    | `HttpClient`                          | `fetch()`               |
+| Port operations  | `PortManager`                         | `net` module            |
+| Process spawning | `ProcessRunner`                       | `execa`                 |
+| Agent operations | `AgentProvider`, `AgentServerManager` | Direct OpenCode SDK     |
+| OpenCode API     | `OpenCodeClient`                      | Direct HTTP/SSE         |
+| Git operations   | `GitClient`                           | `simple-git`            |
+| Electron Window  | `WindowLayer`                         | `BaseWindow`            |
+| Electron View    | `ViewLayer`                           | `WebContentsView`       |
+| Electron Session | `SessionLayer`                        | `session`               |
+| Electron IPC     | `IpcLayer`                            | `ipcMain`               |
+| Electron Dialog  | `DialogLayer`                         | `dialog`                |
+| Electron Image   | `ImageLayer`                          | `nativeImage`           |
+| Electron App     | `AppLayer`                            | `app`                   |
+| Electron Menu    | `MenuLayer`                           | `Menu`                  |
 
 ### Path Handling
 
 **ALWAYS use the `Path` class** for internal path handling:
+
 ```typescript
 import { Path } from "../services/platform/path";
 const projectPath = new Path(inputPath);
-map.set(path.toString(), value);  // toString() for Map keys
-path1.equals(path2);              // equals() for comparison
+map.set(path.toString(), value); // toString() for Map keys
+path1.equals(path2); // equals() for comparison
 ```
 
 **Rules**: Services receive `Path` objects. IPC uses strings. Convert at IPC boundary.
@@ -79,34 +84,34 @@ path1.equals(path2);              // equals() for comparison
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Desktop | Electron (BaseWindow + WebContentsViews) |
-| Frontend | Svelte 5 + TypeScript + @vscode-elements |
-| Backend | Node.js services |
-| Testing | Vitest |
-| Build | Vite |
-| Package Manager | pnpm |
+| Layer           | Technology                               |
+| --------------- | ---------------------------------------- |
+| Desktop         | Electron (BaseWindow + WebContentsViews) |
+| Frontend        | Svelte 5 + TypeScript + @vscode-elements |
+| Backend         | Node.js services                         |
+| Testing         | Vitest                                   |
+| Build           | Vite                                     |
+| Package Manager | pnpm                                     |
 
 ### Essential Commands
 
-| Command | Purpose |
-|---------|---------|
-| `pnpm dev` | Start development mode |
+| Command             | Purpose                           |
+| ------------------- | --------------------------------- |
+| `pnpm dev`          | Start development mode            |
 | `pnpm validate:fix` | Fix lint/format issues, run tests |
-| `pnpm test` | Run all tests |
-| `pnpm build` | Build for production |
+| `pnpm test`         | Run all tests                     |
+| `pnpm build`        | Build for production              |
 
 ### Key Documents
 
-| Document | Location | Purpose |
-|----------|----------|---------|
-| Patterns | docs/PATTERNS.md | Implementation patterns with code examples |
-| Architecture | docs/ARCHITECTURE.md | System design, component relationships |
-| API Reference | docs/API.md | Private/Public API documentation |
-| Testing Strategy | docs/TESTING.md | Test types, conventions, commands |
-| Release | docs/RELEASE.md | Version format, release workflow, Windows builds |
-| Contributing | CONTRIBUTING.md | Feature skill workflow, GitHub setup, /ship command |
+| Document         | Location             | Purpose                                             |
+| ---------------- | -------------------- | --------------------------------------------------- |
+| Patterns         | docs/PATTERNS.md     | Implementation patterns with code examples          |
+| Architecture     | docs/ARCHITECTURE.md | System design, component relationships              |
+| API Reference    | docs/API.md          | Private/Public API documentation                    |
+| Testing Strategy | docs/TESTING.md      | Test types, conventions, commands                   |
+| Release          | docs/RELEASE.md      | Version format, release workflow, Windows builds    |
+| Contributing     | CONTRIBUTING.md      | Feature skill workflow, GitHub setup, /ship command |
 
 **Note**: Files in `planning/` are historical records. Read source code and `docs/` for current state.
 
@@ -114,13 +119,13 @@ path1.equals(path2);              // equals() for comparison
 
 ## Key Concepts
 
-| Concept | Description |
-|---------|-------------|
-| Project | Git repository path (container, not viewable) |
-| Workspace | Git worktree (viewable in code-server) - NOT the main directory |
-| WebContentsView | Electron view for embedding (not iframe) |
-| Shortcut Mode | Alt+X activates keyboard navigation. Keys: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project, Escape exits |
-| .keepfiles | Config listing files to copy to new workspaces. Gitignore syntax with **inverted semantics** |
+| Concept         | Description                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Project         | Git repository path (container, not viewable)                                                                            |
+| Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                                          |
+| WebContentsView | Electron view for embedding (not iframe)                                                                                 |
+| Shortcut Mode   | Alt+X activates keyboard navigation. Keys: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, O open project, Escape exits |
+| .keepfiles      | Config listing files to copy to new workspaces. Gitignore syntax with **inverted semantics**                             |
 
 ---
 
@@ -157,12 +162,14 @@ src/renderer/lib/
 ### VSCode Elements
 
 Use `@vscode-elements/elements` where equivalents exist:
+
 - `<vscode-button>`, `<vscode-textfield>`, `<vscode-checkbox>` instead of native HTML
 - Property binding: `value={x} oninput={...}` (not `bind:value`)
 
 ### Icons
 
 Use `Icon` component. Never use Unicode characters.
+
 ```svelte
 <Icon name="check" />
 <Icon name="close" action label="Close" />
@@ -212,21 +219,21 @@ cd /path/to/main && git merge --ff-only <branch>  # Fast-forward only
 
 ### Testing
 
-| Code Change | Required Tests |
-|-------------|---------------|
-| New feature/module | Integration tests (behavioral mocks) |
-| Pure utility function | Focused tests (input/output) |
-| External interface | Boundary tests |
-| Bug fix | Test covering the fix |
+| Code Change           | Required Tests                       |
+| --------------------- | ------------------------------------ |
+| New feature/module    | Integration tests (behavioral mocks) |
+| Pure utility function | Focused tests (input/output)         |
+| External interface    | Boundary tests                       |
+| Bug fix               | Test covering the fix                |
 
 **Note**: Unit tests deprecated. Use integration tests with behavioral mocks.
 
-| Command | Purpose |
-|---------|---------|
-| `pnpm test` | All tests |
+| Command                 | Purpose                      |
+| ----------------------- | ---------------------------- |
+| `pnpm test`             | All tests                    |
 | `pnpm test:integration` | Primary development feedback |
-| `pnpm test:boundary` | External interface tests |
-| `pnpm validate:fix` | Auto-fix + validate |
+| `pnpm test:boundary`    | External interface tests     |
+| `pnpm validate:fix`     | Auto-fix + validate          |
 
 Integration tests MUST be fast (<50ms per test).
 
@@ -256,12 +263,12 @@ See docs/API.md for full Plugin API and MCP Server documentation.
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `CODEHYDRA_ELECTRON_FLAGS` | Electron switches (e.g., `--disable-gpu`) |
-| `CODEHYDRA_LOGLEVEL` | Log level: silly\|debug\|info\|warn\|error |
-| `CODEHYDRA_PRINT_LOGS` | Print logs to stdout/stderr |
-| `CODEHYDRA_LOGGER` | Filter logs by name (e.g., `git,process`) |
+| Variable                   | Description                                |
+| -------------------------- | ------------------------------------------ |
+| `CODEHYDRA_ELECTRON_FLAGS` | Electron switches (e.g., `--disable-gpu`)  |
+| `CODEHYDRA_LOGLEVEL`       | Log level: silly\|debug\|info\|warn\|error |
+| `CODEHYDRA_PRINT_LOGS`     | Print logs to stdout/stderr                |
+| `CODEHYDRA_LOGGER`         | Filter logs by name (e.g., `git,process`)  |
 
 ### Log Files
 

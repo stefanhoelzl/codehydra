@@ -33,7 +33,7 @@ async function createAndInitializeProvider(
   workspacePath = "/test/workspace"
 ): Promise<OpenCodeProvider> {
   const provider = new OpenCodeProvider(workspacePath, SILENT_LOGGER, asSdkFactory(sdkFactory));
-  await provider.initializeClient(port);
+  await provider.connect(port);
   await provider.fetchStatus();
   return provider;
 }
@@ -120,8 +120,8 @@ describe("AgentStatusManager", () => {
       const provider = await createAndInitializeProvider(8080, mockSdkFactory);
       manager.addProvider("/test/workspace" as WorkspacePath, provider);
 
-      // Mark TUI as attached (simulates first MCP request received)
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Mark agent as active (simulates first MCP request received)
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       // When TUI attached but no sessions, should show "idle" (ready to use)
       const status = manager.getStatus("/test/workspace" as WorkspacePath);
@@ -154,7 +154,7 @@ describe("AgentStatusManager", () => {
         SILENT_LOGGER,
         asSdkFactory(mockSdkFactory)
       );
-      await expect(provider.initializeClient(59999)).resolves.not.toThrow();
+      await expect(provider.connect(59999)).resolves.not.toThrow();
     });
   });
 
@@ -230,8 +230,8 @@ describe("AgentStatusManager", () => {
       );
       listener.mockClear();
 
-      // Mark TUI as attached
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Mark agent as active
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       // Should notify with "idle" status when TUI attaches (no sessions = ready to use)
       expect(listener).toHaveBeenCalledWith(
@@ -255,7 +255,7 @@ describe("AgentStatusManager", () => {
     });
   });
 
-  describe("setTuiAttached", () => {
+  describe("markActive", () => {
     it("transitions status from none to idle when called", async () => {
       manager.addProvider(
         "/test/workspace" as WorkspacePath,
@@ -265,8 +265,8 @@ describe("AgentStatusManager", () => {
       // Before TUI attach: status is "none"
       expect(manager.getStatus("/test/workspace" as WorkspacePath).status).toBe("none");
 
-      // Mark TUI as attached
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Mark agent as active
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       // After TUI attach: status is "idle"
       expect(manager.getStatus("/test/workspace" as WorkspacePath).status).toBe("idle");
@@ -282,10 +282,10 @@ describe("AgentStatusManager", () => {
       );
       listener.mockClear();
 
-      // Call setTuiAttached multiple times
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Call markActive multiple times
+      manager.markActive("/test/workspace" as WorkspacePath);
+      manager.markActive("/test/workspace" as WorkspacePath);
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       // Should only notify once (first call transitions from none to idle)
       expect(listener).toHaveBeenCalledTimes(1);
@@ -293,18 +293,18 @@ describe("AgentStatusManager", () => {
 
     it("does nothing for unknown workspace", () => {
       // Should not throw when called on unknown workspace
-      expect(() => manager.setTuiAttached("/unknown/workspace" as WorkspacePath)).not.toThrow();
+      expect(() => manager.markActive("/unknown/workspace" as WorkspacePath)).not.toThrow();
     });
 
     it("restores TUI attached state after workspace is re-initialized", async () => {
       // This tests the server restart scenario:
-      // 1. TUI attaches (setTuiAttached called when first MCP request received)
+      // 1. TUI attaches (markActive called when first MCP request received)
       // 2. Server restarts (removeWorkspace + initWorkspace)
       // 3. New provider should have tuiAttached = true restored
       const path = "/test/workspace" as WorkspacePath;
 
       manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
-      manager.setTuiAttached(path);
+      manager.markActive(path);
 
       // Verify TUI attached (should be "idle" status)
       expect(manager.getStatus(path).status).toBe("idle");
@@ -329,7 +329,7 @@ describe("AgentStatusManager", () => {
       const path = "/test/workspace" as WorkspacePath;
 
       manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
-      manager.setTuiAttached(path);
+      manager.markActive(path);
 
       // Verify TUI attached
       expect(manager.getStatus(path).status).toBe("idle");
@@ -367,11 +367,11 @@ describe("AgentStatusManager", () => {
       const provider = new OpenCodeProvider(path, SILENT_LOGGER, asSdkFactory(mockSdkFactory));
 
       // Initialize the client - this should find the existing session and register it as a root session
-      await provider.initializeClient(8080);
+      await provider.connect(8080);
 
-      // Add the provider to the manager and set TUI attached
+      // Add the provider to the manager and mark it as active
       manager.addProvider(path, provider);
-      manager.setTuiAttached(path);
+      manager.markActive(path);
 
       // Initially should be idle since the session starts as idle
       let status = manager.getStatus(path);
@@ -409,7 +409,7 @@ describe("AgentStatusManager", () => {
     it("clears TUI tracking state", async () => {
       const path = "/test/workspace" as WorkspacePath;
       manager.addProvider(path, await createAndInitializeProvider(14001, mockSdkFactory));
-      manager.setTuiAttached(path);
+      manager.markActive(path);
 
       // Verify TUI was attached
       expect(manager.getStatus(path).status).toBe("idle");
@@ -475,8 +475,8 @@ describe("AgentStatusManager", () => {
         { id: "ses-1", directory: "/test", status: { type: "idle" } },
       ]);
 
-      // Mark TUI as attached (simulates first MCP request received)
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Mark agent as active (simulates first MCP request received)
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       const status = manager.getStatus("/test/workspace" as WorkspacePath);
       expect(status.counts.idle).toBe(1);
@@ -504,8 +504,8 @@ describe("AgentStatusManager", () => {
         { id: "ses-1", directory: "/test", status: { type: "busy" } },
       ]);
 
-      // Mark TUI as attached (simulates first MCP request received)
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Mark agent as active (simulates first MCP request received)
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       const status = manager.getStatus("/test/workspace" as WorkspacePath);
       expect(status.counts.idle).toBe(0);
@@ -535,8 +535,8 @@ describe("AgentStatusManager", () => {
       // Emit SSE events to register session and set status
       await emitSessionEvents(mockSdk, [{ id: "ses-1", directory: "/test", status: retryStatus }]);
 
-      // Mark TUI as attached (simulates first MCP request received)
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Mark agent as active (simulates first MCP request received)
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       const status = manager.getStatus("/test/workspace" as WorkspacePath);
       expect(status.counts.busy).toBe(1);
@@ -565,8 +565,8 @@ describe("AgentStatusManager", () => {
         { id: "ses-1", directory: "/test", status: { type: "idle" } },
       ]);
 
-      // Mark TUI as attached (simulates first MCP request received)
-      manager.setTuiAttached("/test/workspace" as WorkspacePath);
+      // Mark agent as active (simulates first MCP request received)
+      manager.markActive("/test/workspace" as WorkspacePath);
 
       // Verify status is tracked correctly
       const status = manager.getStatus("/test/workspace" as WorkspacePath);

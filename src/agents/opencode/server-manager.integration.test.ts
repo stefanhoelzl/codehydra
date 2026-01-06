@@ -41,7 +41,7 @@ async function createAndInitializeProvider(
   workspacePath = "/test/workspace"
 ): Promise<OpenCodeProvider> {
   const provider = new OpenCodeProvider(workspacePath, SILENT_LOGGER, asSdkFactory(sdkFactory));
-  await provider.initializeClient(port);
+  await provider.connect(port);
   await provider.fetchStatus();
   return provider;
 }

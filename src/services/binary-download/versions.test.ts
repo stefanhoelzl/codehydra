@@ -101,7 +101,7 @@ describe("opencode URL generation", () => {
 
   it("throws on win32-arm64", () => {
     expect(() => config.getUrl("win32", "arm64")).toThrow(
-      "Windows opencode builds only support x64"
+      "Windows OpenCode builds only support x64"
     );
   });
 });

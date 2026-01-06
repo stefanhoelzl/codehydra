@@ -87,7 +87,6 @@ describe("VscodeSetupService Integration", () => {
     await writeFile(join(binAssetsDir, "opencode"), "#!/bin/sh\nexec opencode.cjs");
     await writeFile(join(binAssetsDir, "opencode.cmd"), "@echo off\ncall opencode.cjs");
     await writeFile(join(binAssetsDir, "opencode.cjs"), "// opencode wrapper");
-    await writeFile(join(binAssetsDir, "opencode.codehydra.json"), "mock-opencode-config-content");
   }
 
   /**

@@ -3,16 +3,15 @@
  */
 
 import type { BinaryConfig, BinaryType, SupportedArch, SupportedPlatform } from "./types.js";
+import { OPENCODE_VERSION, getOpencodeUrl } from "../../agents/opencode/setup-info";
+
+// Re-export OPENCODE_VERSION for backward compatibility
+export { OPENCODE_VERSION };
 
 /**
  * Current version of code-server to download.
  */
 export const CODE_SERVER_VERSION = "4.107.0";
-
-/**
- * Current version of opencode to download.
- */
-export const OPENCODE_VERSION = "1.0.223";
 
 /**
  * GitHub repository for Windows code-server builds.
@@ -46,35 +45,6 @@ function getCodeServerUrl(platform: SupportedPlatform, arch: SupportedArch): str
   const os = platform === "darwin" ? "macos" : "linux";
   const archName = CODE_SERVER_ARCH[arch];
   return `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-${os}-${archName}.tar.gz`;
-}
-
-/**
- * Architecture name mappings for opencode releases (new naming convention).
- */
-const OPENCODE_ARCH_NEW = {
-  x64: "x64",
-  arm64: "arm64",
-} as const;
-
-/**
- * Get the download URL for opencode.
- *
- * @param platform - Operating system platform
- * @param arch - CPU architecture
- * @returns Download URL for the opencode release
- * @throws Error if platform/arch combination is not supported
- */
-function getOpencodeUrl(platform: SupportedPlatform, arch: SupportedArch): string {
-  if (platform === "win32") {
-    if (arch !== "x64") {
-      throw new Error(`Windows opencode builds only support x64, got: ${arch}`);
-    }
-    return `https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-windows-x64.zip`;
-  }
-  const archName = OPENCODE_ARCH_NEW[arch];
-  const os = platform === "darwin" ? "darwin" : "linux";
-  const ext = platform === "darwin" ? "zip" : "tar.gz";
-  return `https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${os}-${archName}.${ext}`;
 }
 
 /**

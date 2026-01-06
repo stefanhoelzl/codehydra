@@ -1223,9 +1223,49 @@ Renderer components use `createLogger` from `$lib/logging`:
 
 **Svelte 5 Guidance**: Call logger methods in event handlers and lifecycle hooks (`onMount`, `onDestroy`), NOT inside `$effect()` or `$derived()` runes.
 
-## OpenCode Integration
+## Agent Integration
 
-The OpenCode integration provides real-time agent status monitoring for AI agents running in each workspace.
+The agent integration layer provides real-time agent status monitoring for AI agents running in each workspace. Currently supports OpenCode with extensible architecture for future agent types.
+
+### Agent Abstraction Layer
+
+The agent abstraction layer (`src/agents/`) defines interfaces for pluggable agent implementations:
+
+| Interface            | Purpose                                              | Location              |
+| -------------------- | ---------------------------------------------------- | --------------------- |
+| `AgentSetupInfo`     | Static setup information (version, URLs, config gen) | `src/agents/types.ts` |
+| `AgentServerManager` | Server lifecycle (start/stop/restart per workspace)  | `src/agents/types.ts` |
+| `AgentProvider`      | Per-workspace connection and status tracking         | `src/agents/types.ts` |
+
+Factory functions in `src/agents/index.ts` create implementations:
+
+```typescript
+import { getAgentSetupInfo, createAgentServerManager, createAgentProvider } from "../agents";
+
+// Create setup info for OpenCode
+const setupInfo = getAgentSetupInfo("opencode", setupDeps);
+
+// Create server manager
+const serverManager = createAgentServerManager("opencode", serverDeps);
+
+// Create provider for a workspace
+const provider = createAgentProvider("opencode", providerDeps);
+```
+
+OpenCode-specific implementation resides in `src/agents/opencode/`:
+
+```
+src/agents/
+  types.ts              # Shared interfaces
+  index.ts              # Factory functions and exports
+  status-manager.ts     # Re-exports AgentStatusManager
+  opencode/
+    setup-info.ts       # OpenCodeSetupInfo (version, URLs)
+    server-manager.ts   # OpenCodeServerManager
+    provider.ts         # OpenCodeProvider
+    client.ts           # OpenCodeClient (SSE/HTTP)
+    types.ts            # OpenCode-specific types
+```
 
 ### Architecture Overview
 
@@ -1259,7 +1299,7 @@ The OpenCode integration provides real-time agent status monitoring for AI agent
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Services (src/services/opencode/)
+### OpenCode Services (src/agents/opencode/)
 
 | Service                 | Responsibility                                                 |
 | ----------------------- | -------------------------------------------------------------- |
