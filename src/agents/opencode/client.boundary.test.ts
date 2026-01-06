@@ -15,14 +15,14 @@
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { existsSync } from "node:fs";
-import { OpenCodeClient } from "./opencode-client";
+import { OpenCodeClient } from "./client";
 import { withOpencode } from "./boundary-test-utils";
-import { CI_TIMEOUT_MS } from "../platform/network.test-utils";
+import { CI_TIMEOUT_MS } from "../../services/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
-import { SILENT_LOGGER } from "../logging";
-import { DefaultPathProvider } from "../platform/path-provider";
+import { SILENT_LOGGER } from "../../services/logging";
+import { DefaultPathProvider } from "../../services/platform/path-provider";
 import { NodePlatformInfo } from "../../main/platform-info";
-import { createMockBuildInfo } from "../platform/build-info.test-utils";
+import { createMockBuildInfo } from "../../services/platform/build-info.test-utils";
 import type { ClientStatus } from "./types";
 
 describe("OpenCodeClient boundary tests", () => {

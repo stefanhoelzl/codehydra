@@ -12,7 +12,7 @@ import {
   isPermissionRepliedEvent,
   isValidSessionStatus,
   isSessionStatusResponse,
-} from "./opencode-client";
+} from "./client";
 import type { SessionStatus as OurSessionStatus } from "./types";
 import {
   createSdkClientMock,
@@ -22,7 +22,7 @@ import {
   type MockSdkClient,
 } from "./sdk-client.state-mock";
 import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
-import { SILENT_LOGGER } from "../logging";
+import { SILENT_LOGGER } from "../../services/logging";
 
 describe("OpenCodeClient", () => {
   let client: OpenCodeClient;
@@ -52,7 +52,7 @@ describe("OpenCodeClient", () => {
     return new OpenCodeClient(
       port,
       SILENT_LOGGER,
-      (customFactory ?? mockFactory) as unknown as import("./opencode-client").SdkClientFactory
+      (customFactory ?? mockFactory) as unknown as import("./client").SdkClientFactory
     );
   }
 
@@ -1613,7 +1613,7 @@ describe("Permission Event Emission", () => {
     return new OpenCodeClient(
       8080,
       SILENT_LOGGER,
-      factory as unknown as import("./opencode-client").SdkClientFactory
+      factory as unknown as import("./client").SdkClientFactory
     );
   }
 

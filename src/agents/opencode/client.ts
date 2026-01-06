@@ -10,8 +10,8 @@ import {
   type Event as SdkEvent,
   type SessionStatus as SdkSessionStatus,
 } from "@opencode-ai/sdk";
-import { OpenCodeError, getErrorMessage } from "../errors";
-import type { Logger } from "../logging";
+import { OpenCodeError, getErrorMessage } from "../../services/errors";
+import type { Logger } from "../../services/logging";
 import {
   ok,
   err,
@@ -234,14 +234,14 @@ export class OpenCodeClient implements IDisposable {
   /**
    * Get current status from the API.
    * Fetches session status and aggregates to a single ClientStatus.
-   * Empty or all idle → "idle", any busy/retry → "busy"
+   * Empty or all idle -> "idle", any busy/retry -> "busy"
    */
   async getStatus(): Promise<Result<ClientStatus, OpenCodeError>> {
     try {
       const result = await this.sdk.session.status();
       const statuses = result.data as Record<string, SdkSessionStatus>;
 
-      // Aggregate: empty OR all idle → "idle", any busy/retry → "busy"
+      // Aggregate: empty OR all idle -> "idle", any busy/retry -> "busy"
       const hasBusy = Object.values(statuses).some((s) => s.type === "busy" || s.type === "retry");
       const status: ClientStatus = hasBusy ? "busy" : "idle";
 

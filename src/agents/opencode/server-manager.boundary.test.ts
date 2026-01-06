@@ -7,22 +7,22 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { OpenCodeServerManager } from "./opencode-server-manager";
-import { ExecaProcessRunner } from "../platform/process";
-import { DefaultNetworkLayer } from "../platform/network";
-import { DefaultPathProvider } from "../platform/path-provider";
+import { OpenCodeServerManager } from "./server-manager";
+import { ExecaProcessRunner } from "../../services/platform/process";
+import { DefaultNetworkLayer } from "../../services/platform/network";
+import { DefaultPathProvider } from "../../services/platform/path-provider";
 import { NodePlatformInfo } from "../../main/platform-info";
-import { createMockBuildInfo } from "../platform/build-info.test-utils";
-import { SILENT_LOGGER } from "../logging";
+import { createMockBuildInfo } from "../../services/platform/build-info.test-utils";
+import { SILENT_LOGGER } from "../../services/logging";
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { CI_TIMEOUT_MS } from "../platform/network.test-utils";
+import { CI_TIMEOUT_MS } from "../../services/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 
-import type { PathProvider } from "../platform/path-provider";
-import type { Path } from "../platform/path";
+import type { PathProvider } from "../../services/platform/path-provider";
+import type { Path } from "../../services/platform/path";
 
 /**
  * Check if opencode binary exists and is executable.

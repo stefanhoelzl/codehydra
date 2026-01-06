@@ -25,14 +25,8 @@ import {
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspacePath } from "../shared/ipc";
 import type { Project, ProjectId } from "../shared/api/types";
-import {
-  OpenCodeProvider,
-  type AgentStatusManager,
-} from "../services/opencode/agent-status-manager";
-import type {
-  OpenCodeServerManager,
-  PendingPrompt,
-} from "../services/opencode/opencode-server-manager";
+import { OpenCodeProvider, type AgentStatusManager } from "../agents/opencode/status-manager";
+import type { OpenCodeServerManager, PendingPrompt } from "../agents/opencode/server-manager";
 import type { McpServerManager } from "../services/mcp-server";
 import { getErrorMessage } from "../shared/error-utils";
 import { toIpcWorkspaces } from "./api/workspace-conversion";

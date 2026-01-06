@@ -3,7 +3,7 @@
  * Extracted for reuse by OpenCodeProvider and CLI wrapper.
  */
 
-import { Path } from "../platform/path";
+import { Path } from "../../services/platform/path";
 import type { Session } from "./types";
 
 /**

@@ -7,17 +7,17 @@
  * and redirects to `opencode attach`.
  */
 
-import type { ProcessRunner, SpawnedProcess } from "../platform/process";
+import type { ProcessRunner, SpawnedProcess } from "../../services/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
   PROCESS_KILL_FORCE_TIMEOUT_MS,
-} from "../platform/process";
-import type { PortManager, HttpClient } from "../platform/network";
-import type { PathProvider } from "../platform/path-provider";
-import type { Logger } from "../logging";
+} from "../../services/platform/process";
+import type { PortManager, HttpClient } from "../../services/platform/network";
+import type { PathProvider } from "../../services/platform/path-provider";
+import type { Logger } from "../../services/logging";
 import type { IDisposable, Unsubscribe } from "./types";
-import { waitForHealthy } from "../platform/health-check";
-import { Path } from "../platform/path";
+import { waitForHealthy } from "../../services/platform/health-check";
+import { Path } from "../../services/platform/path";
 import type { PromptModel } from "../../shared/api/types";
 
 /**

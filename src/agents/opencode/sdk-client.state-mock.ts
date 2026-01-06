@@ -11,7 +11,7 @@
  * Event emission is SYNCHRONOUS for test predictability. When `$.emitEvent()` is called,
  * it immediately resolves any pending iterator reads. This differs from the real SDK's
  * async SSE streams, but allows tests to control timing precisely. Real async behavior
- * is validated in boundary tests (`opencode-client.boundary.test.ts`).
+ * is validated in boundary tests (`client.boundary.test.ts`).
  *
  * Matchers are auto-registered when this module is imported.
  */
@@ -29,7 +29,7 @@ import type {
   MatcherResult,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
-import type { SdkClientFactory as OpenCodeSdkClientFactory } from "./opencode-client";
+import type { SdkClientFactory as OpenCodeSdkClientFactory } from "./client";
 
 // Re-export SDK types for convenience
 export type { Session, SdkEvent, SdkSessionStatus };

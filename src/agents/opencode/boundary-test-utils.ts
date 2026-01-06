@@ -8,18 +8,18 @@
 import { writeFileSync } from "fs";
 import { join } from "path";
 import { createOpencodeClient, type OpencodeClient as SdkClient } from "@opencode-ai/sdk";
-import type { SpawnedProcess, ProcessRunner } from "../platform/process";
-import { ExecaProcessRunner } from "../platform/process";
-import { DefaultNetworkLayer } from "../platform/network";
-import { SILENT_LOGGER } from "../logging";
-import { waitForPort, CI_TIMEOUT_MS } from "../platform/network.test-utils";
-import { createTestGitRepo } from "../test-utils";
+import type { SpawnedProcess, ProcessRunner } from "../../services/platform/process";
+import { ExecaProcessRunner } from "../../services/platform/process";
+import { DefaultNetworkLayer } from "../../services/platform/network";
+import { SILENT_LOGGER } from "../../services/logging";
+import { waitForPort, CI_TIMEOUT_MS } from "../../services/platform/network.test-utils";
+import { createTestGitRepo } from "../../services/test-utils";
 import {
   createMockLlmServer,
   type MockLlmServer,
   type MockLlmMode,
 } from "../../test/fixtures/mock-llm-server";
-import { OpenCodeClient } from "./opencode-client";
+import { OpenCodeClient } from "./client";
 
 /**
  * Creates a default ProcessRunner for boundary tests.

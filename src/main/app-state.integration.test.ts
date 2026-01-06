@@ -23,8 +23,8 @@ import {
   type MockLoggingService,
   Path,
 } from "../services";
-import type { AgentStatusManager } from "../services/opencode/agent-status-manager";
-import type { OpenCodeServerManager } from "../services/opencode/opencode-server-manager";
+import type { AgentStatusManager } from "../agents/opencode/status-manager";
+import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import type { WorkspacePath } from "../shared/ipc";
 
 // =============================================================================
