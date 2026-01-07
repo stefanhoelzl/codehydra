@@ -73,6 +73,7 @@ export interface OpenCodeSetupInfoDeps {
 export class OpenCodeSetupInfo implements AgentSetupInfo {
   readonly version = OPENCODE_VERSION;
   readonly wrapperEntryPoint = "agents/opencode-wrapper.cjs";
+  readonly extensionId = "sst-dev.opencode";
 
   private readonly fileSystem: FileSystemLayer;
   private readonly platform: SupportedPlatform;

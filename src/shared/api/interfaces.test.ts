@@ -23,7 +23,7 @@ import type {
   BaseInfo,
   SetupResult,
   AppState,
-  OpenCodeSession,
+  AgentSession,
 } from "./types";
 import type { UIMode, UIModeChangedEvent } from "../ipc";
 
@@ -118,15 +118,15 @@ describe("IWorkspaceApi Interface", () => {
         void workspaceName;
         return { base: "main" };
       },
-      async getOpenCodeSession(
+      async getAgentSession(
         projectId: ProjectId,
         workspaceName: WorkspaceName
-      ): Promise<OpenCodeSession | null> {
+      ): Promise<AgentSession | null> {
         void projectId;
         void workspaceName;
         return null;
       },
-      async restartOpencodeServer(
+      async restartAgentServer(
         projectId: ProjectId,
         workspaceName: WorkspaceName
       ): Promise<number> {
@@ -156,8 +156,8 @@ describe("IWorkspaceApi Interface", () => {
     expect(typeof api.getStatus).toBe("function");
     expect(typeof api.setMetadata).toBe("function");
     expect(typeof api.getMetadata).toBe("function");
-    expect(typeof api.getOpenCodeSession).toBe("function");
-    expect(typeof api.restartOpencodeServer).toBe("function");
+    expect(typeof api.getAgentSession).toBe("function");
+    expect(typeof api.restartAgentServer).toBe("function");
     expect(typeof api.executeCommand).toBe("function");
   });
 });

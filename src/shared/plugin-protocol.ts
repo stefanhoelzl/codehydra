@@ -5,7 +5,7 @@
  * CodeHydra (server) and VS Code extensions (clients).
  */
 
-import type { WorkspaceStatus, Workspace, InitialPrompt, OpenCodeSession } from "./api/types";
+import type { WorkspaceStatus, Workspace, InitialPrompt, AgentSession } from "./api/types";
 import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
 
 // ============================================================================
@@ -40,11 +40,15 @@ export interface CommandRequest {
 
 /**
  * Configuration sent from server to client on connection.
- * Used to enable development-only features in the extension.
+ * Contains all data needed for extension startup.
  */
 export interface PluginConfig {
   /** True when running in development mode */
   readonly isDevelopment: boolean;
+  /** Agent environment variables for terminal integration (null if agent not ready) */
+  readonly env: Record<string, string> | null;
+  /** VS Code commands to execute on startup */
+  readonly startupCommands: readonly string[];
 }
 
 // ============================================================================
@@ -342,20 +346,20 @@ export interface ClientToServerEvents {
   "api:workspace:getStatus": (ack: (result: PluginResult<WorkspaceStatus>) => void) => void;
 
   /**
-   * Get the OpenCode session info for the connected workspace.
+   * Get the agent session info for the connected workspace.
    *
    * @param ack - Acknowledgment callback with session info (null if not running)
    */
-  "api:workspace:getOpenCodeSession": (
-    ack: (result: PluginResult<OpenCodeSession | null>) => void
+  "api:workspace:getAgentSession": (
+    ack: (result: PluginResult<AgentSession | null>) => void
   ) => void;
 
   /**
-   * Restart the OpenCode server for the connected workspace, preserving the same port.
+   * Restart the agent server for the connected workspace, preserving the same port.
    *
    * @param ack - Acknowledgment callback with port number after restart
    */
-  "api:workspace:restartOpencodeServer": (ack: (result: PluginResult<number>) => void) => void;
+  "api:workspace:restartAgentServer": (ack: (result: PluginResult<number>) => void) => void;
 
   /**
    * Get all metadata for the connected workspace.

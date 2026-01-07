@@ -134,10 +134,10 @@ export interface Workspace {
 }
 
 /**
- * OpenCode session information.
+ * Agent session information.
  */
-export interface OpenCodeSession {
-  /** Port number the OpenCode server is running on */
+export interface AgentSession {
+  /** Port number the agent server is running on */
   readonly port: number;
   /** Session ID for the primary session */
   readonly sessionId: string;
@@ -195,25 +195,25 @@ export interface WorkspaceApi {
   getStatus(): Promise<WorkspaceStatus>;
 
   /**
-   * Get the OpenCode session info for this workspace.
-   * Returns the session info if the OpenCode server is running, or null if not running.
+   * Get the agent session info for this workspace.
+   * Returns the session info if the agent server is running, or null if not running.
    *
    * @returns Session info (port and sessionId) or null if server not running
    * @throws Error if not connected or request fails
    *
    * @example
    * ```typescript
-   * const session = await api.workspace.getOpenCodeSession();
+   * const session = await api.workspace.getAgentSession();
    * if (session !== null) {
-   *   console.log(`OpenCode server running on port ${session.port}`);
+   *   console.log(`Agent server running on port ${session.port}`);
    *   console.log(`Primary session: ${session.sessionId}`);
    * }
    * ```
    */
-  getOpenCodeSession(): Promise<OpenCodeSession | null>;
+  getAgentSession(): Promise<AgentSession | null>;
 
   /**
-   * Restart the OpenCode server for this workspace, preserving the same port.
+   * Restart the agent server for this workspace, preserving the same port.
    * Useful for reloading configuration changes without affecting other workspaces.
    *
    * @returns Port number of the restarted server
@@ -222,14 +222,14 @@ export interface WorkspaceApi {
    * @example
    * ```typescript
    * try {
-   *   const port = await api.workspace.restartOpencodeServer();
-   *   console.log(`OpenCode server restarted on port ${port}`);
+   *   const port = await api.workspace.restartAgentServer();
+   *   console.log(`Agent server restarted on port ${port}`);
    * } catch (error) {
    *   console.error('Failed to restart server:', error);
    * }
    * ```
    */
-  restartOpencodeServer(): Promise<number>;
+  restartAgentServer(): Promise<number>;
 
   /**
    * Get all metadata for this workspace.

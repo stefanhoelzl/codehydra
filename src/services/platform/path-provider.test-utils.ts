@@ -30,6 +30,9 @@ export interface MockPathProviderOptions {
   bundledNodePath?: Path | string;
   opencodeConfig?: Path | string;
   binAssetsDir?: Path | string;
+  claudeCodeConfigDir?: Path | string;
+  claudeCodeHookHandlerPath?: Path | string;
+  claudeCodeWrapperPath?: Path | string;
   getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
 }
 
@@ -100,6 +103,15 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
       "/test/app-data/opencode/opencode.codehydra.json"
     ),
     binAssetsDir: ensurePath(overrides?.binAssetsDir, "/mock/assets/bin"),
+    claudeCodeConfigDir: ensurePath(overrides?.claudeCodeConfigDir, "/test/app-data/claude-code"),
+    claudeCodeHookHandlerPath: ensurePath(
+      overrides?.claudeCodeHookHandlerPath,
+      "/mock/assets/bin/claude-code-hook-handler.cjs"
+    ),
+    claudeCodeWrapperPath: ensurePath(
+      overrides?.claudeCodeWrapperPath,
+      "/test/app-data/bin/claude"
+    ),
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

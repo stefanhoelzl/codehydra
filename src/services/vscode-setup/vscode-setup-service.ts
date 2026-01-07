@@ -35,6 +35,7 @@ export class VscodeSetupService implements IVscodeSetup {
   private readonly assetsDir: Path;
   private readonly binaryDownloadService: BinaryDownloadService | null;
   private readonly logger: Logger | undefined;
+  private readonly agentExtensionId: string | undefined;
 
   constructor(
     processRunner: ProcessRunner,
@@ -42,7 +43,8 @@ export class VscodeSetupService implements IVscodeSetup {
     fs: FileSystemLayer,
     _platformInfo?: PlatformInfo, // Kept for backward compatibility, no longer used
     binaryDownloadService?: BinaryDownloadService,
-    logger?: Logger
+    logger?: Logger,
+    agentExtensionId?: string
   ) {
     this.processRunner = processRunner;
     this.pathProvider = pathProvider;
@@ -50,6 +52,7 @@ export class VscodeSetupService implements IVscodeSetup {
     this.assetsDir = pathProvider.vscodeAssetsDir;
     this.binaryDownloadService = binaryDownloadService ?? null;
     this.logger = logger;
+    this.agentExtensionId = agentExtensionId;
   }
 
   /**
@@ -109,13 +112,21 @@ export class VscodeSetupService implements IVscodeSetup {
         this.pathProvider.vscodeExtensionsDir
       );
 
-      // Check all extensions (exact version required)
+      // Check all bundled extensions (exact version required)
       for (const ext of manifest) {
         const installedVersion = installedExtensions.get(ext.id);
         if (!installedVersion) {
           missingExtensions.push(ext.id);
         } else if (installedVersion !== ext.version) {
           outdatedExtensions.push(ext.id);
+        }
+      }
+
+      // Check agent extension (marketplace - no version pinning, just check if installed)
+      if (this.agentExtensionId) {
+        const isAgentExtensionInstalled = installedExtensions.has(this.agentExtensionId);
+        if (!isAgentExtensionInstalled) {
+          missingExtensions.push(this.agentExtensionId);
         }
       }
 
@@ -435,7 +446,7 @@ export class VscodeSetupService implements IVscodeSetup {
   }
 
   /**
-   * Install all extensions from bundled vsix files.
+   * Install extensions: bundled from vsix files and agent extension from marketplace.
    * @param onProgress Optional callback for progress updates
    * @param extensionsToInstall Optional list of extension IDs to install (for selective setup)
    * @returns Result indicating success or failure
@@ -468,7 +479,7 @@ export class VscodeSetupService implements IVscodeSetup {
     const shouldInstall = (extId: string) =>
       extensionsToInstall === undefined || extensionsToInstall.includes(extId);
 
-    // Install all extensions from bundled vsix files
+    // Install bundled extensions from vsix files
     for (const ext of manifest) {
       if (!shouldInstall(ext.id)) {
         continue;
@@ -498,6 +509,20 @@ export class VscodeSetupService implements IVscodeSetup {
 
       // Install the extension using code-server
       const result = await this.runInstallExtension(destPath.toNative());
+      if (!result.success) {
+        return result;
+      }
+    }
+
+    // Install agent extension from marketplace (if configured and needed)
+    if (this.agentExtensionId && shouldInstall(this.agentExtensionId)) {
+      this.logger?.info("Installing agent extension from marketplace", {
+        extensionId: this.agentExtensionId,
+      });
+      onProgress?.({ step: "extensions", message: `Installing ${this.agentExtensionId}...` });
+
+      // Install directly from marketplace using extension ID
+      const result = await this.runInstallExtension(this.agentExtensionId);
       if (!result.success) {
         return result;
       }

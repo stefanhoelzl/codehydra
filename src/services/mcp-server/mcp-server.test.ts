@@ -28,8 +28,8 @@ function createMockCoreApi(overrides?: {
     forceRemove: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-    getOpenCodeSession: vi.fn().mockResolvedValue(14001),
-    restartOpencodeServer: vi.fn().mockResolvedValue(14001),
+    getAgentSession: vi.fn().mockResolvedValue(14001),
+    restartAgentServer: vi.fn().mockResolvedValue(14001),
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
     executeCommand: vi.fn().mockResolvedValue(undefined),
@@ -153,8 +153,8 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_get_status");
       expect(toolNames).toContain("workspace_get_metadata");
       expect(toolNames).toContain("workspace_set_metadata");
-      expect(toolNames).toContain("workspace_get_opencode_session");
-      expect(toolNames).toContain("workspace_restart_opencode_server");
+      expect(toolNames).toContain("workspace_get_agent_session");
+      expect(toolNames).toContain("workspace_restart_agent_server");
       expect(toolNames).toContain("workspace_delete");
       expect(toolNames).toContain("workspace_execute_command");
       expect(toolNames).toContain("workspace_create");
@@ -162,7 +162,7 @@ describe("McpServer", () => {
       expect(tools.length).toBe(9);
     });
 
-    it("workspace_restart_opencode_server tool calls API and returns port", async () => {
+    it("workspace_restart_agent_server tool calls API and returns port", async () => {
       // Set up mock app state with a workspace
       const workspacePath = "/project/workspaces/test-workspace";
       const projectPath = "/project";
@@ -176,7 +176,7 @@ describe("McpServer", () => {
 
       // Find the registered tool handler
       const tools = mockMcpSdk.getRegisteredTools();
-      const restartTool = tools.find((t) => t.name === "workspace_restart_opencode_server");
+      const restartTool = tools.find((t) => t.name === "workspace_restart_agent_server");
       expect(restartTool).toBeDefined();
 
       // Invoke the handler with workspace path in extra.authInfo.extra (matches real MCP flow)
@@ -186,7 +186,7 @@ describe("McpServer", () => {
       );
 
       // Verify API was called
-      expect(mockApi.workspaces.restartOpencodeServer).toHaveBeenCalled();
+      expect(mockApi.workspaces.restartAgentServer).toHaveBeenCalled();
 
       // Verify result contains the port number
       expect(result).toEqual({

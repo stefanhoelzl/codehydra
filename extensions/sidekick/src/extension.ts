@@ -10,7 +10,7 @@ import type {
   LogContext,
   WorkspaceCreateRequest,
   InitialPrompt,
-  OpenCodeSession,
+  AgentSession,
 } from "./types";
 import {
   reconstructVscodeObjects,
@@ -157,12 +157,12 @@ const codehydraApi = {
       return emitApiCall("api:workspace:getStatus");
     },
 
-    getOpenCodeSession() {
-      return emitApiCall<OpenCodeSession | null>("api:workspace:getOpenCodeSession");
+    getAgentSession() {
+      return emitApiCall<AgentSession | null>("api:workspace:getAgentSession");
     },
 
-    restartOpencodeServer() {
-      return emitApiCall<number>("api:workspace:restartOpencodeServer");
+    restartAgentServer() {
+      return emitApiCall<number>("api:workspace:restartAgentServer");
     },
 
     getMetadata() {
@@ -289,12 +289,10 @@ function registerDebugCommands(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Debug: Get OpenCode Session
+  // Debug: Get Agent Session
   context.subscriptions.push(
-    vscode.commands.registerCommand("codehydra.debug.getOpenCodeSession", async () => {
-      await runDebugCommand("getOpenCodeSession", () =>
-        codehydraApi.workspace.getOpenCodeSession()
-      );
+    vscode.commands.registerCommand("codehydra.debug.getAgentSession", async () => {
+      await runDebugCommand("getAgentSession", () => codehydraApi.workspace.getAgentSession());
     })
   );
 
@@ -395,48 +393,56 @@ function connectToPluginServer(port: number, workspacePath: string): void {
       return;
     }
 
-    isDevelopment = config.isDevelopment;
-    codehydraApi.log.debug("Config received", { isDevelopment });
-
-    void vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
-
-    if (isDevelopment && extensionContext) {
-      registerDebugCommands(extensionContext);
-    }
-  });
-
-  socket.on("connect", () => {
+    // Mark as connected and resolve pending ready promises
     isConnected = true;
-    codehydraApi.log.info("Connected to PluginServer");
-
     const pending = pendingReady;
     pendingReady = [];
     for (const { resolve } of pending) {
       resolve();
     }
 
-    codehydraApi.workspace
-      .getOpenCodeSession()
-      .then((session) => {
-        if (session !== null && extensionContext) {
-          extensionContext.environmentVariableCollection.replace(
-            "CODEHYDRA_OPENCODE_PORT",
-            String(session.port)
-          );
-          extensionContext.environmentVariableCollection.replace(
-            "CODEHYDRA_OPENCODE_SESSION_ID",
-            session.sessionId
-          );
-          codehydraApi.log.debug("Set OpenCode env vars", {
-            port: session.port,
-            sessionId: session.sessionId,
-          });
-        }
-      })
-      .catch((err: unknown) => {
-        const error = err instanceof Error ? err.message : String(err);
-        codehydraApi.log.warn("Failed to get opencode session", { error });
+    isDevelopment = config.isDevelopment;
+    codehydraApi.log.debug("Config received", {
+      isDevelopment,
+      hasEnv: config.env !== null,
+      startupCommandsCount: config.startupCommands?.length ?? 0,
+    });
+
+    void vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
+
+    // Apply agent environment variables
+    if (config.env !== null && extensionContext) {
+      for (const [key, value] of Object.entries(config.env)) {
+        extensionContext.environmentVariableCollection.replace(key, value);
+      }
+      codehydraApi.log.debug("Set agent env vars", {
+        count: Object.keys(config.env).length,
       });
+    }
+
+    // Execute startup commands
+    if (config.startupCommands && config.startupCommands.length > 0) {
+      for (const command of config.startupCommands) {
+        vscode.commands.executeCommand(command).then(
+          () => {
+            codehydraApi.log.debug("Startup command executed", { command });
+          },
+          (err: unknown) => {
+            const error = err instanceof Error ? err.message : String(err);
+            codehydraApi.log.warn("Startup command failed", { command, error });
+          }
+        );
+      }
+    }
+
+    // Register debug commands in development mode
+    if (isDevelopment && extensionContext) {
+      registerDebugCommands(extensionContext);
+    }
+  });
+
+  socket.on("connect", () => {
+    codehydraApi.log.info("Connected to PluginServer");
   });
 
   socket.on("disconnect", (reason) => {
@@ -498,13 +504,13 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
   extensionContext = context;
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codehydra.restartOpencodeServer", async () => {
+    vscode.commands.registerCommand("codehydra.restartAgentServer", async () => {
       try {
-        const port = await codehydraApi.workspace.restartOpencodeServer();
-        await vscode.window.showInformationMessage(`OpenCode server restarted on port ${port}`);
+        const port = await codehydraApi.workspace.restartAgentServer();
+        await vscode.window.showInformationMessage(`Agent server restarted on port ${port}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        await vscode.window.showErrorMessage(`Failed to restart OpenCode server: ${message}`);
+        await vscode.window.showErrorMessage(`Failed to restart agent server: ${message}`);
       }
     })
   );

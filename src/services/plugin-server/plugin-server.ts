@@ -37,7 +37,7 @@ import {
   validateLogRequest,
 } from "../../shared/plugin-protocol";
 import { LogLevel } from "../logging/types";
-import type { WorkspaceStatus, Workspace, OpenCodeSession } from "../../shared/api/types";
+import type { WorkspaceStatus, Workspace, AgentSession } from "../../shared/api/types";
 import { getErrorMessage } from "../errors";
 import { Path } from "../platform/path";
 
@@ -72,18 +72,18 @@ export interface ApiCallHandlers {
   getStatus(workspacePath: string): Promise<PluginResult<WorkspaceStatus>>;
 
   /**
-   * Handle getOpenCodeSession request.
+   * Handle getAgentSession request.
    * @param workspacePath - Normalized workspace path
    * @returns Session info (null if not running) or error
    */
-  getOpenCodeSession(workspacePath: string): Promise<PluginResult<OpenCodeSession | null>>;
+  getAgentSession(workspacePath: string): Promise<PluginResult<AgentSession | null>>;
 
   /**
-   * Handle restartOpencodeServer request.
+   * Handle restartAgentServer request.
    * @param workspacePath - Normalized workspace path
    * @returns Port number after restart or error
    */
-  restartOpencodeServer(workspacePath: string): Promise<PluginResult<number>>;
+  restartAgentServer(workspacePath: string): Promise<PluginResult<number>>;
 
   /**
    * Handle getMetadata request.
@@ -129,6 +129,57 @@ export interface ApiCallHandlers {
    * @returns Created workspace or error
    */
   create(workspacePath: string, request: WorkspaceCreateRequest): Promise<PluginResult<Workspace>>;
+}
+
+/**
+ * Provider for config data sent to extensions on connection.
+ * Called when a workspace connects to get its startup configuration.
+ */
+export interface ConfigDataProvider {
+  /**
+   * Get config data for a workspace.
+   * @param workspacePath - Normalized workspace path
+   * @returns Config data including env vars and agent command for startup
+   */
+  (workspacePath: string): {
+    env: Record<string, string> | null;
+    agentCommand: string | undefined;
+  };
+}
+
+// ============================================================================
+// Startup Commands
+// ============================================================================
+
+/**
+ * Default agent command used when none is specified.
+ * Falls back to OpenCode terminal command for backward compatibility.
+ */
+const DEFAULT_AGENT_COMMAND = "opencode.openTerminal";
+
+/**
+ * VS Code commands sent to each workspace on extension connection.
+ *
+ * These commands configure the workspace layout:
+ * - Close sidebars to maximize editor space
+ * - Open agent terminal for AI workflow (OpenCode or Claude Code)
+ * - Unlock editor groups for flexible tab management
+ * - Open dictation panel in background (no-op if not configured)
+ * - Focus terminal to ensure agent input is ready for typing
+ *
+ * @param agentCommand - The VS Code command to open the agent terminal
+ * @returns Array of VS Code commands to execute
+ */
+function getStartupCommands(agentCommand: string = DEFAULT_AGENT_COMMAND): readonly string[] {
+  return [
+    "workbench.action.closeSidebar", // Hide left sidebar to maximize editor
+    "workbench.action.closeAuxiliaryBar", // Hide right sidebar (auxiliary bar)
+    agentCommand, // Open agent terminal (dynamic: OpenCode or Claude Code)
+    "workbench.action.unlockEditorGroup", // Unlock editor group for tab reuse
+    "workbench.action.closeEditorsInOtherGroups", // Clean up empty editor groups
+    "codehydra.dictation.openPanel", // Open dictation tab in background (no-op if no API key)
+    "workbench.action.terminal.focus", // Ensure terminal input is focused
+  ];
 }
 
 // ============================================================================
@@ -186,10 +237,9 @@ export class PluginServer {
   private readonly connections = new Map<string, TypedSocket>();
 
   /**
-   * Callbacks to invoke when a client connects.
-   * Each callback receives the normalized workspace path.
+   * Provider for config data sent to extensions on connection.
    */
-  private readonly connectCallbacks = new Set<(workspacePath: string) => void>();
+  private configDataProvider: ConfigDataProvider | null = null;
 
   /**
    * API call handlers registered via onApiCall().
@@ -322,29 +372,26 @@ export class PluginServer {
   }
 
   /**
-   * Register a callback to be invoked when a client connects.
+   * Register a provider for config data sent to extensions on connection.
    *
-   * The callback is invoked AFTER connection validation succeeds.
-   * Rejected connections do not trigger the callback.
+   * The provider is called for each workspace connection to get:
+   * - env: Agent environment variables for terminal integration
+   * - agentCommand: VS Code command to open the agent terminal
    *
-   * @param callback - Function to call with normalized workspace path
-   * @returns Unsubscribe function to remove the callback
+   * Only one provider can be registered at a time.
+   *
+   * @param provider - Function that returns config data for a workspace
    *
    * @example
    * ```typescript
-   * const unsubscribe = server.onConnect((workspacePath) => {
-   *   console.log(`Workspace connected: ${workspacePath}`);
-   * });
-   *
-   * // Later, to stop receiving notifications:
-   * unsubscribe();
+   * server.onConfigData((workspacePath) => ({
+   *   env: { OPENCODE_PORT: "8080" },
+   *   agentCommand: "opencode.openTerminal"
+   * }));
    * ```
    */
-  onConnect(callback: (workspacePath: string) => void): () => void {
-    this.connectCallbacks.add(callback);
-    return () => {
-      this.connectCallbacks.delete(callback);
-    };
+  onConfigData(provider: ConfigDataProvider): void {
+    this.configDataProvider = provider;
   }
 
   /**
@@ -540,26 +587,35 @@ export class PluginServer {
         socketId: socket.id,
       });
 
-      // Send config event with development mode flag
-      const config: PluginConfig = { isDevelopment: this.isDevelopment };
-      socket.emit("config", config);
-      this.logger.debug("Config sent", {
-        workspace: workspacePath,
-        isDevelopment: this.isDevelopment,
-      });
-
-      // Invoke connect callbacks
-      for (const callback of this.connectCallbacks) {
+      // Get config data from provider
+      let env: Record<string, string> | null = null;
+      let startupCommands: readonly string[] = getStartupCommands();
+      if (this.configDataProvider) {
         try {
-          callback(workspacePath);
+          const configData = this.configDataProvider(workspacePath);
+          env = configData.env;
+          startupCommands = getStartupCommands(configData.agentCommand);
         } catch (error) {
-          // Log error but don't crash server or prevent other callbacks
-          this.logger.error("Connect callback error", {
+          this.logger.error("Config data provider error", {
             workspace: workspacePath,
             error: getErrorMessage(error),
           });
         }
       }
+
+      // Send config event with all startup data
+      const config: PluginConfig = {
+        isDevelopment: this.isDevelopment,
+        env,
+        startupCommands,
+      };
+      socket.emit("config", config);
+      this.logger.debug("Config sent", {
+        workspace: workspacePath,
+        isDevelopment: this.isDevelopment,
+        hasEnv: env !== null,
+        startupCommandCount: startupCommands.length,
+      });
 
       // Handle disconnection
       socket.on("disconnect", (reason) => {
@@ -587,27 +643,27 @@ export class PluginServer {
    * @param workspacePath - Normalized workspace path for this connection
    */
   private setupApiHandlers(socket: TypedSocket, workspacePath: string): void {
-    // No-arg handlers (getStatus, getOpencodePort, getMetadata)
+    // No-arg handlers (getStatus, getAgentSession, getMetadata)
     socket.on(
       "api:workspace:getStatus",
       this.createNoArgHandler("api:workspace:getStatus", workspacePath, (h) => h.getStatus)
     );
 
     socket.on(
-      "api:workspace:getOpenCodeSession",
+      "api:workspace:getAgentSession",
       this.createNoArgHandler(
-        "api:workspace:getOpenCodeSession",
+        "api:workspace:getAgentSession",
         workspacePath,
-        (h) => h.getOpenCodeSession
+        (h) => h.getAgentSession
       )
     );
 
     socket.on(
-      "api:workspace:restartOpencodeServer",
+      "api:workspace:restartAgentServer",
       this.createNoArgHandler(
-        "api:workspace:restartOpencodeServer",
+        "api:workspace:restartAgentServer",
         workspacePath,
-        (h) => h.restartOpencodeServer
+        (h) => h.restartAgentServer
       )
     );
 

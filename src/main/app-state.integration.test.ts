@@ -197,7 +197,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -243,7 +244,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -263,7 +265,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -282,7 +285,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       // Don't set agentStatusManager
 
@@ -306,7 +310,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -340,7 +345,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -365,7 +371,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -390,7 +397,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -429,7 +437,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -469,7 +478,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -500,7 +510,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -525,7 +536,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       // First: open project A with workspaces

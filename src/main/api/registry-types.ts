@@ -14,7 +14,7 @@ import type {
   SetupResult,
   AppState,
   InitialPrompt,
-  OpenCodeSession,
+  AgentSession,
 } from "../../shared/api/types";
 import type { UIMode } from "../../shared/ipc";
 import type { ApiEvents, Unsubscribe, ICodeHydraApi } from "../../shared/api/interfaces";
@@ -127,10 +127,8 @@ export interface MethodRegistry {
   "workspaces.forceRemove": (payload: WorkspaceRefPayload) => Promise<void>;
   "workspaces.get": (payload: WorkspaceRefPayload) => Promise<Workspace | undefined>;
   "workspaces.getStatus": (payload: WorkspaceRefPayload) => Promise<WorkspaceStatus>;
-  "workspaces.getOpenCodeSession": (
-    payload: WorkspaceRefPayload
-  ) => Promise<OpenCodeSession | null>;
-  "workspaces.restartOpencodeServer": (payload: WorkspaceRefPayload) => Promise<number>;
+  "workspaces.getAgentSession": (payload: WorkspaceRefPayload) => Promise<AgentSession | null>;
+  "workspaces.restartAgentServer": (payload: WorkspaceRefPayload) => Promise<number>;
   "workspaces.setMetadata": (payload: WorkspaceSetMetadataPayload) => Promise<void>;
   "workspaces.getMetadata": (
     payload: WorkspaceRefPayload
@@ -177,8 +175,8 @@ export type WorkspacePath =
   | "workspaces.forceRemove"
   | "workspaces.get"
   | "workspaces.getStatus"
-  | "workspaces.getOpenCodeSession"
-  | "workspaces.restartOpencodeServer"
+  | "workspaces.getAgentSession"
+  | "workspaces.restartAgentServer"
   | "workspaces.setMetadata"
   | "workspaces.getMetadata"
   | "workspaces.executeCommand";
@@ -223,8 +221,8 @@ export const ALL_METHOD_PATHS = [
   "workspaces.forceRemove",
   "workspaces.get",
   "workspaces.getStatus",
-  "workspaces.getOpenCodeSession",
-  "workspaces.restartOpencodeServer",
+  "workspaces.getAgentSession",
+  "workspaces.restartAgentServer",
   "workspaces.setMetadata",
   "workspaces.getMetadata",
   "workspaces.executeCommand",

@@ -386,16 +386,23 @@ export const initialPromptSchema = z.union([
 ]);
 
 // =============================================================================
-// OpenCode Session Types
+// Agent Session Types
 // =============================================================================
 
 /**
- * OpenCode session information for a workspace.
- * Used to track the primary session created/found when the OpenCode server starts.
+ * Agent session information for a workspace.
+ * Used to track the primary session created/found when the agent server starts.
  */
-export interface OpenCodeSession {
-  /** Port of the OpenCode server */
+export interface AgentSession {
+  /** Port of the agent server */
   readonly port: number;
   /** Session ID of the primary session */
   readonly sessionId: string;
 }
+
+/**
+ * Agent environment variables for a workspace.
+ * These are set by the sidekick extension for all new terminals.
+ * The exact variables depend on the agent type (OpenCode, Claude Code, etc.).
+ */
+export type AgentEnvironmentVariables = Record<string, string>;

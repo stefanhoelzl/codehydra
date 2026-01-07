@@ -34,9 +34,9 @@ import {
   DefaultArchiveExtractor,
   type BinaryDownloadService,
 } from "../services/binary-download";
-import { AgentStatusManager } from "../agents";
-import { OpenCodeServerManager } from "../agents/opencode";
-import { PluginServer, sendStartupCommands } from "../services/plugin-server";
+import { AgentStatusManager, getAgentSetupInfo, type AgentType } from "../agents";
+import { ClaudeCodeServerManager } from "../agents/claude-code/server-manager";
+import { PluginServer } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { wirePluginApi } from "./api/wire-plugin-api";
 import { WindowManager } from "./managers/window-manager";
@@ -107,6 +107,9 @@ if (buildInfo.isDevelopment) {
 
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+// Agent type configuration - determines which agent extension to install and use
+const AGENT_TYPE: AgentType = "claude-code";
 
 // Create logging service - must be before any code that needs to log
 const loggingService: LoggingService = new ElectronLogService(buildInfo, pathProvider);
@@ -185,7 +188,7 @@ let appState: AppState | null = null;
 let codeServerManager: CodeServerManager | null = null;
 let agentStatusManager: AgentStatusManager | null = null;
 let badgeManager: BadgeManager | null = null;
-let serverManager: OpenCodeServerManager | null = null;
+let serverManager: ClaudeCodeServerManager | null = null;
 let mcpServerManager: McpServerManager | null = null;
 let codeHydraApi: ICodeHydraApi | null = null;
 let apiEventCleanup: Unsubscribe | null = null;
@@ -304,9 +307,22 @@ async function startServices(): Promise<void> {
     const pluginPort = await pluginServer.start();
     loggingService.createLogger("app").info("PluginServer started", { port: pluginPort });
 
-    // Wire up startup commands - sent when workspace extension connects
-    pluginServer.onConnect((workspacePath) => {
-      void sendStartupCommands(pluginServer!, workspacePath, pluginLogger);
+    // Wire up config data provider - called when workspace extension connects
+    // Provides environment variables and startup command for each workspace
+    pluginServer.onConfigData((workspacePath) => {
+      // Get agent environment variables for terminal integration
+      const env =
+        appState
+          ?.getAgentStatusManager()
+          ?.getEnvironmentVariables(workspacePath as import("../shared/ipc").WorkspacePath) ?? null;
+
+      // Get the agent startup command for this workspace (e.g., "opencode.openTerminal" or "claude-vscode.terminal.open")
+      // Note: appState may be null during early startup, in which case we fall back to default
+      const agentCommand = appState?.getAgentStartupCommand(
+        workspacePath as import("../shared/ipc").WorkspacePath
+      );
+
+      return { env, agentCommand };
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -360,21 +376,21 @@ async function startServices(): Promise<void> {
     pathProvider,
     port,
     fileSystemLayer,
-    loggingService
+    loggingService,
+    AGENT_TYPE
   );
 
-  // Initialize OpenCode services
-  // Create OpenCodeServerManager to manage one opencode server per workspace
-  serverManager = new OpenCodeServerManager(
-    processRunner,
-    networkLayer, // PortManager
-    networkLayer, // HttpClient
+  // Initialize Claude Code services
+  // Create ClaudeCodeServerManager - single HTTP bridge server for all workspaces
+  serverManager = new ClaudeCodeServerManager({
+    portManager: networkLayer,
     pathProvider,
-    loggingService.createLogger("opencode")
-  );
+    fileSystem: fileSystemLayer,
+    logger: loggingService.createLogger("claude-code"),
+  });
 
-  // Create AgentStatusManager (receives ports via callbacks from serverManager)
-  agentStatusManager = new AgentStatusManager(loggingService.createLogger("opencode"));
+  // Create AgentStatusManager (receives status via callbacks from serverManager)
+  agentStatusManager = new AgentStatusManager(loggingService.createLogger("claude-code"));
 
   // Create and connect BadgeManager
   // Uses shared imageLayer (created in bootstrap) so ImageHandles are resolvable by WindowLayer
@@ -496,10 +512,9 @@ async function startServices(): Promise<void> {
       agentStatusManagerRef.markActive(workspacePath as import("../shared/ipc").WorkspacePath);
     });
 
-    // Configure OpenCode servers to connect to MCP
+    // Configure Claude Code bridge server to connect to MCP
     if (serverManager) {
       serverManager.setMcpConfig({
-        configPath: pathProvider.opencodeConfig.toString(),
         port: mcpServerManager.getPort()!,
       });
     }
@@ -630,20 +645,31 @@ async function bootstrap(): Promise<void> {
     loggingService.createLogger("binary-download")
   );
 
+  // Get agent setup info to retrieve extension ID
+  const agentSetupInfo = getAgentSetupInfo(AGENT_TYPE, {
+    fileSystem: fileSystemLayer,
+    platform: platformInfo.platform as "darwin" | "linux" | "win32",
+    arch: platformInfo.arch,
+  });
+
   vscodeSetupService = new VscodeSetupService(
     processRunner,
     pathProvider,
     fileSystemLayer,
     platformInfo,
     binaryDownloadService,
-    loggingService.createLogger("vscode-setup")
+    loggingService.createLogger("vscode-setup"),
+    agentSetupInfo.extensionId
   );
 
-  // 3. Run preflight to determine if setup is needed
+  // 3. Regenerate wrapper scripts (cheap operation, ensures they always exist)
+  await vscodeSetupService.setupBinDirectory();
+
+  // 4. Run preflight to determine if setup is needed
   const preflightResult = await vscodeSetupService.preflight();
   const setupComplete = preflightResult.success && !preflightResult.needsSetup;
 
-  // 4. Create WindowManager with appropriate title and icon
+  // 5. Create WindowManager with appropriate title and icon
   // In dev mode, show branch name: "CodeHydra (branch-name)"
   const windowTitle =
     buildInfo.isDevelopment && buildInfo.gitBranch

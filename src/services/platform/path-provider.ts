@@ -68,6 +68,15 @@ export interface PathProvider {
   /** Directory for CLI wrapper script assets: `<appPath>/out/main/assets/bin/` */
   readonly binAssetsDir: Path;
 
+  /** Directory for Claude Code configs: `<dataRoot>/claude-code/` */
+  readonly claudeCodeConfigDir: Path;
+
+  /** Path to Claude Code hook handler script: `<binAssetsDir>/claude-code-hook-handler.cjs` */
+  readonly claudeCodeHookHandlerPath: Path;
+
+  /** Path to Claude Code wrapper script: `<binDir>/claude` (or `claude.cmd` on Windows) */
+  readonly claudeCodeWrapperPath: Path;
+
   /**
    * Get the workspaces directory for a project.
    * @param projectPath Absolute path to the project (string or Path)
@@ -106,6 +115,9 @@ export class DefaultPathProvider implements PathProvider {
   readonly bundledNodePath: Path;
   readonly opencodeConfig: Path;
   readonly binAssetsDir: Path;
+  readonly claudeCodeConfigDir: Path;
+  readonly claudeCodeHookHandlerPath: Path;
+  readonly claudeCodeWrapperPath: Path;
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
     const dataRootDirStr = this.computeDataRootDir(buildInfo, platformInfo);
@@ -149,6 +161,14 @@ export class DefaultPathProvider implements PathProvider {
 
     // Bin wrapper assets directory
     this.binAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets", "bin");
+
+    // Claude Code paths
+    this.claudeCodeConfigDir = new Path(this.dataRootDir, "claude-code");
+    this.claudeCodeHookHandlerPath = new Path(this.binAssetsDir, "claude-code-hook-handler.cjs");
+    this.claudeCodeWrapperPath = new Path(
+      this.binDir,
+      platform === "win32" ? "claude.cmd" : "claude"
+    );
   }
 
   /**

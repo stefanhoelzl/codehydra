@@ -24,6 +24,9 @@ import type { AgentType, AgentSetupInfo, AgentServerManager, AgentProvider } fro
 import { OpenCodeSetupInfo } from "./opencode/setup-info";
 import { OpenCodeServerManager } from "./opencode/server-manager";
 import { OpenCodeProvider } from "./opencode/provider";
+import { ClaudeCodeSetupInfo } from "./claude-code/setup-info";
+import { ClaudeCodeServerManager } from "./claude-code/server-manager";
+import { ClaudeCodeProvider } from "./claude-code/provider";
 
 // Re-export types for convenience
 export type {
@@ -57,6 +60,7 @@ export interface ServerManagerDeps {
   readonly portManager: PortManager;
   readonly httpClient: HttpClient;
   readonly pathProvider: PathProvider;
+  readonly fileSystem: FileSystemLayer;
   readonly logger: Logger;
 }
 
@@ -66,7 +70,10 @@ export interface ServerManagerDeps {
 export interface ProviderDeps {
   readonly workspacePath: string;
   readonly logger: Logger;
-  readonly sdkFactory?: SdkClientFactory;
+  /** SDK factory for OpenCode provider (optional, can be undefined) */
+  readonly sdkFactory?: SdkClientFactory | undefined;
+  /** Server manager for Claude Code provider (optional, can be undefined) */
+  readonly serverManager?: ClaudeCodeServerManager | undefined;
 }
 
 /**
@@ -84,6 +91,11 @@ export function getAgentSetupInfo(type: AgentType, deps: SetupInfoDeps): AgentSe
         fileSystem: deps.fileSystem,
         platform: deps.platform,
         arch: deps.arch,
+      });
+    case "claude-code":
+      return new ClaudeCodeSetupInfo({
+        fileSystem: deps.fileSystem,
+        platform: deps.platform,
       });
   }
 }
@@ -109,6 +121,13 @@ export function createAgentServerManager(
         deps.pathProvider,
         deps.logger
       );
+    case "claude-code":
+      return new ClaudeCodeServerManager({
+        portManager: deps.portManager,
+        pathProvider: deps.pathProvider,
+        fileSystem: deps.fileSystem,
+        logger: deps.logger,
+      });
   }
 }
 
@@ -124,5 +143,14 @@ export function createAgentProvider(type: AgentType, deps: ProviderDeps): AgentP
   switch (type) {
     case "opencode":
       return new OpenCodeProvider(deps.workspacePath, deps.logger, deps.sdkFactory);
+    case "claude-code":
+      if (!deps.serverManager) {
+        throw new Error("ClaudeCodeProvider requires serverManager in deps");
+      }
+      return new ClaudeCodeProvider({
+        serverManager: deps.serverManager,
+        workspacePath: deps.workspacePath,
+        logger: deps.logger,
+      });
   }
 }

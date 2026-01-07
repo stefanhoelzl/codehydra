@@ -348,9 +348,9 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(handlers.getMetadata).toHaveBeenCalledWith("/test/workspace");
     });
 
-    it("getOpenCodeSession Socket.IO event should return session from handler", async () => {
+    it("getAgentSession Socket.IO event should return session from handler", async () => {
       const handlers = createMockApiHandlers({
-        getOpenCodeSession: { port: 12345, sessionId: "session-abc123" },
+        getAgentSession: { port: 12345, sessionId: "session-abc123" },
       });
       server.onApiCall(handlers);
 
@@ -362,17 +362,17 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         data?: { port: number; sessionId: string } | null;
         error?: string;
       }>((resolve) => {
-        client.emit("api:workspace:getOpenCodeSession", (res) => resolve(res));
+        client.emit("api:workspace:getAgentSession", (res) => resolve(res));
       });
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual({ port: 12345, sessionId: "session-abc123" });
-      expect(handlers.getOpenCodeSession).toHaveBeenCalledWith("/test/workspace");
+      expect(handlers.getAgentSession).toHaveBeenCalledWith("/test/workspace");
     });
 
-    it("getOpenCodeSession Socket.IO event should return null when no server", async () => {
+    it("getAgentSession Socket.IO event should return null when no server", async () => {
       const handlers = createMockApiHandlers({
-        getOpenCodeSession: null,
+        getAgentSession: null,
       });
       server.onApiCall(handlers);
 
@@ -384,16 +384,16 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         data?: { port: number; sessionId: string } | null;
         error?: string;
       }>((resolve) => {
-        client.emit("api:workspace:getOpenCodeSession", (res) => resolve(res));
+        client.emit("api:workspace:getAgentSession", (res) => resolve(res));
       });
 
       expect(result.success).toBe(true);
       expect(result.data).toBeNull();
     });
 
-    it("getOpenCodeSession Socket.IO event should handle handler errors gracefully", async () => {
+    it("getAgentSession Socket.IO event should handle handler errors gracefully", async () => {
       const handlers = createMockApiHandlers({
-        getOpenCodeSession: { success: false, error: "Workspace not found" },
+        getAgentSession: { success: false, error: "Workspace not found" },
       });
       server.onApiCall(handlers);
 
@@ -405,7 +405,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         data?: { port: number; sessionId: string } | null;
         error?: string;
       }>((resolve) => {
-        client.emit("api:workspace:getOpenCodeSession", (res) => resolve(res));
+        client.emit("api:workspace:getAgentSession", (res) => resolve(res));
       });
 
       expect(result.success).toBe(false);
@@ -999,129 +999,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 200 });
 
       expect(shutdownCount).toBe(2);
-    });
-  });
-
-  describe("onConnect callbacks", () => {
-    it("invokes callback with normalized workspace path on valid connection", async () => {
-      let callbackWorkspacePath: string | null = null;
-      server.onConnect((workspacePath) => {
-        callbackWorkspacePath = workspacePath;
-      });
-
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      expect(callbackWorkspacePath).toBe("/test/workspace");
-    });
-
-    it("does not invoke callback for invalid auth (rejected connection)", async () => {
-      let callbackCalled = false;
-      server.onConnect(() => {
-        callbackCalled = true;
-      });
-
-      // Client with empty workspace path (should be rejected)
-      const client = createTestClient(port, { workspacePath: "" });
-      clients.push(client);
-
-      client.connect();
-
-      // Wait for potential callback
-      await delay(500);
-
-      expect(callbackCalled).toBe(false);
-    });
-
-    it("invokes multiple callbacks for single connection", async () => {
-      const calls: string[] = [];
-
-      server.onConnect((workspacePath) => {
-        calls.push(`callback1:${workspacePath}`);
-      });
-
-      server.onConnect((workspacePath) => {
-        calls.push(`callback2:${workspacePath}`);
-      });
-
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      // Give callbacks time to execute
-      await delay(100);
-
-      expect(calls).toHaveLength(2);
-      expect(calls).toContain("callback1:/test/workspace");
-      expect(calls).toContain("callback2:/test/workspace");
-    });
-
-    it("exception in one callback does not prevent other callbacks", async () => {
-      const calls: string[] = [];
-
-      server.onConnect(() => {
-        throw new Error("Intentional error in callback");
-      });
-
-      server.onConnect((workspacePath) => {
-        calls.push(`callback2:${workspacePath}`);
-      });
-
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      // Give callbacks time to execute
-      await delay(100);
-
-      // Second callback should still be called despite first throwing
-      expect(calls).toContain("callback2:/test/workspace");
-    });
-
-    it("unsubscribe removes callback", async () => {
-      const calls: string[] = [];
-
-      const unsubscribe = server.onConnect((workspacePath) => {
-        calls.push(workspacePath);
-      });
-
-      // Unsubscribe before connecting
-      unsubscribe();
-
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      // Give potential callback time to execute
-      await delay(100);
-
-      // Callback should not have been called
-      expect(calls).toHaveLength(0);
-    });
-
-    it("concurrent connections each trigger callbacks", async () => {
-      const connectedWorkspaces: string[] = [];
-
-      server.onConnect((workspacePath) => {
-        connectedWorkspaces.push(workspacePath);
-      });
-
-      const client1 = createClient("/workspace/one");
-      const client2 = createClient("/workspace/two");
-      const client3 = createClient("/workspace/three");
-
-      // Connect all clients concurrently
-      await Promise.all([
-        waitForConnect(client1),
-        waitForConnect(client2),
-        waitForConnect(client3),
-      ]);
-
-      // Give callbacks time to execute
-      await delay(100);
-
-      // All three workspaces should trigger callbacks
-      expect(connectedWorkspaces).toHaveLength(3);
-      expect(connectedWorkspaces).toContain("/workspace/one");
-      expect(connectedWorkspaces).toContain("/workspace/two");
-      expect(connectedWorkspaces).toContain("/workspace/three");
     });
   });
 });

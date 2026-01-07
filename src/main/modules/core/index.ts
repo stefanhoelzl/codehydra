@@ -4,7 +4,7 @@
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
  * - Workspace operations: create, remove, forceRemove, get, getStatus,
- *   getOpenCodeSession, setMetadata, getMetadata
+ *   getAgentSession, setMetadata, getMetadata
  *
  * Created in startServices() after setup is complete.
  */
@@ -33,7 +33,7 @@ import type {
   DeletionOperation,
   DeletionOperationId,
   BlockingProcess,
-  OpenCodeSession,
+  AgentSession,
 } from "../../../shared/api/types";
 import { normalizeInitialPrompt } from "../../../shared/api/types";
 import type { WorkspacePath } from "../../../shared/ipc";
@@ -175,18 +175,14 @@ export class CoreModule implements IApiModule {
     this.api.register("workspaces.getStatus", this.workspaceGetStatus.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET_STATUS,
     });
+    this.api.register("workspaces.getAgentSession", this.workspaceGetAgentSession.bind(this), {
+      ipc: ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION,
+    });
     this.api.register(
-      "workspaces.getOpenCodeSession",
-      this.workspaceGetOpenCodeSession.bind(this),
+      "workspaces.restartAgentServer",
+      this.workspaceRestartAgentServer.bind(this),
       {
-        ipc: ApiIpcChannels.WORKSPACE_GET_OPENCODE_SESSION,
-      }
-    );
-    this.api.register(
-      "workspaces.restartOpencodeServer",
-      this.workspaceRestartOpencodeServer.bind(this),
-      {
-        ipc: ApiIpcChannels.WORKSPACE_RESTART_OPENCODE_SERVER,
+        ipc: ApiIpcChannels.WORKSPACE_RESTART_AGENT_SERVER,
       }
     );
     this.api.register("workspaces.setMetadata", this.workspaceSetMetadata.bind(this), {
@@ -416,21 +412,21 @@ export class CoreModule implements IApiModule {
     };
   }
 
-  private async workspaceGetOpenCodeSession(
+  private async workspaceGetAgentSession(
     payload: WorkspaceRefPayload
-  ): Promise<OpenCodeSession | null> {
+  ): Promise<AgentSession | null> {
     const { workspace } = await this.resolveWorkspace(payload);
 
     const agentStatusManager = this.deps.appState.getAgentStatusManager();
     return agentStatusManager?.getSession(workspace.path as WorkspacePath) ?? null;
   }
 
-  private async workspaceRestartOpencodeServer(payload: WorkspaceRefPayload): Promise<number> {
+  private async workspaceRestartAgentServer(payload: WorkspaceRefPayload): Promise<number> {
     const { workspace } = await this.resolveWorkspace(payload);
 
     const serverManager = this.deps.appState.getServerManager();
     if (!serverManager) {
-      throw new Error("OpenCode server manager not available");
+      throw new Error("Agent server manager not available");
     }
 
     const result = await serverManager.restartServer(workspace.path);

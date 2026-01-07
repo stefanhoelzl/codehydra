@@ -17,7 +17,7 @@ import type {
   Workspace,
   WorkspaceName,
   ProjectId,
-  OpenCodeSession,
+  AgentSession,
 } from "../../shared/api/types";
 import type { ApiCallHandlers } from "./plugin-server";
 
@@ -198,10 +198,10 @@ export interface DeleteWorkspaceResponse {
 export interface MockApiHandlersOptions {
   /** Status to return from getStatus. Default: { isDirty: false, agent: { type: 'none' } } */
   readonly getStatus?: WorkspaceStatus | PluginResult<WorkspaceStatus>;
-  /** Session info to return from getOpenCodeSession. Default: null */
-  readonly getOpenCodeSession?: OpenCodeSession | null | PluginResult<OpenCodeSession | null>;
-  /** Port to return from restartOpencodeServer. Default: 14001 */
-  readonly restartOpencodeServer?: PluginResult<number>;
+  /** Session info to return from getAgentSession. Default: null */
+  readonly getAgentSession?: AgentSession | null | PluginResult<AgentSession | null>;
+  /** Port to return from restartAgentServer. Default: 14001 */
+  readonly restartAgentServer?: PluginResult<number>;
   /** Metadata to return from getMetadata. Default: { base: 'main' } */
   readonly getMetadata?: Record<string, string> | PluginResult<Record<string, string>>;
   /** Result to return from setMetadata. Default: { success: true, data: undefined } */
@@ -260,11 +260,11 @@ export function createMockApiHandlers(options?: MockApiHandlersOptions): ApiCall
     statusResult = { success: true, data: options?.getStatus ?? defaultStatus };
   }
 
-  let sessionResult: PluginResult<OpenCodeSession | null>;
-  if (isPluginResult(options?.getOpenCodeSession)) {
-    sessionResult = options.getOpenCodeSession;
+  let sessionResult: PluginResult<AgentSession | null>;
+  if (isPluginResult(options?.getAgentSession)) {
+    sessionResult = options.getAgentSession;
   } else {
-    sessionResult = { success: true, data: options?.getOpenCodeSession ?? null };
+    sessionResult = { success: true, data: options?.getAgentSession ?? null };
   }
 
   let metadataResult: PluginResult<Record<string, string>>;
@@ -291,7 +291,7 @@ export function createMockApiHandlers(options?: MockApiHandlersOptions): ApiCall
     executeCommandResult = { success: true, data: options?.executeCommand ?? undefined };
   }
 
-  const restartOpencodeServerResult: PluginResult<number> = options?.restartOpencodeServer ?? {
+  const restartAgentServerResult: PluginResult<number> = options?.restartAgentServer ?? {
     success: true,
     data: 14001,
   };
@@ -309,8 +309,8 @@ export function createMockApiHandlers(options?: MockApiHandlersOptions): ApiCall
 
   return {
     getStatus: vi.fn().mockResolvedValue(statusResult),
-    getOpenCodeSession: vi.fn().mockResolvedValue(sessionResult),
-    restartOpencodeServer: vi.fn().mockResolvedValue(restartOpencodeServerResult),
+    getAgentSession: vi.fn().mockResolvedValue(sessionResult),
+    restartAgentServer: vi.fn().mockResolvedValue(restartAgentServerResult),
     getMetadata: vi.fn().mockResolvedValue(metadataResult),
     setMetadata: vi.fn(() => Promise.resolve(setMetadataResult)),
     delete: vi.fn().mockResolvedValue(deleteResult),

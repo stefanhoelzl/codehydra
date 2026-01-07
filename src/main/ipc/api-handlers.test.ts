@@ -27,11 +27,11 @@ function createMockApi(): ICodeHydraApi {
       forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-      getOpenCodeSession: vi.fn().mockResolvedValue(null),
+      getAgentSession: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn(),
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
       executeCommand: vi.fn().mockResolvedValue(undefined),
-      restartOpencodeServer: vi.fn().mockResolvedValue(3000),
+      restartAgentServer: vi.fn().mockResolvedValue(3000),
     },
     ui: {
       selectFolder: vi.fn().mockResolvedValue(null),

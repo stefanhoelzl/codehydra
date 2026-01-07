@@ -10,13 +10,10 @@ import type { IDisposable, Unsubscribe } from "./types";
 import type { SdkClientFactory } from "./client";
 import type { Logger } from "../../services/logging";
 import { OpenCodeProvider } from "./provider";
-import type { AgentSessionInfo, AgentStatus } from "../types";
+import type { AgentSessionInfo, AgentStatus, AgentProvider } from "../types";
 
 // Re-export OpenCodeProvider for backward compatibility
 export { OpenCodeProvider } from "./provider";
-
-// Re-export AgentSessionInfo as OpenCodeSessionInfo for backward compatibility
-export type OpenCodeSessionInfo = AgentSessionInfo;
 
 /**
  * Callback for status changes.
@@ -31,7 +28,7 @@ export type StatusChangedCallback = (
  * Receives port assignments from OpenCodeServerManager via AppState callbacks.
  */
 export class AgentStatusManager implements IDisposable {
-  private readonly providers = new Map<WorkspacePath, OpenCodeProvider>();
+  private readonly providers = new Map<WorkspacePath, AgentProvider>();
   private readonly statuses = new Map<WorkspacePath, AggregatedAgentStatus>();
   private readonly listeners = new Set<StatusChangedCallback>();
   private readonly sdkFactory: SdkClientFactory | undefined;
@@ -69,9 +66,9 @@ export class AgentStatusManager implements IDisposable {
    * Called by AppState after creating and initializing the provider.
    *
    * @param path - Workspace path
-   * @param provider - Initialized OpenCodeProvider
+   * @param provider - Initialized AgentProvider (OpenCodeProvider or ClaudeCodeProvider)
    */
-  addProvider(path: WorkspacePath, provider: OpenCodeProvider): void {
+  addProvider(path: WorkspacePath, provider: AgentProvider): void {
     if (this.providers.has(path)) {
       return;
     }
@@ -95,6 +92,14 @@ export class AgentStatusManager implements IDisposable {
    */
   hasProvider(path: WorkspacePath): boolean {
     return this.providers.has(path);
+  }
+
+  /**
+   * Get the provider for a workspace.
+   * Used by AppState to retrieve startup commands.
+   */
+  getProvider(path: WorkspacePath): AgentProvider | undefined {
+    return this.providers.get(path);
   }
 
   /**
@@ -153,9 +158,18 @@ export class AgentStatusManager implements IDisposable {
    * Get the session info for a workspace.
    * Returns port and sessionId for the primary session.
    */
-  getSession(path: WorkspacePath): OpenCodeSessionInfo | null {
+  getSession(path: WorkspacePath): AgentSessionInfo | null {
     const provider = this.providers.get(path);
     return provider?.getSession() ?? null;
+  }
+
+  /**
+   * Get environment variables for a workspace.
+   * Returns environment variables needed for terminal integration.
+   */
+  getEnvironmentVariables(path: WorkspacePath): Record<string, string> | null {
+    const provider = this.providers.get(path);
+    return provider?.getEnvironmentVariables() ?? null;
   }
 
   /**
@@ -205,17 +219,25 @@ export class AgentStatusManager implements IDisposable {
   /**
    * Get current status from a provider by calling its internal calculation.
    * Used for initial status fetch and reconnection.
+   *
+   * For OpenCodeProvider: uses getEffectiveCounts() for precise status
+   * For ClaudeCodeProvider: returns "none" initially (status comes from ServerManager)
    */
-  private getProviderStatus(provider: OpenCodeProvider): AgentStatus {
-    // Provider's getEffectiveCounts is still available for this calculation
-    const counts = provider.getEffectiveCounts();
-    if (counts.idle === 0 && counts.busy === 0) {
-      return "none";
+  private getProviderStatus(provider: AgentProvider): AgentStatus {
+    // OpenCodeProvider has getEffectiveCounts() for detailed session tracking
+    if (provider instanceof OpenCodeProvider) {
+      const counts = provider.getEffectiveCounts();
+      if (counts.idle === 0 && counts.busy === 0) {
+        return "none";
+      }
+      if (counts.busy > 0) {
+        return "busy";
+      }
+      return "idle";
     }
-    if (counts.busy > 0) {
-      return "busy";
-    }
-    return "idle";
+    // ClaudeCodeProvider: status comes via onStatusChange callback from ServerManager
+    // Initial status is "none" until first activity is detected
+    return "none";
   }
 
   /**

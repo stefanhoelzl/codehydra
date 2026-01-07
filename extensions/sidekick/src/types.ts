@@ -12,11 +12,11 @@ import type {
   Workspace,
   LogContext,
   InitialPrompt,
-  OpenCodeSession,
+  AgentSession,
 } from "../api";
 
 // Re-export types from api.d.ts that are used internally
-export type { WorkspaceStatus, AgentStatus, Workspace, LogContext, InitialPrompt, OpenCodeSession };
+export type { WorkspaceStatus, AgentStatus, Workspace, LogContext, InitialPrompt, AgentSession };
 
 // API response types
 export type PluginResult<T = unknown> =
@@ -30,6 +30,8 @@ export interface CommandRequest {
 
 export interface PluginConfig {
   readonly isDevelopment: boolean;
+  readonly env: Record<string, string> | null;
+  readonly startupCommands: readonly string[];
 }
 
 export interface SetMetadataRequest {
@@ -66,10 +68,10 @@ export interface ClientToServerEvents {
     request: SetMetadataRequest,
     ack: (result: PluginResult<void>) => void
   ) => void;
-  "api:workspace:getOpenCodeSession": (
-    ack: (result: PluginResult<OpenCodeSession | null>) => void
+  "api:workspace:getAgentSession": (
+    ack: (result: PluginResult<AgentSession | null>) => void
   ) => void;
-  "api:workspace:restartOpencodeServer": (ack: (result: PluginResult<number>) => void) => void;
+  "api:workspace:restartAgentServer": (ack: (result: PluginResult<number>) => void) => void;
   "api:workspace:executeCommand": (
     request: CommandRequest,
     ack: (result: PluginResult<unknown>) => void

@@ -81,11 +81,11 @@ function createMockApiWithEvents(): {
       forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue(TEST_WORKSPACE),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-      getOpenCodeSession: vi.fn().mockResolvedValue(null),
+      getAgentSession: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn().mockResolvedValue(undefined),
       getMetadata: vi.fn().mockResolvedValue({ base: "main", note: "test note" }),
       executeCommand: vi.fn().mockResolvedValue(undefined),
-      restartOpencodeServer: vi.fn().mockResolvedValue(3000),
+      restartAgentServer: vi.fn().mockResolvedValue(3000),
     },
     ui: {
       selectFolder: vi.fn().mockResolvedValue(null),
