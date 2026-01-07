@@ -66,8 +66,8 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET, { projectId, workspaceName }),
     getStatus: (projectId: string, workspaceName: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, { projectId, workspaceName }),
-    getOpenCodeSession: (projectId: string, workspaceName: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_OPENCODE_SESSION, {
+    getAgentSession: (projectId: string, workspaceName: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION, {
         projectId,
         workspaceName,
       }),

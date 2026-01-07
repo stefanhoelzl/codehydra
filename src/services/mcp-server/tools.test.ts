@@ -133,7 +133,7 @@ function createToolHandlers(api: ICoreApi) {
         return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
       }
       try {
-        const port = await api.workspaces.getOpenCodeSession(
+        const port = await api.workspaces.getAgentSession(
           context.resolved.projectId,
           context.resolved.workspaceName
         );
@@ -452,9 +452,7 @@ describe("MCP Tools", () => {
   describe("workspace_get_opencode_session", () => {
     it("returns session info on success", async () => {
       const workspaceApi = createMockWorkspaceApi({
-        getOpenCodeSession: vi
-          .fn()
-          .mockResolvedValue({ port: 14001, sessionId: "test-session-id" }),
+        getAgentSession: vi.fn().mockResolvedValue({ port: 14001, sessionId: "test-session-id" }),
       });
 
       const api: ICoreApi = {
@@ -478,7 +476,7 @@ describe("MCP Tools", () => {
 
     it("returns null when server not running", async () => {
       const workspaceApi = createMockWorkspaceApi({
-        getOpenCodeSession: vi.fn().mockResolvedValue(null),
+        getAgentSession: vi.fn().mockResolvedValue(null),
       });
 
       const api: ICoreApi = {

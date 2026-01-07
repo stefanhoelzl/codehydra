@@ -62,7 +62,9 @@ function createBinAssetsEntries() {
 }
 
 /**
- * Create default mock manifest.json content (new flat array format).
+ * Create default mock manifest.json content (bundled extensions only).
+ * Note: Agent extensions (opencode, claude-code) are installed from marketplace,
+ * not bundled. They are handled via agentExtensionId parameter.
  */
 function createManifestConfig(): string {
   return JSON.stringify([
@@ -71,17 +73,12 @@ function createManifestConfig(): string {
       version: "0.0.3",
       vsix: "codehydra-sidekick-0.0.3.vsix",
     },
-    {
-      id: "sst-dev.opencode",
-      version: "0.0.13",
-      vsix: "sst-dev-opencode-0.0.13.vsix",
-    },
   ]);
 }
 
 /**
  * Create a preflight result for full setup (all components missing).
- * All extensions are now bundled - no marketplace distinction.
+ * Note: Agent extensions are included in missingExtensions when agentExtensionId is set.
  */
 function createFullSetupPreflightResult(): {
   success: true;
@@ -94,7 +91,7 @@ function createFullSetupPreflightResult(): {
     success: true,
     needsSetup: true,
     missingBinaries: ["code-server", "opencode"],
-    missingExtensions: ["codehydra.sidekick", "sst-dev.opencode"],
+    missingExtensions: ["codehydra.sidekick"],
     outdatedExtensions: [],
   };
 }
@@ -263,7 +260,6 @@ describe("VscodeSetupService", () => {
         entries: {
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
         },
       });
@@ -283,7 +279,6 @@ describe("VscodeSetupService", () => {
         entries: {
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
         },
       });
@@ -303,22 +298,14 @@ describe("VscodeSetupService", () => {
             new Path("/mock/vscode", "codehydra-sidekick-0.0.3.vsix").toNative(),
           ]),
         },
-        {
-          command: mockPathProvider.codeServerBinaryPath.toNative(),
-          args: expect.arrayContaining([
-            "--install-extension",
-            new Path("/mock/vscode", "sst-dev-opencode-0.0.13.vsix").toNative(),
-          ]),
-        },
       ]);
     });
 
-    it("installs all extensions from bundled vsix files", async () => {
+    it("installs all bundled extensions from vsix files", async () => {
       mockFs = createFileSystemMock({
         entries: {
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
         },
       });
@@ -330,7 +317,51 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions(progressCallback);
 
-      // Verify both extensions installed from vsix files
+      // Verify bundled extension installed from vsix file
+      expect(mockProcessRunner).toHaveSpawned([
+        {
+          args: expect.arrayContaining([
+            new Path("/mock/vscode", "codehydra-sidekick-0.0.3.vsix").toNative(),
+          ]),
+        },
+      ]);
+
+      // Verify progress messages
+      const progressMessages = progressCallback.mock.calls.map(
+        (call) => (call[0] as { message: string }).message
+      );
+      expect(progressMessages).toContain("Installing codehydra.sidekick...");
+    });
+
+    it("installs agent extension from marketplace when agentExtensionId is set", async () => {
+      mockFs = createFileSystemMock({
+        entries: {
+          "/mock/assets/manifest.json": file(createManifestConfig()),
+          "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
+          "/mock/vscode": directory(),
+        },
+      });
+      mockProcessRunner = createMockProcessRunner({
+        defaultResult: { stdout: "Extension installed", stderr: "", exitCode: 0 },
+      });
+      const progressCallback = vi.fn();
+
+      // Create service with agentExtensionId
+      const service = new VscodeSetupService(
+        mockProcessRunner,
+        mockPathProvider,
+        mockFs,
+        mockPlatformInfo,
+        undefined, // no binary download service
+        undefined, // no logger
+        "sst-dev.opencode" // agent extension ID
+      );
+
+      // Preflight includes agent extension in missingExtensions
+      await service.installExtensions(progressCallback, ["codehydra.sidekick", "sst-dev.opencode"]);
+
+      // Verify bundled extension installed from vsix
+      // And agent extension installed from marketplace by ID
       expect(mockProcessRunner).toHaveSpawned([
         {
           args: expect.arrayContaining([
@@ -338,13 +369,11 @@ describe("VscodeSetupService", () => {
           ]),
         },
         {
-          args: expect.arrayContaining([
-            new Path("/mock/vscode", "sst-dev-opencode-0.0.13.vsix").toNative(),
-          ]),
+          args: expect.arrayContaining(["--install-extension", "sst-dev.opencode"]),
         },
       ]);
 
-      // Verify progress messages
+      // Verify progress messages include agent extension
       const progressMessages = progressCallback.mock.calls.map(
         (call) => (call[0] as { message: string }).message
       );
@@ -357,7 +386,6 @@ describe("VscodeSetupService", () => {
         entries: {
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
         },
       });
@@ -383,7 +411,6 @@ describe("VscodeSetupService", () => {
         entries: {
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
         },
       });
@@ -453,7 +480,6 @@ describe("VscodeSetupService", () => {
           "/mock": directory(),
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
           ...createBinAssetsEntries(),
@@ -475,7 +501,6 @@ describe("VscodeSetupService", () => {
         (call) => (call[0] as { message: string }).message
       );
       expect(progressMessages).toContain("Installing codehydra.sidekick...");
-      expect(progressMessages).toContain("Installing sst-dev.opencode...");
       expect(progressMessages).toContain("Creating CLI wrapper scripts...");
       expect(progressMessages).toContain("Finalizing setup...");
     });
@@ -486,7 +511,6 @@ describe("VscodeSetupService", () => {
           "/mock": directory(),
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
         },
       });
@@ -655,7 +679,6 @@ describe("VscodeSetupService", () => {
           "/mock": directory(),
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
           ...createBinAssetsEntries(),
@@ -693,7 +716,6 @@ describe("VscodeSetupService", () => {
           "/mock": directory(),
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
           ...createBinAssetsEntries(),
@@ -721,7 +743,7 @@ describe("VscodeSetupService", () => {
         success: true,
         needsSetup: true, // Still needs setup for extensions
         missingBinaries: [], // No missing binaries
-        missingExtensions: ["codehydra.sidekick", "sst-dev.opencode"],
+        missingExtensions: ["codehydra.sidekick"],
         outdatedExtensions: [],
       };
       await service.setup(preflight);
@@ -771,7 +793,6 @@ describe("VscodeSetupService", () => {
           "/mock": directory(),
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
           ...createBinAssetsEntries(),
@@ -812,7 +833,6 @@ describe("VscodeSetupService", () => {
           "/mock": directory(),
           "/mock/assets/manifest.json": file(createManifestConfig()),
           "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/assets/sst-dev-opencode-0.0.13.vsix": file("vsix-content-2"),
           "/mock/vscode": directory(),
           "/mock/bin": directory(),
           ...createBinAssetsEntries(),
@@ -843,7 +863,7 @@ describe("VscodeSetupService", () => {
         entries: {
           "/mock/vscode/extensions": directory(),
           "/mock/vscode/extensions/codehydra.codehydra-0.0.1": directory(),
-          "/mock/vscode/extensions/sst-dev.opencode-1.0.0": directory(),
+          "/mock/vscode/extensions/codehydra.sidekick-0.0.3": directory(),
           "/mock/vscode/extensions/other.extension-2.0.0": directory(),
         },
       });
@@ -854,7 +874,7 @@ describe("VscodeSetupService", () => {
       // Should only remove the specified extension
       expect(wasRmCalledWith(spyFs, "codehydra.codehydra-0.0.1")).toBe(true);
       // Should not remove other extensions
-      expect(wasRmCalledWith(spyFs, "sst-dev.opencode")).toBe(false);
+      expect(wasRmCalledWith(spyFs, "codehydra.sidekick")).toBe(false);
       expect(wasRmCalledWith(spyFs, "other.extension")).toBe(false);
     });
 
@@ -862,7 +882,7 @@ describe("VscodeSetupService", () => {
       const spyFs = createSpyFileSystemLayer({
         entries: {
           "/mock/vscode/extensions": directory(),
-          "/mock/vscode/extensions/sst-dev.opencode-1.0.0": directory(),
+          "/mock/vscode/extensions/codehydra.sidekick-0.0.3": directory(),
         },
       });
 
@@ -877,16 +897,16 @@ describe("VscodeSetupService", () => {
         entries: {
           "/mock/vscode/extensions": directory(),
           "/mock/vscode/extensions/codehydra.codehydra-0.0.1": directory(),
-          "/mock/vscode/extensions/sst-dev.opencode-1.0.0": directory(),
+          "/mock/vscode/extensions/codehydra.sidekick-0.0.3": directory(),
         },
       });
 
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, spyFs);
-      await service.cleanComponents(["codehydra.codehydra", "sst-dev.opencode"]);
+      await service.cleanComponents(["codehydra.codehydra", "codehydra.sidekick"]);
 
       // Should remove both extensions
       expect(wasRmCalledWith(spyFs, "codehydra.codehydra-0.0.1")).toBe(true);
-      expect(wasRmCalledWith(spyFs, "sst-dev.opencode-1.0.0")).toBe(true);
+      expect(wasRmCalledWith(spyFs, "codehydra.sidekick-0.0.3")).toBe(true);
     });
   });
 });

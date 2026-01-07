@@ -334,32 +334,31 @@ export class McpServer implements IMcpServer {
       )
     );
 
-    // workspace_get_opencode_session
+    // workspace_get_agent_session
     this.registeredTools.push(
       this.mcpServer.registerTool(
-        "workspace_get_opencode_session",
+        "workspace_get_agent_session",
         {
-          description:
-            "Get the OpenCode session info (port and session ID) for the current workspace",
+          description: "Get the agent session info (port and session ID) for the current workspace",
           inputSchema: z.object({}),
         },
         this.createWorkspaceHandler(async (resolved) =>
-          this.api.workspaces.getOpenCodeSession(resolved.projectId, resolved.workspaceName)
+          this.api.workspaces.getAgentSession(resolved.projectId, resolved.workspaceName)
         )
       )
     );
 
-    // workspace_restart_opencode_server
+    // workspace_restart_agent_server
     this.registeredTools.push(
       this.mcpServer.registerTool(
-        "workspace_restart_opencode_server",
+        "workspace_restart_agent_server",
         {
           description:
-            "Restart the OpenCode server for the current workspace, preserving the same port",
+            "Restart the agent server for the current workspace, preserving the same port",
           inputSchema: z.object({}),
         },
         this.createWorkspaceHandler(async (resolved) =>
-          this.api.workspaces.restartOpencodeServer(resolved.projectId, resolved.workspaceName)
+          this.api.workspaces.restartAgentServer(resolved.projectId, resolved.workspaceName)
         )
       )
     );
@@ -575,7 +574,7 @@ export class McpServer implements IMcpServer {
   private async getCallerModel(resolved: McpResolvedWorkspace): Promise<PromptModel | undefined> {
     try {
       // Get caller's OpenCode session
-      const session = await this.api.workspaces.getOpenCodeSession(
+      const session = await this.api.workspaces.getAgentSession(
         resolved.projectId,
         resolved.workspaceName
       );

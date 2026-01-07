@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "codehydra": {
+      "type": "http",
+      "url": "http://127.0.0.1:${MCP_PORT}/mcp",
+      "headers": {
+        "X-Workspace-Path": "${WORKSPACE_PATH}"
+      }
+    }
+  }
+}

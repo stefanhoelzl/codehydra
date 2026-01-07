@@ -607,10 +607,10 @@ describe("core.workspaces.create", () => {
 });
 
 // =============================================================================
-// restartOpencodeServer Tests
+// restartAgentServer Tests
 // =============================================================================
 
-describe("core.workspaces.restartOpencodeServer", () => {
+describe("core.workspaces.restartAgentServer", () => {
   let registry: MockApiRegistry;
 
   beforeEach(() => {
@@ -641,7 +641,7 @@ describe("core.workspaces.restartOpencodeServer", () => {
     const deps = createMockDeps({ appState });
     new CoreModule(registry, deps);
 
-    const handler = registry.getHandler("workspaces.restartOpencodeServer");
+    const handler = registry.getHandler("workspaces.restartAgentServer");
     const port = await handler!({
       projectId: TEST_PROJECT_ID,
       workspaceName,
@@ -670,13 +670,13 @@ describe("core.workspaces.restartOpencodeServer", () => {
     const deps = createMockDeps({ appState });
     new CoreModule(registry, deps);
 
-    const handler = registry.getHandler("workspaces.restartOpencodeServer");
+    const handler = registry.getHandler("workspaces.restartAgentServer");
     await expect(
       handler!({
         projectId: TEST_PROJECT_ID,
         workspaceName,
       })
-    ).rejects.toThrow("OpenCode server manager not available");
+    ).rejects.toThrow("Agent server manager not available");
   });
 
   it("throws error when restart fails", async () => {
@@ -705,7 +705,7 @@ describe("core.workspaces.restartOpencodeServer", () => {
     const deps = createMockDeps({ appState });
     new CoreModule(registry, deps);
 
-    const handler = registry.getHandler("workspaces.restartOpencodeServer");
+    const handler = registry.getHandler("workspaces.restartAgentServer");
     await expect(
       handler!({
         projectId: TEST_PROJECT_ID,

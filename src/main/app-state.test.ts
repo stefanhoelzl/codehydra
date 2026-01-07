@@ -142,7 +142,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       expect(appState).toBeInstanceOf(AppState);
@@ -157,7 +158,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -180,7 +182,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -195,7 +198,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -215,7 +219,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -232,7 +237,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -247,7 +253,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       const project = await appState.openProject("/project");
@@ -275,7 +282,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       const project = await appState.openProject("/project");
@@ -300,7 +308,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -328,7 +337,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -349,7 +359,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -381,7 +392,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       const project = await appState.openProject("/project");
@@ -411,7 +423,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -429,7 +442,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -445,7 +459,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -461,7 +476,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.closeProject("/nonexistent");
@@ -479,7 +495,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -495,7 +512,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       expect(appState.getProject("/nonexistent")).toBeUndefined();
@@ -510,7 +528,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -529,7 +548,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -545,7 +565,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       expect(appState.getWorkspaceProvider("/nonexistent")).toBeUndefined();
@@ -560,7 +581,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       const url = appState.getWorkspaceUrl("/path/to/workspace");
@@ -581,7 +603,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.loadPersistedProjects();
@@ -609,7 +632,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       // Should not throw
@@ -627,7 +651,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -643,7 +668,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -665,7 +691,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       // Should not throw even without agentStatusManager
@@ -686,7 +713,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       // openProject should still succeed despite cleanup failure
@@ -705,7 +733,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -724,7 +753,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -742,7 +772,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -762,7 +793,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -781,7 +813,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -798,7 +831,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       // Don't open any project
@@ -813,7 +847,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -837,7 +872,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       const project = await appState.openProject("/project");
@@ -852,7 +888,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       // Set a branch before opening the project
@@ -874,7 +911,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -897,7 +935,8 @@ describe("AppState", () => {
         mockPathProvider,
         8080,
         mockFileSystemLayer,
-        mockLoggingService
+        mockLoggingService,
+        "claude-code"
       );
 
       await appState.openProject("/project");
@@ -917,6 +956,113 @@ describe("AppState", () => {
 
       // Provider should NOT be called when cached value exists
       expect(mockWorkspaceProvider.defaultBase).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getAgentStartupCommand", () => {
+    it("returns default command when agentStatusManager is not set", async () => {
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude-code"
+      );
+
+      // Without agentStatusManager set, should return default
+      const command = appState.getAgentStartupCommand(
+        "/project/.worktrees/feature-1" as import("../shared/ipc").WorkspacePath
+      );
+      expect(command).toBe("opencode.openTerminal");
+    });
+
+    it("returns default command when provider not found", async () => {
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude-code"
+      );
+
+      // Create a mock AgentStatusManager
+      const mockAgentStatusManager = {
+        getProvider: vi.fn().mockReturnValue(undefined),
+        addProvider: vi.fn(),
+        hasProvider: vi.fn(),
+        removeWorkspace: vi.fn(),
+        disconnectWorkspace: vi.fn(),
+        reconnectWorkspace: vi.fn(),
+        markActive: vi.fn(),
+        clearTuiTracking: vi.fn(),
+        onStatusChanged: vi.fn(),
+        dispose: vi.fn(),
+        getLogger: vi.fn(),
+        getSdkFactory: vi.fn(),
+      };
+      appState.setAgentStatusManager(
+        mockAgentStatusManager as unknown as import("../agents").AgentStatusManager
+      );
+
+      // Provider not found, should return default
+      const command = appState.getAgentStartupCommand(
+        "/project/.worktrees/feature-1" as import("../shared/ipc").WorkspacePath
+      );
+      expect(command).toBe("opencode.openTerminal");
+    });
+
+    it("returns provider startup command when provider found", async () => {
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude-code"
+      );
+
+      // Create a mock provider with startupCommands
+      const mockProvider = {
+        startupCommands: ["claude-vscode.terminal.open"] as readonly string[],
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        reconnect: vi.fn(),
+        onStatusChange: vi.fn(),
+        getSession: vi.fn(),
+        getEnvironmentVariables: vi.fn(),
+        markActive: vi.fn(),
+        dispose: vi.fn(),
+      };
+
+      // Create a mock AgentStatusManager that returns the provider
+      const mockAgentStatusManager = {
+        getProvider: vi.fn().mockReturnValue(mockProvider),
+        addProvider: vi.fn(),
+        hasProvider: vi.fn(),
+        removeWorkspace: vi.fn(),
+        disconnectWorkspace: vi.fn(),
+        reconnectWorkspace: vi.fn(),
+        markActive: vi.fn(),
+        clearTuiTracking: vi.fn(),
+        onStatusChanged: vi.fn(),
+        dispose: vi.fn(),
+        getLogger: vi.fn(),
+        getSdkFactory: vi.fn(),
+      };
+      appState.setAgentStatusManager(
+        mockAgentStatusManager as unknown as import("../agents").AgentStatusManager
+      );
+
+      // Provider found, should return provider's startup command
+      const command = appState.getAgentStartupCommand(
+        "/project/.worktrees/feature-1" as import("../shared/ipc").WorkspacePath
+      );
+      expect(command).toBe("claude-vscode.terminal.open");
     });
   });
 });

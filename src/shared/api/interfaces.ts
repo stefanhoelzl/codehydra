@@ -14,7 +14,7 @@ import type {
   SetupResult,
   AppState,
   InitialPrompt,
-  OpenCodeSession,
+  AgentSession,
 } from "./types";
 import type { UIMode, UIModeChangedEvent } from "../ipc";
 import type { IDisposable, Unsubscribe } from "../types";
@@ -84,16 +84,13 @@ export interface IWorkspaceApi {
   get(projectId: ProjectId, workspaceName: WorkspaceName): Promise<Workspace | undefined>;
   getStatus(projectId: ProjectId, workspaceName: WorkspaceName): Promise<WorkspaceStatus>;
   /**
-   * Get the OpenCode session info for a workspace.
+   * Get the agent session info for a workspace.
    * @param projectId Project containing the workspace
    * @param workspaceName Name of the workspace
    * @returns Session info (port and sessionId) if available, null if not running or not initialized
    * @throws Error if project or workspace not found
    */
-  getOpenCodeSession(
-    projectId: ProjectId,
-    workspaceName: WorkspaceName
-  ): Promise<OpenCodeSession | null>;
+  getAgentSession(projectId: ProjectId, workspaceName: WorkspaceName): Promise<AgentSession | null>;
   /**
    * Set a metadata value for a workspace.
    * @param projectId Project containing the workspace
@@ -141,7 +138,7 @@ export interface IWorkspaceApi {
     args?: readonly unknown[]
   ): Promise<unknown>;
   /**
-   * Restart the OpenCode server for a workspace, preserving the same port.
+   * Restart the agent server for a workspace, preserving the same port.
    * Useful for reloading configuration changes without affecting other workspaces.
    *
    * @param projectId Project containing the workspace
@@ -149,7 +146,7 @@ export interface IWorkspaceApi {
    * @returns The port number of the restarted server
    * @throws Error if project or workspace not found, or server not running
    */
-  restartOpencodeServer(projectId: ProjectId, workspaceName: WorkspaceName): Promise<number>;
+  restartAgentServer(projectId: ProjectId, workspaceName: WorkspaceName): Promise<number>;
 }
 
 export interface IUiApi {

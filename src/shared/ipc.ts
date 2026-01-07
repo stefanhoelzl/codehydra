@@ -89,8 +89,8 @@ export const ApiIpcChannels = {
   WORKSPACE_FORCE_REMOVE: "api:workspace:force-remove",
   WORKSPACE_GET: "api:workspace:get",
   WORKSPACE_GET_STATUS: "api:workspace:get-status",
-  WORKSPACE_GET_OPENCODE_SESSION: "api:workspace:get-opencode-session",
-  WORKSPACE_RESTART_OPENCODE_SERVER: "api:workspace:restart-opencode-server",
+  WORKSPACE_GET_AGENT_SESSION: "api:workspace:get-agent-session",
+  WORKSPACE_RESTART_AGENT_SERVER: "api:workspace:restart-agent-server",
   WORKSPACE_SET_METADATA: "api:workspace:set-metadata",
   WORKSPACE_GET_METADATA: "api:workspace:get-metadata",
   // UI commands

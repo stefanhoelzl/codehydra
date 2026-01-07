@@ -1,63 +1,54 @@
 /**
  * Vite config for building CLI wrapper scripts.
  *
- * Compiles src/agents/opencode/wrapper.ts to out/main/agents/opencode-wrapper.cjs
- * as a self-contained CJS bundle.
+ * Compiles agent wrapper scripts to out/main/agents/ as self-contained CJS bundles:
+ * - src/agents/opencode/wrapper.ts -> opencode-wrapper.cjs
+ * - src/agents/claude-code/wrapper.ts -> claude-code-wrapper.cjs
+ * - src/agents/claude-code/hook-handler.ts -> hook-handler.cjs
  *
- * Also copies wrapper scripts to ./app-data/bin/ (development) and ./dist/bin/ (production).
+ * Also copies compiled wrappers to ./dist/bin/ for production packaging.
+ * Runtime copying to app-data/bin/ is handled by VscodeSetupService.setupBinDirectory().
  */
 
 import { defineConfig } from "vite";
 import { resolve } from "path";
 import { viteStaticCopy } from "vite-plugin-static-copy";
-import { chmod, copyFile, mkdir } from "node:fs/promises";
 import { codehydraDefaults } from "./vite.defaults";
 
 export default defineConfig({
   plugins: [
     codehydraDefaults({ nodeBuiltins: true }),
-    // Copy shell scripts from resources/bin/ (these exist before build)
+    // Copy compiled wrappers to dist/bin after build completes
     viteStaticCopy({
       targets: [
         {
-          src: "resources/bin/*",
-          dest: "../app-data/bin",
+          src: "out/main/agents/opencode-wrapper.cjs",
+          dest: "../../../dist/bin",
+          rename: "opencode.cjs",
+        },
+        {
+          src: "out/main/agents/claude-code-wrapper.cjs",
+          dest: "../../../dist/bin",
+          rename: "claude.cjs",
+        },
+        {
+          src: "out/main/agents/hook-handler.cjs",
+          dest: "../../../dist/bin",
+          rename: "claude-code-hook-handler.cjs",
         },
       ],
+      hook: "closeBundle",
     }),
-    // Copy compiled wrapper and set permissions after build completes
-    {
-      name: "copy-wrapper-scripts",
-      closeBundle: async () => {
-        const wrapperSrc = resolve(__dirname, "out/main/agents/opencode-wrapper.cjs");
-        const appDataBin = resolve(__dirname, "app-data/bin");
-        const distBin = resolve(__dirname, "dist/bin");
-
-        // Ensure directories exist
-        await mkdir(appDataBin, { recursive: true });
-        await mkdir(distBin, { recursive: true });
-
-        // Copy wrapper to both locations
-        await copyFile(wrapperSrc, resolve(appDataBin, "opencode.cjs"));
-        await copyFile(wrapperSrc, resolve(distBin, "opencode.cjs"));
-
-        // Make shell scripts executable
-        const scripts = ["code", "opencode"];
-        for (const script of scripts) {
-          try {
-            await chmod(resolve(appDataBin, script), 0o755);
-          } catch {
-            // Ignore errors (file might not exist on Windows)
-          }
-        }
-      },
-    },
   ],
   build: {
     lib: {
-      entry: resolve(__dirname, "src/agents/opencode/wrapper.ts"),
+      entry: {
+        "opencode-wrapper": resolve(__dirname, "src/agents/opencode/wrapper.ts"),
+        "claude-code-wrapper": resolve(__dirname, "src/agents/claude-code/wrapper.ts"),
+        "hook-handler": resolve(__dirname, "src/agents/claude-code/hook-handler.ts"),
+      },
       formats: ["cjs"],
-      fileName: () => "opencode-wrapper.cjs",
+      fileName: (_, entryName) => `${entryName}.cjs`,
     },
     outDir: "out/main/agents",
     // Clear out/main/agents on each build

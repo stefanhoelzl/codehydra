@@ -22,7 +22,7 @@ describe("PluginServer", () => {
   // Note: normalizeWorkspacePath tests moved to Path class tests (path.test.ts)
   // The PluginServer now uses Path internally for cross-platform normalization
 
-  describe("onConnect", () => {
+  describe("onConfigData", () => {
     let server: PluginServer;
     let mockPortManager: ReturnType<typeof createPortManagerMock>;
 
@@ -35,47 +35,29 @@ describe("PluginServer", () => {
       await server.close();
     });
 
-    it("returns unsubscribe function that removes callback", () => {
-      const callback = vi.fn();
-      const unsubscribe = server.onConnect(callback);
-
-      // Callback is registered
-      expect(typeof unsubscribe).toBe("function");
-
-      // After unsubscribe, callback should be removed (tested indirectly via boundary tests)
-      unsubscribe();
-
-      // Calling unsubscribe again should not throw
-      expect(() => unsubscribe()).not.toThrow();
+    it("accepts provider registration without throwing", () => {
+      // Should not throw when registering a config data provider
+      expect(() =>
+        server.onConfigData(() => ({
+          env: null,
+          agentCommand: undefined,
+        }))
+      ).not.toThrow();
     });
 
-    it("allows multiple callbacks to be registered", () => {
-      const callback1 = vi.fn();
-      const callback2 = vi.fn();
+    it("allows provider to be replaced", () => {
+      server.onConfigData(() => ({
+        env: null,
+        agentCommand: undefined,
+      }));
 
-      const unsubscribe1 = server.onConnect(callback1);
-      const unsubscribe2 = server.onConnect(callback2);
-
-      expect(typeof unsubscribe1).toBe("function");
-      expect(typeof unsubscribe2).toBe("function");
-
-      // Cleanup
-      unsubscribe1();
-      unsubscribe2();
-    });
-
-    it("unsubscribe removes only the specific callback", () => {
-      const callback1 = vi.fn();
-      const callback2 = vi.fn();
-
-      const unsubscribe1 = server.onConnect(callback1);
-      server.onConnect(callback2);
-
-      // Unsubscribe first callback
-      unsubscribe1();
-
-      // Second callback should still be registered (tested via boundary tests)
-      // This test verifies the unsubscribe logic doesn't affect other callbacks
+      // Should not throw when replacing provider
+      expect(() =>
+        server.onConfigData(() => ({
+          env: { TEST: "value" },
+          agentCommand: "test.command",
+        }))
+      ).not.toThrow();
     });
   });
 
@@ -209,8 +191,8 @@ describe("PluginServer", () => {
         getStatus: vi
           .fn()
           .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
-        getOpenCodeSession: vi.fn().mockResolvedValue({ success: true, data: null }),
-        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
+        getAgentSession: vi.fn().mockResolvedValue({ success: true, data: null }),
+        restartAgentServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
@@ -227,8 +209,8 @@ describe("PluginServer", () => {
         getStatus: vi
           .fn()
           .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
-        getOpenCodeSession: vi.fn().mockResolvedValue({ success: true, data: null }),
-        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
+        getAgentSession: vi.fn().mockResolvedValue({ success: true, data: null }),
+        restartAgentServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
@@ -244,10 +226,10 @@ describe("PluginServer", () => {
             agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
           },
         }),
-        getOpenCodeSession: vi
+        getAgentSession: vi
           .fn()
           .mockResolvedValue({ success: true, data: { port: 12345, sessionId: "session-abc" } }),
-        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
+        restartAgentServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: { note: "test" } }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
@@ -261,15 +243,15 @@ describe("PluginServer", () => {
       // No error - second registration replaces first
     });
 
-    it("should register getOpenCodeSession handler on socket connection", () => {
+    it("should register getAgentSession handler on socket connection", () => {
       const handlers: ApiCallHandlers = {
         getStatus: vi
           .fn()
           .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
-        getOpenCodeSession: vi
+        getAgentSession: vi
           .fn()
           .mockResolvedValue({ success: true, data: { port: 12345, sessionId: "session-abc" } }),
-        restartOpencodeServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
+        restartAgentServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
         setMetadata: vi.fn().mockResolvedValue({ success: true, data: undefined }),
         delete: vi.fn().mockResolvedValue({ success: true, data: { started: true } }),
@@ -281,7 +263,7 @@ describe("PluginServer", () => {
       expect(() => server.onApiCall(handlers)).not.toThrow();
 
       // Verify handler is in the handlers object
-      expect(handlers.getOpenCodeSession).toBeDefined();
+      expect(handlers.getAgentSession).toBeDefined();
     });
   });
 });

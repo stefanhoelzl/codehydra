@@ -9,5 +9,4 @@
 export { AgentStatusManager, type StatusChangedCallback } from "./opencode/status-manager";
 
 // Re-export session types
-export type { OpenCodeSessionInfo } from "./opencode/status-manager";
 export type { AgentSessionInfo } from "./types";

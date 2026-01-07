@@ -109,15 +109,15 @@ export function wirePluginApi(
       });
     },
 
-    async getOpenCodeSession(workspacePath: string) {
-      return handleApiCall(workspacePath, "getOpenCodeSession", (projectId, workspaceName) =>
-        api.workspaces.getOpenCodeSession(projectId, workspaceName)
+    async getAgentSession(workspacePath: string) {
+      return handleApiCall(workspacePath, "getAgentSession", (projectId, workspaceName) =>
+        api.workspaces.getAgentSession(projectId, workspaceName)
       );
     },
 
-    async restartOpencodeServer(workspacePath: string) {
-      return handleApiCall(workspacePath, "restartOpencodeServer", (projectId, workspaceName) =>
-        api.workspaces.restartOpencodeServer(projectId, workspaceName)
+    async restartAgentServer(workspacePath: string) {
+      return handleApiCall(workspacePath, "restartAgentServer", (projectId, workspaceName) =>
+        api.workspaces.restartAgentServer(projectId, workspaceName)
       );
     },
 

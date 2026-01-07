@@ -40,8 +40,8 @@ function createMockApi(): ICodeHydraApi {
       forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-      getOpenCodeSession: vi.fn().mockResolvedValue(null),
-      restartOpencodeServer: vi.fn().mockResolvedValue(14001),
+      getAgentSession: vi.fn().mockResolvedValue(null),
+      restartAgentServer: vi.fn().mockResolvedValue(14001),
       setMetadata: vi.fn(),
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
       executeCommand: vi.fn().mockResolvedValue(undefined),
@@ -94,12 +94,12 @@ describe("wirePluginApi", () => {
     expect(pluginServer.registeredHandlers).not.toBeNull();
   });
 
-  describe("getOpenCodeSession handler", () => {
+  describe("getAgentSession handler", () => {
     it("should resolve workspace path to projectId and workspaceName", async () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      await handlers.getOpenCodeSession("/home/user/.codehydra/workspaces/my-feature");
+      await handlers.getAgentSession("/home/user/.codehydra/workspaces/my-feature");
 
       expect(workspaceResolver.findProjectForWorkspace).toHaveBeenCalledWith(
         "/home/user/.codehydra/workspaces/my-feature"
@@ -107,16 +107,14 @@ describe("wirePluginApi", () => {
     });
 
     it("should return success result with session info", async () => {
-      vi.mocked(api.workspaces.getOpenCodeSession).mockResolvedValue({
+      vi.mocked(api.workspaces.getAgentSession).mockResolvedValue({
         port: 12345,
         sessionId: "ses-123",
       });
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpenCodeSession(
-        "/home/user/.codehydra/workspaces/my-feature"
-      );
+      const result = await handlers.getAgentSession("/home/user/.codehydra/workspaces/my-feature");
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -125,13 +123,11 @@ describe("wirePluginApi", () => {
     });
 
     it("should return success result with null when no session", async () => {
-      vi.mocked(api.workspaces.getOpenCodeSession).mockResolvedValue(null);
+      vi.mocked(api.workspaces.getAgentSession).mockResolvedValue(null);
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpenCodeSession(
-        "/home/user/.codehydra/workspaces/my-feature"
-      );
+      const result = await handlers.getAgentSession("/home/user/.codehydra/workspaces/my-feature");
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -144,7 +140,7 @@ describe("wirePluginApi", () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpenCodeSession("/unknown/workspace");
+      const result = await handlers.getAgentSession("/unknown/workspace");
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -153,15 +149,13 @@ describe("wirePluginApi", () => {
     });
 
     it("should return error result when API throws", async () => {
-      vi.mocked(api.workspaces.getOpenCodeSession).mockRejectedValue(
+      vi.mocked(api.workspaces.getAgentSession).mockRejectedValue(
         new Error("Session lookup failed")
       );
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.getOpenCodeSession(
-        "/home/user/.codehydra/workspaces/my-feature"
-      );
+      const result = await handlers.getAgentSession("/home/user/.codehydra/workspaces/my-feature");
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -173,22 +167,22 @@ describe("wirePluginApi", () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      await handlers.getOpenCodeSession("/home/user/.codehydra/workspaces/my-feature");
+      await handlers.getAgentSession("/home/user/.codehydra/workspaces/my-feature");
 
-      expect(api.workspaces.getOpenCodeSession).toHaveBeenCalledWith(
+      expect(api.workspaces.getAgentSession).toHaveBeenCalledWith(
         expect.any(String), // projectId (generated from path)
         "my-feature" as WorkspaceName
       );
     });
   });
 
-  describe("restartOpencodeServer handler", () => {
+  describe("restartAgentServer handler", () => {
     it("should return success result with port number", async () => {
-      vi.mocked(api.workspaces.restartOpencodeServer).mockResolvedValue(14001);
+      vi.mocked(api.workspaces.restartAgentServer).mockResolvedValue(14001);
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.restartOpencodeServer(
+      const result = await handlers.restartAgentServer(
         "/home/user/.codehydra/workspaces/my-feature"
       );
 
@@ -203,7 +197,7 @@ describe("wirePluginApi", () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.restartOpencodeServer("/unknown/workspace");
+      const result = await handlers.restartAgentServer("/unknown/workspace");
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -212,13 +206,13 @@ describe("wirePluginApi", () => {
     });
 
     it("should return error result when API throws", async () => {
-      vi.mocked(api.workspaces.restartOpencodeServer).mockRejectedValue(
+      vi.mocked(api.workspaces.restartAgentServer).mockRejectedValue(
         new Error("Server not running")
       );
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      const result = await handlers.restartOpencodeServer(
+      const result = await handlers.restartAgentServer(
         "/home/user/.codehydra/workspaces/my-feature"
       );
 
@@ -232,9 +226,9 @@ describe("wirePluginApi", () => {
       wirePluginApi(pluginServer, api, workspaceResolver, logger);
       const handlers = pluginServer.registeredHandlers!;
 
-      await handlers.restartOpencodeServer("/home/user/.codehydra/workspaces/my-feature");
+      await handlers.restartAgentServer("/home/user/.codehydra/workspaces/my-feature");
 
-      expect(api.workspaces.restartOpencodeServer).toHaveBeenCalledWith(
+      expect(api.workspaces.restartAgentServer).toHaveBeenCalledWith(
         expect.any(String), // projectId (generated from path)
         "my-feature" as WorkspaceName
       );

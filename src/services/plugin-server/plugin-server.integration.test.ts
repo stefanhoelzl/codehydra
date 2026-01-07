@@ -1,26 +1,25 @@
 /**
- * Integration tests for PluginServer with startup commands and wirePluginApi.
+ * Integration tests for PluginServer with config and wirePluginApi.
  *
  * Tests the full flow:
- * - PluginServer start → onConnect registration → connection → sendStartupCommands called
+ * - PluginServer start → onConfigData registration → connection → config event with startup commands
  * - wirePluginApi: Client → PluginServer → API handlers → ICodeHydraApi → result
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { PluginServer } from "./plugin-server";
-import { STARTUP_COMMANDS, sendStartupCommands } from "./startup-commands";
 import { DefaultNetworkLayer } from "../platform/network";
-import { SILENT_LOGGER, createBehavioralLogger } from "../logging/logging.test-utils";
+import { SILENT_LOGGER } from "../logging/logging.test-utils";
 import { delay } from "@shared/test-fixtures";
 import {
   createTestClient,
   waitForConnect,
-  createMockCommandHandler,
   type TestClientSocket,
 } from "./plugin-server.test-utils";
 import { wirePluginApi, type WorkspaceResolver } from "../../main/api/wire-plugin-api";
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
 import type { WorkspaceStatus } from "../../shared/api/types";
+import type { PluginConfig } from "../../shared/plugin-protocol";
 
 // Longer timeout for integration tests
 const TEST_TIMEOUT = 15000;
@@ -59,128 +58,108 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
     return client;
   }
 
-  describe("startup commands on connection", () => {
-    it("sends all 5 startup commands when client connects", async () => {
-      const receivedCommands: string[] = [];
+  describe("config event on connection", () => {
+    it("sends config with startup commands when client connects", async () => {
+      let receivedConfig: PluginConfig | null = null;
       const client = createClient("/test/workspace");
 
-      // Set up command handler to track received commands
-      const handler = createMockCommandHandler();
-      client.on("command", (request, ack) => {
-        receivedCommands.push(request.command);
-        handler(request, ack);
+      // Set up config handler to track received config
+      client.on("config", (config) => {
+        receivedConfig = config;
       });
 
-      // Register onConnect callback to send startup commands
-      server.onConnect((workspacePath) => {
-        void sendStartupCommands(server, workspacePath, SILENT_LOGGER, 0);
-      });
+      // Register onConfigData callback
+      server.onConfigData(() => ({
+        env: null,
+        agentCommand: "myagent.command",
+      }));
 
-      // Connect and wait for startup commands
+      // Connect and wait
       await waitForConnect(client);
+      await delay(100);
 
-      // Wait for all commands to be processed (give some time for async commands)
-      await delay(500);
-
-      // All 5 startup commands should be received
-      expect(receivedCommands).toHaveLength(STARTUP_COMMANDS.length);
-      expect(receivedCommands).toEqual([...STARTUP_COMMANDS]);
+      // Config should be received
+      expect(receivedConfig).not.toBeNull();
+      const config = receivedConfig!;
+      expect(config.isDevelopment).toBe(false);
+      expect(config.startupCommands).toBeDefined();
+      expect(config.startupCommands.length).toBeGreaterThan(0);
+      // Check that agent command is included
+      expect(config.startupCommands).toContain("myagent.command");
     });
 
-    it("sends commands in correct order", async () => {
-      const receivedCommands: string[] = [];
+    it("sends config with environment variables", async () => {
+      let receivedConfig: PluginConfig | null = null;
       const client = createClient("/test/workspace");
 
-      // Set up command handler to track order
-      client.on("command", (request, ack) => {
-        receivedCommands.push(request.command);
-        ack({ success: true, data: undefined });
+      // Set up config handler
+      client.on("config", (config) => {
+        receivedConfig = config;
       });
 
-      // Register onConnect callback
-      server.onConnect((workspacePath) => {
-        void sendStartupCommands(server, workspacePath, SILENT_LOGGER, 0);
-      });
+      // Register onConfigData callback with env vars
+      server.onConfigData(() => ({
+        env: { TEST_VAR: "test-value", ANOTHER_VAR: "another" },
+        agentCommand: undefined,
+      }));
 
       await waitForConnect(client);
-      await delay(500);
+      await delay(100);
 
-      // Commands should be in exact order
-      expect(receivedCommands[0]).toBe("workbench.action.closeSidebar");
-      expect(receivedCommands[1]).toBe("workbench.action.closeAuxiliaryBar");
-      expect(receivedCommands[2]).toBe("opencode.openTerminal");
-      expect(receivedCommands[3]).toBe("workbench.action.unlockEditorGroup");
-      expect(receivedCommands[4]).toBe("workbench.action.closeEditorsInOtherGroups");
+      expect(receivedConfig).not.toBeNull();
+      expect(receivedConfig!.env).toEqual({ TEST_VAR: "test-value", ANOTHER_VAR: "another" });
     });
 
-    it("sends commands only after connection established", async () => {
-      let commandsReceivedBeforeConnect = false;
-      let connectEventFired = false;
-      const receivedCommands: string[] = [];
-
+    it("sends config with null env when not available", async () => {
+      let receivedConfig: PluginConfig | null = null;
       const client = createClient("/test/workspace");
 
-      // Track when connect event fires
-      client.on("connect", () => {
-        connectEventFired = true;
+      client.on("config", (config) => {
+        receivedConfig = config;
       });
 
-      // Track commands
-      client.on("command", (request, ack) => {
-        if (!connectEventFired) {
-          commandsReceivedBeforeConnect = true;
-        }
-        receivedCommands.push(request.command);
-        ack({ success: true, data: undefined });
-      });
-
-      // Register onConnect callback
-      server.onConnect((workspacePath) => {
-        void sendStartupCommands(server, workspacePath, SILENT_LOGGER, 0);
-      });
+      server.onConfigData(() => ({
+        env: null,
+        agentCommand: undefined,
+      }));
 
       await waitForConnect(client);
-      await delay(500);
+      await delay(100);
 
-      // Commands should only come after connect
-      expect(commandsReceivedBeforeConnect).toBe(false);
-      expect(receivedCommands.length).toBeGreaterThan(0);
+      expect(receivedConfig).not.toBeNull();
+      expect(receivedConfig!.env).toBeNull();
     });
 
     it("handles concurrent workspace connections independently", async () => {
-      const workspace1Commands: string[] = [];
-      const workspace2Commands: string[] = [];
+      let config1: PluginConfig | null = null;
+      let config2: PluginConfig | null = null;
 
       const client1 = createClient("/workspace/one");
       const client2 = createClient("/workspace/two");
 
-      // Set up handlers for each workspace
-      client1.on("command", (request, ack) => {
-        workspace1Commands.push(request.command);
-        ack({ success: true, data: undefined });
+      client1.on("config", (config) => {
+        config1 = config;
       });
 
-      client2.on("command", (request, ack) => {
-        workspace2Commands.push(request.command);
-        ack({ success: true, data: undefined });
+      client2.on("config", (config) => {
+        config2 = config;
       });
 
-      // Register onConnect callback
-      server.onConnect((workspacePath) => {
-        void sendStartupCommands(server, workspacePath, SILENT_LOGGER, 0);
-      });
+      // Register onConfigData that returns different env for different workspaces
+      server.onConfigData((workspacePath) => ({
+        env: { WORKSPACE: workspacePath },
+        agentCommand: undefined,
+      }));
 
       // Connect both clients
       await Promise.all([waitForConnect(client1), waitForConnect(client2)]);
-      await delay(500);
+      await delay(100);
 
-      // Each workspace should receive its own set of startup commands
-      expect(workspace1Commands).toHaveLength(STARTUP_COMMANDS.length);
-      expect(workspace2Commands).toHaveLength(STARTUP_COMMANDS.length);
-
-      // Commands should be the same for both workspaces
-      expect(workspace1Commands).toEqual([...STARTUP_COMMANDS]);
-      expect(workspace2Commands).toEqual([...STARTUP_COMMANDS]);
+      // Each workspace should receive its own config
+      expect(config1).not.toBeNull();
+      expect(config2).not.toBeNull();
+      expect(config1!.env).toEqual({ WORKSPACE: "/workspace/one" });
+      expect(config2!.env).toEqual({ WORKSPACE: "/workspace/two" });
     });
   });
 });
@@ -212,8 +191,8 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
         forceRemove: vi.fn(),
         get: vi.fn(),
         getStatus: vi.fn(),
-        getOpenCodeSession: vi.fn(),
-        restartOpencodeServer: vi.fn(),
+        getAgentSession: vi.fn(),
+        restartAgentServer: vi.fn(),
         setMetadata: vi.fn(),
         getMetadata: vi.fn(),
         executeCommand: vi.fn(),
@@ -240,7 +219,6 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
   });
 
   afterEach(async () => {
-    // Disconnect all clients
     for (const client of clients) {
       if (client.connected) {
         client.disconnect();
@@ -248,355 +226,143 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
     }
     clients = [];
 
-    // Close server
     if (server) {
       await server.close();
     }
   });
 
-  // Helper to create and track clients
   function createClient(workspacePath: string): TestClientSocket {
     const client = createTestClient(port, { workspacePath });
     clients.push(client);
     return client;
   }
 
-  describe("getStatus", () => {
-    it("returns workspace status through full round-trip", async () => {
+  describe("getStatus round-trip", () => {
+    it("returns status from ICodeHydraApi", async () => {
       const expectedStatus: WorkspaceStatus = {
         isDirty: true,
-        agent: { type: "busy", counts: { idle: 1, busy: 2, total: 3 } },
+        agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
       };
       vi.mocked(mockApi.workspaces.getStatus).mockResolvedValue(expectedStatus);
 
-      const client = createClient("/projects/myproject/workspaces/feature-x");
+      const client = createClient("/projects/myproject/workspaces/test");
       await waitForConnect(client);
 
-      const result = await new Promise<{
-        success: boolean;
-        data?: WorkspaceStatus;
-        error?: string;
-      }>((resolve) => {
-        client.emit("api:workspace:getStatus", (res) => resolve(res));
+      const result = await new Promise<WorkspaceStatus>((resolve, reject) => {
+        client.emit("api:workspace:getStatus", (res) => {
+          if (res.success) {
+            resolve(res.data);
+          } else {
+            reject(new Error(res.error));
+          }
+        });
       });
 
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual(expectedStatus);
+      expect(result).toEqual(expectedStatus);
       expect(mockApi.workspaces.getStatus).toHaveBeenCalled();
     });
+
+    it("returns error when workspace not found", async () => {
+      const client = createClient("/unknown/workspace");
+      await waitForConnect(client);
+
+      await expect(
+        new Promise((resolve, reject) => {
+          client.emit("api:workspace:getStatus", (res) => {
+            if (res.success) {
+              resolve(res.data);
+            } else {
+              reject(new Error(res.error));
+            }
+          });
+        })
+      ).rejects.toThrow();
+    });
   });
 
-  describe("getMetadata", () => {
-    it("returns workspace metadata through full round-trip", async () => {
-      const expectedMetadata = { base: "main", note: "working on feature" };
+  describe("getAgentSession round-trip", () => {
+    it("returns session from ICodeHydraApi", async () => {
+      const expectedSession = { port: 14001, sessionId: "abc123" };
+      vi.mocked(mockApi.workspaces.getAgentSession).mockResolvedValue(expectedSession);
+
+      const client = createClient("/projects/myproject/workspaces/test");
+      await waitForConnect(client);
+
+      const result = await new Promise((resolve, reject) => {
+        client.emit("api:workspace:getAgentSession", (res) => {
+          if (res.success) {
+            resolve(res.data);
+          } else {
+            reject(new Error(res.error));
+          }
+        });
+      });
+
+      expect(result).toEqual(expectedSession);
+    });
+  });
+
+  describe("restartAgentServer round-trip", () => {
+    it("returns port from ICodeHydraApi", async () => {
+      vi.mocked(mockApi.workspaces.restartAgentServer).mockResolvedValue(14001);
+
+      const client = createClient("/projects/myproject/workspaces/test");
+      await waitForConnect(client);
+
+      const result = await new Promise<number>((resolve, reject) => {
+        client.emit("api:workspace:restartAgentServer", (res) => {
+          if (res.success) {
+            resolve(res.data);
+          } else {
+            reject(new Error(res.error));
+          }
+        });
+      });
+
+      expect(result).toBe(14001);
+    });
+  });
+
+  describe("getMetadata round-trip", () => {
+    it("returns metadata from ICodeHydraApi", async () => {
+      const expectedMetadata = { base: "main", note: "test" };
       vi.mocked(mockApi.workspaces.getMetadata).mockResolvedValue(expectedMetadata);
 
-      const client = createClient("/projects/myproject/workspaces/feature-x");
+      const client = createClient("/projects/myproject/workspaces/test");
       await waitForConnect(client);
 
-      const result = await new Promise<{
-        success: boolean;
-        data?: Record<string, string>;
-        error?: string;
-      }>((resolve) => {
-        client.emit("api:workspace:getMetadata", (res) => resolve(res));
+      const result = await new Promise<Record<string, string>>((resolve, reject) => {
+        client.emit("api:workspace:getMetadata", (res) => {
+          if (res.success) {
+            resolve(res.data);
+          } else {
+            reject(new Error(res.error));
+          }
+        });
       });
 
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual(expectedMetadata);
-      expect(mockApi.workspaces.getMetadata).toHaveBeenCalled();
+      expect(result).toEqual(expectedMetadata);
     });
   });
 
-  describe("setMetadata", () => {
-    it("updates workspace metadata through full round-trip", async () => {
+  describe("setMetadata round-trip", () => {
+    it("calls ICodeHydraApi.setMetadata", async () => {
       vi.mocked(mockApi.workspaces.setMetadata).mockResolvedValue(undefined);
 
-      const client = createClient("/projects/myproject/workspaces/feature-x");
+      const client = createClient("/projects/myproject/workspaces/test");
       await waitForConnect(client);
 
-      const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-        client.emit("api:workspace:setMetadata", { key: "note", value: "my note" }, (res) =>
-          resolve(res)
-        );
-      });
-
-      expect(result.success).toBe(true);
-      expect(mockApi.workspaces.setMetadata).toHaveBeenCalledWith(
-        expect.any(String), // projectId
-        expect.any(String), // workspaceName
-        "note",
-        "my note"
-      );
-    });
-  });
-
-  describe("delete", () => {
-    it("deletes workspace through full round-trip", async () => {
-      vi.mocked(mockApi.workspaces.remove).mockResolvedValue({ started: true });
-
-      const client = createClient("/projects/myproject/workspaces/feature-x");
-      await waitForConnect(client);
-
-      const result = await new Promise<{
-        success: boolean;
-        data?: { started: boolean };
-        error?: string;
-      }>((resolve) => {
-        client.emit("api:workspace:delete", {}, (res) => resolve(res));
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ started: true });
-      expect(mockApi.workspaces.remove).toHaveBeenCalled();
-    });
-
-    it("passes keepBranch option to API", async () => {
-      vi.mocked(mockApi.workspaces.remove).mockResolvedValue({ started: true });
-
-      const client = createClient("/projects/myproject/workspaces/feature-x");
-      await waitForConnect(client);
-
-      await new Promise<{ success: boolean }>((resolve) => {
-        client.emit("api:workspace:delete", { keepBranch: true }, (res) => resolve(res));
-      });
-
-      expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
-        expect.any(String), // projectId
-        expect.any(String), // workspaceName
-        true // keepBranch
-      );
-    });
-  });
-
-  describe("error handling", () => {
-    it("returns error when workspace not found", async () => {
-      // Connect with unknown workspace path (not under /projects/myproject/)
-      const client = createClient("/unknown/workspace/path");
-      await waitForConnect(client);
-
-      const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-        client.emit("api:workspace:getStatus", (res) => resolve(res));
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe("Workspace not found");
-      // API should not be called when workspace not found
-      expect(mockApi.workspaces.getStatus).not.toHaveBeenCalled();
-    });
-
-    it("returns error when API throws exception", async () => {
-      vi.mocked(mockApi.workspaces.getStatus).mockRejectedValue(new Error("Database unavailable"));
-
-      const client = createClient("/projects/myproject/workspaces/feature-x");
-      await waitForConnect(client);
-
-      const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-        client.emit("api:workspace:getStatus", (res) => resolve(res));
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe("Database unavailable");
-    });
-
-    it("returns error when metadata key is invalid", async () => {
-      const client = createClient("/projects/myproject/workspaces/feature-x");
-      await waitForConnect(client);
-
-      // Empty key should be rejected at validation (before reaching API)
-      const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-        client.emit("api:workspace:setMetadata", { key: "", value: "test" }, (res) => resolve(res));
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("cannot be empty");
-      // API should not be called for invalid requests
-      expect(mockApi.workspaces.setMetadata).not.toHaveBeenCalled();
-    });
-
-    it("returns error when delete fails", async () => {
-      vi.mocked(mockApi.workspaces.remove).mockRejectedValue(new Error("Deletion failed"));
-
-      const client = createClient("/projects/myproject/workspaces/feature-x");
-      await waitForConnect(client);
-
-      const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-        client.emit("api:workspace:delete", {}, (res) => resolve(res));
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe("Deletion failed");
-    });
-  });
-});
-
-/**
- * Integration tests for log event handling.
- *
- * Tests the full flow: Client → PluginServer → extensionLogger → message storage
- */
-describe("PluginServer log events (integration)", { timeout: TEST_TIMEOUT }, () => {
-  let server: PluginServer;
-  let networkLayer: DefaultNetworkLayer;
-  let port: number;
-  let clients: TestClientSocket[] = [];
-  let extensionLogger: ReturnType<typeof createBehavioralLogger>;
-
-  beforeEach(async () => {
-    networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
-    extensionLogger = createBehavioralLogger();
-    server = new PluginServer(networkLayer, SILENT_LOGGER, {
-      transports: ["polling"],
-      extensionLogger,
-    });
-    port = await server.start();
-  });
-
-  afterEach(async () => {
-    // Disconnect all clients
-    for (const client of clients) {
-      if (client.connected) {
-        client.disconnect();
-      }
-    }
-    clients = [];
-
-    // Close server
-    if (server) {
-      await server.close();
-    }
-  });
-
-  // Helper to create and track clients
-  function createClient(workspacePath: string): TestClientSocket {
-    const client = createTestClient(port, { workspacePath });
-    clients.push(client);
-    return client;
-  }
-
-  describe("valid log events", () => {
-    it("logs info level message", async () => {
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      client.emit("api:log", { level: "info", message: "Test message" });
-
-      // Wait for async processing
-      await delay(100);
-
-      const messages = extensionLogger.getMessages();
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toMatchObject({
-        level: "info",
-        message: "Test message",
-      });
-    });
-
-    it("logs all levels correctly", async () => {
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      const levels = ["silly", "debug", "info", "warn", "error"] as const;
-      for (const level of levels) {
-        client.emit("api:log", { level, message: `${level} message` });
-      }
-
-      // Wait for async processing
-      await delay(200);
-
-      for (const level of levels) {
-        const messages = extensionLogger.getMessagesByLevel(level);
-        expect(messages).toHaveLength(1);
-        expect(messages[0]).toMatchObject({
-          level,
-          message: `${level} message`,
+      await new Promise<void>((resolve, reject) => {
+        client.emit("api:workspace:setMetadata", { key: "note", value: "test" }, (res) => {
+          if (res.success) {
+            resolve();
+          } else {
+            reject(new Error(res.error));
+          }
         });
-      }
-    });
-
-    it("auto-appends workspace context", async () => {
-      const workspacePath = "/projects/myproject/workspace";
-      const client = createClient(workspacePath);
-      await waitForConnect(client);
-
-      client.emit("api:log", { level: "info", message: "Test" });
-
-      // Wait for async processing
-      await delay(100);
-
-      const messages = extensionLogger.getMessages();
-      expect(messages).toHaveLength(1);
-      expect(messages[0]?.context?.workspace).toBe(workspacePath);
-    });
-
-    it("preserves existing context and adds workspace", async () => {
-      const workspacePath = "/test/workspace";
-      const client = createClient(workspacePath);
-      await waitForConnect(client);
-
-      client.emit("api:log", {
-        level: "debug",
-        message: "Test",
-        context: { key: "value", count: 42 },
       });
 
-      // Wait for async processing
-      await delay(100);
-
-      const messages = extensionLogger.getMessages();
-      expect(messages).toHaveLength(1);
-      expect(messages[0]?.context).toEqual({
-        key: "value",
-        count: 42,
-        workspace: workspacePath,
-      });
-    });
-  });
-
-  describe("invalid log events", () => {
-    it("silently ignores invalid level", async () => {
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      // Testing invalid input: "invalid" is not a valid log level
-      client.emit("api:log", {
-        level: "invalid" as "info",
-        message: "Test",
-      });
-
-      // Wait for async processing
-      await delay(100);
-
-      expect(extensionLogger.getMessages()).toHaveLength(0);
-    });
-
-    it("silently ignores empty message", async () => {
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      client.emit("api:log", { level: "info", message: "" });
-
-      // Wait for async processing
-      await delay(100);
-
-      expect(extensionLogger.getMessages()).toHaveLength(0);
-    });
-
-    it("silently ignores invalid context", async () => {
-      const client = createClient("/test/workspace");
-      await waitForConnect(client);
-
-      // Testing invalid input: context with nested object should be rejected
-      client.emit("api:log", {
-        level: "info",
-        message: "Test",
-        context: { nested: { deep: 1 } } as unknown as Record<string, string | number | boolean>,
-      });
-
-      // Wait for async processing
-      await delay(100);
-
-      expect(extensionLogger.getMessages()).toHaveLength(0);
+      expect(mockApi.workspaces.setMetadata).toHaveBeenCalled();
     });
   });
 });

@@ -190,10 +190,10 @@ export class ApiRegistry implements IApiRegistry {
         get: (projectId, workspaceName) => get("workspaces.get")({ projectId, workspaceName }),
         getStatus: (projectId, workspaceName) =>
           get("workspaces.getStatus")({ projectId, workspaceName }),
-        getOpenCodeSession: (projectId, workspaceName) =>
-          get("workspaces.getOpenCodeSession")({ projectId, workspaceName }),
-        restartOpencodeServer: (projectId, workspaceName) =>
-          get("workspaces.restartOpencodeServer")({ projectId, workspaceName }),
+        getAgentSession: (projectId, workspaceName) =>
+          get("workspaces.getAgentSession")({ projectId, workspaceName }),
+        restartAgentServer: (projectId, workspaceName) =>
+          get("workspaces.restartAgentServer")({ projectId, workspaceName }),
         setMetadata: (projectId, workspaceName, key, value) =>
           get("workspaces.setMetadata")({ projectId, workspaceName, key, value }),
         getMetadata: (projectId, workspaceName) =>

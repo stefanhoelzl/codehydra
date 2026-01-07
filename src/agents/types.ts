@@ -19,7 +19,7 @@ import type { Logger } from "../services/logging";
 export type { AggregatedAgentStatus, InternalAgentCounts } from "../shared/ipc";
 
 /** Agent types supported by CodeHydra */
-export type AgentType = "opencode"; // | "claude" in future
+export type AgentType = "opencode" | "claude-code";
 
 /** Agent status for a single workspace */
 export type AgentStatus = "none" | "idle" | "busy";
@@ -41,6 +41,9 @@ export interface AgentSetupInfo {
 
   /** Entry point for wrapper script (e.g., "agents/opencode-wrapper.cjs") */
   readonly wrapperEntryPoint: string;
+
+  /** VS Code marketplace extension ID (e.g., "sst-dev.opencode", "anthropic.claude-code") */
+  readonly extensionId?: string;
 
   /** Get download URL for the binary for current platform */
   getBinaryUrl(): string;

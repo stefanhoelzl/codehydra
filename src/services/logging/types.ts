@@ -31,6 +31,7 @@ export type LoggerName =
   | "git" // SimpleGitClient - git operations
   | "worktree" // GitWorktreeProvider - worktree operations
   | "opencode" // OpenCodeClient - OpenCode SDK
+  | "claude-code" // ClaudeCodeServerManager - Claude Code agent
   | "code-server" // CodeServerManager - code-server process
   | "keepfiles" // KeepFilesService - .keepfiles copying
   | "opencode-server" // OpenCodeServerManager - opencode server lifecycle
