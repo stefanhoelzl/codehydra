@@ -146,7 +146,7 @@ describe("WorkspaceFileService", () => {
   });
 
   describe("ensureWorkspaceFile", () => {
-    it("returns existing file path if file exists", async () => {
+    it("always regenerates file to ensure fresh settings", async () => {
       const mockFileSystem = createFileSystemMock({
         entries: {
           "/project": directory(),
@@ -169,12 +169,12 @@ describe("WorkspaceFileService", () => {
       const result = await service.ensureWorkspaceFile(workspacePath, projectWorkspacesDir);
 
       expect(result.toString()).toBe("/project/workspaces/my-feature.code-workspace");
-      // Verify file content wasn't overwritten (should still have original content)
+      // File is always regenerated to ensure settings are fresh (e.g., bridge port)
       const content = await mockFileSystem.readFile(
         new Path("/project/workspaces/my-feature.code-workspace")
       );
       const parsed = JSON.parse(content) as CodeWorkspaceFile;
-      expect(parsed.settings).toBeUndefined(); // Original file had no settings
+      expect(parsed.settings).toEqual({}); // Default empty settings from config
     });
 
     it("creates file if it does not exist", async () => {
