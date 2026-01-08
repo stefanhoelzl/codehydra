@@ -27,6 +27,25 @@ type Unsubscribe = () => void;
 type PidChangedCallback = (pid: number | null) => void;
 
 /**
+ * Normalize a path for use in code-server URLs.
+ * Handles Windows path conversion and URL encoding.
+ *
+ * @param path Absolute path to normalize
+ * @returns URL-safe encoded path
+ */
+function normalizePathForUrl(path: string): string {
+  // Handle Windows paths: C:\Users\... -> /C:/Users/...
+  let normalizedPath = path;
+  if (/^[A-Za-z]:/.test(path)) {
+    // Windows absolute path - convert backslashes and prefix with /
+    normalizedPath = "/" + path.replace(/\\/g, "/");
+  }
+
+  // Encode the path but preserve colons for Windows drive letters
+  return encodePathForUrl(normalizedPath).replace(/%3A/g, ":");
+}
+
+/**
  * Generate URL for opening a folder in code-server.
  *
  * @param port The port code-server is running on
@@ -34,16 +53,20 @@ type PidChangedCallback = (pid: number | null) => void;
  * @returns Full URL with folder query parameter
  */
 export function urlForFolder(port: number, folderPath: string): string {
-  // Handle Windows paths: C:\Users\... -> /C:/Users/...
-  let normalizedPath = folderPath;
-  if (/^[A-Za-z]:/.test(folderPath)) {
-    // Windows absolute path - convert backslashes and prefix with /
-    normalizedPath = "/" + folderPath.replace(/\\/g, "/");
-  }
-
-  // Encode the path but preserve colons for Windows drive letters
-  const encodedPath = encodePathForUrl(normalizedPath).replace(/%3A/g, ":");
+  const encodedPath = normalizePathForUrl(folderPath);
   return `http://127.0.0.1:${port}/?folder=${encodedPath}`;
+}
+
+/**
+ * Generate URL for opening a .code-workspace file in code-server.
+ *
+ * @param port The port code-server is running on
+ * @param workspaceFilePath Absolute path to the .code-workspace file
+ * @returns Full URL with workspace query parameter
+ */
+export function urlForWorkspace(port: number, workspaceFilePath: string): string {
+  const encodedPath = normalizePathForUrl(workspaceFilePath);
+  return `http://127.0.0.1:${port}/?workspace=${encodedPath}`;
 }
 
 /**

@@ -27,6 +27,24 @@ const EXIT_SPAWN_FAILED = 2;
 const EXIT_NOT_FOUND = 3;
 
 /**
+ * Get user arguments from process.argv.
+ * Auto-detects the start of user flags to handle both terminal and panel modes.
+ * In terminal mode: argv = [node, script, ...flags]
+ * In panel mode: argv = [node, script, command, ...flags]
+ */
+function getUserArgs(): string[] {
+  // Find the first argument that looks like a flag (starts with --)
+  const firstFlagIndex = process.argv.findIndex((arg, i) => i >= 2 && arg.startsWith("--"));
+
+  if (firstFlagIndex === -1) {
+    // No flags found, return empty
+    return [];
+  }
+
+  return process.argv.slice(firstFlagIndex);
+}
+
+/**
  * Common installation paths for Claude CLI.
  */
 const COMMON_PATHS_UNIX = [
@@ -109,18 +127,17 @@ async function main(): Promise<never> {
   // --mcp-config: Our MCP config (merges with user's)
   // User args can override these if they come after
   const isWindows = process.platform === "win32";
-  const baseArgs = [
+  const args = [
     "--ide",
     "--settings",
     settingsPath,
     "--mcp-config",
     mcpConfigPath,
-    ...process.argv.slice(2), // User args can override
+    ...getUserArgs(), // Auto-detect user args for both terminal and panel modes
   ];
 
-  // 4. First try with --continue to resume last conversation
-  const continueArgs = ["--continue", ...baseArgs];
-  const result = spawnSync(claudeBinary, continueArgs, {
+  // 4. Spawn Claude
+  const result = spawnSync(claudeBinary, args, {
     stdio: "inherit",
     shell: isWindows && claudeBinary.endsWith(".cmd"),
   });
@@ -129,20 +146,6 @@ async function main(): Promise<never> {
   if (result.error) {
     console.error(`Error: Failed to start Claude: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
-  }
-
-  // 6. If --continue failed (likely no previous conversation), retry without it
-  // Skip retry if user explicitly passed --continue
-  if (result.status !== 0 && !process.argv.includes("--continue")) {
-    const retryResult = spawnSync(claudeBinary, baseArgs, {
-      stdio: "inherit",
-      shell: isWindows && claudeBinary.endsWith(".cmd"),
-    });
-    if (retryResult.error) {
-      console.error(`Error: Failed to start Claude: ${retryResult.error.message}`);
-      process.exit(EXIT_SPAWN_FAILED);
-    }
-    process.exit(retryResult.status ?? EXIT_SPAWN_FAILED);
   }
 
   process.exit(result.status ?? EXIT_SPAWN_FAILED);

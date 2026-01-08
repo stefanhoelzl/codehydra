@@ -22,73 +22,89 @@ let mockPathProvider: PathProvider;
 let mockFileSystemLayer: FileSystemLayer;
 let mockLoggingService: MockLoggingService;
 
+// Mock wrapper path for Claude wrapper
+const MOCK_WRAPPER_PATH = "/mock/bin/claude";
+
 // Mock services
-const { mockProjectStore, mockWorkspaceProvider, mockViewManager, mockCreateGitWorktreeProvider } =
-  vi.hoisted(() => {
-    const mockProvider: {
-      discover: ReturnType<typeof vi.fn>;
-      createWorkspace: ReturnType<typeof vi.fn>;
-      removeWorkspace: ReturnType<typeof vi.fn>;
-      listBases: ReturnType<typeof vi.fn>;
-      updateBases: ReturnType<typeof vi.fn>;
-      isDirty: ReturnType<typeof vi.fn>;
-      projectRoot: string;
-      isMainWorkspace: ReturnType<typeof vi.fn>;
-      cleanupOrphanedWorkspaces: ReturnType<typeof vi.fn>;
-      defaultBase: ReturnType<typeof vi.fn>;
-    } = {
-      projectRoot: "/project",
-      discover: vi.fn(),
-      isMainWorkspace: vi.fn(() => false),
-      createWorkspace: vi.fn(),
-      removeWorkspace: vi.fn(() => Promise.resolve({ workspaceRemoved: true, baseDeleted: false })),
-      listBases: vi.fn(() =>
-        Promise.resolve([
-          { name: "main", isRemote: false },
-          { name: "origin/main", isRemote: true },
-        ])
-      ),
-      updateBases: vi.fn(() => Promise.resolve({ fetchedRemotes: ["origin"], failedRemotes: [] })),
-      isDirty: vi.fn(() => Promise.resolve(false)),
-      cleanupOrphanedWorkspaces: vi.fn(() => Promise.resolve({ removedCount: 0, failedPaths: [] })),
-      defaultBase: vi.fn(() => Promise.resolve("main")),
-    };
+const {
+  mockProjectStore,
+  mockWorkspaceProvider,
+  mockViewManager,
+  mockCreateGitWorktreeProvider,
+  mockWorkspaceFileService,
+} = vi.hoisted(() => {
+  const mockProvider: {
+    discover: ReturnType<typeof vi.fn>;
+    createWorkspace: ReturnType<typeof vi.fn>;
+    removeWorkspace: ReturnType<typeof vi.fn>;
+    listBases: ReturnType<typeof vi.fn>;
+    updateBases: ReturnType<typeof vi.fn>;
+    isDirty: ReturnType<typeof vi.fn>;
+    projectRoot: string;
+    isMainWorkspace: ReturnType<typeof vi.fn>;
+    cleanupOrphanedWorkspaces: ReturnType<typeof vi.fn>;
+    defaultBase: ReturnType<typeof vi.fn>;
+  } = {
+    projectRoot: "/project",
+    discover: vi.fn(),
+    isMainWorkspace: vi.fn(() => false),
+    createWorkspace: vi.fn(),
+    removeWorkspace: vi.fn(() => Promise.resolve({ workspaceRemoved: true, baseDeleted: false })),
+    listBases: vi.fn(() =>
+      Promise.resolve([
+        { name: "main", isRemote: false },
+        { name: "origin/main", isRemote: true },
+      ])
+    ),
+    updateBases: vi.fn(() => Promise.resolve({ fetchedRemotes: ["origin"], failedRemotes: [] })),
+    isDirty: vi.fn(() => Promise.resolve(false)),
+    cleanupOrphanedWorkspaces: vi.fn(() => Promise.resolve({ removedCount: 0, failedPaths: [] })),
+    defaultBase: vi.fn(() => Promise.resolve("main")),
+  };
 
-    const mockStore = {
-      saveProject: vi.fn(() => Promise.resolve()),
-      removeProject: vi.fn(() => Promise.resolve()),
-      loadAllProjects: vi.fn(() => Promise.resolve([] as string[])),
-    };
+  const mockStore = {
+    saveProject: vi.fn(() => Promise.resolve()),
+    removeProject: vi.fn(() => Promise.resolve()),
+    loadAllProjects: vi.fn(() => Promise.resolve([] as string[])),
+  };
 
-    const mockView: {
-      getUIView: ReturnType<typeof vi.fn>;
-      createWorkspaceView: ReturnType<typeof vi.fn>;
-      destroyWorkspaceView: ReturnType<typeof vi.fn>;
-      getWorkspaceView: ReturnType<typeof vi.fn>;
-      updateBounds: ReturnType<typeof vi.fn>;
-      setActiveWorkspace: ReturnType<typeof vi.fn>;
-      focusActiveWorkspace: ReturnType<typeof vi.fn>;
-      focusUI: ReturnType<typeof vi.fn>;
-      preloadWorkspaceUrl: ReturnType<typeof vi.fn>;
-    } = {
-      getUIView: vi.fn(),
-      createWorkspaceView: vi.fn(),
-      destroyWorkspaceView: vi.fn(),
-      getWorkspaceView: vi.fn(),
-      updateBounds: vi.fn(),
-      setActiveWorkspace: vi.fn(),
-      focusActiveWorkspace: vi.fn(),
-      focusUI: vi.fn(),
-      preloadWorkspaceUrl: vi.fn(),
-    };
+  const mockView: {
+    getUIView: ReturnType<typeof vi.fn>;
+    createWorkspaceView: ReturnType<typeof vi.fn>;
+    destroyWorkspaceView: ReturnType<typeof vi.fn>;
+    getWorkspaceView: ReturnType<typeof vi.fn>;
+    updateBounds: ReturnType<typeof vi.fn>;
+    setActiveWorkspace: ReturnType<typeof vi.fn>;
+    focusActiveWorkspace: ReturnType<typeof vi.fn>;
+    focusUI: ReturnType<typeof vi.fn>;
+    preloadWorkspaceUrl: ReturnType<typeof vi.fn>;
+  } = {
+    getUIView: vi.fn(),
+    createWorkspaceView: vi.fn(),
+    destroyWorkspaceView: vi.fn(),
+    getWorkspaceView: vi.fn(),
+    updateBounds: vi.fn(),
+    setActiveWorkspace: vi.fn(),
+    focusActiveWorkspace: vi.fn(),
+    focusUI: vi.fn(),
+    preloadWorkspaceUrl: vi.fn(),
+  };
 
-    return {
-      mockProjectStore: mockStore,
-      mockWorkspaceProvider: mockProvider,
-      mockViewManager: mockView,
-      mockCreateGitWorktreeProvider: vi.fn(() => Promise.resolve(mockProvider)),
-    };
-  });
+  // Mock WorkspaceFileService
+  const mockWsFileService = {
+    ensureWorkspaceFile: vi.fn(),
+    createWorkspaceFile: vi.fn(),
+    getWorkspaceFilePath: vi.fn(),
+  };
+
+  return {
+    mockProjectStore: mockStore,
+    mockWorkspaceProvider: mockProvider,
+    mockViewManager: mockView,
+    mockCreateGitWorktreeProvider: vi.fn(() => Promise.resolve(mockProvider)),
+    mockWorkspaceFileService: mockWsFileService,
+  };
+});
 
 vi.mock("../services", async () => {
   const actual = await vi.importActual("../services");
@@ -143,7 +159,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       expect(appState).toBeInstanceOf(AppState);
@@ -159,7 +177,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -183,7 +203,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -199,7 +221,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -220,7 +244,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -238,7 +264,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -254,7 +282,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       const project = await appState.openProject("/project");
@@ -283,7 +313,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       const project = await appState.openProject("/project");
@@ -309,7 +341,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -338,7 +372,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -360,7 +396,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -393,7 +431,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       const project = await appState.openProject("/project");
@@ -424,7 +464,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -443,7 +485,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -460,7 +504,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -477,7 +523,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.closeProject("/nonexistent");
@@ -496,7 +544,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -513,7 +563,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       expect(appState.getProject("/nonexistent")).toBeUndefined();
@@ -529,7 +581,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -549,7 +603,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -566,7 +622,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       expect(appState.getWorkspaceProvider("/nonexistent")).toBeUndefined();
@@ -574,7 +632,12 @@ describe("AppState", () => {
   });
 
   describe("getWorkspaceUrl", () => {
-    it("generates code-server URL with folder parameter", () => {
+    it("generates code-server URL with workspace parameter when file creation succeeds", async () => {
+      // Mock ensureWorkspaceFile to return a workspace file path
+      mockWorkspaceFileService.ensureWorkspaceFile.mockResolvedValue(
+        new Path("/test/workspaces/my-workspace.code-workspace")
+      );
+
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
@@ -582,13 +645,70 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
-      const url = appState.getWorkspaceUrl("/path/to/workspace");
+      const url = await appState.getWorkspaceUrl("/path/to/workspace", {});
+
+      expect(url).toContain("http://127.0.0.1:8080");
+      expect(url).toContain("workspace=");
+    });
+
+    it("falls back to folder URL when workspace file creation fails", async () => {
+      // Mock ensureWorkspaceFile to throw an error
+      mockWorkspaceFileService.ensureWorkspaceFile.mockRejectedValue(
+        new Error("File creation failed")
+      );
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      const url = await appState.getWorkspaceUrl("/path/to/workspace", {});
 
       expect(url).toContain("http://127.0.0.1:8080");
       expect(url).toContain("folder=");
+    });
+
+    it("passes agent settings to workspace file service", async () => {
+      mockWorkspaceFileService.ensureWorkspaceFile.mockResolvedValue(
+        new Path("/test/workspaces/my-workspace.code-workspace")
+      );
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      const envVars = { ANTHROPIC_API_KEY: "test-key" };
+      await appState.getWorkspaceUrl("/path/to/workspace", envVars);
+
+      expect(mockWorkspaceFileService.ensureWorkspaceFile).toHaveBeenCalledWith(
+        expect.any(Path), // workspacePath
+        expect.any(Path), // projectWorkspacesDir
+        expect.objectContaining({
+          "claudeCode.claudeProcessWrapper": MOCK_WRAPPER_PATH,
+          // Env vars are converted to {name, value}[] format for Claude extension
+          "claudeCode.environmentVariables": [{ name: "ANTHROPIC_API_KEY", value: "test-key" }],
+        })
+      );
     });
   });
 
@@ -604,7 +724,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.loadPersistedProjects();
@@ -633,7 +755,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // Should not throw
@@ -652,7 +776,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -669,7 +795,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -692,7 +820,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // Should not throw even without agentStatusManager
@@ -714,7 +844,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // openProject should still succeed despite cleanup failure
@@ -734,7 +866,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -754,7 +888,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -773,7 +909,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -794,7 +932,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -814,7 +954,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -832,7 +974,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // Don't open any project
@@ -848,7 +992,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -873,7 +1019,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       const project = await appState.openProject("/project");
@@ -889,7 +1037,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // Set a branch before opening the project
@@ -912,7 +1062,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -936,7 +1088,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -968,7 +1122,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // Without agentStatusManager set, should return default
@@ -986,7 +1142,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // Create a mock AgentStatusManager
@@ -1023,7 +1181,9 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // Create a mock provider with startupCommands

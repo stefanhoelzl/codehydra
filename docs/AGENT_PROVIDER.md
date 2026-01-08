@@ -6,13 +6,14 @@ This document describes how to implement a new agent provider for CodeHydra.
 
 CodeHydra uses an abstraction layer to support multiple AI coding agents. The architecture consists of three main components:
 
-| Component            | Purpose                                     | Scope                |
-| -------------------- | ------------------------------------------- | -------------------- |
-| `AgentSetupInfo`     | Binary distribution, config file generation | Singleton per type   |
+| Component            | Purpose                                     | Scope                    |
+| -------------------- | ------------------------------------------- | ------------------------ |
+| `AgentSetupInfo`     | Binary distribution, config file generation | Singleton per type       |
 | `AgentServerManager` | Server lifecycle (start, stop, restart)     | Shared across workspaces |
-| `AgentProvider`      | Connection and status tracking              | One per workspace    |
+| `AgentProvider`      | Connection and status tracking              | One per workspace        |
 
 **Existing implementations:**
+
 - **OpenCode** (`src/agents/opencode/`) - SSE-based SDK client, one server per workspace
 - **Claude Code** (`src/agents/claude-code/`) - HTTP hook server, shared across all workspaces
 
@@ -51,6 +52,7 @@ interface AgentSetupInfo {
 ```
 
 **Implementation notes:**
+
 - `getBinaryUrl()` returns platform-specific download URL
 - `generateConfigFile()` creates workspace-specific config (e.g., MCP server configuration)
 - Use template files with `${VARIABLE}` placeholders for config generation
@@ -94,12 +96,13 @@ interface AgentServerManager {
 
 **Server architecture patterns:**
 
-| Pattern | Description | Example |
-| ------- | ----------- | ------- |
-| Per-workspace | Spawn one server process per workspace | OpenCode |
-| Shared | Single HTTP server routes requests by workspace | Claude Code |
+| Pattern       | Description                                     | Example     |
+| ------------- | ----------------------------------------------- | ----------- |
+| Per-workspace | Spawn one server process per workspace          | OpenCode    |
+| Shared        | Single HTTP server routes requests by workspace | Claude Code |
 
 **Implementation notes:**
+
 - Use `PortManager` to allocate ports
 - Implement health checks before firing `onServerStarted`
 - Preserve port across restarts when possible
@@ -141,6 +144,7 @@ interface AgentProvider {
 ```
 
 **Implementation notes:**
+
 - `startupCommands` are VS Code commands executed when workspace becomes active
 - `disconnect()` preserves state for reconnection; `dispose()` is final cleanup
 - Status changes should be emitted as soon as they occur
@@ -404,7 +408,7 @@ describe("MyAgentProvider", () => {
 
 ## Reference Implementations
 
-| Agent | Setup Info | Server Manager | Provider |
-| ----- | ---------- | -------------- | -------- |
-| OpenCode | `src/agents/opencode/setup-info.ts` | `src/agents/opencode/server-manager.ts` | `src/agents/opencode/provider.ts` |
+| Agent       | Setup Info                             | Server Manager                             | Provider                             |
+| ----------- | -------------------------------------- | ------------------------------------------ | ------------------------------------ |
+| OpenCode    | `src/agents/opencode/setup-info.ts`    | `src/agents/opencode/server-manager.ts`    | `src/agents/opencode/provider.ts`    |
 | Claude Code | `src/agents/claude-code/setup-info.ts` | `src/agents/claude-code/server-manager.ts` | `src/agents/claude-code/provider.ts` |

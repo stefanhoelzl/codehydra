@@ -30,7 +30,11 @@ export { GitWorktreeProvider } from "./git/git-worktree-provider";
 
 // Code server
 export type { InstanceState, CodeServerConfig } from "./code-server/types";
-export { CodeServerManager, urlForFolder } from "./code-server/code-server-manager";
+export {
+  CodeServerManager,
+  urlForFolder,
+  urlForWorkspace,
+} from "./code-server/code-server-manager";
 
 // Project store
 export type { ProjectConfig } from "./project/types";
@@ -134,6 +138,16 @@ export type {
 // KeepFiles service
 export { KeepFilesService } from "./keepfiles";
 export type { IKeepFilesService, CopyResult, CopyError } from "./keepfiles";
+
+// VS Code workspace file service
+export { WorkspaceFileService, createWorkspaceFileConfig } from "./vscode-workspace";
+export type {
+  IWorkspaceFileService,
+  WorkspaceFileConfig,
+  CodeWorkspaceFile,
+  WorkspaceFolder,
+  WorkspaceExtensions,
+} from "./vscode-workspace";
 
 // Logging service
 export {

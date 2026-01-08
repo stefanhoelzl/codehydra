@@ -35,9 +35,9 @@ export interface ClaudeCodeProviderDeps {
 export class ClaudeCodeProvider implements AgentProvider {
   /**
    * VS Code commands to execute on workspace activation.
-   * Uses the Claude Code VS Code extension's terminal.open command.
+   * Uses the Claude Code VS Code extension's editor.open command to open the panel.
    */
-  readonly startupCommands: readonly string[] = ["claude-vscode.terminal.open"] as const;
+  readonly startupCommands: readonly string[] = ["claude-vscode.editor.open"] as const;
 
   private readonly serverManager: ClaudeCodeServerManager;
   private readonly workspacePath: string;
