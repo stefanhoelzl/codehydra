@@ -20,7 +20,9 @@ import {
   type FileSystemLayer,
   type LoggingService,
   type Logger,
+  type IWorkspaceFileService,
   urlForFolder,
+  urlForWorkspace,
 } from "../services";
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspacePath } from "../shared/ipc";
@@ -64,6 +66,8 @@ export class AppState {
   private readonly loggingService: LoggingService;
   private readonly logger: Logger;
   private readonly agentType: AgentType;
+  private readonly workspaceFileService: IWorkspaceFileService;
+  private readonly wrapperPath: string;
   /**
    * Map of normalized project path strings to open project state.
    * Keys use path.toString() for consistent cross-platform lookup.
@@ -84,7 +88,9 @@ export class AppState {
     codeServerPort: number,
     fileSystemLayer: FileSystemLayer,
     loggingService: LoggingService,
-    agentType: AgentType
+    agentType: AgentType,
+    workspaceFileService: IWorkspaceFileService,
+    wrapperPath: string
   ) {
     this.projectStore = projectStore;
     this.viewManager = viewManager;
@@ -94,6 +100,8 @@ export class AppState {
     this.loggingService = loggingService;
     this.logger = loggingService.createLogger("app");
     this.agentType = agentType;
+    this.workspaceFileService = workspaceFileService;
+    this.wrapperPath = wrapperPath;
   }
 
   /**
@@ -360,13 +368,24 @@ export class AppState {
     // Returns internal Workspace with Path-based paths
     const workspaces = await provider.discover();
 
-    // Create views for each workspace and start OpenCode servers
+    // Create views for each workspace
+    // Start agent server FIRST so env vars are available for workspace file
     // ViewManager still uses string paths (will be migrated in Step 5.5)
     for (const workspace of workspaces) {
       const workspacePathStr = workspace.path.toString();
-      const url = this.getWorkspaceUrl(workspacePathStr);
+
+      // 1. Start agent server first (await so env vars become available)
+      await this.startAgentServer(workspacePathStr);
+
+      // 2. Get environment variables from provider (now available)
+      const provider = this.agentStatusManager?.getProvider(workspacePathStr as WorkspacePath);
+      const agentEnvVars = provider?.getEnvironmentVariables() ?? {};
+
+      // 3. Create workspace file with env vars and get URL
+      const url = await this.getWorkspaceUrl(workspacePathStr, agentEnvVars);
+
+      // 4. Create view with workspace URL
       this.viewManager.createWorkspaceView(workspacePathStr, url, projectPathStr, true);
-      this.startAgentServerAsync(workspacePathStr);
     }
 
     // First workspace will be set as active after project is registered
@@ -508,12 +527,41 @@ export class AppState {
 
   /**
    * Generates a code-server URL for a workspace.
+   * Creates a .code-workspace file with agent-specific settings if it doesn't exist.
    *
    * @param workspacePath - Absolute path to the workspace directory (string)
+   * @param agentEnvVars - Environment variables from the agent provider
    * @returns The code-server URL
    */
-  getWorkspaceUrl(workspacePath: string): string {
-    return urlForFolder(this.codeServerPort, workspacePath);
+  async getWorkspaceUrl(
+    workspacePath: string,
+    agentEnvVars: Record<string, string>
+  ): Promise<string> {
+    try {
+      const workspacePathObj = new Path(workspacePath);
+      const projectWorkspacesDir = workspacePathObj.dirname;
+
+      // Build settings from wrapper path + agent env vars
+      // Convert env vars from Record<string, string> to {name, value}[] format expected by Claude extension
+      const envVarsArray = Object.entries(agentEnvVars).map(([name, value]) => ({ name, value }));
+      const agentSettings: Record<string, unknown> = {
+        "claudeCode.claudeProcessWrapper": this.wrapperPath,
+        "claudeCode.environmentVariables": envVarsArray,
+      };
+
+      const workspaceFilePath = await this.workspaceFileService.ensureWorkspaceFile(
+        workspacePathObj,
+        projectWorkspacesDir,
+        agentSettings
+      );
+      return urlForWorkspace(this.codeServerPort, workspaceFilePath.toString());
+    } catch (error) {
+      this.logger.warn("Failed to ensure workspace file, using folder URL", {
+        workspacePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return urlForFolder(this.codeServerPort, workspacePath);
+    }
   }
 
   /**
@@ -568,11 +616,11 @@ export class AppState {
    * @param workspace - The internal workspace to add (with Path-based path)
    * @param options - Optional options (e.g., initialPrompt)
    */
-  addWorkspace(
+  async addWorkspace(
     projectPathInput: string,
     workspace: InternalWorkspace,
     options?: { initialPrompt?: { prompt: string; agent?: string } }
-  ): void {
+  ): Promise<void> {
     // Note: initialPrompt is ignored for Claude Code agent (no TUI)
     if (options?.initialPrompt) {
       this.logger.debug("Initial prompt ignored - Claude Code agent has no TUI", {
@@ -586,9 +634,19 @@ export class AppState {
       return;
     }
 
-    // Create view for the workspace (mark as new to show loading overlay)
     const workspacePathStr = workspace.path.toString();
-    const url = this.getWorkspaceUrl(workspacePathStr);
+
+    // 1. Start agent server first (await so env vars become available)
+    await this.startAgentServer(workspacePathStr);
+
+    // 2. Get environment variables from provider (now available)
+    const agentProvider = this.agentStatusManager?.getProvider(workspacePathStr as WorkspacePath);
+    const agentEnvVars = agentProvider?.getEnvironmentVariables() ?? {};
+
+    // 3. Create workspace file with env vars and get URL
+    const url = await this.getWorkspaceUrl(workspacePathStr, agentEnvVars);
+
+    // 4. Create view with workspace URL (mark as new to show loading overlay)
     this.viewManager.createWorkspaceView(workspacePathStr, url, normalizedKey, true);
 
     // Preload the URL so VS Code starts loading in the background
@@ -602,26 +660,25 @@ export class AppState {
     };
 
     this.openProjects.set(normalizedKey, updatedProject);
-
-    // Start agent server for the workspace (agent status tracking is wired via callback)
-    this.startAgentServerAsync(workspacePathStr);
   }
 
   /**
-   * Start agent server asynchronously with error logging.
-   * Fire-and-forget pattern - failures are logged but don't block.
+   * Start agent server and wait for it to be ready.
+   * Failures are logged but don't throw.
    *
    * @param workspacePath - Path to the workspace
    */
-  private startAgentServerAsync(workspacePath: string): void {
+  private async startAgentServer(workspacePath: string): Promise<void> {
     if (this.serverManager) {
-      void this.serverManager.startServer(workspacePath).catch((err: unknown) => {
+      try {
+        await this.serverManager.startServer(workspacePath);
+      } catch (err: unknown) {
         this.logger.error(
           "Failed to start agent server",
           { workspacePath },
           err instanceof Error ? err : undefined
         );
-      });
+      }
     }
   }
 

@@ -14,6 +14,8 @@ import {
   DefaultFileSystemLayer,
   ElectronLogService,
   createWorkspaceLockHandler,
+  WorkspaceFileService,
+  createWorkspaceFileConfig,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -370,6 +372,15 @@ async function startServices(): Promise<void> {
 
   // Create ProjectStore and AppState
   const projectStore = new ProjectStore(pathProvider.projectsDir.toString(), fileSystemLayer);
+
+  // Create WorkspaceFileService for .code-workspace file management
+  const workspaceFileConfig = createWorkspaceFileConfig();
+  const workspaceFileService = new WorkspaceFileService(
+    fileSystemLayer,
+    workspaceFileConfig,
+    loggingService.createLogger("workspace-file")
+  );
+
   appState = new AppState(
     projectStore,
     viewManager,
@@ -377,7 +388,9 @@ async function startServices(): Promise<void> {
     port,
     fileSystemLayer,
     loggingService,
-    AGENT_TYPE
+    AGENT_TYPE,
+    workspaceFileService,
+    pathProvider.claudeCodeWrapperPath.toString()
   );
 
   // Initialize Claude Code services

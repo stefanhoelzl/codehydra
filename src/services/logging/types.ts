@@ -48,7 +48,8 @@ export type LoggerName =
   | "mcp" // McpServerManager - MCP server
   | "extension" // PluginServer - extension-side logs forwarded to main
   | "dialog" // DialogLayer - system dialogs
-  | "menu"; // MenuLayer - application menu
+  | "menu" // MenuLayer - application menu
+  | "workspace-file"; // WorkspaceFileService - .code-workspace file management
 
 /**
  * Context data for log entries.

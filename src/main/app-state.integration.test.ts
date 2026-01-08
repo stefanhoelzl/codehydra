@@ -113,6 +113,9 @@ function createMockAgentStatusManager(): AgentStatusManager {
     clearTuiTracking: vi.fn(),
     onStatusChanged: vi.fn().mockReturnValue(() => {}),
     dispose: vi.fn(),
+    getProvider: vi.fn().mockReturnValue({
+      getEnvironmentVariables: vi.fn().mockReturnValue({}),
+    }),
   } as unknown as AgentStatusManager;
 }
 
@@ -142,6 +145,17 @@ function createMockServerManager(): OpenCodeServerManager {
   } as unknown as OpenCodeServerManager;
 }
 
+// Mock wrapper path for Claude wrapper
+const MOCK_WRAPPER_PATH = "/mock/bin/claude";
+
+function createMockWorkspaceFileService() {
+  return {
+    ensureWorkspaceFile: vi.fn().mockResolvedValue(new Path("/test/workspace.code-workspace")),
+    createWorkspaceFile: vi.fn().mockResolvedValue(new Path("/test/workspace.code-workspace")),
+    getWorkspaceFilePath: vi.fn().mockReturnValue(new Path("/test/workspace.code-workspace")),
+  };
+}
+
 // =============================================================================
 // Integration Tests: Workspace Removal Cleanup Flow
 // =============================================================================
@@ -154,6 +168,7 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
   let mockPathProvider: PathProvider;
   let mockFileSystemLayer: FileSystemLayer;
   let mockLoggingService: MockLoggingService;
+  let mockWorkspaceFileService: ReturnType<typeof createMockWorkspaceFileService>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -166,6 +181,7 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
     mockServerManager = createMockServerManager();
     mockFileSystemLayer = createFileSystemMock();
     mockLoggingService = createMockLoggingService();
+    mockWorkspaceFileService = createMockWorkspaceFileService();
 
     // Set up workspace provider mock implementations with Path objects
     // (Type assertions needed because hoisted mock types are strings but runtime uses Path)
@@ -198,7 +214,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -245,7 +263,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -266,7 +286,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -286,7 +308,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       // Don't set agentStatusManager
 
@@ -311,7 +335,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -346,7 +372,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -372,7 +400,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -398,7 +428,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
 
@@ -438,7 +470,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
       appState.setAgentStatusManager(mockAgentStatusManager);
       appState.setServerManager(mockServerManager);
@@ -479,7 +513,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -511,7 +547,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       await appState.openProject("/project");
@@ -537,7 +575,9 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code"
+        "claude-code",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
       );
 
       // First: open project A with workspaces
