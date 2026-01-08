@@ -74,10 +74,10 @@ export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChan
   Stop: "idle",
   // Subagent done, main agent continues (no change)
   SubagentStop: null,
-  // Tool starting, still busy (no change)
-  PreToolUse: null,
-  // Tool done, still busy (no change)
-  PostToolUse: null,
+  // Tool starting, back to busy (handles return from PermissionRequest idle state)
+  PreToolUse: "busy",
+  // Tool done, back to busy (handles return from PermissionRequest idle state)
+  PostToolUse: "busy",
   // Informational only (no change)
   Notification: null,
   // Informational only (no change)
