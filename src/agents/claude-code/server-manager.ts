@@ -493,6 +493,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * Handle a hook notification.
    */
   private handleHook(hookName: ClaudeCodeHookName, payload: ClaudeCodeBridgePayload): void {
+    this.logger.silly("Hook payload received", { hookName, payload: JSON.stringify(payload) });
+
     const { workspacePath, session_id } = payload;
 
     // Normalize workspace path

@@ -32,6 +32,7 @@
     ],
     "PermissionRequest": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
