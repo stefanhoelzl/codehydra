@@ -83,7 +83,7 @@ describe("WorkspaceFileService", () => {
       const parsed = JSON.parse(content) as CodeWorkspaceFile;
 
       expect(parsed.folders).toHaveLength(1);
-      expect(parsed.folders[0]?.path).toBe("./my-feature");
+      expect(parsed.folders[0]?.path).toBe("/project/workspaces/my-feature");
     });
 
     it("includes agent settings when provided", async () => {
@@ -202,7 +202,7 @@ describe("WorkspaceFileService", () => {
         new Path("/project/workspaces/my-feature.code-workspace")
       );
       const parsed = JSON.parse(content) as CodeWorkspaceFile;
-      expect(parsed.folders[0]?.path).toBe("./my-feature");
+      expect(parsed.folders[0]?.path).toBe("/project/workspaces/my-feature");
     });
 
     it("passes agent settings to createWorkspaceFile when creating new file", async () => {
@@ -237,6 +237,56 @@ describe("WorkspaceFileService", () => {
           "claudeCode.claudeProcessWrapper": "/path/to/claude",
         })
       );
+    });
+  });
+
+  describe("deleteWorkspaceFile", () => {
+    it("deletes an existing workspace file", async () => {
+      const mockFileSystem = createFileSystemMock({
+        entries: {
+          "/project": directory(),
+          "/project/workspaces": directory(),
+          "/project/workspaces/my-feature": directory(),
+          "/project/workspaces/my-feature.code-workspace": file(
+            JSON.stringify({ folders: [{ path: "/project/workspaces/my-feature" }] })
+          ),
+        },
+      });
+      const service = new WorkspaceFileService(
+        mockFileSystem,
+        config,
+        mockLoggingService.createLogger("workspace-file")
+      );
+
+      const projectWorkspacesDir = new Path("/project/workspaces");
+
+      await service.deleteWorkspaceFile("my-feature", projectWorkspacesDir);
+
+      // Verify file was deleted by trying to read it
+      await expect(
+        mockFileSystem.readFile(new Path("/project/workspaces/my-feature.code-workspace"))
+      ).rejects.toThrow();
+    });
+
+    it("does not throw when file does not exist", async () => {
+      const mockFileSystem = createFileSystemMock({
+        entries: {
+          "/project": directory(),
+          "/project/workspaces": directory(),
+        },
+      });
+      const service = new WorkspaceFileService(
+        mockFileSystem,
+        config,
+        mockLoggingService.createLogger("workspace-file")
+      );
+
+      const projectWorkspacesDir = new Path("/project/workspaces");
+
+      // Should not throw
+      await expect(
+        service.deleteWorkspaceFile("nonexistent", projectWorkspacesDir)
+      ).resolves.toBeUndefined();
     });
   });
 });

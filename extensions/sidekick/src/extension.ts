@@ -385,7 +385,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     autoConnect: false,
   }) as TypedSocket;
 
-  socket.on("config", (config: PluginConfig) => {
+  socket.on("config", async (config: PluginConfig) => {
     if (typeof config !== "object" || config === null) {
       return;
     }
@@ -408,7 +408,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
       startupCommandsCount: config.startupCommands?.length ?? 0,
     });
 
-    void vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
+    await vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
 
     // Apply agent environment variables
     if (config.env !== null && extensionContext) {
@@ -420,18 +420,14 @@ function connectToPluginServer(port: number, workspacePath: string): void {
       });
     }
 
-    // Execute startup commands
-    if (config.startupCommands && config.startupCommands.length > 0) {
-      for (const command of config.startupCommands) {
-        vscode.commands.executeCommand(command).then(
-          () => {
-            codehydraApi.log.debug("Startup command executed", { command });
-          },
-          (err: unknown) => {
-            const error = err instanceof Error ? err.message : String(err);
-            codehydraApi.log.warn("Startup command failed", { command, error });
-          }
-        );
+    // Execute startup commands sequentially to preserve order
+    for (const command of config.startupCommands ?? []) {
+      try {
+        await vscode.commands.executeCommand(command);
+        codehydraApi.log.debug("Startup command executed", { command });
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err.message : String(err);
+        codehydraApi.log.warn("Startup command failed", { command, error });
       }
     }
 
@@ -527,6 +523,10 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
+    // No folder loaded - reload the window to retry
+    // This handles a race condition where VS Code sometimes fails to open
+    // the folder from a .code-workspace file
+    void vscode.commands.executeCommand("workbench.action.reloadWindow");
     return { codehydra: codehydraApi };
   }
 

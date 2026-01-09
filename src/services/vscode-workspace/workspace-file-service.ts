@@ -41,8 +41,8 @@ export class WorkspaceFileService implements IWorkspaceFileService {
     const content: CodeWorkspaceFile = {
       folders: [
         {
-          // Use relative path from workspace file to folder
-          path: `./${workspaceName}`,
+          // Use absolute path for the folder
+          path: workspacePath.toString(),
         },
       ],
       settings: {
@@ -70,5 +70,24 @@ export class WorkspaceFileService implements IWorkspaceFileService {
 
   getWorkspaceFilePath(workspaceName: string, projectWorkspacesDir: Path): Path {
     return new Path(projectWorkspacesDir, `${workspaceName}.code-workspace`);
+  }
+
+  async deleteWorkspaceFile(workspaceName: string, projectWorkspacesDir: Path): Promise<void> {
+    const workspaceFilePath = this.getWorkspaceFilePath(workspaceName, projectWorkspacesDir);
+
+    try {
+      await this.fileSystem.rm(workspaceFilePath, { force: true });
+      this.logger.debug("Deleted workspace file", {
+        workspaceName,
+        path: workspaceFilePath.toString(),
+      });
+    } catch (error) {
+      // Log but don't throw - file might not exist or be already deleted
+      this.logger.debug("Failed to delete workspace file", {
+        workspaceName,
+        path: workspaceFilePath.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

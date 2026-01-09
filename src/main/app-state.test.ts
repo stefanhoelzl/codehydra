@@ -95,6 +95,7 @@ const {
     ensureWorkspaceFile: vi.fn(),
     createWorkspaceFile: vi.fn(),
     getWorkspaceFilePath: vi.fn(),
+    deleteWorkspaceFile: vi.fn(),
   };
 
   return {
@@ -704,6 +705,7 @@ describe("AppState", () => {
         expect.any(Path), // workspacePath
         expect.any(Path), // projectWorkspacesDir
         expect.objectContaining({
+          "claudeCode.useTerminal": true,
           "claudeCode.claudeProcessWrapper": MOCK_WRAPPER_PATH,
           // Env vars are converted to {name, value}[] format for Claude extension
           "claudeCode.environmentVariables": [{ name: "ANTHROPIC_API_KEY", value: "test-key" }],
