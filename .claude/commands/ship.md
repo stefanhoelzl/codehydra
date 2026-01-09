@@ -142,13 +142,13 @@ Capture the PR URL and number from output.
 ### 4. Enable Auto-merge
 
 ```bash
-gh pr merge --repo stefanhoelzl/codehydra <number> --auto --merge --delete-branch
+gh pr merge --repo stefanhoelzl/codehydra <number> --auto --rebase --delete-branch
 ```
 
 This:
 
 - Enables auto-merge (will merge when all checks pass and branch is up-to-date)
-- Uses **merge** (not squash) to preserve commit history
+- Uses **rebase** to maintain linear history
 - Sets branch to auto-delete after merge
 
 ### 5. Run ship-wait script
