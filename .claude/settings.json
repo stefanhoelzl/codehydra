@@ -5,8 +5,6 @@
       "Bash(pnpm test:*)",
       "Bash(pnpm validate:*)",
       "Bash(pnpm build:*)",
-      "Bash(node --version:*)",
-      "Bash(npm --version:*)",
       "Bash(pnpm --version:*)",
       "Bash(tsc --version:*)"
     ]
