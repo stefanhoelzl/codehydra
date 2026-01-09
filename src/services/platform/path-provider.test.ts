@@ -2,7 +2,7 @@
  * Tests for PathProvider interface, mock factory, and DefaultPathProvider.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMockPathProvider } from "./path-provider.test-utils";
 import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
@@ -154,6 +154,15 @@ describe("createMockPathProvider", () => {
 });
 
 describe("DefaultPathProvider", () => {
+  // Clear CODEHYDRA_BUNDLE_DIR to ensure tests use expected paths
+  beforeEach(() => {
+    vi.stubEnv("CODEHYDRA_BUNDLE_DIR", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   describe("development mode", () => {
     it("returns ./app-data/ based paths as Path objects", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
