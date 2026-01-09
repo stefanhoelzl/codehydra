@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { ArchiveError, getErrorMessage } from "./errors.js";
+import { Path } from "../platform/path.js";
 
 /**
  * Interface for extracting archives.
@@ -20,25 +21,26 @@ export interface ArchiveExtractor {
    * @param destDir - Directory to extract to (will be created if it doesn't exist)
    * @throws ArchiveError on extraction failure
    */
-  extract(archivePath: string, destDir: string): Promise<void>;
+  extract(archivePath: string, destDir: Path): Promise<void>;
 }
 
 /**
  * Extractor for .tar.gz archives using the `tar` package.
  */
 export class TarExtractor implements ArchiveExtractor {
-  async extract(archivePath: string, destDir: string): Promise<void> {
+  async extract(archivePath: string, destDir: Path): Promise<void> {
+    const destPath = destDir.toNative();
     try {
-      await fs.promises.mkdir(destDir, { recursive: true });
+      await fs.promises.mkdir(destPath, { recursive: true });
       await tar.extract({
         file: archivePath,
-        cwd: destDir,
+        cwd: destPath,
       });
     } catch (error) {
       const message = getErrorMessage(error);
       if (message.includes("EACCES") || message.includes("EPERM")) {
         throw new ArchiveError(
-          `Permission denied extracting to ${destDir}: ${message}`,
+          `Permission denied extracting to ${destPath}: ${message}`,
           "PERMISSION_DENIED"
         );
       }
@@ -61,9 +63,10 @@ export class TarExtractor implements ArchiveExtractor {
  * Extractor for .zip archives using the `yauzl` package.
  */
 export class ZipExtractor implements ArchiveExtractor {
-  async extract(archivePath: string, destDir: string): Promise<void> {
+  async extract(archivePath: string, destDir: Path): Promise<void> {
+    const destPath = destDir.toNative();
     try {
-      await fs.promises.mkdir(destDir, { recursive: true });
+      await fs.promises.mkdir(destPath, { recursive: true });
       await this.extractZip(archivePath, destDir);
     } catch (error) {
       if (error instanceof ArchiveError) {
@@ -72,7 +75,7 @@ export class ZipExtractor implements ArchiveExtractor {
       const message = getErrorMessage(error);
       if (message.includes("EACCES") || message.includes("EPERM")) {
         throw new ArchiveError(
-          `Permission denied extracting to ${destDir}: ${message}`,
+          `Permission denied extracting to ${destPath}: ${message}`,
           "PERMISSION_DENIED"
         );
       }
@@ -80,7 +83,7 @@ export class ZipExtractor implements ArchiveExtractor {
     }
   }
 
-  private extractZip(archivePath: string, destDir: string): Promise<void> {
+  private extractZip(archivePath: string, destDir: Path): Promise<void> {
     return new Promise((resolve, reject) => {
       yauzl.open(archivePath, { lazyEntries: true }, (err, zipfile) => {
         if (err) {
@@ -104,9 +107,24 @@ export class ZipExtractor implements ArchiveExtractor {
 
         zipfile.readEntry();
         zipfile.on("entry", (entry) => {
-          const entryPath = path.join(destDir, entry.fileName);
+          // Use Path class to construct entry path - this automatically handles normalization
+          // and ensures consistent separator usage regardless of platform
+          let entryPath: Path;
+          try {
+            entryPath = new Path(destDir, entry.fileName);
+          } catch (error) {
+            zipfile.close();
+            reject(
+              new ArchiveError(
+                `Invalid path in archive: ${entry.fileName} - ${getErrorMessage(error)}`,
+                "INVALID_ARCHIVE"
+              )
+            );
+            return;
+          }
 
           // Security check: prevent path traversal
+          // We can reliably use startsWith because Path ensures canonical format
           if (!entryPath.startsWith(destDir)) {
             zipfile.close();
             reject(
@@ -118,16 +136,18 @@ export class ZipExtractor implements ArchiveExtractor {
             return;
           }
 
+          const nativeEntryPath = entryPath.toNative();
+
           if (entry.fileName.endsWith("/")) {
             // Directory entry
             fs.promises
-              .mkdir(entryPath, { recursive: true })
+              .mkdir(nativeEntryPath, { recursive: true })
               .then(() => zipfile.readEntry())
               .catch(reject);
           } else {
             // File entry
             fs.promises
-              .mkdir(path.dirname(entryPath), { recursive: true })
+              .mkdir(path.dirname(nativeEntryPath), { recursive: true })
               .then(() => {
                 zipfile.openReadStream(entry, (err, readStream) => {
                   if (err) {
@@ -140,13 +160,13 @@ export class ZipExtractor implements ArchiveExtractor {
                     return;
                   }
 
-                  const writeStream = fs.createWriteStream(entryPath);
+                  const writeStream = fs.createWriteStream(nativeEntryPath);
                   pipeline(readStream, writeStream)
                     .then(async () => {
                       // Preserve file mode from external attributes (Unix mode is in upper 16 bits)
                       const mode = (entry.externalFileAttributes >> 16) & 0o777;
                       if (mode !== 0) {
-                        await fs.promises.chmod(entryPath, mode);
+                        await fs.promises.chmod(nativeEntryPath, mode);
                       }
                     })
                     .then(() => zipfile.readEntry())
@@ -180,7 +200,7 @@ export class DefaultArchiveExtractor implements ArchiveExtractor {
     this.zipExtractor = new ZipExtractor();
   }
 
-  async extract(archivePath: string, destDir: string): Promise<void> {
+  async extract(archivePath: string, destDir: Path): Promise<void> {
     const lowerPath = archivePath.toLowerCase();
 
     if (lowerPath.endsWith(".tar.gz") || lowerPath.endsWith(".tgz")) {

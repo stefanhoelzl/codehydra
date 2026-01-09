@@ -12,6 +12,7 @@ import * as tar from "tar";
 import yazl from "yazl";
 import { TarExtractor, ZipExtractor, DefaultArchiveExtractor } from "./archive-extractor";
 import { ArchiveError } from "./errors";
+import { Path } from "../platform/path";
 
 /**
  * Creates a zip archive from a source directory using yazl.
@@ -73,7 +74,7 @@ describe("TarExtractor (boundary)", () => {
 
     // Extract using TarExtractor
     const extractor = new TarExtractor();
-    await extractor.extract(archivePath, destDir);
+    await extractor.extract(archivePath, new Path(destDir));
 
     // Verify contents
     const testContent = await fs.readFile(path.join(destDir, "test.txt"), "utf-8");
@@ -99,7 +100,7 @@ describe("TarExtractor (boundary)", () => {
 
     // Extract
     const extractor = new TarExtractor();
-    await extractor.extract(archivePath, destDir);
+    await extractor.extract(archivePath, new Path(destDir));
 
     // Check permissions
     const stats = await fs.stat(path.join(destDir, "script.sh"));
@@ -113,8 +114,8 @@ describe("TarExtractor (boundary)", () => {
 
     const extractor = new TarExtractor();
 
-    await expect(extractor.extract(archivePath, destDir)).rejects.toThrow(ArchiveError);
-    await expect(extractor.extract(archivePath, destDir)).rejects.toMatchObject({
+    await expect(extractor.extract(archivePath, new Path(destDir))).rejects.toThrow(ArchiveError);
+    await expect(extractor.extract(archivePath, new Path(destDir))).rejects.toMatchObject({
       errorCode: "INVALID_ARCHIVE",
     });
   });
@@ -147,7 +148,7 @@ describe("ZipExtractor (boundary)", () => {
 
     // Extract using ZipExtractor
     const extractor = new ZipExtractor();
-    await extractor.extract(archivePath, destDir);
+    await extractor.extract(archivePath, new Path(destDir));
 
     // Verify contents
     const testContent = await fs.readFile(path.join(destDir, "test.txt"), "utf-8");
@@ -167,7 +168,7 @@ describe("ZipExtractor (boundary)", () => {
     // or INVALID_ARCHIVE (for files that look like zips but are structurally corrupt)
     let caughtError: ArchiveError | undefined;
     try {
-      await extractor.extract(archivePath, destDir);
+      await extractor.extract(archivePath, new Path(destDir));
     } catch (e) {
       caughtError = e as ArchiveError;
     }
@@ -200,7 +201,7 @@ describe("DefaultArchiveExtractor (boundary)", () => {
     await tar.create({ gzip: true, file: archivePath, cwd: sourceDir }, ["."]);
 
     const extractor = new DefaultArchiveExtractor();
-    await extractor.extract(archivePath, destDir);
+    await extractor.extract(archivePath, new Path(destDir));
 
     const content = await fs.readFile(path.join(destDir, "file.txt"), "utf-8");
     expect(content).toBe("tar.gz content");
@@ -216,7 +217,7 @@ describe("DefaultArchiveExtractor (boundary)", () => {
     await tar.create({ gzip: true, file: archivePath, cwd: sourceDir }, ["."]);
 
     const extractor = new DefaultArchiveExtractor();
-    await extractor.extract(archivePath, destDir);
+    await extractor.extract(archivePath, new Path(destDir));
 
     const content = await fs.readFile(path.join(destDir, "file.txt"), "utf-8");
     expect(content).toBe("tgz content");
@@ -232,7 +233,7 @@ describe("DefaultArchiveExtractor (boundary)", () => {
     await createTestZip(sourceDir, archivePath);
 
     const extractor = new DefaultArchiveExtractor();
-    await extractor.extract(archivePath, destDir);
+    await extractor.extract(archivePath, new Path(destDir));
 
     const content = await fs.readFile(path.join(destDir, "file.txt"), "utf-8");
     expect(content).toBe("zip content");
@@ -244,8 +245,8 @@ describe("DefaultArchiveExtractor (boundary)", () => {
 
     const extractor = new DefaultArchiveExtractor();
 
-    await expect(extractor.extract(archivePath, destDir)).rejects.toThrow(ArchiveError);
-    await expect(extractor.extract(archivePath, destDir)).rejects.toMatchObject({
+    await expect(extractor.extract(archivePath, new Path(destDir))).rejects.toThrow(ArchiveError);
+    await expect(extractor.extract(archivePath, new Path(destDir))).rejects.toMatchObject({
       errorCode: "INVALID_ARCHIVE",
       message: expect.stringContaining("Unsupported archive format"),
     });

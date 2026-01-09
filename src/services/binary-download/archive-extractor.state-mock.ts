@@ -134,10 +134,10 @@ export function createArchiveExtractorMock(
   const mock: MockArchiveExtractor = {
     $: state,
 
-    async extract(archivePath: string, destDir: string): Promise<void> {
+    async extract(archivePath: string, destDir: Path): Promise<void> {
       // Normalize the archive path for lookup
       const normalizedArchivePath = new Path(archivePath).toString();
-      const normalizedDestDir = new Path(destDir).toString();
+      const normalizedDestDir = destDir.toString();
 
       // Get configured result (or default)
       const result = results.get(normalizedArchivePath) ?? defaultResult;

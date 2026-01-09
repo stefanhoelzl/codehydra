@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DefaultArchiveExtractor, TarExtractor, ZipExtractor } from "./archive-extractor";
 import { ArchiveError } from "./errors";
+import { Path } from "../platform/path";
 
 // Mock the tar and yauzl modules
 vi.mock("tar", () => ({
@@ -47,7 +48,7 @@ describe("TarExtractor", () => {
     tarMock.extract.mockResolvedValue(undefined);
     const extractor = new TarExtractor();
 
-    await extractor.extract("/path/to/archive.tar.gz", "/dest/dir");
+    await extractor.extract("/path/to/archive.tar.gz", new Path("/dest/dir"));
 
     expect(tarMock.extract).toHaveBeenCalledWith({
       file: "/path/to/archive.tar.gz",
@@ -59,26 +60,34 @@ describe("TarExtractor", () => {
     tarMock.extract.mockRejectedValue(new Error("TAR_BAD_ARCHIVE: Invalid tar data"));
     const extractor = new TarExtractor();
 
-    await expect(extractor.extract("/path/to/bad.tar.gz", "/dest")).rejects.toThrow(ArchiveError);
-    await expect(extractor.extract("/path/to/bad.tar.gz", "/dest")).rejects.toMatchObject({
-      errorCode: "INVALID_ARCHIVE",
-    });
+    await expect(extractor.extract("/path/to/bad.tar.gz", new Path("/dest"))).rejects.toThrow(
+      ArchiveError
+    );
+    await expect(extractor.extract("/path/to/bad.tar.gz", new Path("/dest"))).rejects.toMatchObject(
+      {
+        errorCode: "INVALID_ARCHIVE",
+      }
+    );
   });
 
   it("throws ArchiveError with INVALID_ARCHIVE for zlib errors", async () => {
     tarMock.extract.mockRejectedValue(new Error("zlib: invalid deflate data"));
     const extractor = new TarExtractor();
 
-    await expect(extractor.extract("/path/to/bad.tar.gz", "/dest")).rejects.toMatchObject({
-      errorCode: "INVALID_ARCHIVE",
-    });
+    await expect(extractor.extract("/path/to/bad.tar.gz", new Path("/dest"))).rejects.toMatchObject(
+      {
+        errorCode: "INVALID_ARCHIVE",
+      }
+    );
   });
 
   it("throws ArchiveError with PERMISSION_DENIED for EACCES errors", async () => {
     tarMock.extract.mockRejectedValue(new Error("EACCES: permission denied"));
     const extractor = new TarExtractor();
 
-    await expect(extractor.extract("/path/to/archive.tar.gz", "/dest")).rejects.toMatchObject({
+    await expect(
+      extractor.extract("/path/to/archive.tar.gz", new Path("/dest"))
+    ).rejects.toMatchObject({
       errorCode: "PERMISSION_DENIED",
     });
   });
@@ -87,7 +96,9 @@ describe("TarExtractor", () => {
     tarMock.extract.mockRejectedValue(new Error("Some other error"));
     const extractor = new TarExtractor();
 
-    await expect(extractor.extract("/path/to/archive.tar.gz", "/dest")).rejects.toMatchObject({
+    await expect(
+      extractor.extract("/path/to/archive.tar.gz", new Path("/dest"))
+    ).rejects.toMatchObject({
       errorCode: "EXTRACTION_FAILED",
     });
   });
@@ -112,8 +123,10 @@ describe("ZipExtractor", () => {
     });
     const extractor = new ZipExtractor();
 
-    await expect(extractor.extract("/path/to/bad.zip", "/dest")).rejects.toThrow(ArchiveError);
-    await expect(extractor.extract("/path/to/bad.zip", "/dest")).rejects.toMatchObject({
+    await expect(extractor.extract("/path/to/bad.zip", new Path("/dest"))).rejects.toThrow(
+      ArchiveError
+    );
+    await expect(extractor.extract("/path/to/bad.zip", new Path("/dest"))).rejects.toMatchObject({
       errorCode: "INVALID_ARCHIVE",
     });
   });
@@ -124,7 +137,9 @@ describe("ZipExtractor", () => {
     });
     const extractor = new ZipExtractor();
 
-    await expect(extractor.extract("/path/to/missing.zip", "/dest")).rejects.toMatchObject({
+    await expect(
+      extractor.extract("/path/to/missing.zip", new Path("/dest"))
+    ).rejects.toMatchObject({
       errorCode: "EXTRACTION_FAILED",
     });
   });
@@ -136,7 +151,7 @@ describe("DefaultArchiveExtractor", () => {
     const tarMock = (await import("tar")) as unknown as { extract: ReturnType<typeof vi.fn> };
     tarMock.extract.mockResolvedValue(undefined);
 
-    await extractor.extract("/path/to/archive.tar.gz", "/dest");
+    await extractor.extract("/path/to/archive.tar.gz", new Path("/dest"));
 
     expect(tarMock.extract).toHaveBeenCalled();
   });
@@ -146,7 +161,7 @@ describe("DefaultArchiveExtractor", () => {
     const tarMock = (await import("tar")) as unknown as { extract: ReturnType<typeof vi.fn> };
     tarMock.extract.mockResolvedValue(undefined);
 
-    await extractor.extract("/path/to/archive.tgz", "/dest");
+    await extractor.extract("/path/to/archive.tgz", new Path("/dest"));
 
     expect(tarMock.extract).toHaveBeenCalled();
   });
@@ -172,7 +187,7 @@ describe("DefaultArchiveExtractor", () => {
       callback(null, mockZipfile);
     });
 
-    await extractor.extract("/path/to/archive.zip", "/dest");
+    await extractor.extract("/path/to/archive.zip", new Path("/dest"));
 
     expect(yauzlMock.default.open).toHaveBeenCalled();
   });
@@ -182,7 +197,7 @@ describe("DefaultArchiveExtractor", () => {
     const tarMock = (await import("tar")) as unknown as { extract: ReturnType<typeof vi.fn> };
     tarMock.extract.mockResolvedValue(undefined);
 
-    await extractor.extract("/path/to/ARCHIVE.TAR.GZ", "/dest");
+    await extractor.extract("/path/to/ARCHIVE.TAR.GZ", new Path("/dest"));
 
     expect(tarMock.extract).toHaveBeenCalled();
   });
@@ -190,8 +205,12 @@ describe("DefaultArchiveExtractor", () => {
   it("throws ArchiveError with INVALID_ARCHIVE for unsupported formats", async () => {
     const extractor = new DefaultArchiveExtractor();
 
-    await expect(extractor.extract("/path/to/archive.rar", "/dest")).rejects.toThrow(ArchiveError);
-    await expect(extractor.extract("/path/to/archive.rar", "/dest")).rejects.toMatchObject({
+    await expect(extractor.extract("/path/to/archive.rar", new Path("/dest"))).rejects.toThrow(
+      ArchiveError
+    );
+    await expect(
+      extractor.extract("/path/to/archive.rar", new Path("/dest"))
+    ).rejects.toMatchObject({
       errorCode: "INVALID_ARCHIVE",
       message: expect.stringContaining("Unsupported archive format"),
     });
