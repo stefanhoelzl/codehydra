@@ -36,10 +36,13 @@ vi.mock("electron", () => ({
 describe("Main process wiring", () => {
   beforeEach(() => {
     mockIsPackaged = false;
+    // Clear CODEHYDRA_BUNDLE_DIR to ensure tests use expected paths
+    vi.stubEnv("CODEHYDRA_BUNDLE_DIR", "");
   });
 
   afterEach(() => {
     mockIsPackaged = false;
+    vi.unstubAllEnvs();
   });
 
   describe("createCodeServerConfig pattern", () => {

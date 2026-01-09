@@ -47,12 +47,13 @@ describe("TarExtractor", () => {
   it("calls tar.extract with correct options", async () => {
     tarMock.extract.mockResolvedValue(undefined);
     const extractor = new TarExtractor();
+    const destDir = new Path("/dest/dir");
 
-    await extractor.extract("/path/to/archive.tar.gz", new Path("/dest/dir"));
+    await extractor.extract("/path/to/archive.tar.gz", destDir);
 
     expect(tarMock.extract).toHaveBeenCalledWith({
       file: "/path/to/archive.tar.gz",
-      cwd: "/dest/dir",
+      cwd: destDir.toNative(),
     });
   });
 
