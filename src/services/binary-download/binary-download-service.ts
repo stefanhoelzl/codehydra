@@ -14,6 +14,7 @@ import type { PathProvider } from "../platform/path-provider.js";
 import type { PlatformInfo } from "../platform/platform-info.js";
 import type { Logger } from "../logging/index.js";
 import { FileSystemError } from "../errors.js";
+import { Path } from "../platform/path.js";
 
 /**
  * Service for downloading and managing binary distributions.
@@ -63,7 +64,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     // The executable permission check is redundant since we call makeExecutable() after extraction anyway
     const binaryDir = this.getBinaryDir(binary);
     try {
-      await this.fileSystemLayer.readdir(binaryDir);
+      await this.fileSystemLayer.readdir(binaryDir.toString());
       this.logger?.debug("Install check", { binary, installed: true });
       return true;
     } catch (error) {
@@ -124,7 +125,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
       await this.archiveExtractor.extract(tempFile, destDir);
 
       // Handle nested directory structure (common in releases)
-      await this.flattenExtractedDir(destDir);
+      await this.flattenExtractedDir(destDir.toString());
 
       // Set executable permissions on Unix
       if (platform !== "win32") {
@@ -150,16 +151,16 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     const platform = this.platformInfo.platform as SupportedPlatform;
     const destDir = this.getBinaryDir(binary);
     const relativePath = config.extractedBinaryPath(platform);
-    return path.join(destDir, relativePath);
+    return new Path(destDir, relativePath).toNative();
   }
 
   /**
    * Get the directory where a binary is installed.
    */
-  private getBinaryDir(binary: BinaryType): string {
+  private getBinaryDir(binary: BinaryType): Path {
     return binary === "code-server"
-      ? this.pathProvider.codeServerDir.toString()
-      : this.pathProvider.opencodeDir.toString();
+      ? this.pathProvider.codeServerDir
+      : this.pathProvider.opencodeDir;
   }
 
   /**
