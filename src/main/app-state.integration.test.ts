@@ -153,6 +153,7 @@ function createMockWorkspaceFileService() {
     ensureWorkspaceFile: vi.fn().mockResolvedValue(new Path("/test/workspace.code-workspace")),
     createWorkspaceFile: vi.fn().mockResolvedValue(new Path("/test/workspace.code-workspace")),
     getWorkspaceFilePath: vi.fn().mockReturnValue(new Path("/test/workspace.code-workspace")),
+    deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
   };
 }
 

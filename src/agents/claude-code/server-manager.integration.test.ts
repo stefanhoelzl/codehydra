@@ -268,7 +268,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
     });
 
-    it("PreToolUse/PostToolUse do not change status", async () => {
+    it("PreToolUse does not change status without prior PermissionRequest", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -279,12 +279,8 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
 
-      // Tool use hooks should not change status
+      // PreToolUse without PermissionRequest should not change status
       await sendHook(port, "PreToolUse", {
-        workspacePath: "/workspace/feature-a",
-        tool_name: "bash",
-      });
-      await sendHook(port, "PostToolUse", {
         workspacePath: "/workspace/feature-a",
         tool_name: "bash",
       });
@@ -292,6 +288,59 @@ describe("ClaudeCodeServerManager integration", () => {
       // Status should remain busy
       expect(statusChanges).toEqual(["idle", "busy"]);
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("PreToolUse transitions to busy after PermissionRequest", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Start session and make busy
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      // Permission request puts us in idle
+      await sendHook(port, "PermissionRequest", { workspacePath: "/workspace/feature-a" });
+
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+
+      // PreToolUse after PermissionRequest should transition to busy
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "bash",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("PreToolUse flag is cleared after use", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Start session and make busy
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      // Permission request
+      await sendHook(port, "PermissionRequest", { workspacePath: "/workspace/feature-a" });
+      // First PreToolUse clears the flag
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "bash",
+      });
+
+      // Second PreToolUse should NOT change status (flag already cleared)
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "bash",
+      });
+
+      // Should only have 4 status changes, not 5
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
     });
 
     it("ignores hooks for unknown workspaces", async () => {

@@ -545,6 +545,7 @@ export class AppState {
       // Convert env vars from Record<string, string> to {name, value}[] format expected by Claude extension
       const envVarsArray = Object.entries(agentEnvVars).map(([name, value]) => ({ name, value }));
       const agentSettings: Record<string, unknown> = {
+        "claudeCode.useTerminal": true,
         "claudeCode.claudeProcessWrapper": this.wrapperPath,
         "claudeCode.environmentVariables": envVarsArray,
       };
@@ -717,6 +718,11 @@ export class AppState {
 
     // Destroy the workspace view
     await this.viewManager.destroyWorkspaceView(workspacePathStr);
+
+    // Delete the .code-workspace file
+    const workspaceName = workspacePath.basename;
+    const projectWorkspacesDir = workspacePath.dirname;
+    await this.workspaceFileService.deleteWorkspaceFile(workspaceName, projectWorkspacesDir);
 
     // Update internal project state using Path.equals() for comparison
     const updatedProject: OpenProject = {

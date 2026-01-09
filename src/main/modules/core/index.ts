@@ -281,7 +281,8 @@ export class CoreModule implements IApiModule {
       : undefined;
 
     // Add workspace and start server (with optional initial prompt)
-    this.deps.appState.addWorkspace(
+    // Must await to ensure view is created before setActiveWorkspace is called
+    await this.deps.appState.addWorkspace(
       projectPath,
       internalWorkspace,
       normalizedPrompt ? { initialPrompt: normalizedPrompt } : undefined

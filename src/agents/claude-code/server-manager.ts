@@ -42,6 +42,8 @@ export interface WorkspaceState {
   sessionId?: string;
   /** Callbacks for status changes */
   statusCallbacks: Set<(status: AgentStatus) => void>;
+  /** Flag set after PermissionRequest, cleared on PreToolUse */
+  awaitingPermissionResolution?: boolean;
 }
 
 /**
@@ -515,8 +517,17 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       state.sessionId = session_id;
     }
 
-    // Get status change for this hook
-    const newStatus = getStatusChangeForHook(hookName);
+    // Determine status change for this hook
+    let newStatus = getStatusChangeForHook(hookName);
+
+    // Special handling for permission resolution flow:
+    // PermissionRequest sets flag, PreToolUse clears it and transitions to busy
+    if (hookName === "PermissionRequest") {
+      state.awaitingPermissionResolution = true;
+    } else if (hookName === "PreToolUse" && state.awaitingPermissionResolution) {
+      state.awaitingPermissionResolution = false;
+      newStatus = "busy";
+    }
 
     this.logger.debug("Hook received", {
       hookName,

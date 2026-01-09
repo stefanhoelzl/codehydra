@@ -88,4 +88,12 @@ export interface IWorkspaceFileService {
    * @returns Path to the .code-workspace file
    */
   getWorkspaceFilePath(workspaceName: string, projectWorkspacesDir: Path): Path;
+
+  /**
+   * Delete a workspace file if it exists.
+   *
+   * @param workspaceName - Name of the workspace
+   * @param projectWorkspacesDir - Directory containing all workspace folders and files
+   */
+  deleteWorkspaceFile(workspaceName: string, projectWorkspacesDir: Path): Promise<void>;
 }

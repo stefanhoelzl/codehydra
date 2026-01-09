@@ -162,23 +162,25 @@ const DEFAULT_AGENT_COMMAND = "opencode.openTerminal";
  *
  * These commands configure the workspace layout:
  * - Close sidebars to maximize editor space
- * - Open agent terminal for AI workflow (OpenCode or Claude Code)
- * - Unlock editor groups for flexible tab management
+ * - Open agent tab for AI workflow (OpenCode or Claude Code)
+ * - Close all other editors to show only the agent
+ * - Hide the terminal panel
  * - Open dictation panel in background (no-op if not configured)
- * - Focus terminal to ensure agent input is ready for typing
  *
- * @param agentCommand - The VS Code command to open the agent terminal
+ * @param agentCommand - The VS Code command to open the agent tab
  * @returns Array of VS Code commands to execute
  */
 function getStartupCommands(agentCommand: string = DEFAULT_AGENT_COMMAND): readonly string[] {
   return [
     "workbench.action.closeSidebar", // Hide left sidebar to maximize editor
     "workbench.action.closeAuxiliaryBar", // Hide right sidebar (auxiliary bar)
-    agentCommand, // Open agent terminal (dynamic: OpenCode or Claude Code)
+    agentCommand,
+    "workbench.action.closeOtherEditors", // Close other editors in current group
+    "workbench.action.closeEditorsInOtherGroups", // Close editors in other groups
     "workbench.action.unlockEditorGroup", // Unlock editor group for tab reuse
-    "workbench.action.closeEditorsInOtherGroups", // Clean up empty editor groups
+    "workbench.action.editorLayoutSingle",
     "codehydra.dictation.openPanel", // Open dictation tab in background (no-op if no API key)
-    "workbench.action.terminal.focus", // Ensure terminal input is focused
+    "workbench.action.terminal.focus",
   ];
 }
 

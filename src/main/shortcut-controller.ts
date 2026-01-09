@@ -165,8 +165,8 @@ export class ShortcutController {
     const isAltKey = input.key === SHORTCUT_MODIFIER_KEY;
     const currentMode = this.getCurrentMode();
 
-    // Log all input events for debugging
-    this.logger?.debug("Input received", {
+    // Log all input events for debugging (silly level to avoid noise)
+    this.logger?.silly("Input received", {
       type: input.type,
       key: input.key,
       isAutoRepeat: input.isAutoRepeat,

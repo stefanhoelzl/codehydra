@@ -60,6 +60,9 @@ export type HookStatusChange = AgentStatus | null;
  * - none: No session active
  * - idle: Waiting for user (submit prompt, answer permission, etc.)
  * - busy: Agent is working, no action needed
+ *
+ * Note: PreToolUse is handled specially in server-manager.ts
+ * to only transition to busy after a PermissionRequest (flag-based).
  */
 export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChange>> = {
   // Session started, waiting for user prompt
@@ -74,8 +77,8 @@ export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChan
   Stop: "idle",
   // Subagent done, main agent continues (no change)
   SubagentStop: null,
-  // Tool starting, back to busy (handles return from PermissionRequest idle state)
-  PreToolUse: "busy",
+  // Tool starting - handled specially with flag (see server-manager.ts)
+  PreToolUse: null,
   // Tool done, back to busy (handles return from PermissionRequest idle state)
   PostToolUse: "busy",
   // Informational only (no change)

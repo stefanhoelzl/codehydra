@@ -565,7 +565,7 @@ export class ViewManager implements IViewManager {
     state.urlLoaded = true;
 
     const workspaceName = basename(workspacePath);
-    this.logger.debug("Loading URL", { workspace: workspaceName });
+    this.logger.info("Loading URL", { workspace: workspaceName, url: state.url });
 
     // Load the URL (fire-and-forget)
     void this.viewLayer.loadURL(state.handle, state.url);
