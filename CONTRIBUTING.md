@@ -4,41 +4,54 @@
 
 See [README.md](README.md) for quick start instructions.
 
-## Feature Agent Workflow
+## Feature Workflow
 
-The `/feature` skill orchestrates the complete feature lifecycle from planning to merge.
+The feature workflow uses explicit commands for each phase transition:
+
+| Command              | Purpose                             |
+| -------------------- | ----------------------------------- |
+| `/feature:discuss`   | Load context, discuss the feature   |
+| `/feature:plan`      | Enter planning mode, write the plan |
+| `/feature:review`    | Invoke parallel reviewers           |
+| `/feature:implement` | Start implementation                |
+| `/ship`              | Create PR with auto-merge           |
+
+### Workflow Overview
+
+```
+/feature:discuss → Load context (docs/PLANNING.md + relevant docs)
+       ↓
+Natural discussion (explore, ask questions)
+       ↓
+/feature:plan → Enter plan mode → Write plan → User approves
+       ↓
+/feature:review → Invoke reviewers (parallel) → Summarize → Fix issues
+       ↓
+/feature:implement → implement agent → code-review → User testing
+       ↓
+User accepts → commit → /ship
+       ↓
+┌──────┼──────┬─────────┐
+↓      ↓      ↓         ↓
+MERGED FAILED TIMEOUT
+```
 
 ### Plan Status Transitions
 
 | Status                  | Set By    | When                                                |
 | ----------------------- | --------- | --------------------------------------------------- |
-| `REVIEW_PENDING`        | feature   | Plan created                                        |
+| `REVIEW_PENDING`        | plan      | Plan created                                        |
 | `APPROVED`              | implement | Starting implementation                             |
 | `IMPLEMENTATION_REVIEW` | implement | Implementation complete, ready for review & testing |
 | `COMPLETED`             | user      | User accepted, committed                            |
 
-### Workflow Overview
+### Planning Requirements
 
-```
-PLANNING → Write plan → Ask reviewers → User approves → Invoke reviewers (parallel)
-                                                              │
-                              ┌───────────────────────────────┘
-                              ▼
-                     Reviews complete → Summarize with grades → Fix issues
-                              │
-                              ▼
-                     implement → code-review → USER_TESTING
-                              │
-                              ▼
-                     User accepts → commit → /ship
-                              │
-                        ┌─────┴─────┬─────────┐
-                        ▼           ▼         ▼
-                     MERGED     FAILED    TIMEOUT
-                        │           │         │
-                        ▼           ▼         ▼
-                   Delete ws   User reviews  User decides
-```
+See [docs/PLANNING.md](docs/PLANNING.md) for:
+
+- Which documents to read for each change type
+- What a plan must contain
+- Questions to answer during discussion
 
 ### /ship Command
 
