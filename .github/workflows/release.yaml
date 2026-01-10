@@ -10,8 +10,6 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,49 +24,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - id: version
-        run: |
-          TODAY=$(date -u +%Y.%m.%d)
-          COUNT=$(gh run list --workflow=release.yaml --created=$(date -u +%Y-%m-%d) --json status --jq 'length')
-          echo "version=$([[ "$COUNT" -le 1 ]] && echo "$TODAY" || echo "$TODAY.$COUNT")" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ github.token }}
-
   build:
-    name: Build (${{ matrix.platform }})
     needs: check
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            platform: linux
-            builder: --linux AppImage
-          - os: windows-2025
-            platform: win
-            builder: --win dir
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/setup
-
-      - run: pnpm build
-        env:
-          VERSION: ${{ needs.check.outputs.version }}
-
-      - run: npx electron-builder ${{ matrix.builder }}
-
-      - if: runner.os == 'Windows'
-        run: mv dist/win-unpacked dist/CodeHydra-win-${{ needs.check.outputs.version }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CodeHydra-${{ matrix.platform }}-${{ needs.check.outputs.version }}
-          path: dist/CodeHydra-*
+    uses: ./.github/workflows/build.yaml
+    with:
+      release: true
 
   summary:
-    needs: [build]
+    needs: build
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +42,7 @@ jobs:
           CODE_SERVER=$(grep -oP 'CODE_SERVER_VERSION\s*=\s*"\K[^"]+' src/services/binary-download/versions.ts)
           OPENCODE=$(grep -oP 'OPENCODE_VERSION\s*=\s*"\K[^"]+' src/services/binary-download/versions.ts)
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          # CodeHydra ${{ needs.check.outputs.version }}
+          # CodeHydra ${{ needs.build.outputs.version }}
 
           ## Bundled Versions
           - [code-server](https://coder.com/docs/code-server): [${CODE_SERVER}](https://github.com/coder/code-server/releases/tag/v${CODE_SERVER})

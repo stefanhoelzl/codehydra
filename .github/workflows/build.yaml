@@ -1,0 +1,115 @@
+name: Build Distribution
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        description: "Use release versioning (YYYY.MM.DD)"
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: "The computed version string"
+        value: ${{ jobs.prepare.outputs.version }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version
+        id: version
+        run: |
+          if [[ "${{ inputs.release }}" == "true" ]]; then
+            echo "version=$(date -u +%Y.%m.%d)" >> $GITHUB_OUTPUT
+          else
+            DATE=$(git log -1 --format=%cs | tr '-' '.')
+            HASH=$(git rev-parse --short=8 HEAD)
+            DIRTY=$(git status --porcelain | grep -q . && echo "-dirty" || echo "")
+            echo "version=${DATE}-dev.${HASH}${DIRTY}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Build
+        env:
+          CODEHYDRA_VERSION: ${{ steps.version.outputs.version }}
+        run: pnpm build
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: out
+          retention-days: 1
+
+  package:
+    name: Package (${{ matrix.artifact }})
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: linux-x64
+            target: linux:appimage
+            output: CodeHydra-linux-x86_64.AppImage
+            rename: CodeHydra-linux-x64.AppImage
+          - artifact: win-installer-x64
+            target: win:installer
+            output: CodeHydra-win-installer-x64.exe
+            wine: true
+          - artifact: win-portable-x64
+            target: win:portable
+            output: win-unpacked
+            rename: CodeHydra-win-portable-x64
+            wine: true
+          - artifact: darwin-x64
+            target: mac:intel
+            output: mac
+            rename: CodeHydra-darwin-x64
+          - artifact: darwin-arm64
+            target: mac:arm
+            output: mac-arm64
+            rename: CodeHydra-darwin-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: out
+
+      - name: Install Wine
+        if: matrix.wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine64 wine32:i386
+
+      - name: Package
+        run: pnpm dist:${{ matrix.target }}
+
+      - name: Rename artifact
+        if: matrix.rename
+        run: mv dist/${{ matrix.output }} dist/${{ matrix.rename }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rename || matrix.output }}
+          path: dist/${{ matrix.rename || matrix.output }}
+          retention-days: 1
+          if-no-files-found: error

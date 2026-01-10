@@ -1,23 +1,16 @@
 name: CI
 
 on:
-  push:
-    branches-ignore: [main]
+  workflow_dispatch:
   pull_request:
 
 jobs:
-  ci:
-    name: CI (${{ matrix.os }})
-    # Skip PR trigger if from same repo (push already ran)
-    if: |
-      github.event_name != 'pull_request' || 
-      github.event.pull_request.head.repo.full_name != github.repository
+  validate:
+    name: Validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # Use windows-2025 to test on Windows Server 2025 where wmic.exe is unavailable
-        # This verifies @vscode/windows-process-tree works correctly
         os: [ubuntu-24.04, windows-2025]
 
     steps:
@@ -29,17 +22,7 @@ jobs:
 
       - run: pnpm validate
       - run: pnpm test:boundary
-
-      - run: pnpm dist
-
       - run: git diff --exit-code
 
-      - if: runner.os == 'Windows'
-        run: mv dist/win-unpacked dist/CodeHydra-win
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CodeHydra-${{ runner.os == 'Windows' && 'win' || 'linux' }}
-          path: dist/CodeHydra-*
-          retention-days: 7
-          if-no-files-found: error
+  build:
+    uses: ./.github/workflows/build.yaml
