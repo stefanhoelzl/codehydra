@@ -36,9 +36,17 @@ compression: normal
 # Windows configuration
 win:
   target:
+    - target: nsis
+      arch: [x64]
     - target: dir
       arch: [x64]
   icon: resources/icon.ico
+
+# NSIS installer settings
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-win-installer-${arch}.${ext}
 
 # Linux configuration
 linux:
@@ -54,12 +62,12 @@ linux:
 
 # AppImage-specific settings
 appImage:
-  artifactName: ${productName}-linux-${version}.${ext}
+  artifactName: ${productName}-linux-${arch}.${ext}
 
-# macOS configuration (future enhancement - not implemented)
-# mac:
-#   target:
-#     - target: dmg
-#       arch: [x64, arm64]
-#   icon: resources/icon.png
-#   category: public.app-category.developer-tools
+# macOS configuration
+mac:
+  target:
+    - target: dir
+      arch: [x64, arm64]
+  icon: resources/icon.png
+  category: public.app-category.developer-tools
