@@ -34,7 +34,7 @@
 						"filenamePattern": "*.md"
 					}
 				],
-				"priority": "default"
+				"priority": "option"
 			}
 		]
 	},
