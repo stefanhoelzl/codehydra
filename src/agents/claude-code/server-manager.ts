@@ -57,6 +57,13 @@ export type ServerStartedCallback = (workspacePath: string, port: number) => voi
 export type ServerStoppedCallback = (workspacePath: string, isRestart: boolean) => void;
 
 /**
+ * Callback for workspace ready events.
+ * Triggered when status changes to idle, indicating the workspace
+ * should be marked as loaded (clear loading screen).
+ */
+export type WorkspaceReadyCallback = (workspacePath: string) => void;
+
+/**
  * Configuration for ClaudeCodeServerManager.
  */
 export interface ClaudeCodeServerManagerConfig {
@@ -109,6 +116,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   /** Callbacks for lifecycle events */
   private readonly startedCallbacks = new Set<ServerStartedCallback>();
   private readonly stoppedCallbacks = new Set<ServerStoppedCallback>();
+  private readonly workspaceReadyCallbacks = new Set<WorkspaceReadyCallback>();
 
   /** MCP configuration (set before starting servers) */
   private mcpConfig: McpConfig | null = null;
@@ -306,6 +314,19 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
+   * Subscribe to workspace ready events.
+   * Triggered when status changes to idle (from WrapperStart or SessionStart),
+   * indicating the loading screen should be cleared.
+   *
+   * @param callback - Callback invoked with workspace path
+   * @returns Unsubscribe function
+   */
+  onWorkspaceReady(callback: WorkspaceReadyCallback): () => void {
+    this.workspaceReadyCallbacks.add(callback);
+    return () => this.workspaceReadyCallbacks.delete(callback);
+  }
+
+  /**
    * Subscribe to status changes for a specific workspace.
    *
    * @param workspacePath - Absolute path to the workspace
@@ -381,6 +402,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Clear callbacks
     this.startedCallbacks.clear();
     this.stoppedCallbacks.clear();
+    this.workspaceReadyCallbacks.clear();
   }
 
   /**
@@ -551,6 +573,13 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       // Notify subscribers
       for (const callback of state.statusCallbacks) {
         callback(newStatus);
+      }
+
+      // When status becomes idle, notify workspace is ready (clears loading screen)
+      if (newStatus === "idle") {
+        for (const callback of this.workspaceReadyCallbacks) {
+          callback(normalizedPath);
+        }
       }
     }
   }
