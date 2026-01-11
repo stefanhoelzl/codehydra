@@ -8,24 +8,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - run: |
-          CONCLUSION=$(gh run list --workflow=ci.yaml --commit=$(git rev-parse HEAD) --json conclusion --jq '.[0].conclusion')
-          if [[ "$CONCLUSION" != "success" ]]; then
-            echo "::error::CI has not passed (status: ${CONCLUSION:-not found})"
-            exit 1
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-
   build:
-    needs: check
     uses: ./.github/workflows/build.yaml
     with:
       release: true

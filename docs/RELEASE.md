@@ -12,13 +12,21 @@ Extension versions use valid SemVer format (required by VS Code).
 
 The `-dirty` suffix only appears in local dev builds when there are uncommitted changes.
 
-## Triggering a Build
+## Triggering a Release
 
 1. Go to **Actions** > **Release**
 2. Click **Run workflow**
-3. Optionally check "Skip CI status check" to bypass CI gate
 
 Summary and artifacts appear on the workflow run page.
+
+### Prerequisites
+
+Releases can only be triggered from commits on the `main` branch. Branch protection ensures all commits have passed CI before merge, so no additional CI check is performed during release.
+
+**Required branch protection settings for `main`:**
+
+- Require status checks to pass before merging
+- Required checks: `validate (ubuntu-24.04)`, `validate (windows-2025)`, `build`
 
 ## Artifacts
 
