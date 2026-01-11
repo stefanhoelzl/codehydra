@@ -196,6 +196,7 @@ let codeHydraApi: ICodeHydraApi | null = null;
 let apiEventCleanup: Unsubscribe | null = null;
 let agentStatusCleanup: Unsubscribe | null = null;
 let mcpFirstRequestCleanup: Unsubscribe | null = null;
+let wrapperReadyCleanup: Unsubscribe | null = null;
 let loadingChangeCleanup: Unsubscribe | null = null;
 
 /**
@@ -524,6 +525,16 @@ async function startServices(): Promise<void> {
       // Mark agent as active for status indicator (shows green when TUI attaches)
       agentStatusManagerRef.markActive(workspacePath as import("../shared/ipc").WorkspacePath);
     });
+
+    // Register callback for wrapper start (Claude Code only)
+    // This signals when the wrapper has started (before Claude shows dialogs)
+    // Allows loading screen to clear immediately rather than waiting for MCP or timeout
+    if (serverManager) {
+      wrapperReadyCleanup = serverManager.onWorkspaceReady((workspacePath) => {
+        // setWorkspaceLoaded is idempotent, safe if both WrapperStart and MCP first request fire
+        viewManagerRef.setWorkspaceLoaded(workspacePath);
+      });
+    }
 
     // Configure Claude Code bridge server to connect to MCP
     if (serverManager) {
@@ -917,6 +928,12 @@ async function cleanup(): Promise<void> {
   if (mcpFirstRequestCleanup) {
     mcpFirstRequestCleanup();
     mcpFirstRequestCleanup = null;
+  }
+
+  // Cleanup wrapper ready callback
+  if (wrapperReadyCleanup) {
+    wrapperReadyCleanup();
+    wrapperReadyCleanup = null;
   }
 
   // Cleanup loading state change callback

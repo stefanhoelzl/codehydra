@@ -155,6 +155,35 @@ describe("ClaudeCodeServerManager integration", () => {
       await serverManager.startServer("/workspace/feature-b");
       expect(startedCallback).toHaveBeenCalledTimes(1);
     });
+
+    it("onWorkspaceReady fires when status changes to idle", async () => {
+      const readyCallback = vi.fn();
+      serverManager.onWorkspaceReady(readyCallback);
+
+      const port = await serverManager.startServer("/workspace/feature-a");
+
+      // WrapperStart sets status to idle
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      expect(readyCallback).toHaveBeenCalledTimes(1);
+      expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
+
+      // SessionStart also sets status to idle, but status is already idle so no change
+      readyCallback.mockClear();
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      expect(readyCallback).not.toHaveBeenCalled(); // No change, already idle
+    });
+
+    it("onWorkspaceReady unsubscribe works", async () => {
+      const readyCallback = vi.fn();
+      const unsubscribe = serverManager.onWorkspaceReady(readyCallback);
+
+      const port = await serverManager.startServer("/workspace/feature-a");
+
+      unsubscribe();
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(readyCallback).not.toHaveBeenCalled();
+    });
   });
 
   describe("hook handling", () => {
@@ -185,6 +214,35 @@ describe("ClaudeCodeServerManager integration", () => {
 
       expect(statusChangesA).toEqual(["idle"]);
       expect(statusChangesB).toEqual(["busy"]);
+    });
+
+    it("WrapperStart -> idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("WrapperEnd -> none", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Start session first
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      // Then wrapper ends (Claude closed)
+      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "none"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
     });
 
     it("SessionStart -> idle", async () => {

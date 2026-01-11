@@ -8,8 +8,13 @@ import type { AgentStatus } from "../types";
 /**
  * All Claude Code hook names.
  * These are the lifecycle events that Claude Code emits.
+ *
+ * WrapperStart/WrapperEnd are CodeHydra-specific hooks sent by the wrapper script
+ * before/after spawning the Claude binary. They are not part of Claude's hook system.
  */
 export type ClaudeCodeHookName =
+  | "WrapperStart"
+  | "WrapperEnd"
   | "SessionStart"
   | "SessionEnd"
   | "UserPromptSubmit"
@@ -65,6 +70,10 @@ export type HookStatusChange = AgentStatus | null;
  * to only transition to busy after a PermissionRequest (flag-based).
  */
 export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChange>> = {
+  // Wrapper started, Claude about to be spawned
+  WrapperStart: "idle",
+  // Wrapper exited, Claude has closed
+  WrapperEnd: "none",
   // Session started, waiting for user prompt
   SessionStart: "idle",
   // Session ended

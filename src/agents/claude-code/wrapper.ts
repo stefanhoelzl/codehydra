@@ -19,6 +19,7 @@
 
 import { spawnSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { request } from "node:http";
 import { join } from "node:path";
 
 // Exit codes
@@ -97,6 +98,56 @@ function findSystemClaude(): string | null {
 }
 
 /**
+ * Send a hook notification to the bridge server.
+ * Waits for request to complete (or timeout) before returning.
+ * Silent on error - fallback to 10-second timeout works.
+ *
+ * @param hookName - Name of the hook (WrapperStart or WrapperEnd)
+ */
+async function notifyHook(hookName: "WrapperStart" | "WrapperEnd"): Promise<void> {
+  const bridgePort = process.env.CODEHYDRA_BRIDGE_PORT;
+  const workspacePath = process.env.CODEHYDRA_WORKSPACE_PATH;
+
+  // Not in CodeHydra context
+  if (!bridgePort || !workspacePath) {
+    return;
+  }
+
+  const payload = JSON.stringify({ workspacePath });
+
+  return new Promise((resolve) => {
+    const req = request(
+      {
+        hostname: "127.0.0.1",
+        port: parseInt(bridgePort, 10),
+        path: `/hook/${hookName}`,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+        timeout: 2000, // 2 second timeout
+      },
+      () => {
+        resolve();
+      }
+    );
+
+    req.on("error", () => {
+      resolve(); // Silent failure
+    });
+
+    req.on("timeout", () => {
+      req.destroy();
+      resolve();
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
+
+/**
  * Main entry point for the wrapper script.
  */
 async function main(): Promise<never> {
@@ -136,13 +187,19 @@ async function main(): Promise<never> {
     ...getUserArgs(), // Auto-detect user args for both terminal and panel modes
   ];
 
-  // 4. Spawn Claude
+  // 4. Notify wrapper start (clears loading screen before Claude shows dialogs)
+  await notifyHook("WrapperStart");
+
+  // 5. Spawn Claude
   const result = spawnSync(claudeBinary, args, {
     stdio: "inherit",
     shell: isWindows && claudeBinary.endsWith(".cmd"),
   });
 
-  // 5. Handle result
+  // 6. Notify wrapper end (Claude has exited)
+  await notifyHook("WrapperEnd");
+
+  // 7. Handle result
   if (result.error) {
     console.error(`Error: Failed to start Claude: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
@@ -161,4 +218,4 @@ if (!process.env.VITEST) {
 }
 
 // Export for testing
-export { findSystemClaude };
+export { findSystemClaude, notifyHook };
