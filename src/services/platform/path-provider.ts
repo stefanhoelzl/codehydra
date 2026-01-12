@@ -68,10 +68,31 @@ export interface PathProvider {
   /** Directory for CLI wrapper script assets: `<appPath>/out/main/assets/bin/` */
   readonly binAssetsDir: Path;
 
+  /**
+   * Directory for runtime bin scripts (external execution).
+   * - Dev: same as binAssetsDir (files accessible directly)
+   * - Prod: `<resourcesPath>/bin/` (extraResources destination)
+   */
+  readonly binRuntimeDir: Path;
+
+  /**
+   * Directory for runtime scripts (external execution).
+   * - Dev: same as scriptsDir (files accessible directly)
+   * - Prod: `<resourcesPath>/scripts/` (extraResources destination)
+   */
+  readonly scriptsRuntimeDir: Path;
+
+  /**
+   * Directory for runtime extensions (external access by code-server).
+   * - Dev: same as vscodeAssetsDir (files accessible directly)
+   * - Prod: `<resourcesPath>/extensions/` (extraResources destination)
+   */
+  readonly extensionsRuntimeDir: Path;
+
   /** Directory for Claude Code configs: `<dataRoot>/claude-code/` */
   readonly claudeCodeConfigDir: Path;
 
-  /** Path to Claude Code hook handler script: `<binAssetsDir>/claude-code-hook-handler.cjs` */
+  /** Path to Claude Code hook handler script: `<binRuntimeDir>/claude-code-hook-handler.cjs` */
   readonly claudeCodeHookHandlerPath: Path;
 
   /** Path to Claude Code wrapper script: `<binDir>/claude` (or `claude.cmd` on Windows) */
@@ -115,6 +136,9 @@ export class DefaultPathProvider implements PathProvider {
   readonly bundledNodePath: Path;
   readonly opencodeConfig: Path;
   readonly binAssetsDir: Path;
+  readonly binRuntimeDir: Path;
+  readonly scriptsRuntimeDir: Path;
+  readonly extensionsRuntimeDir: Path;
   readonly claudeCodeConfigDir: Path;
   readonly claudeCodeHookHandlerPath: Path;
   readonly claudeCodeWrapperPath: Path;
@@ -140,11 +164,24 @@ export class DefaultPathProvider implements PathProvider {
     this.binDir = new Path(this.dataRootDir, "bin");
     this.opencodeConfig = new Path(this.dataRootDir, "opencode", "opencode.codehydra.json");
 
-    // Assets are bundled at out/main/assets/ (same path in dev and prod)
+    // Assets are bundled at out/main/assets/ (inside ASAR in production)
     this.vscodeAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets");
     this.scriptsDir = new Path(buildInfo.appPath, "out", "main", "assets", "scripts");
     this.appIconPath = this.computeAppIconPath(buildInfo);
     this.binAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets", "bin");
+
+    // Runtime paths for external process access (outside ASAR via extraResources)
+    // In dev mode, use assets paths directly (no ASAR)
+    // In prod mode, use resourcesPath (extraResources destination)
+    this.binRuntimeDir = buildInfo.resourcesPath
+      ? new Path(buildInfo.resourcesPath, "bin")
+      : this.binAssetsDir;
+    this.scriptsRuntimeDir = buildInfo.resourcesPath
+      ? new Path(buildInfo.resourcesPath, "scripts")
+      : this.scriptsDir;
+    this.extensionsRuntimeDir = buildInfo.resourcesPath
+      ? new Path(buildInfo.resourcesPath, "extensions")
+      : this.vscodeAssetsDir;
 
     // Binary paths - use bundlesRoot (always production paths)
     this.codeServerDir = new Path(bundlesRoot, "code-server", CODE_SERVER_VERSION);
@@ -170,7 +207,7 @@ export class DefaultPathProvider implements PathProvider {
 
     // Claude Code paths
     this.claudeCodeConfigDir = new Path(this.dataRootDir, "claude-code");
-    this.claudeCodeHookHandlerPath = new Path(this.binAssetsDir, "claude-code-hook-handler.cjs");
+    this.claudeCodeHookHandlerPath = new Path(this.binRuntimeDir, "claude-code-hook-handler.cjs");
     this.claudeCodeWrapperPath = new Path(
       this.binDir,
       platform === "win32" ? "claude.cmd" : "claude"

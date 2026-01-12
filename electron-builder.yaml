@@ -18,17 +18,30 @@ files:
   - "!out/**/*.map"
   - "!out/**/*.test.*"
 
-# Copy icons outside ASAR for runtime access (app badge, etc.)
+# Copy files outside ASAR for external process access
+# (ASAR contents not accessible by child_process.spawn/exec)
 extraResources:
   - from: resources/icon.png
     to: icon.png
   - from: resources/icon.ico
     to: icon.ico
+  # CLI wrapper scripts and hook handler (executed by Claude Code)
+  - from: out/main/assets/bin
+    to: bin
+  # PowerShell scripts (executed by PowerShell)
+  - from: out/main/assets/scripts
+    to: scripts
+  # VSIX files (installed by code-server)
+  # Note: glob patterns require filter syntax
+  - from: out/main/assets
+    to: extensions
+    filter:
+      - "*.vsix"
 
 # ASAR archive settings
 asar: true
-# Note: No asarUnpack needed - simple-git is pure JS (spawns git CLI),
-# and socket.io's optional native deps are already externalized in vite config
+# Note: No asarUnpack needed - external process files use extraResources above,
+# simple-git is pure JS, socket.io deps externalized in vite config
 
 # Use normal compression for faster CI builds (default is maximum)
 compression: normal

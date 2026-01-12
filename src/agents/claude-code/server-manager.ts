@@ -127,10 +127,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.fileSystem = deps.fileSystem;
     this.logger = deps.logger;
 
-    // Default hook handler path is in the bin assets directory
+    // Default hook handler path uses runtime dir (outside ASAR in production)
     this.hookHandlerPath =
-      deps.config?.hookHandlerPath ??
-      new Path(this.pathProvider.binAssetsDir, "claude-code-hook-handler.cjs").toNative();
+      deps.config?.hookHandlerPath ?? this.pathProvider.claudeCodeHookHandlerPath.toNative();
   }
 
   /**

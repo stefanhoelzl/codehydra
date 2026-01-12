@@ -772,13 +772,13 @@ async function bootstrap(): Promise<void> {
 
       // Create WorkspaceLockHandler for Windows file handle detection
       // Uses "process" logger since blocking process detection is process management
-      // Script path is resolved from pathProvider.scriptsDir
+      // Script path is resolved from pathProvider.scriptsRuntimeDir (outside ASAR)
       // Returns undefined on non-Windows platforms (no file locking issues)
       const workspaceLockHandler = createWorkspaceLockHandler(
         processRunner,
         platformInfo,
         loggingService.createLogger("process"),
-        nodePath.join(pathProvider.scriptsDir.toNative(), "blocking-processes.ps1")
+        nodePath.join(pathProvider.scriptsRuntimeDir.toNative(), "blocking-processes.ps1")
       );
 
       const baseDeps = {

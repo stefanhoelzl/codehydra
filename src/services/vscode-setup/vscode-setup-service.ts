@@ -479,7 +479,12 @@ export class VscodeSetupService implements IVscodeSetup {
     const shouldInstall = (extId: string) =>
       extensionsToInstall === undefined || extensionsToInstall.includes(extId);
 
+    // Ensure vscode extensions directory exists before code-server tries to use it
+    await this.fs.mkdir(this.pathProvider.vscodeExtensionsDir);
+
     // Install bundled extensions from vsix files
+    // In production, vsix files are in extensionsRuntimeDir (extraResources)
+    // In development, extensionsRuntimeDir falls back to vscodeAssetsDir
     for (const ext of manifest) {
       if (!shouldInstall(ext.id)) {
         continue;
@@ -487,28 +492,24 @@ export class VscodeSetupService implements IVscodeSetup {
 
       onProgress?.({ step: "extensions", message: `Installing ${ext.id}...` });
 
-      // Check that vsix file exists in assets
-      const srcPath = new Path(this.assetsDir, ext.vsix);
+      // Get vsix path from runtime directory (outside ASAR in production)
+      const vsixPath = new Path(this.pathProvider.extensionsRuntimeDir, ext.vsix);
       try {
-        await this.fs.readFile(srcPath);
+        await this.fs.readFile(vsixPath);
       } catch {
         return {
           success: false,
           error: {
             type: "missing-assets",
-            message: `Bundled extension vsix not found: ${ext.vsix}. Expected at: ${srcPath}`,
+            message: `Bundled extension vsix not found: ${ext.vsix}. Expected at: ${vsixPath}`,
             code: "VSIX_NOT_FOUND",
           },
         };
       }
 
-      // Copy vsix from assets to vscode directory for installation
-      const destPath = new Path(this.pathProvider.vscodeDir, ext.vsix);
-      await this.fs.mkdir(this.pathProvider.vscodeDir);
-      await this.fs.copyTree(srcPath, destPath);
-
-      // Install the extension using code-server
-      const result = await this.runInstallExtension(destPath.toNative());
+      // Install the extension directly from runtime directory
+      // No copy needed - code-server can read from the runtime path
+      const result = await this.runInstallExtension(vsixPath.toNative());
       if (!result.success) {
         return result;
       }

@@ -254,8 +254,8 @@ describe("VscodeSetupService", () => {
   });
 
   describe("installExtensions", () => {
-    it("copies bundled vsix to vscodeDir before install", async () => {
-      // Set up source vsix file in assets
+    it("installs bundled extension via code-server from extensionsRuntimeDir", async () => {
+      // Set up source vsix file in extensionsRuntimeDir (same as assets in dev mode)
       mockFs = createFileSystemMock({
         entries: {
           "/mock/assets/manifest.json": file(createManifestConfig()),
@@ -270,32 +270,14 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions();
 
-      // Verify vsix was copied from assets to vscode dir
-      expect(mockFs).toHaveFile("/mock/vscode/codehydra-sidekick-0.0.3.vsix", "vsix-content");
-    });
-
-    it("installs bundled extension via code-server", async () => {
-      mockFs = createFileSystemMock({
-        entries: {
-          "/mock/assets/manifest.json": file(createManifestConfig()),
-          "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/vscode": directory(),
-        },
-      });
-      mockProcessRunner = createMockProcessRunner({
-        defaultResult: { stdout: "Extension installed", stderr: "", exitCode: 0 },
-      });
-
-      const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
-      await service.installExtensions();
-
-      // Installs bundled vsix - uses codeServerBinaryPath.toNative() from pathProvider
+      // Installs bundled vsix directly from extensionsRuntimeDir (no copy needed)
+      // Uses codeServerBinaryPath.toNative() from pathProvider
       expect(mockProcessRunner).toHaveSpawned([
         {
           command: mockPathProvider.codeServerBinaryPath.toNative(),
           args: expect.arrayContaining([
             "--install-extension",
-            new Path("/mock/vscode", "codehydra-sidekick-0.0.3.vsix").toNative(),
+            new Path("/mock/assets", "codehydra-sidekick-0.0.3.vsix").toNative(),
           ]),
         },
       ]);
@@ -317,11 +299,11 @@ describe("VscodeSetupService", () => {
       const service = new VscodeSetupService(mockProcessRunner, mockPathProvider, mockFs);
       await service.installExtensions(progressCallback);
 
-      // Verify bundled extension installed from vsix file
+      // Verify bundled extension installed from extensionsRuntimeDir
       expect(mockProcessRunner).toHaveSpawned([
         {
           args: expect.arrayContaining([
-            new Path("/mock/vscode", "codehydra-sidekick-0.0.3.vsix").toNative(),
+            new Path("/mock/assets", "codehydra-sidekick-0.0.3.vsix").toNative(),
           ]),
         },
       ]);
@@ -360,12 +342,12 @@ describe("VscodeSetupService", () => {
       // Preflight includes agent extension in missingExtensions
       await service.installExtensions(progressCallback, ["codehydra.sidekick", "sst-dev.opencode"]);
 
-      // Verify bundled extension installed from vsix
+      // Verify bundled extension installed from extensionsRuntimeDir
       // And agent extension installed from marketplace by ID
       expect(mockProcessRunner).toHaveSpawned([
         {
           args: expect.arrayContaining([
-            new Path("/mock/vscode", "codehydra-sidekick-0.0.3.vsix").toNative(),
+            new Path("/mock/assets", "codehydra-sidekick-0.0.3.vsix").toNative(),
           ]),
         },
         {

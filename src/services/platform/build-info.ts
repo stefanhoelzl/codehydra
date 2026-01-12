@@ -29,4 +29,12 @@ export interface BuildInfo {
    * - In prod mode: app.getAppPath() (inside ASAR archive)
    */
   readonly appPath: string;
+
+  /**
+   * Path to application resources directory (outside ASAR).
+   * Used for files that need external process access (scripts, extensions).
+   * - In dev mode: undefined (use appPath-relative paths directly)
+   * - In prod mode: process.resourcesPath (extraResources destination)
+   */
+  readonly resourcesPath?: string;
 }
