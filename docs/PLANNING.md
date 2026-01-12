@@ -32,8 +32,8 @@ Use `.claude/templates/plan.md` for the exact structure. Every plan must include
 | ------------------------ | -------------------------------------------------------------------- |
 | **Overview**             | What problem? What solution? What risks? What alternatives?          |
 | **Architecture**         | How does this fit into the system? (diagram for significant changes) |
-| **Implementation Steps** | What to build, in what order, with test criteria for each step       |
 | **Testing Strategy**     | Which test types needed? (per docs/TESTING.md)                       |
+| **Implementation Steps** | What to build, in what order, with test criteria for each step       |
 | **Dependencies**         | Any new packages needed? (require user approval)                     |
 | **Documentation**        | What docs need updating?                                             |
 | **Definition of Done**   | Acceptance criteria                                                  |
