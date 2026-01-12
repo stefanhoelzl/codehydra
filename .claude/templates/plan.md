@@ -31,20 +31,6 @@ reviewers: []
 - Interaction 1: description
 - Interaction 2: description
 
-## Implementation Steps
-
-- [ ] **Step 1: Title**
-  - Description
-  - Files affected
-  - Test criteria
-
-- [ ] **Step 2: Title**
-  - Description
-  - Files affected
-  - Test criteria
-
-(continue for all steps...)
-
 ## Testing Strategy
 
 ### Integration Tests
@@ -77,6 +63,20 @@ Test behavior through high-level entry points with behavioral mocks.
 
 - [ ] Test scenario 1
 - [ ] Test scenario 2
+
+## Implementation Steps
+
+- [ ] **Step 1: Title**
+  - Description
+  - Files affected
+  - Test criteria
+
+- [ ] **Step 2: Title**
+  - Description
+  - Files affected
+  - Test criteria
+
+(continue for all steps...)
 
 ## Dependencies
 
