@@ -19,7 +19,7 @@ import type { Logger } from "../services/logging";
 export type { AggregatedAgentStatus, InternalAgentCounts } from "../shared/ipc";
 
 /** Agent types supported by CodeHydra */
-export type AgentType = "opencode" | "claude-code";
+export type AgentType = "opencode" | "claude";
 
 /** Agent status for a single workspace */
 export type AgentStatus = "none" | "idle" | "busy";
@@ -31,9 +31,15 @@ export interface AgentError {
   readonly cause?: Error;
 }
 
+/** Supported platforms for binary downloads */
+export type SupportedPlatform = "darwin" | "linux" | "win32";
+
+/** Supported architectures for binary downloads */
+export type SupportedArch = "x64" | "arm64";
+
 /** Static setup information for an agent type (singleton per agent type) */
 export interface AgentSetupInfo {
-  /** Version string (e.g., "0.1.0-beta.43") */
+  /** Version string (e.g., "0.1.0-beta.43"), or "latest" if using system-first preference */
   readonly version: string;
 
   /** Binary filename relative to bin directory (e.g., "opencode" or "opencode.exe") */
@@ -42,11 +48,30 @@ export interface AgentSetupInfo {
   /** Entry point for wrapper script (e.g., "agents/opencode-wrapper.cjs") */
   readonly wrapperEntryPoint: string;
 
-  /** VS Code marketplace extension ID (e.g., "sst-dev.opencode", "anthropic.claude-code") */
+  /** VS Code marketplace extension ID (e.g., "sst-dev.opencode", "anthropic.claude") */
   readonly extensionId?: string;
 
-  /** Get download URL for the binary for current platform */
+  /** Get download URL for the binary for current platform (uses instance's version) */
   getBinaryUrl(): string;
+
+  /**
+   * Get download URL for a specific version and platform/arch.
+   * Used by BinaryDownloadService for downloading specific versions.
+   *
+   * @param version - Version string (e.g., "1.0.58")
+   * @param platform - Operating system platform
+   * @param arch - CPU architecture
+   * @returns Download URL for the binary
+   */
+  getBinaryUrlForVersion(version: string, platform: SupportedPlatform, arch: SupportedArch): string;
+
+  /**
+   * Fetch the latest available version from the remote server.
+   * Used when version is "latest" or null to determine what to download.
+   *
+   * @returns Latest version string (e.g., "1.0.58")
+   */
+  getLatestVersion(): Promise<string>;
 
   /**
    * Generate config file with environment variable substitution

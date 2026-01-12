@@ -22,8 +22,9 @@ import type {
   WorkspaceStatus,
   BaseInfo,
   SetupResult,
-  AppState,
+  AppStateResult,
   AgentSession,
+  SetupScreenProgress,
 } from "./types";
 import type { UIMode, UIModeChangedEvent } from "../ipc";
 
@@ -196,13 +197,16 @@ describe("IUiApi Interface", () => {
 describe("ILifecycleApi Interface", () => {
   it("should have correct method signatures", () => {
     const api: ILifecycleApi = {
-      async getState(): Promise<AppState> {
-        return "loading";
+      async getState(): Promise<AppStateResult> {
+        return { state: "loading", agent: "opencode" };
       },
       async setup(): Promise<SetupResult> {
         return { success: true };
       },
       async startServices(): Promise<SetupResult> {
+        return { success: true };
+      },
+      async setAgent(): Promise<SetupResult> {
         return { success: true };
       },
       async quit(): Promise<void> {
@@ -260,10 +264,13 @@ describe("ApiEvents Interface", () => {
       "ui:mode-changed": (event: UIModeChangedEvent) => {
         void event;
       },
+      "lifecycle:setup-progress": (event: SetupScreenProgress) => {
+        void event;
+      },
     };
 
     expect(handlers).toBeDefined();
-    expect(Object.keys(handlers)).toHaveLength(9);
+    expect(Object.keys(handlers)).toHaveLength(10);
   });
 });
 

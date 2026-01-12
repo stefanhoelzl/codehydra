@@ -31,7 +31,7 @@ import { OpenCodeProvider } from "../agents/opencode/provider";
 import type { AgentStatusManager } from "../agents";
 import { createAgentProvider, type AgentType } from "../agents";
 import type { AgentServerManager } from "../agents/types";
-import type { ClaudeCodeServerManager } from "../agents/claude-code/server-manager";
+import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { PendingPrompt } from "../agents/opencode/server-manager";
 import type { McpServerManager } from "../services/mcp-server";
 import { getErrorMessage } from "../shared/error-utils";
@@ -208,9 +208,7 @@ export class AppState {
       sdkFactory:
         this.agentType === "opencode" ? this.agentStatusManager.getSdkFactory() : undefined,
       serverManager:
-        this.agentType === "claude-code"
-          ? (this.serverManager as ClaudeCodeServerManager)
-          : undefined,
+        this.agentType === "claude" ? (this.serverManager as ClaudeCodeServerManager) : undefined,
     });
 
     try {

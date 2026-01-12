@@ -12,6 +12,8 @@ import type {
   SetupResult,
 } from "../../../services/vscode-setup/types";
 import { createMockLogger } from "../../../services/logging";
+import type { ConfigService } from "../../../services/config/config-service";
+import type { AppConfig, ConfigAgentType } from "../../../services/config/types";
 
 // =============================================================================
 // Mock Factories
@@ -40,9 +42,40 @@ function createMockVscodeSetup(overrides: Partial<IVscodeSetup> = {}): IVscodeSe
   };
 }
 
-function createMockDeps(overrides: Partial<LifecycleModuleDeps> = {}): LifecycleModuleDeps {
+/**
+ * Create a mock ConfigService for testing.
+ * Default config has agent set to "opencode" so tests see the normal flow.
+ */
+function createMockConfigService(
+  overrides: {
+    agent?: ConfigAgentType;
+  } = {}
+): ConfigService {
+  const defaultConfig: AppConfig = {
+    agent: overrides.agent !== undefined ? overrides.agent : "opencode",
+    versions: {
+      claude: null,
+      opencode: null,
+      codeServer: "4.107.0",
+    },
+  };
   return {
-    vscodeSetup: createMockVscodeSetup(),
+    load: vi.fn().mockResolvedValue(defaultConfig),
+    save: vi.fn().mockResolvedValue(undefined),
+    setAgent: vi.fn().mockResolvedValue(undefined),
+  } as unknown as ConfigService;
+}
+
+function createMockDeps(overrides: Partial<LifecycleModuleDeps> = {}): LifecycleModuleDeps {
+  // If vscodeSetup is explicitly provided in overrides, use it; otherwise create default
+  const vscodeSetup =
+    "getVscodeSetup" in overrides
+      ? undefined // Will use the override
+      : createMockVscodeSetup();
+
+  return {
+    getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup),
+    configService: createMockConfigService(),
     app: createMockApp(),
     doStartServices: vi.fn().mockResolvedValue(undefined),
     logger: createMockLogger(),
@@ -64,14 +97,14 @@ describe("lifecycle.getState", () => {
   });
 
   it("returns 'loading' when no vscodeSetup provided", async () => {
-    deps = createMockDeps({ vscodeSetup: undefined });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(undefined) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.getState");
     expect(handler).toBeDefined();
 
     const result = await handler!({});
-    expect(result).toBe("loading");
+    expect(result).toEqual({ state: "loading", agent: "opencode" });
   });
 
   it("returns 'loading' when preflight shows no setup needed", async () => {
@@ -84,13 +117,13 @@ describe("lifecycle.getState", () => {
         outdatedExtensions: [],
       }),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.getState");
     const result = await handler!({});
 
-    expect(result).toBe("loading");
+    expect(result).toEqual({ state: "loading", agent: "opencode" });
     expect(vscodeSetup.preflight).toHaveBeenCalled();
   });
 
@@ -104,13 +137,13 @@ describe("lifecycle.getState", () => {
         outdatedExtensions: [],
       }),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.getState");
     const result = await handler!({});
 
-    expect(result).toBe("setup");
+    expect(result).toEqual({ state: "setup", agent: "opencode" });
   });
 
   it("returns 'setup' when preflight fails", async () => {
@@ -120,13 +153,23 @@ describe("lifecycle.getState", () => {
         error: { type: "unknown", message: "Preflight failed" },
       }),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.getState");
     const result = await handler!({});
 
-    expect(result).toBe("setup");
+    expect(result).toEqual({ state: "setup", agent: "opencode" });
+  });
+
+  it("returns 'agent-selection' when agent is null", async () => {
+    deps = createMockDeps({ configService: createMockConfigService({ agent: null }) });
+    new LifecycleModule(registry, deps);
+
+    const handler = registry.getHandler("lifecycle.getState");
+    const result = await handler!({});
+
+    expect(result).toEqual({ state: "agent-selection", agent: null });
   });
 });
 
@@ -140,7 +183,7 @@ describe("lifecycle.setup", () => {
   });
 
   it("returns success when no vscodeSetup provided (no setup to do)", async () => {
-    deps = createMockDeps({ vscodeSetup: undefined });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(undefined) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.setup");
@@ -162,7 +205,7 @@ describe("lifecycle.setup", () => {
       }),
       setup: vi.fn().mockResolvedValue({ success: true }),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.setup");
@@ -188,7 +231,7 @@ describe("lifecycle.setup", () => {
         error: { type: "network", message: "Download failed" },
       }),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.setup");
@@ -212,7 +255,7 @@ describe("lifecycle.setup", () => {
       }),
       setup: vi.fn().mockRejectedValue(new Error("Unexpected error")),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.setup");
@@ -242,7 +285,7 @@ describe("lifecycle.setup", () => {
           })
       ),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.setup");
@@ -277,7 +320,7 @@ describe("lifecycle.setup", () => {
         outdatedExtensions: [],
       }),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     const handler = registry.getHandler("lifecycle.setup");
@@ -300,7 +343,7 @@ describe("lifecycle.setup", () => {
       }),
       setup: vi.fn().mockResolvedValue({ success: true }),
     });
-    deps = createMockDeps({ vscodeSetup });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
     new LifecycleModule(registry, deps);
 
     // First call getState to populate cache
@@ -322,7 +365,106 @@ describe("lifecycle.setup", () => {
 
     // getState should still return "loading" (not "ready")
     const stateAfterSetup = await getStateHandler!({});
-    expect(stateAfterSetup).toBe("loading");
+    expect(stateAfterSetup).toEqual({ state: "loading", agent: "opencode" });
+  });
+
+  it("emits lifecycle:setup-progress events during setup", async () => {
+    // Create a mock that calls the onProgress callback
+    // Note: Only code-server is missing, so agent row will be "done" initially
+    const vscodeSetup = createMockVscodeSetup({
+      preflight: vi.fn().mockResolvedValue({
+        success: true,
+        needsSetup: true,
+        missingBinaries: ["code-server"],
+        missingExtensions: ["some-extension"],
+        outdatedExtensions: [],
+      }),
+      setup: vi.fn().mockImplementation(async (_preflight, onProgress) => {
+        // Simulate progress callbacks during setup
+        if (onProgress) {
+          onProgress({
+            step: "binary-download",
+            message: "Downloading code-server...",
+            binaryType: "code-server",
+          });
+          onProgress({ step: "extensions", message: "Installing extensions..." });
+        }
+        return { success: true };
+      }),
+    });
+    deps = createMockDeps({ getVscodeSetup: vi.fn().mockResolvedValue(vscodeSetup) });
+    new LifecycleModule(registry, deps);
+
+    const handler = registry.getHandler("lifecycle.setup");
+    const result = await handler!({});
+
+    expect(result).toEqual({ success: true });
+
+    // Verify progress events were emitted
+    const emittedEvents = registry.getEmittedEvents();
+    const progressEvents = emittedEvents.filter((e) => e.event === "lifecycle:setup-progress");
+
+    // Events: initial, binary-download (vscode running), extensions (setup running), final (all done)
+    expect(progressEvents.length).toBeGreaterThanOrEqual(4);
+
+    // First event should be initial state based on preflight:
+    // - vscode: pending (code-server missing)
+    // - agent: done (not missing)
+    // - setup: pending (extensions missing)
+    const initialEvent = progressEvents.at(0);
+    expect(initialEvent).toBeDefined();
+    expect(initialEvent!.payload).toEqual(
+      expect.objectContaining({
+        rows: expect.arrayContaining([
+          expect.objectContaining({ id: "vscode", status: "pending" }),
+          expect.objectContaining({ id: "agent", status: "done" }),
+          expect.objectContaining({ id: "setup", status: "pending" }),
+        ]),
+      })
+    );
+
+    // Second event should be for binary-download (maps to vscode row)
+    const binaryEvent = progressEvents.at(1);
+    expect(binaryEvent).toBeDefined();
+    expect(binaryEvent!.payload).toEqual(
+      expect.objectContaining({
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            id: "vscode",
+            status: "running",
+            message: "Downloading code-server...",
+          }),
+        ]),
+      })
+    );
+
+    // Third event should be for extensions (maps to setup row)
+    const extensionsEvent = progressEvents.at(2);
+    expect(extensionsEvent).toBeDefined();
+    expect(extensionsEvent!.payload).toEqual(
+      expect.objectContaining({
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            id: "setup",
+            status: "running",
+            message: "Installing extensions...",
+          }),
+        ]),
+      })
+    );
+
+    // Final event should mark all rows as done
+    const finalEvent = progressEvents.at(-1);
+    expect(finalEvent).toBeDefined();
+    expect(finalEvent!.payload).toEqual(
+      expect.objectContaining({
+        rows: expect.arrayContaining([
+          expect.objectContaining({ id: "vscode", status: "done" }),
+          expect.objectContaining({ id: "agent", status: "done" }),
+          expect.objectContaining({ id: "setup", status: "done" }),
+        ]),
+      })
+    );
   });
 });
 
@@ -432,6 +574,7 @@ describe("lifecycle.registration", () => {
 
     const registeredPaths = registry.getRegisteredPaths();
     expect(registeredPaths).toContain("lifecycle.getState");
+    expect(registeredPaths).toContain("lifecycle.setAgent");
     expect(registeredPaths).toContain("lifecycle.setup");
     expect(registeredPaths).toContain("lifecycle.startServices");
     expect(registeredPaths).toContain("lifecycle.quit");
@@ -439,6 +582,9 @@ describe("lifecycle.registration", () => {
     // Verify register was called with IPC options
     expect(registry.register).toHaveBeenCalledWith("lifecycle.getState", expect.any(Function), {
       ipc: "api:lifecycle:get-state",
+    });
+    expect(registry.register).toHaveBeenCalledWith("lifecycle.setAgent", expect.any(Function), {
+      ipc: "api:lifecycle:set-agent",
     });
     expect(registry.register).toHaveBeenCalledWith("lifecycle.setup", expect.any(Function), {
       ipc: "api:lifecycle:setup",

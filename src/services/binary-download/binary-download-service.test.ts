@@ -307,6 +307,7 @@ describe("createMockBinaryDownloadService", () => {
       installedBinaries: {
         "code-server": true,
         opencode: false,
+        claude: false,
       },
     });
 

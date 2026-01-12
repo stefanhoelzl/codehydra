@@ -9,10 +9,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DefaultPathProvider, type CodeServerConfig } from "../services";
+import { DefaultPathProvider } from "../services";
 import { createMockBuildInfo } from "../services/platform/build-info.test-utils";
 import { createMockPlatformInfo } from "../services/platform/platform-info.test-utils";
-import { Path } from "../services/platform/path";
+import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../services/binary-download";
+import type { PathProvider } from "../services/platform/path-provider";
+import nodePath from "node:path";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
@@ -49,16 +51,27 @@ describe("Main process wiring", () => {
     /**
      * This tests the same pattern used in main/index.ts createCodeServerConfig()
      * PathProvider now returns Path objects, so we convert to native strings for external use.
+     * Uses dynamic getBinaryPath and getBinaryDir methods with version constants.
      */
-    function createCodeServerConfig(pathProvider: DefaultPathProvider): CodeServerConfig {
+    interface TestCodeServerConfig {
+      readonly binaryPath: string;
+      readonly runtimeDir: string;
+      readonly extensionsDir: string;
+      readonly userDataDir: string;
+      readonly binDir: string;
+      readonly codeServerDir: string;
+      readonly opencodeDir: string;
+    }
+
+    function createCodeServerConfig(pathProvider: PathProvider): TestCodeServerConfig {
       return {
-        binaryPath: pathProvider.codeServerBinaryPath.toNative(),
-        runtimeDir: new Path(pathProvider.dataRootDir, "runtime").toNative(),
+        binaryPath: pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toNative(),
+        runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
         extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
         userDataDir: pathProvider.vscodeUserDataDir.toNative(),
         binDir: pathProvider.binDir.toNative(),
-        codeServerDir: pathProvider.codeServerDir.toNative(),
-        opencodeDir: pathProvider.opencodeDir.toNative(),
+        codeServerDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
+        opencodeDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
       };
     }
 

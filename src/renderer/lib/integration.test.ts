@@ -46,9 +46,10 @@ const mockApi = vi.hoisted(() => ({
     setMode: vi.fn().mockResolvedValue(undefined),
   },
   lifecycle: {
-    getState: vi.fn().mockResolvedValue("loading"),
+    getState: vi.fn().mockResolvedValue({ state: "loading", agent: "opencode" }),
     setup: vi.fn().mockResolvedValue({ success: true }),
     startServices: vi.fn().mockResolvedValue({ success: true }),
+    setAgent: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn().mockResolvedValue(undefined),
   },
   // on() captures callbacks by event name for tests to fire events
@@ -1268,7 +1269,7 @@ describe("Integration tests", () => {
 
   describe("setup flow integration", () => {
     it("routes-to-mainview-when-loading: lifecycle.getState returns 'loading', startServices called, MainView mounts", async () => {
-      mockApi.lifecycle.getState.mockResolvedValue("loading");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
       mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
       mockApi.projects.list.mockResolvedValue([]);
 
@@ -1289,7 +1290,7 @@ describe("Integration tests", () => {
     });
 
     it("routes-to-setupscreen-when-setup: lifecycle.getState returns 'setup', SetupScreen shown", async () => {
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // Keep setup running indefinitely
       mockApi.lifecycle.setup.mockReturnValue(new Promise(() => {}));
 
@@ -1308,7 +1309,7 @@ describe("Integration tests", () => {
     // The integration test focuses on the routing behavior verified above
 
     it("does-not-call-listProjects-during-setup: IPC calls deferred until MainView mounts", async () => {
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // Keep setup running indefinitely
       mockApi.lifecycle.setup.mockReturnValue(new Promise(() => {}));
 
@@ -1325,7 +1326,7 @@ describe("Integration tests", () => {
 
     it("setup-success-triggers-mainview-mount: lifecycle.setup success triggers startServices, then MainView mount", async () => {
       // Start in setup mode
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       mockApi.projects.list.mockResolvedValue([]);
       // Setup completes successfully
       mockApi.lifecycle.setup.mockResolvedValue({ success: true });
@@ -1357,7 +1358,7 @@ describe("Integration tests", () => {
       // This test verifies that when lifecycle.startServices completes,
       // the IPC handlers that MainView needs are already registered.
       // We can verify this by checking that v2.projects.list succeeds.
-      mockApi.lifecycle.getState.mockResolvedValue("loading");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
       mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
       const mockProjects = [createProject("my-project", [])];
       mockApi.projects.list.mockResolvedValue(mockProjects);

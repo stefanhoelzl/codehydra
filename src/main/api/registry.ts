@@ -219,6 +219,7 @@ export class ApiRegistry implements IApiRegistry {
       },
       lifecycle: {
         getState: () => get("lifecycle.getState")({}),
+        setAgent: (agent) => get("lifecycle.setAgent")({ agent }),
         setup: () => get("lifecycle.setup")({}),
         startServices: () => get("lifecycle.startServices")({}),
         quit: () => get("lifecycle.quit")({}),

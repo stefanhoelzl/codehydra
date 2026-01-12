@@ -112,14 +112,17 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
         : urlPath.endsWith(".zip")
           ? ".zip"
           : ".archive";
-    const tempFile = path.join(
-      os.tmpdir(),
-      `${binary}-${config.version}-${Date.now()}${urlExtension}`
-    );
+    const versionStr = config.version ?? "latest";
+    const tempFile = path.join(os.tmpdir(), `${binary}-${versionStr}-${Date.now()}${urlExtension}`);
 
     try {
       // Download to temp file
       await this.downloadToFile(url, tempFile, onProgress);
+
+      // Signal extraction phase before starting
+      if (onProgress) {
+        onProgress({ phase: "extracting", bytesDownloaded: 0, totalBytes: null });
+      }
 
       // Extract archive
       await this.archiveExtractor.extract(tempFile, destDir);
@@ -156,11 +159,17 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
 
   /**
    * Get the directory where a binary is installed.
+   * @throws Error if the binary has no pinned version (version is null)
    */
   private getBinaryDir(binary: BinaryType): Path {
-    return binary === "code-server"
-      ? this.pathProvider.codeServerDir
-      : this.pathProvider.opencodeDir;
+    const config = BINARY_CONFIGS[binary];
+    if (config.version === null) {
+      throw new BinaryDownloadError(
+        `Cannot get binary dir for ${binary}: no pinned version. Use BinaryResolutionService for dynamic resolution.`,
+        "INVALID_VERSION"
+      );
+    }
+    return this.pathProvider.getBinaryDir(binary, config.version);
   }
 
   /**
@@ -211,7 +220,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
         bytesDownloaded += value.byteLength;
 
         if (onProgress) {
-          onProgress({ bytesDownloaded, totalBytes: total });
+          onProgress({ phase: "downloading", bytesDownloaded, totalBytes: total });
         }
       }
     } catch (error) {

@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld("api", {
   },
   lifecycle: {
     getState: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_GET_STATE),
+    setAgent: (agent: string) => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_SET_AGENT, { agent }),
     setup: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_SETUP),
     startServices: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_START_SERVICES),
     quit: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_QUIT),

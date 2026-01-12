@@ -16,6 +16,7 @@ import {
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { createMockProcessRunner, type MockProcessRunner } from "../platform/process.state-mock";
 import { VscodeSetupError } from "../errors";
+import { CODE_SERVER_VERSION } from "../binary-download/versions";
 import type { PathLike, RmOptions } from "../platform/filesystem";
 import type { PlatformInfo } from "../platform/platform-info";
 import type { BinaryDownloadService } from "../binary-download/binary-download-service";
@@ -33,9 +34,9 @@ function wasRmCalledWith(spyFs: SpyFileSystemLayer, pathPattern: string): boolea
  */
 function createMockBinaryDownloadService(
   overrides?: Partial<{
-    isInstalled: (binary: "code-server" | "opencode") => Promise<boolean>;
-    download: (binary: "code-server" | "opencode") => Promise<void>;
-    getBinaryPath: (binary: "code-server" | "opencode") => string;
+    isInstalled: (binary: "code-server" | "opencode" | "claude") => Promise<boolean>;
+    download: (binary: "code-server" | "opencode" | "claude") => Promise<void>;
+    getBinaryPath: (binary: "code-server" | "opencode" | "claude") => string;
   }>
 ): BinaryDownloadService {
   return {
@@ -63,7 +64,7 @@ function createBinAssetsEntries() {
 
 /**
  * Create default mock manifest.json content (bundled extensions only).
- * Note: Agent extensions (opencode, claude-code) are installed from marketplace,
+ * Note: Agent extensions (opencode, claude) are installed from marketplace,
  * not bundled. They are handled via agentExtensionId parameter.
  */
 function createManifestConfig(): string {
@@ -271,10 +272,10 @@ describe("VscodeSetupService", () => {
       await service.installExtensions();
 
       // Installs bundled vsix directly from extensionsRuntimeDir (no copy needed)
-      // Uses codeServerBinaryPath.toNative() from pathProvider
+      // Uses getBinaryPath("code-server", version).toNative() from pathProvider
       expect(mockProcessRunner).toHaveSpawned([
         {
-          command: mockPathProvider.codeServerBinaryPath.toNative(),
+          command: mockPathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toNative(),
           args: expect.arrayContaining([
             "--install-extension",
             new Path("/mock/assets", "codehydra-sidekick-0.0.3.vsix").toNative(),
@@ -799,13 +800,18 @@ describe("VscodeSetupService", () => {
         (call) => call[0] as { message: string; step: string }
       );
 
+      // Initial download messages should include binary type and 0% progress
       expect(progressMessages).toContainEqual({
         step: "binary-download",
-        message: "Setting up code-server...",
+        message: "Downloading code-server...",
+        binaryType: "code-server",
+        percent: 0,
       });
       expect(progressMessages).toContainEqual({
         step: "binary-download",
-        message: "Setting up opencode...",
+        message: "Downloading opencode...",
+        binaryType: "opencode",
+        percent: 0,
       });
     });
 

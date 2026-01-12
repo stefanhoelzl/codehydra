@@ -151,6 +151,13 @@ export function wireApiEvents(
     })
   );
 
+  // Lifecycle events
+  unsubscribers.push(
+    api.on("lifecycle:setup-progress", (event) => {
+      send(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, event);
+    })
+  );
+
   // Return cleanup function
   return () => {
     for (const unsubscribe of unsubscribers) {

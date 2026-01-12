@@ -46,7 +46,10 @@ describe("registry.register", () => {
   });
 
   it("throws on duplicate registration", () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
+    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
+      state: "ready" as const,
+      agent: "opencode" as const,
+    });
     registry.register("lifecycle.getState", handler);
 
     expect(() => registry.register("lifecycle.getState", handler)).toThrow(
@@ -57,9 +60,12 @@ describe("registry.register", () => {
   it("throws when registering on disposed registry", async () => {
     await registry.dispose();
 
-    expect(() => registry.register("lifecycle.getState", async () => "ready")).toThrow(
-      "Cannot register on disposed registry"
-    );
+    expect(() =>
+      registry.register("lifecycle.getState", async () => ({
+        state: "ready" as const,
+        agent: "opencode" as const,
+      }))
+    ).toThrow("Cannot register on disposed registry");
   });
 });
 
@@ -77,7 +83,10 @@ describe("registry.register.ipc", () => {
   });
 
   it("auto-creates IPC handler when ipc option provided", () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
+    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
+      state: "ready" as const,
+      agent: "opencode" as const,
+    });
     registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
 
     const state = ipcLayer._getState();
@@ -85,7 +94,10 @@ describe("registry.register.ipc", () => {
   });
 
   it("does not create IPC handler when ipc option not provided", () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
+    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
+      state: "ready" as const,
+      agent: "opencode" as const,
+    });
     registry.register("lifecycle.getState", handler);
 
     const state = ipcLayer._getState();
@@ -94,7 +106,10 @@ describe("registry.register.ipc", () => {
 
   it("does not create IPC handler when no ipcLayer provided", () => {
     const noIpcRegistry = new ApiRegistry();
-    const handler: MethodHandler<"lifecycle.getState"> = async () => "ready";
+    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
+      state: "ready" as const,
+      agent: "opencode" as const,
+    });
     noIpcRegistry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
 
     // Should not throw, just skip IPC registration
@@ -120,7 +135,7 @@ describe("registry.ipc.payload", () => {
     const receivedPayload = vi.fn();
     const handler: MethodHandler<"lifecycle.getState"> = async (payload) => {
       receivedPayload(payload);
-      return "ready";
+      return { state: "ready" as const, agent: "opencode" as const };
     };
     registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
 
@@ -133,7 +148,7 @@ describe("registry.ipc.payload", () => {
     const receivedPayload = vi.fn();
     const handler: MethodHandler<"lifecycle.getState"> = async (payload) => {
       receivedPayload(payload);
-      return "ready";
+      return { state: "ready" as const, agent: "opencode" as const };
     };
     registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
 
@@ -307,14 +322,20 @@ describe("registry.getInterface.partial", () => {
 
   it("throws if not all methods registered", () => {
     // Only register one method
-    registry.register("lifecycle.getState", async () => "ready");
+    registry.register("lifecycle.getState", async () => ({
+      state: "ready" as const,
+      agent: "opencode" as const,
+    }));
 
     expect(() => registry.getInterface()).toThrow("Missing method registrations:");
   });
 
   it("error message lists missing methods", () => {
     // Only register one method
-    registry.register("lifecycle.getState", async () => "ready");
+    registry.register("lifecycle.getState", async () => ({
+      state: "ready" as const,
+      agent: "opencode" as const,
+    }));
 
     try {
       registry.getInterface();
@@ -336,9 +357,13 @@ describe("registry.dispose", () => {
   });
 
   it("cleans up IPC handlers and subscriptions", async () => {
-    registry.register("lifecycle.getState", async () => "ready", {
-      ipc: "api:lifecycle:get-state",
-    });
+    registry.register(
+      "lifecycle.getState",
+      async () => ({ state: "ready" as const, agent: "opencode" as const }),
+      {
+        ipc: "api:lifecycle:get-state",
+      }
+    );
 
     const handler = vi.fn();
     registry.on("project:opened", handler);
@@ -367,9 +392,13 @@ describe("registry.dispose.twice", () => {
   });
 
   it("second dispose is no-op (idempotent)", async () => {
-    registry.register("lifecycle.getState", async () => "ready", {
-      ipc: "api:lifecycle:get-state",
-    });
+    registry.register(
+      "lifecycle.getState",
+      async () => ({ state: "ready" as const, agent: "opencode" as const }),
+      {
+        ipc: "api:lifecycle:get-state",
+      }
+    );
 
     await registry.dispose();
     expect(ipcLayer._getState().handlers.size).toBe(0);
@@ -489,7 +518,8 @@ function registerAllMethodsWithStubs(
   }> = {}
 ): void {
   const defaultHandlers: { [P in MethodPath]: MethodHandler<P> } = {
-    "lifecycle.getState": async () => "ready",
+    "lifecycle.getState": async () => ({ state: "ready" as const, agent: "opencode" as const }),
+    "lifecycle.setAgent": async () => ({ success: true }),
     "lifecycle.setup": async () => ({ success: true }),
     "lifecycle.startServices": async () => ({ success: true }),
     "lifecycle.quit": async () => {},

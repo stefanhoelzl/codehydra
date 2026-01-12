@@ -57,6 +57,7 @@ export function createMockBinaryDownloadService(
   const defaultPaths: Record<BinaryType, string> = {
     "code-server": "/app-data/code-server/4.106.3/bin/code-server",
     opencode: "/app-data/opencode/0.1.47/opencode",
+    claude: "/app-data/claude/1.0.58/claude",
   };
 
   return {

@@ -3,17 +3,18 @@
  * Boundary tests for OpenCodeServerManager.
  *
  * Tests with real opencode process spawning.
- * These tests are skipped if the opencode binary is not available.
+ * Uses ensureBinaryForTests to download opencode if not available.
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
 import { ExecaProcessRunner } from "../../services/platform/process";
 import { DefaultNetworkLayer } from "../../services/platform/network";
-import { DefaultPathProvider } from "../../services/platform/path-provider";
-import { NodePlatformInfo } from "../../main/platform-info";
-import { createMockBuildInfo } from "../../services/platform/build-info.test-utils";
 import { SILENT_LOGGER } from "../../services/logging";
+import {
+  ensureBinaryForTests,
+  getTestPathProvider,
+} from "../../services/test-utils/ensure-binaries";
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,63 +23,30 @@ import { CI_TIMEOUT_MS } from "../../services/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 
 import type { PathProvider } from "../../services/platform/path-provider";
-import type { Path } from "../../services/platform/path";
-
-/**
- * Check if opencode binary exists and is executable.
- */
-function isOpencodeAvailable(pathProvider: { opencodeBinaryPath: Path }): boolean {
-  try {
-    return existsSync(pathProvider.opencodeBinaryPath.toNative());
-  } catch {
-    return false;
-  }
-}
 
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;
   let manager: OpenCodeServerManager;
-  // Use the actual PathProvider type since all properties are now Path objects
   let pathProvider: PathProvider;
   let networkLayer: DefaultNetworkLayer;
   let processRunner: ExecaProcessRunner;
-  let skipTests = false;
 
   beforeAll(async () => {
+    // Ensure opencode binary is available (downloads if missing)
+    await ensureBinaryForTests("opencode");
+
     // Create test directory
     testDir = join(tmpdir(), `opencode-server-test-${Date.now()}`);
     await mkdir(testDir, { recursive: true });
     await mkdir(join(testDir, "opencode"), { recursive: true });
     await mkdir(join(testDir, "workspace"), { recursive: true });
 
-    // Create mock build info with development mode and correct appPath
-    // This avoids Electron dependency (ElectronBuildInfo uses app.getVersion())
-    const buildInfo = createMockBuildInfo({
-      isDevelopment: true,
-      appPath: process.cwd(),
-    });
-    const platformInfo = new NodePlatformInfo();
-
-    // Use real path provider to get the actual opencode binary path
-    const realPathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-    // Create a custom path provider that uses test directory for data
-    // but real opencode binary path
-    // Use the real path provider since all properties are now Path objects
-    pathProvider = realPathProvider;
+    // Use test path provider for binary resolution
+    pathProvider = getTestPathProvider();
 
     // Create dependencies using silent loggers (no Electron dependency)
     networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
     processRunner = new ExecaProcessRunner(SILENT_LOGGER);
-
-    // Check if opencode is available
-    skipTests = !isOpencodeAvailable(realPathProvider);
-    if (skipTests) {
-      console.log(
-        "Skipping boundary tests: opencode binary not found at",
-        realPathProvider.opencodeBinaryPath.toString()
-      );
-    }
   });
 
   afterEach(async () => {
@@ -97,7 +65,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     }
   });
 
-  it.skipIf(skipTests)(
+  it(
     "opencode serve starts and listens on allocated port",
     async () => {
       manager = new OpenCodeServerManager(
@@ -120,7 +88,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     CI_TIMEOUT_MS
   );
 
-  it.skipIf(skipTests)(
+  it(
     "health check to /path succeeds after startup",
     async () => {
       manager = new OpenCodeServerManager(
@@ -142,7 +110,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     CI_TIMEOUT_MS
   );
 
-  it.skipIf(skipTests)(
+  it(
     "graceful shutdown terminates process",
     async () => {
       manager = new OpenCodeServerManager(
@@ -181,7 +149,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     CI_TIMEOUT_MS
   );
 
-  it.skipIf(skipTests)(
+  it(
     "port is stored in memory after start",
     async () => {
       manager = new OpenCodeServerManager(
@@ -208,7 +176,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     CI_TIMEOUT_MS
   );
 
-  it.skipIf(skipTests)(
+  it(
     "no ports.json file is created after server start",
     async () => {
       manager = new OpenCodeServerManager(

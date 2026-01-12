@@ -3,8 +3,8 @@
  *
  * Compiles agent wrapper scripts to out/main/agents/ as self-contained CJS bundles:
  * - src/agents/opencode/wrapper.ts -> opencode-wrapper.cjs
- * - src/agents/claude-code/wrapper.ts -> claude-code-wrapper.cjs
- * - src/agents/claude-code/hook-handler.ts -> hook-handler.cjs
+ * - src/agents/claude/wrapper.ts -> claude-wrapper.cjs
+ * - src/agents/claude/hook-handler.ts -> hook-handler.cjs
  *
  * Also copies compiled wrappers to ./dist/bin/ for production packaging.
  * Runtime copying to app-data/bin/ is handled by VscodeSetupService.setupBinDirectory().
@@ -27,14 +27,14 @@ export default defineConfig({
           rename: "opencode.cjs",
         },
         {
-          src: "out/main/agents/claude-code-wrapper.cjs",
+          src: "out/main/agents/claude-wrapper.cjs",
           dest: "../../../dist/bin",
           rename: "claude.cjs",
         },
         {
           src: "out/main/agents/hook-handler.cjs",
           dest: "../../../dist/bin",
-          rename: "claude-code-hook-handler.cjs",
+          rename: "claude-hook-handler.cjs",
         },
       ],
       hook: "closeBundle",
@@ -44,8 +44,8 @@ export default defineConfig({
     lib: {
       entry: {
         "opencode-wrapper": resolve(__dirname, "src/agents/opencode/wrapper.ts"),
-        "claude-code-wrapper": resolve(__dirname, "src/agents/claude-code/wrapper.ts"),
-        "hook-handler": resolve(__dirname, "src/agents/claude-code/hook-handler.ts"),
+        "claude-wrapper": resolve(__dirname, "src/agents/claude/wrapper.ts"),
+        "hook-handler": resolve(__dirname, "src/agents/claude/hook-handler.ts"),
       },
       formats: ["cjs"],
       fileName: (_, entryName) => `${entryName}.cjs`,

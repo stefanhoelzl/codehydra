@@ -20,6 +20,7 @@ import { waitForHealthy } from "../../services/platform/health-check";
 import { Path } from "../../services/platform/path";
 import type { PromptModel } from "../../shared/api/types";
 import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
+import { OPENCODE_VERSION } from "../../services/binary-download/versions";
 
 /**
  * Pending initial prompt to send when server becomes healthy.
@@ -237,7 +238,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     }
 
     // Spawn opencode serve
-    const opencodeCmd = this.pathProvider.opencodeBinaryPath.toNative();
+    const opencodeCmd = this.pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toNative();
     const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {
       cwd: workspacePath,
       ...(env && { env }),

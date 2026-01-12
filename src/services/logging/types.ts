@@ -31,7 +31,7 @@ export type LoggerName =
   | "git" // SimpleGitClient - git operations
   | "worktree" // GitWorktreeProvider - worktree operations
   | "opencode" // OpenCodeClient - OpenCode SDK
-  | "claude-code" // ClaudeCodeServerManager - Claude Code agent
+  | "claude" // ClaudeServerManager - Claude agent
   | "code-server" // CodeServerManager - code-server process
   | "keepfiles" // KeepFilesService - .keepfiles copying
   | "opencode-server" // OpenCodeServerManager - opencode server lifecycle
@@ -49,7 +49,8 @@ export type LoggerName =
   | "extension" // PluginServer - extension-side logs forwarded to main
   | "dialog" // DialogLayer - system dialogs
   | "menu" // MenuLayer - application menu
-  | "workspace-file"; // WorkspaceFileService - .code-workspace file management
+  | "workspace-file" // WorkspaceFileService - .code-workspace file management
+  | "config"; // ConfigService - application config
 
 /**
  * Context data for log entries.

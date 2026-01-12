@@ -590,7 +590,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   private async generateConfigFiles(workspacePath: string): Promise<void> {
     // Config directory is in the app data, not in the workspace
     // Using a hash of workspace path to make it unique
-    const configDir = new Path(this.pathProvider.dataRootDir, "claude-code", "configs");
+    const configDir = new Path(this.pathProvider.dataRootDir, "claude", "configs");
 
     // Generate a safe directory name from workspace path
     const safeWorkspaceName = this.getConfigDirName(workspacePath);
@@ -687,7 +687,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     const safeWorkspaceName = this.getConfigDirName(normalizedPath);
     return new Path(
       this.pathProvider.dataRootDir,
-      "claude-code",
+      "claude",
       "configs",
       safeWorkspaceName,
       "codehydra-hooks.json"
@@ -703,7 +703,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     const safeWorkspaceName = this.getConfigDirName(normalizedPath);
     return new Path(
       this.pathProvider.dataRootDir,
-      "claude-code",
+      "claude",
       "configs",
       safeWorkspaceName,
       "codehydra-mcp.json"
