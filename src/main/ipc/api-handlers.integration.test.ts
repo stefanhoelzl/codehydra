@@ -94,9 +94,10 @@ function createMockApiWithEvents(): {
       setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
-      getState: vi.fn().mockResolvedValue("ready"),
+      getState: vi.fn().mockResolvedValue({ state: "ready", agent: "opencode" }),
       setup: vi.fn().mockResolvedValue({ success: true }),
       startServices: vi.fn().mockResolvedValue({ success: true }),
+      setAgent: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn().mockResolvedValue(undefined),
     },
     on: vi.fn().mockImplementation(<E extends keyof ApiEvents>(event: E, handler: ApiEvents[E]) => {

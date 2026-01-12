@@ -35,9 +35,10 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
         setMode: vi.fn().mockResolvedValue(undefined),
       },
       lifecycle: {
-        getState: vi.fn().mockResolvedValue("loading"),
+        getState: vi.fn().mockResolvedValue({ state: "loading", agent: "opencode" }),
         setup: vi.fn().mockResolvedValue({ success: true }),
         startServices: vi.fn().mockResolvedValue({ success: true }),
+        setAgent: vi.fn().mockResolvedValue(undefined),
         quit: vi.fn().mockResolvedValue(undefined),
       },
       // on() captures callbacks by event name for tests to fire events
@@ -117,7 +118,7 @@ describe("App component", () => {
     // Default to returning empty projects
     mockApi.projects.list.mockResolvedValue([]);
     // Default to loading state (services need to be started)
-    mockApi.lifecycle.getState.mockResolvedValue("loading");
+    mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
     mockApi.lifecycle.setup.mockResolvedValue({ success: true });
     mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
   });
@@ -1029,7 +1030,7 @@ describe("App component", () => {
 
     it("shows SetupScreen when state is 'setup'", async () => {
       // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // Keep setup running indefinitely
       mockApi.lifecycle.setup.mockReturnValue(new Promise(() => {}));
 
@@ -1044,7 +1045,7 @@ describe("App component", () => {
 
     it("shows SetupComplete when lifecycle.setup() returns success", async () => {
       // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // Setup completes successfully
       mockApi.lifecycle.setup.mockResolvedValue({ success: true });
       // Keep startServices running indefinitely so we stay at SetupComplete
@@ -1060,7 +1061,7 @@ describe("App component", () => {
 
     it("shows SetupError when lifecycle.setup() returns failure", async () => {
       // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // Setup fails
       mockApi.lifecycle.setup.mockResolvedValue({
         success: false,
@@ -1078,7 +1079,7 @@ describe("App component", () => {
 
     it("calls lifecycle.setup() when Retry button clicked on error screen", async () => {
       // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // First setup fails, second succeeds
       mockApi.lifecycle.setup
         .mockResolvedValueOnce({
@@ -1110,7 +1111,7 @@ describe("App component", () => {
 
     it("calls lifecycle.quit() when Quit button clicked on error screen", async () => {
       // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // Setup fails
       mockApi.lifecycle.setup.mockResolvedValue({
         success: false,
@@ -1134,7 +1135,7 @@ describe("App component", () => {
 
     it("shows loading screen when state is 'loading'", async () => {
       // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue("loading");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
       // Keep startServices running indefinitely
       mockApi.lifecycle.startServices.mockReturnValue(new Promise(() => {}));
 
@@ -1148,7 +1149,7 @@ describe("App component", () => {
 
     it("transitions to ready after startServices() succeeds", async () => {
       // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue("loading");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
       // startServices completes successfully
       mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
       mockApi.projects.list.mockResolvedValue([]);
@@ -1163,7 +1164,7 @@ describe("App component", () => {
 
     it("shows error with Retry/Quit when startServices() fails", async () => {
       // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue("loading");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
       // startServices fails
       mockApi.lifecycle.startServices.mockResolvedValue({
         success: false,
@@ -1183,7 +1184,7 @@ describe("App component", () => {
 
     it("retries startServices when Retry clicked in loading mode", async () => {
       // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue("loading");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
       // First startServices fails, second succeeds
       mockApi.lifecycle.startServices
         .mockResolvedValueOnce({
@@ -1213,7 +1214,7 @@ describe("App component", () => {
 
     it("setup success transitions through loading to ready", async () => {
       // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue("setup");
+      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
       // Setup completes successfully
       mockApi.lifecycle.setup.mockResolvedValue({ success: true });
       // startServices completes successfully

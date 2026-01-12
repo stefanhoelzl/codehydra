@@ -804,12 +804,24 @@ const unsubscribe = on("workspace:switched", (event) => {
 
 #### `lifecycle` - Application Lifecycle
 
-| Method          | Signature                    | Description                                           |
-| --------------- | ---------------------------- | ----------------------------------------------------- |
-| `getState`      | `() => Promise<AppState>`    | Get app state ("setup" or "loading", never "ready")   |
-| `setup`         | `() => Promise<SetupResult>` | Run first-time setup (does NOT start services)        |
-| `startServices` | `() => Promise<SetupResult>` | Start app services (idempotent, called after loading) |
-| `quit`          | `() => Promise<void>`        | Quit the application                                  |
+| Method          | Signature                                   | Description                                             |
+| --------------- | ------------------------------------------- | ------------------------------------------------------- |
+| `getState`      | `() => Promise<AppStateResult>`             | Get app state and selected agent                        |
+| `setAgent`      | `(agent: ConfigAgentType) => Promise<void>` | Save agent selection to config (called after UI choice) |
+| `setup`         | `() => Promise<SetupResult>`                | Run first-time setup (does NOT start services)          |
+| `startServices` | `() => Promise<SetupResult>`                | Start app services (idempotent, called after loading)   |
+| `quit`          | `() => Promise<void>`                       | Quit the application                                    |
+
+**`AppStateResult` return type:**
+
+```typescript
+interface AppStateResult {
+  state: AppState; // "agent-selection" | "setup" | "loading" | "ready"
+  agent: ConfigAgentType | null; // "claude" | "opencode" | null
+}
+```
+
+**Note:** `getState()` never returns `state: "ready"` - the "ready" state is only reached after `startServices()` completes successfully.
 
 ### Events
 
@@ -826,7 +838,23 @@ const unsubscribe = on("workspace:switched", (event) => {
 | `workspace:loading-changed`   | `{ path: string, loading: boolean }`             | Workspace loading state changed                                              |
 | `workspace:deletion-progress` | `DeletionProgress`                               | Workspace deletion progress update (includes `blockingProcesses` on Windows) |
 | `ui:mode-changed`             | `{ mode: UIMode, previousMode: UIMode }`         | UI mode changed                                                              |
-| `setup:progress`              | `{ step: SetupStep, message: string }`           | Setup progress                                                               |
+| `setup:progress`              | `{ step: SetupStep, message: string }`           | Setup progress (legacy)                                                      |
+| `lifecycle:setup-progress`    | `SetupRowProgress`                               | Setup row progress update (3-row model)                                      |
+
+**`SetupRowProgress` payload:**
+
+```typescript
+type SetupRowId = "vscode" | "agent" | "setup";
+type SetupRowStatus = "pending" | "running" | "done" | "failed";
+
+interface SetupRowProgress {
+  id: SetupRowId; // Which row this update is for
+  status: SetupRowStatus; // Current status
+  progress?: number; // Progress percentage (0-100), only for "running"
+  message?: string; // Status message to display
+  error?: string; // Error message when status is "failed"
+}
+```
 
 ---
 
@@ -929,10 +957,25 @@ type UIMode = "workspace" | "dialog" | "shortcut" | "hover";
 #### `AppState`
 
 ```typescript
-type AppState = "setup" | "loading" | "ready";
+type AppState = "agent-selection" | "setup" | "loading" | "ready";
 ```
 
-**Note:** `getState()` returns "setup" or "loading" (never "ready"). The "ready" state is only reached after `startServices()` completes successfully.
+**States:**
+
+- `agent-selection`: First run, no agent selected yet (shows AgentSelectionDialog)
+- `setup`: Agent selected but binaries need to be downloaded (shows SetupScreen)
+- `loading`: All binaries available, services starting (shows loading screen)
+- `ready`: Services started, application fully operational
+
+**Note:** `getState()` never returns "ready" - that state is only reached after `startServices()` completes successfully.
+
+#### `ConfigAgentType`
+
+```typescript
+type ConfigAgentType = "claude" | "opencode";
+```
+
+User-selectable agent types. Stored in `config.json` after initial selection.
 
 #### `SetupProgress` / `SetupResult`
 

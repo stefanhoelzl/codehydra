@@ -15,40 +15,33 @@
  * - Edge cases
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import * as os from "node:os";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { CodeServerManager } from "./code-server-manager";
 import { ExecaProcessRunner } from "../platform/process";
 import { DefaultNetworkLayer } from "../platform/network";
 import { createTempDir } from "../test-utils";
 import { delay } from "@shared/test-fixtures";
-import { DefaultPathProvider } from "../platform/path-provider";
-import type { BuildInfo } from "../platform/build-info";
-import type { PlatformInfo, SupportedArch } from "../platform/platform-info";
+import {
+  ensureBinariesForTests,
+  getTestPathProvider,
+  CODE_SERVER_VERSION,
+  OPENCODE_VERSION,
+} from "../test-utils/ensure-binaries";
 import type { CodeServerConfig } from "./types";
 
 /**
- * Get the path to the installed code-server binary.
- * Uses DefaultPathProvider to compute the correct path based on environment.
+ * Get binary paths using the test path provider.
  */
 function getCodeServerBinaryPath(): string {
-  // Create build info for development mode
-  const buildInfo: BuildInfo = {
-    version: "dev",
-    isDevelopment: true,
-    appPath: process.cwd(),
-  };
+  return getTestPathProvider().getBinaryPath("code-server", CODE_SERVER_VERSION).toNative();
+}
 
-  // Create platform info
-  const arch = process.arch as SupportedArch;
-  const platformInfo: PlatformInfo = {
-    platform: process.platform,
-    arch,
-    homeDir: os.homedir(),
-  };
+function getCodeServerDir(): string {
+  return getTestPathProvider().getBinaryDir("code-server", CODE_SERVER_VERSION).toNative();
+}
 
-  const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-  return pathProvider.codeServerBinaryPath.toNative();
+function getOpencodeDir(): string {
+  return getTestPathProvider().getBinaryDir("opencode", OPENCODE_VERSION).toNative();
 }
 
 // Platform detection for signal tests
@@ -87,8 +80,8 @@ function createTestConfig(baseDir: string): CodeServerConfig {
     extensionsDir: `${baseDir}/extensions`,
     userDataDir: `${baseDir}/user-data`,
     binDir: `${baseDir}/bin`,
-    codeServerDir: `${baseDir}/code-server`,
-    opencodeDir: `${baseDir}/opencode`,
+    codeServerDir: getCodeServerDir(),
+    opencodeDir: getOpencodeDir(),
   };
 }
 
@@ -125,6 +118,11 @@ describe("CodeServerManager (boundary)", () => {
   let manager: CodeServerManager;
   let tempDir: string;
   let cleanup: () => Promise<void>;
+
+  // Ensure binaries are available before running tests
+  beforeAll(async () => {
+    await ensureBinariesForTests(["code-server", "opencode"]);
+  });
 
   beforeEach(async (): Promise<void> => {
     // Use documented test utility for temp directory

@@ -54,7 +54,7 @@ describe("VscodeSetupService Integration", () => {
 
   /**
    * Creates mock asset files in the assets directory.
-   * Note: Agent extensions (opencode, claude-code) are installed from marketplace,
+   * Note: Agent extensions (opencode, claude) are installed from marketplace,
    * not bundled. Only CodeHydra's own extensions are in the manifest.
    */
   async function createMockAssets(assetsDir: string): Promise<void> {
@@ -420,6 +420,35 @@ describe("VscodeSetupService Integration", () => {
       });
 
       expect(progressMessages).toContain("Creating CLI wrapper scripts...");
+    });
+  });
+
+  describe("Progress callbacks for row-based UI", () => {
+    it("emits progress callbacks with step information for row mapping", async () => {
+      const processRunner = createTestProcessRunner();
+      const service = new VscodeSetupService(processRunner, testPathProvider, fsLayer);
+      const preflight = createFullSetupPreflightResult();
+
+      const progressUpdates: Array<{ step: string; message: string }> = [];
+      const result = await service.setup(preflight, (progress) => {
+        progressUpdates.push({ step: progress.step, message: progress.message });
+      });
+
+      expect(result.success).toBe(true);
+
+      // Verify progress steps are emitted (these map to UI rows)
+      // Extension installation maps to "setup" row
+      const extensionSteps = progressUpdates.filter((p) => p.step === "extensions");
+      expect(extensionSteps.length).toBeGreaterThan(0);
+      expect(extensionSteps[0]?.message).toMatch(/installing/i);
+
+      // Config steps map to "setup" row
+      const configSteps = progressUpdates.filter((p) => p.step === "config");
+      expect(configSteps.length).toBeGreaterThan(0);
+
+      // Finalize step maps to "setup" row
+      const finalizeSteps = progressUpdates.filter((p) => p.step === "finalize");
+      expect(finalizeSteps.length).toBe(1);
     });
   });
 

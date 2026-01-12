@@ -27,18 +27,40 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.scriptsDir.toString()).toBe("/mock/assets/scripts");
     expect(pathProvider.appIconPath.toString()).toBe("/test/resources/icon.png");
     expect(pathProvider.binDir.toString()).toBe("/test/app-data/bin");
-    expect(pathProvider.codeServerDir.toString()).toBe(
-      `/test/bundles/code-server/${CODE_SERVER_VERSION}`
+  });
+
+  it("dynamic methods return correct paths", () => {
+    const pathProvider = createMockPathProvider();
+
+    // Test getBinaryBaseDir
+    expect(pathProvider.getBinaryBaseDir("code-server").toString()).toBe(
+      "/test/bundles/code-server"
     );
-    expect(pathProvider.opencodeDir.toString()).toBe(`/test/bundles/opencode/${OPENCODE_VERSION}`);
-    expect(pathProvider.codeServerBinaryPath.toString()).toBe(
-      `/test/bundles/code-server/${CODE_SERVER_VERSION}/bin/code-server`
+    expect(pathProvider.getBinaryBaseDir("opencode").toString()).toBe("/test/bundles/opencode");
+    expect(pathProvider.getBinaryBaseDir("claude").toString()).toBe("/test/bundles/claude");
+
+    // Test getBinaryDir
+    expect(pathProvider.getBinaryDir("code-server", "4.107.0").toString()).toBe(
+      "/test/bundles/code-server/4.107.0"
     );
-    expect(pathProvider.opencodeBinaryPath.toString()).toBe(
-      `/test/bundles/opencode/${OPENCODE_VERSION}/opencode`
+    expect(pathProvider.getBinaryDir("opencode", "1.0.223").toString()).toBe(
+      "/test/bundles/opencode/1.0.223"
     );
-    expect(pathProvider.bundledNodePath.toString()).toBe(
-      `/test/bundles/code-server/${CODE_SERVER_VERSION}/lib/node`
+
+    // Test getBinaryPath (Linux - default platform)
+    expect(pathProvider.getBinaryPath("code-server", "4.107.0").toString()).toBe(
+      "/test/bundles/code-server/4.107.0/bin/code-server"
+    );
+    expect(pathProvider.getBinaryPath("opencode", "1.0.223").toString()).toBe(
+      "/test/bundles/opencode/1.0.223/opencode"
+    );
+    expect(pathProvider.getBinaryPath("claude", "1.0.58").toString()).toBe(
+      "/test/bundles/claude/1.0.58/claude"
+    );
+
+    // Test getBundledNodePath
+    expect(pathProvider.getBundledNodePath("4.107.0").toString()).toBe(
+      "/test/bundles/code-server/4.107.0/lib/node"
     );
   });
 
@@ -53,7 +75,7 @@ describe("createMockPathProvider", () => {
     // Data paths derived from dataRootDir should use the override
     expect(pathProvider.projectsDir.toString()).toBe("/custom/root/projects");
     // Bundle paths should still use defaults
-    expect(pathProvider.codeServerDir.toString()).toBe(
+    expect(pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toString()).toBe(
       `/test/bundles/code-server/${CODE_SERVER_VERSION}`
     );
   });
@@ -81,11 +103,6 @@ describe("createMockPathProvider", () => {
       scriptsDir: "/h/scripts",
       appIconPath: "/h/icon.png",
       binDir: "/i",
-      codeServerDir: "/j",
-      opencodeDir: "/k",
-      codeServerBinaryPath: "/j/bin/code-server",
-      opencodeBinaryPath: "/k/opencode",
-      bundledNodePath: "/j/lib/node",
     });
 
     expect(pathProvider.dataRootDir.toString()).toBe("/a");
@@ -99,11 +116,40 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.scriptsDir.toString()).toBe("/h/scripts");
     expect(pathProvider.appIconPath.toString()).toBe("/h/icon.png");
     expect(pathProvider.binDir.toString()).toBe("/i");
-    expect(pathProvider.codeServerDir.toString()).toBe("/j");
-    expect(pathProvider.opencodeDir.toString()).toBe("/k");
-    expect(pathProvider.codeServerBinaryPath.toString()).toBe("/j/bin/code-server");
-    expect(pathProvider.opencodeBinaryPath.toString()).toBe("/k/opencode");
-    expect(pathProvider.bundledNodePath.toString()).toBe("/j/lib/node");
+  });
+
+  it("allows overriding bundlesRootDir", () => {
+    const pathProvider = createMockPathProvider({
+      bundlesRootDir: "/custom/bundles",
+    });
+
+    expect(pathProvider.getBinaryBaseDir("code-server").toString()).toBe(
+      "/custom/bundles/code-server"
+    );
+    expect(pathProvider.getBinaryDir("opencode", "1.0.0").toString()).toBe(
+      "/custom/bundles/opencode/1.0.0"
+    );
+  });
+
+  it("respects platform option for binary paths", () => {
+    const linuxProvider = createMockPathProvider({ platform: "linux" });
+    const win32Provider = createMockPathProvider({ platform: "win32" });
+
+    // Linux uses non-.exe extensions
+    expect(linuxProvider.getBinaryPath("opencode", "1.0.0").toString()).toBe(
+      "/test/bundles/opencode/1.0.0/opencode"
+    );
+    expect(linuxProvider.getBinaryPath("code-server", "4.0.0").toString()).toBe(
+      "/test/bundles/code-server/4.0.0/bin/code-server"
+    );
+
+    // Windows uses .exe/.cmd extensions
+    expect(win32Provider.getBinaryPath("opencode", "1.0.0").toString()).toBe(
+      "/test/bundles/opencode/1.0.0/opencode.exe"
+    );
+    expect(win32Provider.getBinaryPath("code-server", "4.0.0").toString()).toBe(
+      "/test/bundles/code-server/4.0.0/bin/code-server.cmd"
+    );
   });
 
   it("getProjectWorkspacesDir returns Path with project hash", () => {
@@ -144,12 +190,11 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.scriptsDir).toBeInstanceOf(Path);
     expect(pathProvider.appIconPath).toBeInstanceOf(Path);
     expect(pathProvider.binDir).toBeInstanceOf(Path);
-    expect(pathProvider.codeServerDir).toBeInstanceOf(Path);
-    expect(pathProvider.opencodeDir).toBeInstanceOf(Path);
-    expect(pathProvider.codeServerBinaryPath).toBeInstanceOf(Path);
-    expect(pathProvider.opencodeBinaryPath).toBeInstanceOf(Path);
-    expect(pathProvider.bundledNodePath).toBeInstanceOf(Path);
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
+    expect(typeof pathProvider.getBinaryBaseDir).toBe("function");
+    expect(typeof pathProvider.getBinaryDir).toBe("function");
+    expect(typeof pathProvider.getBinaryPath).toBe("function");
+    expect(typeof pathProvider.getBundledNodePath).toBe("function");
   });
 });
 
@@ -185,16 +230,16 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.binDir.toString()).toMatch(/app-data\/bin$/);
     });
 
-    it("returns versioned binary directories in production paths", () => {
+    it("returns versioned binary directories via dynamic methods", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       // Binaries always use production paths, even in development
-      expect(pathProvider.codeServerDir.toString()).toMatch(
+      expect(pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toString()).toMatch(
         new RegExp(`\\.local/share/codehydra/code-server/${CODE_SERVER_VERSION}$`)
       );
-      expect(pathProvider.opencodeDir.toString()).toMatch(
+      expect(pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toString()).toMatch(
         new RegExp(`\\.local/share/codehydra/opencode/${OPENCODE_VERSION}$`)
       );
     });
@@ -204,9 +249,15 @@ describe("DefaultPathProvider", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerBinaryPath.toString()).toMatch(/bin\/code-server$/);
-      expect(pathProvider.opencodeBinaryPath.toString()).toMatch(/opencode$/);
-      expect(pathProvider.opencodeBinaryPath.toString()).not.toMatch(/\.exe$/);
+      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toMatch(
+        /bin\/code-server$/
+      );
+      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toMatch(
+        /opencode$/
+      );
+      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).not.toMatch(
+        /\.exe$/
+      );
     });
 
     it("returns bundled Node path for Unix", () => {
@@ -214,8 +265,8 @@ describe("DefaultPathProvider", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.bundledNodePath.toString()).toMatch(/lib\/node$/);
-      expect(pathProvider.bundledNodePath.toString()).not.toMatch(/\.exe$/);
+      expect(pathProvider.getBundledNodePath(CODE_SERVER_VERSION).toString()).toMatch(/lib\/node$/);
+      expect(pathProvider.getBundledNodePath(CODE_SERVER_VERSION).toString()).not.toMatch(/\.exe$/);
     });
 
     it("returns vscodeAssetsDir and scriptsDir based on appPath", () => {
@@ -319,10 +370,10 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerDir.toString()).toBe(
+      expect(pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toString()).toBe(
         `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}`
       );
-      expect(pathProvider.opencodeDir.toString()).toBe(
+      expect(pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toString()).toBe(
         `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}`
       );
     });
@@ -338,10 +389,10 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerBinaryPath.toString()).toBe(
+      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toBe(
         `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}/bin/code-server`
       );
-      expect(pathProvider.opencodeBinaryPath.toString()).toBe(
+      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toBe(
         `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}/opencode`
       );
     });
@@ -394,17 +445,25 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.codeServerDir.toString()).toBe(
+      expect(pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toString()).toBe(
         `/Users/testuser/Library/Application Support/Codehydra/code-server/${CODE_SERVER_VERSION}`
       );
-      expect(pathProvider.opencodeDir.toString()).toBe(
+      expect(pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toString()).toBe(
         `/Users/testuser/Library/Application Support/Codehydra/opencode/${OPENCODE_VERSION}`
       );
       // macOS uses Unix-style paths (no .exe extension)
-      expect(pathProvider.codeServerBinaryPath.toString()).toContain("/bin/code-server");
-      expect(pathProvider.codeServerBinaryPath.toString()).not.toContain(".cmd");
-      expect(pathProvider.opencodeBinaryPath.toString()).toContain("opencode");
-      expect(pathProvider.opencodeBinaryPath.toString()).not.toContain(".exe");
+      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toContain(
+        "/bin/code-server"
+      );
+      expect(
+        pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()
+      ).not.toContain(".cmd");
+      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toContain(
+        "opencode"
+      );
+      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).not.toContain(
+        ".exe"
+      );
     });
   });
 
@@ -447,8 +506,12 @@ describe("DefaultPathProvider", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       // Windows uses .cmd for code-server and .exe for opencode
-      expect(pathProvider.codeServerBinaryPath.toString()).toMatch(/bin\/code-server\.cmd$/);
-      expect(pathProvider.opencodeBinaryPath.toString()).toMatch(/opencode\.exe$/);
+      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toMatch(
+        /bin\/code-server\.cmd$/
+      );
+      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toMatch(
+        /opencode\.exe$/
+      );
     });
 
     it("returns bundled Node path with .exe extension", () => {
@@ -462,7 +525,9 @@ describe("DefaultPathProvider", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.bundledNodePath.toString()).toMatch(/lib\/node\.exe$/);
+      expect(pathProvider.getBundledNodePath(CODE_SERVER_VERSION).toString()).toMatch(
+        /lib\/node\.exe$/
+      );
     });
   });
 

@@ -52,8 +52,8 @@ describe("ClaudeCodeServerManager integration", () => {
     mockFileSystem = createFileSystemMock({
       entries: {
         "/app-data": directory(),
-        "/app-data/claude-code": directory(),
-        "/app-data/claude-code/configs": directory(),
+        "/app-data/claude": directory(),
+        "/app-data/claude/configs": directory(),
       },
     });
 

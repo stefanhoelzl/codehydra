@@ -13,7 +13,8 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   SetupResult,
-  AppState as AppStateType,
+  AppStateResult,
+  ConfigAgentType,
   BaseInfo as ApiBaseInfo,
 } from "./api/types";
 
@@ -95,7 +96,13 @@ export interface Api {
     setMode(mode: UIMode): Promise<void>;
   };
   lifecycle: {
-    getState(): Promise<AppStateType>;
+    getState(): Promise<AppStateResult>;
+    /**
+     * Set the selected agent type.
+     * Called after user selects an agent in the selection dialog.
+     * Saves selection to config and returns success/failure.
+     */
+    setAgent(agent: ConfigAgentType): Promise<SetupResult>;
     setup(): Promise<SetupResult>;
     /**
      * Start application services (code-server, OpenCode, etc.).

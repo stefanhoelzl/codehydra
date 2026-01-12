@@ -4,7 +4,6 @@
 import type { PathProvider } from "./path-provider";
 import { Path } from "./path";
 import { projectDirName } from "./paths";
-import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versions";
 
 /**
  * Options for createMockPathProvider.
@@ -14,11 +13,6 @@ import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versio
 export interface MockPathProviderOptions {
   // Bundle paths (binaries) - use bundlesRootDir
   bundlesRootDir?: Path | string;
-  codeServerDir?: Path | string;
-  opencodeDir?: Path | string;
-  codeServerBinaryPath?: Path | string;
-  opencodeBinaryPath?: Path | string;
-  bundledNodePath?: Path | string;
 
   // Data paths - use dataRootDir
   dataRootDir?: Path | string;
@@ -42,7 +36,17 @@ export interface MockPathProviderOptions {
   claudeCodeConfigDir?: Path | string;
   claudeCodeHookHandlerPath?: Path | string;
   claudeCodeWrapperPath?: Path | string;
+  configPath?: Path | string;
+
+  // Method overrides
   getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
+  getBinaryBaseDir?: (type: "code-server" | "opencode" | "claude") => Path;
+  getBinaryDir?: (type: "code-server" | "opencode" | "claude", version: string) => Path;
+  getBinaryPath?: (type: "code-server" | "opencode" | "claude", version: string) => Path;
+  getBundledNodePath?: (codeServerVersion: string) => Path;
+
+  // Platform for binary path construction (defaults to "linux")
+  platform?: "darwin" | "linux" | "win32";
 }
 
 /**
@@ -65,14 +69,7 @@ function ensurePath(value: Path | string | undefined, defaultValue: string): Pat
 export function createMockPathProvider(overrides?: MockPathProviderOptions): PathProvider {
   // Bundle paths (binaries) - use bundlesRootDir
   const bundlesRootDir = ensurePath(overrides?.bundlesRootDir, "/test/bundles");
-  const codeServerDir = ensurePath(
-    overrides?.codeServerDir,
-    `${bundlesRootDir.toString()}/code-server/${CODE_SERVER_VERSION}`
-  );
-  const opencodeDir = ensurePath(
-    overrides?.opencodeDir,
-    `${bundlesRootDir.toString()}/opencode/${OPENCODE_VERSION}`
-  );
+  const platform = overrides?.platform ?? "linux";
 
   // Data paths - use dataRootDir
   const dataRootDir = ensurePath(overrides?.dataRootDir, "/test/app-data");
@@ -82,6 +79,45 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
   const defaultGetProjectWorkspacesDir = (projectPath: string | Path): Path => {
     const pathStr = projectPath instanceof Path ? projectPath.toString() : projectPath;
     return new Path(projectsDir, projectDirName(pathStr), "workspaces");
+  };
+
+  const defaultGetBinaryBaseDir = (type: "code-server" | "opencode" | "claude"): Path => {
+    return new Path(bundlesRootDir, type);
+  };
+
+  const defaultGetBinaryDir = (
+    type: "code-server" | "opencode" | "claude",
+    version: string
+  ): Path => {
+    return new Path(bundlesRootDir, type, version);
+  };
+
+  const defaultGetBinaryPath = (
+    type: "code-server" | "opencode" | "claude",
+    version: string
+  ): Path => {
+    const versionDir = defaultGetBinaryDir(type, version);
+    const isWindows = platform === "win32";
+    let binaryRelPath: string;
+
+    switch (type) {
+      case "code-server":
+        binaryRelPath = isWindows ? "bin/code-server.cmd" : "bin/code-server";
+        break;
+      case "opencode":
+        binaryRelPath = isWindows ? "opencode.exe" : "opencode";
+        break;
+      case "claude":
+        binaryRelPath = isWindows ? "claude.exe" : "claude";
+        break;
+    }
+
+    return new Path(versionDir, binaryRelPath);
+  };
+
+  const defaultGetBundledNodePath = (codeServerVersion: string): Path => {
+    const codeServerDir = defaultGetBinaryDir("code-server", codeServerVersion);
+    return new Path(codeServerDir, "lib", platform === "win32" ? "node.exe" : "node");
   };
 
   return {
@@ -107,19 +143,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
       `${dataRootDir.toString()}/opencode/opencode.codehydra.json`
     ),
 
-    // Bundle paths
-    codeServerDir,
-    opencodeDir,
-    codeServerBinaryPath: ensurePath(
-      overrides?.codeServerBinaryPath,
-      `${codeServerDir.toString()}/bin/code-server`
-    ),
-    opencodeBinaryPath: ensurePath(
-      overrides?.opencodeBinaryPath,
-      `${opencodeDir.toString()}/opencode`
-    ),
-    bundledNodePath: ensurePath(overrides?.bundledNodePath, `${codeServerDir.toString()}/lib/node`),
-
     // Shared paths
     vscodeAssetsDir: ensurePath(overrides?.vscodeAssetsDir, "/mock/assets"),
     scriptsDir: ensurePath(overrides?.scriptsDir, "/mock/assets/scripts"),
@@ -140,6 +163,13 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
       overrides?.claudeCodeWrapperPath,
       "/test/app-data/bin/claude"
     ),
+    configPath: ensurePath(overrides?.configPath, `${dataRootDir.toString()}/config.json`),
+
+    // Methods
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
+    getBinaryBaseDir: overrides?.getBinaryBaseDir ?? defaultGetBinaryBaseDir,
+    getBinaryDir: overrides?.getBinaryDir ?? defaultGetBinaryDir,
+    getBinaryPath: overrides?.getBinaryPath ?? defaultGetBinaryPath,
+    getBundledNodePath: overrides?.getBundledNodePath ?? defaultGetBundledNodePath,
   };
 }

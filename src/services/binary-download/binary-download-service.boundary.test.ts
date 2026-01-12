@@ -3,15 +3,18 @@
  *
  * Tests actual downloads from GitHub releases (HEAD requests) and
  * archive extraction with real files.
+ *
+ * Network tests use beforeAll to check connectivity once and skip all
+ * network-dependent tests if unavailable, providing clear feedback.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { DefaultArchiveExtractor } from "./archive-extractor";
-import { BINARY_CONFIGS, CODE_SERVER_VERSION, OPENCODE_VERSION } from "./versions";
+import { BINARY_CONFIGS, CODE_SERVER_VERSION } from "./versions";
 import { DefaultNetworkLayer } from "../platform/network";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { SILENT_LOGGER } from "../logging";
@@ -20,13 +23,28 @@ import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
 import type { SupportedArch, SupportedPlatform } from "./types";
 
-// Skip tests that require network in CI environments with restricted network access
-const skipNetworkTests = process.env.CI === "true" && process.env.NETWORK_TESTS !== "true";
-
 describe("BinaryDownloadService (boundary)", () => {
   describe("URL validation", () => {
     // Test that GitHub release URLs are valid using HEAD requests
     const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
+
+    // Network connectivity check - set by beforeAll
+    let networkAvailable = false;
+
+    beforeAll(async () => {
+      // Check network connectivity by trying to reach GitHub
+      // This runs once before all URL validation tests
+      try {
+        const response = await networkLayer.fetch("https://github.com", { timeout: 5000 });
+        networkAvailable = response.ok || response.status === 301 || response.status === 302;
+      } catch {
+        networkAvailable = false;
+        console.warn(
+          "Network unavailable - URL validation tests will be skipped. " +
+            "Run with NETWORK_TESTS=true to enable network tests in CI."
+        );
+      }
+    });
 
     const platformCombinations: Array<{ platform: SupportedPlatform; arch: SupportedArch }> = [
       { platform: "darwin", arch: "x64" },
@@ -38,41 +56,43 @@ describe("BinaryDownloadService (boundary)", () => {
 
     describe("code-server release URLs", () => {
       for (const { platform, arch } of platformCombinations) {
-        it.skipIf(skipNetworkTests)(
-          `URL is valid for ${platform}-${arch}`,
-          async () => {
-            const url = BINARY_CONFIGS["code-server"].getUrl(platform, arch);
+        it(`URL is valid for ${platform}-${arch}`, async ({ skip }) => {
+          if (!networkAvailable) {
+            skip();
+            return;
+          }
 
-            // Use HEAD request to check URL validity (follows redirects)
-            const response = await networkLayer.fetch(url, { timeout: 10000 });
+          const url = BINARY_CONFIGS["code-server"].getUrl(platform, arch);
 
-            // GitHub returns 200 for release assets (redirects are followed automatically)
-            expect(
-              response.ok || response.status === 302,
-              `Expected 200 or 302 for ${url}, got ${response.status}`
-            ).toBe(true);
-          },
-          30000
-        );
+          // Use HEAD request to check URL validity (follows redirects)
+          const response = await networkLayer.fetch(url, { timeout: 10000 });
+
+          // GitHub returns 200 for release assets (redirects are followed automatically)
+          expect(
+            response.ok || response.status === 302,
+            `Expected 200 or 302 for ${url}, got ${response.status}`
+          ).toBe(true);
+        }, 30000);
       }
     });
 
     describe("opencode release URLs", () => {
       for (const { platform, arch } of platformCombinations) {
-        it.skipIf(skipNetworkTests)(
-          `URL is valid for ${platform}-${arch}`,
-          async () => {
-            const url = BINARY_CONFIGS["opencode"].getUrl(platform, arch);
+        it(`URL is valid for ${platform}-${arch}`, async ({ skip }) => {
+          if (!networkAvailable) {
+            skip();
+            return;
+          }
 
-            const response = await networkLayer.fetch(url, { timeout: 10000 });
+          const url = BINARY_CONFIGS["opencode"].getUrl(platform, arch);
 
-            expect(
-              response.ok || response.status === 302,
-              `Expected 200 or 302 for ${url}, got ${response.status}`
-            ).toBe(true);
-          },
-          30000
-        );
+          const response = await networkLayer.fetch(url, { timeout: 10000 });
+
+          expect(
+            response.ok || response.status === 302,
+            `Expected 200 or 302 for ${url}, got ${response.status}`
+          ).toBe(true);
+        }, 30000);
       }
     });
   });
@@ -123,8 +143,7 @@ describe("BinaryDownloadService (boundary)", () => {
       };
 
       const mockPathProvider = createMockPathProvider({
-        codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
-        opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
+        bundlesRootDir: tempDir,
         dataRootDir: tempDir,
         binDir: path.join(tempDir, "bin"),
       });
@@ -188,8 +207,7 @@ describe("BinaryDownloadService (boundary)", () => {
       };
 
       const mockPathProvider = createMockPathProvider({
-        codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
-        opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
+        bundlesRootDir: tempDir,
         dataRootDir: tempDir,
         binDir: path.join(tempDir, "bin"),
       });
@@ -202,7 +220,11 @@ describe("BinaryDownloadService (boundary)", () => {
         createMockPlatformInfo({ platform: "linux", arch: "x64" })
       );
 
-      const progressUpdates: Array<{ bytesDownloaded: number; totalBytes: number | null }> = [];
+      const progressUpdates: Array<{
+        phase: "downloading" | "extracting";
+        bytesDownloaded: number;
+        totalBytes: number | null;
+      }> = [];
 
       await service.download("code-server", (progress) => {
         progressUpdates.push({ ...progress });
@@ -211,10 +233,18 @@ describe("BinaryDownloadService (boundary)", () => {
       // Should have received progress updates
       expect(progressUpdates.length).toBeGreaterThan(0);
 
-      // Final update should have downloaded all bytes
-      const lastUpdate = progressUpdates[progressUpdates.length - 1];
-      expect(lastUpdate?.bytesDownloaded).toBe(archiveContent.length);
-      expect(lastUpdate?.totalBytes).toBe(archiveContent.length);
+      // Filter to downloading phase updates
+      const downloadUpdates = progressUpdates.filter((p) => p.phase === "downloading");
+      expect(downloadUpdates.length).toBeGreaterThan(0);
+
+      // Final download update should have downloaded all bytes
+      const lastDownloadUpdate = downloadUpdates[downloadUpdates.length - 1];
+      expect(lastDownloadUpdate?.bytesDownloaded).toBe(archiveContent.length);
+      expect(lastDownloadUpdate?.totalBytes).toBe(archiveContent.length);
+
+      // Should have extracting phase at the end
+      const extractUpdates = progressUpdates.filter((p) => p.phase === "extracting");
+      expect(extractUpdates.length).toBe(1);
     });
   });
 });

@@ -112,7 +112,7 @@ describe("renderer API layer", () => {
       const result = await api.lifecycle.getState();
 
       expect(mockApi.lifecycle.getState).toHaveBeenCalled();
-      expect(result).toBe("loading");
+      expect(result).toEqual({ state: "loading", agent: "opencode" });
     });
 
     it("on subscribes to events and returns unsubscribe", async () => {

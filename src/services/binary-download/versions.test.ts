@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { CODE_SERVER_VERSION, OPENCODE_VERSION, BINARY_CONFIGS } from "./versions";
+import { CODE_SERVER_VERSION, OPENCODE_VERSION, CLAUDE_VERSION, BINARY_CONFIGS } from "./versions";
 import type { SupportedArch, SupportedPlatform } from "./types";
 
 describe("version constants", () => {
@@ -13,6 +13,10 @@ describe("version constants", () => {
 
   it("OPENCODE_VERSION is a valid semver string", () => {
     expect(OPENCODE_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("CLAUDE_VERSION is null (uses dynamic versioning)", () => {
+    expect(CLAUDE_VERSION).toBeNull();
   });
 });
 
@@ -106,6 +110,49 @@ describe("opencode URL generation", () => {
   });
 });
 
+describe("claude URL generation", () => {
+  const config = BINARY_CONFIGS["claude"];
+
+  it("generates correct URL for darwin-x64", () => {
+    const url = config.getUrl("darwin", "x64");
+    expect(url).toBe(
+      "https://storage.googleapis.com/anthropic-public/claude-code/claude-code-releases/claude-darwin-x64.tar.gz"
+    );
+  });
+
+  it("generates correct URL for darwin-arm64", () => {
+    const url = config.getUrl("darwin", "arm64");
+    expect(url).toBe(
+      "https://storage.googleapis.com/anthropic-public/claude-code/claude-code-releases/claude-darwin-arm64.tar.gz"
+    );
+  });
+
+  it("generates correct URL for linux-x64", () => {
+    const url = config.getUrl("linux", "x64");
+    expect(url).toBe(
+      "https://storage.googleapis.com/anthropic-public/claude-code/claude-code-releases/claude-linux-x64.tar.gz"
+    );
+  });
+
+  it("generates correct URL for linux-arm64", () => {
+    const url = config.getUrl("linux", "arm64");
+    expect(url).toBe(
+      "https://storage.googleapis.com/anthropic-public/claude-code/claude-code-releases/claude-linux-arm64.tar.gz"
+    );
+  });
+
+  it("generates correct URL for win32-x64", () => {
+    const url = config.getUrl("win32", "x64");
+    expect(url).toBe(
+      "https://storage.googleapis.com/anthropic-public/claude-code/claude-code-releases/claude-win32-x64.tar.gz"
+    );
+  });
+
+  it("throws on win32-arm64", () => {
+    expect(() => config.getUrl("win32", "arm64")).toThrow("Windows Claude builds only support x64");
+  });
+});
+
 describe("extractedBinaryPath", () => {
   describe("code-server", () => {
     const config = BINARY_CONFIGS["code-server"];
@@ -132,22 +179,38 @@ describe("extractedBinaryPath", () => {
       expect(config.extractedBinaryPath("win32")).toBe("opencode.exe");
     });
   });
+
+  describe("claude", () => {
+    const config = BINARY_CONFIGS["claude"];
+
+    it("returns claude for unix platforms", () => {
+      expect(config.extractedBinaryPath("darwin")).toBe("claude");
+      expect(config.extractedBinaryPath("linux")).toBe("claude");
+    });
+
+    it("returns claude.exe for Windows", () => {
+      expect(config.extractedBinaryPath("win32")).toBe("claude.exe");
+    });
+  });
 });
 
 describe("BINARY_CONFIGS", () => {
-  it("has entries for both binary types", () => {
+  it("has entries for all binary types", () => {
     expect(BINARY_CONFIGS["code-server"]).toBeDefined();
     expect(BINARY_CONFIGS["opencode"]).toBeDefined();
+    expect(BINARY_CONFIGS["claude"]).toBeDefined();
   });
 
   it("has correct type values", () => {
     expect(BINARY_CONFIGS["code-server"].type).toBe("code-server");
     expect(BINARY_CONFIGS["opencode"].type).toBe("opencode");
+    expect(BINARY_CONFIGS["claude"].type).toBe("claude");
   });
 
   it("has version matching constants", () => {
     expect(BINARY_CONFIGS["code-server"].version).toBe(CODE_SERVER_VERSION);
     expect(BINARY_CONFIGS["opencode"].version).toBe(OPENCODE_VERSION);
+    expect(BINARY_CONFIGS["claude"].version).toBe(CLAUDE_VERSION);
   });
 
   it("generates URLs for all valid platform/arch combinations", () => {

@@ -4,9 +4,10 @@
 
 import type { BinaryConfig, BinaryType, SupportedArch, SupportedPlatform } from "./types.js";
 import { OPENCODE_VERSION, getOpencodeUrl } from "../../agents/opencode/setup-info";
+import { CLAUDE_VERSION, getClaudeUrl } from "../../agents/claude/setup-info";
 
-// Re-export OPENCODE_VERSION for backward compatibility
-export { OPENCODE_VERSION };
+// Re-export version constants for backward compatibility
+export { OPENCODE_VERSION, CLAUDE_VERSION };
 
 /**
  * Current version of code-server to download.
@@ -65,5 +66,12 @@ export const BINARY_CONFIGS = {
     getUrl: getOpencodeUrl,
     extractedBinaryPath: (platform: SupportedPlatform) =>
       platform === "win32" ? "opencode.exe" : "opencode",
+  },
+  claude: {
+    type: "claude",
+    version: CLAUDE_VERSION,
+    getUrl: getClaudeUrl,
+    extractedBinaryPath: (platform: SupportedPlatform) =>
+      platform === "win32" ? "claude.exe" : "claude",
   },
 } as const satisfies Record<BinaryType, BinaryConfig>;

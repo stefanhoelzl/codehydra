@@ -33,7 +33,15 @@ const TEST_WORKSPACE_NAME = "feature" as WorkspaceName;
 
 function createMockLifecycleDeps(overrides?: Partial<LifecycleModuleDeps>): LifecycleModuleDeps {
   return {
-    vscodeSetup: undefined,
+    getVscodeSetup: vi.fn().mockResolvedValue(undefined),
+    configService: {
+      load: vi.fn().mockResolvedValue({
+        agent: "opencode",
+        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
+      }),
+      save: vi.fn().mockResolvedValue(undefined),
+      updateAgent: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../services/config/config-service").ConfigService,
     app: { quit: vi.fn() },
     doStartServices: vi.fn().mockResolvedValue(undefined),
     logger: createMockLogger(),

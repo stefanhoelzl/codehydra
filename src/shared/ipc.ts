@@ -100,9 +100,12 @@ export const ApiIpcChannels = {
   UI_SET_MODE: "api:ui:set-mode",
   // Lifecycle commands
   LIFECYCLE_GET_STATE: "api:lifecycle:get-state",
+  LIFECYCLE_SET_AGENT: "api:lifecycle:set-agent",
   LIFECYCLE_SETUP: "api:lifecycle:setup",
   LIFECYCLE_START_SERVICES: "api:lifecycle:start-services",
   LIFECYCLE_QUIT: "api:lifecycle:quit",
+  // Lifecycle events (main → renderer)
+  LIFECYCLE_SETUP_PROGRESS: "api:lifecycle:setup-progress",
   // Log commands (renderer → main)
   LOG_DEBUG: "api:log:debug",
   LOG_INFO: "api:log:info",

@@ -1,5 +1,5 @@
 /**
- * Postinstall script to download code-server and opencode binaries.
+ * Postinstall script to download code-server, opencode, and claude binaries.
  *
  * This script is run after `pnpm install` to ensure binaries are available
  * for development and testing. Binaries are downloaded to production paths
@@ -7,6 +7,10 @@
  * all development environments.
  *
  * In production, binaries are downloaded during app setup to the same paths.
+ *
+ * For binaries with null version (like Claude), the script first checks if
+ * the binary is available on the system (via which/where). If not, it fetches
+ * the latest version and downloads to the versioned directory.
  *
  * Wrapper scripts are copied separately via `pnpm build:wrappers` which
  * copies from resources/bin/ and dist/bin/ to app-data/bin/.
@@ -16,11 +20,17 @@
  */
 
 import * as os from "node:os";
+import { execSync } from "node:child_process";
 import { DefaultBinaryDownloadService } from "../src/services/binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../src/services/binary-download/archive-extractor";
 import { DefaultNetworkLayer } from "../src/services/platform/network";
 import { DefaultFileSystemLayer } from "../src/services/platform/filesystem";
-import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../src/services/binary-download/versions";
+import {
+  CODE_SERVER_VERSION,
+  OPENCODE_VERSION,
+  CLAUDE_VERSION,
+} from "../src/services/binary-download/versions";
+import { getClaudeLatestVersionUrl } from "../src/agents/claude/setup-info";
 import { DefaultPathProvider } from "../src/services/platform/path-provider";
 import type { PlatformInfo, SupportedArch } from "../src/services/platform/platform-info";
 import type { BuildInfo } from "../src/services/platform/build-info";
@@ -83,6 +93,40 @@ function createProgressCallback(binary: string): (progress: DownloadProgress) =>
   };
 }
 
+/**
+ * Check if a binary is available on the system PATH.
+ */
+function isSystemBinaryAvailable(binaryName: string): boolean {
+  const command = process.platform === "win32" ? "where" : "which";
+  try {
+    execSync(`${command} ${binaryName}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch the latest Claude version from the GCS bucket.
+ */
+async function fetchLatestClaudeVersion(): Promise<string> {
+  const url = getClaudeLatestVersionUrl();
+  const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch latest Claude version: ${response.status}`);
+  }
+
+  const version = (await response.text()).trim();
+
+  // Validate version format
+  if (!/^\d+\.\d+\.\d+/.test(version)) {
+    throw new Error(`Invalid Claude version format: ${version}`);
+  }
+
+  return version;
+}
+
 async function downloadBinary(
   service: DefaultBinaryDownloadService,
   binary: BinaryType,
@@ -133,6 +177,29 @@ async function main(): Promise<void> {
 
   console.log("Checking opencode...");
   await downloadBinary(service, "opencode", OPENCODE_VERSION);
+
+  // Claude: prefer system binary, skip download if available
+  console.log("Checking claude...");
+  if (isSystemBinaryAvailable("claude")) {
+    console.log("  claude is available on system PATH");
+  } else if (CLAUDE_VERSION !== null) {
+    // If CLAUDE_VERSION is pinned, use the standard download flow
+    await downloadBinary(service, "claude", CLAUDE_VERSION);
+  } else {
+    // CLAUDE_VERSION is null: fetch latest version and download
+    // Note: BinaryDownloadService doesn't support dynamic versions yet,
+    // so we skip the download and let the app handle it at runtime
+    try {
+      const latestVersion = await fetchLatestClaudeVersion();
+      console.log(`  claude v${latestVersion} available (will download on first run if needed)`);
+      // TODO: Implement download with dynamic version when BinaryDownloadService supports it
+      // For now, developers can install Claude via: npm install -g @anthropic-ai/claude-code
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`  claude version check skipped: ${message}`);
+      console.log("  Install Claude via: npm install -g @anthropic-ai/claude-code");
+    }
+  }
 
   console.log("\nBinary setup complete!");
 }

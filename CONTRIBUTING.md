@@ -8,13 +8,14 @@ See [README.md](README.md) for quick start instructions.
 
 The feature workflow uses explicit commands for each phase transition:
 
-| Command              | Purpose                             |
-| -------------------- | ----------------------------------- |
-| `/feature:discuss`   | Load context, discuss the feature   |
-| `/feature:plan`      | Enter planning mode, write the plan |
-| `/feature:review`    | Invoke parallel reviewers           |
-| `/feature:implement` | Start implementation                |
-| `/ship`              | Create PR with auto-merge           |
+| Command                | Purpose                             |
+| ---------------------- | ----------------------------------- |
+| `/feature:discuss`     | Load context, discuss the feature   |
+| `/feature:plan`        | Enter planning mode, write the plan |
+| `/feature:plan-review` | Invoke parallel plan reviewers      |
+| `/feature:implement`   | Start implementation                |
+| `/feature:code-review` | Review implementation against plan  |
+| `/ship`                | Create PR with auto-merge           |
 
 ### Workflow Overview
 
@@ -25,9 +26,11 @@ Natural discussion (explore, ask questions)
        ↓
 /feature:plan → Enter plan mode → Write plan → User approves
        ↓
-/feature:review → Invoke reviewers (parallel) → Summarize → Fix issues
+/feature:plan-review → Invoke reviewers (parallel) → Summarize → Fix issues
        ↓
-/feature:implement → implement agent → code-review → User testing
+/feature:implement → implement agent → validates
+       ↓
+/feature:code-review → code-review agent → Fix issues → User testing
        ↓
 User accepts → commit → /ship
        ↓

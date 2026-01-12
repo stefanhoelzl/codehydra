@@ -245,6 +245,7 @@ function createMockCodeHydraApi(
     },
     lifecycle: {
       getState: () => get("lifecycle.getState")({}),
+      setAgent: (agent) => get("lifecycle.setAgent")({ agent }),
       setup: () => get("lifecycle.setup")({}),
       startServices: () => get("lifecycle.startServices")({}),
       quit: () => get("lifecycle.quit")({}),
@@ -263,7 +264,8 @@ export function registerAllMethodsWithStubs(
   overrides: Partial<{ [P in MethodPath]: MethodHandler<P> }> = {}
 ): void {
   const defaultHandlers: { [P in MethodPath]: MethodHandler<P> } = {
-    "lifecycle.getState": async () => "ready",
+    "lifecycle.getState": async () => ({ state: "ready", agent: "claude" }),
+    "lifecycle.setAgent": async () => ({ success: true as const }),
     "lifecycle.setup": async () => ({ success: true as const }),
     "lifecycle.startServices": async () => ({ success: true as const }),
     "lifecycle.quit": async () => {},

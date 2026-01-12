@@ -1452,6 +1452,91 @@ const mockPathProvider = createMockPathProvider({
 
 ---
 
+## Configuration and Binary Resolution
+
+### ConfigService Pattern
+
+`ConfigService` manages user preferences and version configuration stored in `config.json`:
+
+```typescript
+// Load config (creates defaults if missing)
+const config = await configService.load();
+// Returns: { agent: "claude" | "opencode" | null, versions: { ... } }
+
+// Update agent selection
+await configService.update({ agent: "claude" });
+
+// Config is validated on load - invalid JSON returns defaults with warning
+```
+
+**Key behaviors:**
+
+- `load()` creates file with defaults if missing
+- `update()` merges changes with existing config
+- Invalid JSON is handled gracefully (returns defaults, logs warning)
+- Uses `FileSystemLayer` for I/O (per External System Access Rules)
+
+**Config file location:** `{dataRootDir}/config.json`
+
+**Testing with FileSystemMock:**
+
+```typescript
+const mock = createFileSystemMock({
+  entries: {
+    "/data/config.json": file('{"agent": "claude"}'),
+  },
+});
+const service = new ConfigService(new Path("/data/config.json"), mock, logger);
+const config = await service.load();
+expect(config.agent).toBe("claude");
+```
+
+### BinaryResolutionService Pattern
+
+`BinaryResolutionService` determines binary availability using a priority-based resolution:
+
+```typescript
+// Resolution priority for agents (versions.{agent} = null):
+// 1. System binary (via which/where)
+// 2. Downloaded binary (any version in bundles dir)
+// 3. Mark for download
+
+const result = await resolutionService.resolve("claude");
+// Returns: { available: true, path: "/usr/local/bin/claude", source: "system" }
+//     or: { available: true, path: "/bundles/claude/1.0.58/claude", source: "downloaded", version: "1.0.58" }
+//     or: { available: false, needsDownload: true }
+```
+
+**Resolution logic by version config:**
+
+| `versions.{binary}` | Resolution Order                             |
+| ------------------- | -------------------------------------------- |
+| `null`              | System binary → Latest downloaded → Download |
+| `"1.0.58"` (pinned) | Exact version in bundles → Download          |
+
+**System binary detection:**
+
+```typescript
+// Uses ProcessRunner to invoke which/where
+const proc = runner.run(platform === "win32" ? "where" : "which", [binaryName]);
+const result = await proc.wait();
+if (result.exitCode === 0) {
+  return result.stdout.trim().split("\n")[0]; // First line for Windows
+}
+return null;
+```
+
+**Version directory scanning:**
+
+```typescript
+// Find latest downloaded version using locale-aware comparison
+const versions = await fs.readdir(bundlesBaseDir);
+versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+return versions[0]; // Highest version
+```
+
+---
+
 ## Agent Integration
 
 This section covers patterns for integrating AI agent backends (currently OpenCode, extensible to other agents).

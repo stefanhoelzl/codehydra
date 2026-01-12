@@ -26,6 +26,10 @@ export type SetupStep = "binary-download" | "extensions" | "config" | "finalize"
 export interface SetupProgress {
   readonly step: SetupStep;
   readonly message: string;
+  /** Binary type being downloaded (only for binary-download step) */
+  readonly binaryType?: BinaryType;
+  /** Download progress percentage (0-100), only for binary-download step */
+  readonly percent?: number;
 }
 
 /**
@@ -193,7 +197,7 @@ export interface IVscodeSetup {
 // ============================================================================
 
 /** Binary types that can be checked by preflight */
-export type BinaryType = "code-server" | "opencode";
+export type BinaryType = "code-server" | "opencode" | "claude";
 
 /** Error types for preflight failures */
 export type PreflightErrorType = "filesystem-unreadable" | "unknown";

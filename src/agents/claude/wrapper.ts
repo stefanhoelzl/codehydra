@@ -1,5 +1,5 @@
 /**
- * Claude Code CLI wrapper script.
+ * Claude CLI wrapper script.
  *
  * This script is compiled to CJS by Vite and runs in Node.js when the user
  * invokes `claude` from a CodeHydra workspace terminal.
@@ -167,8 +167,8 @@ async function main(): Promise<never> {
     console.error("Error: Claude CLI not found.");
     console.error("");
     console.error("Please install Claude CLI:");
-    console.error("  npm install -g @anthropic-ai/claude-code");
-    console.error("  or see: https://docs.anthropic.com/claude-code/installation");
+    console.error("  npm install -g @anthropic-ai/claude");
+    console.error("  or see: https://docs.anthropic.com/claude/installation");
     process.exit(EXIT_NOT_FOUND);
   }
 

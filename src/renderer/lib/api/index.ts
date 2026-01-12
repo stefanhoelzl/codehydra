@@ -45,6 +45,8 @@ export type {
   BaseInfo,
   SetupResult,
   AppState,
+  AppStateResult,
+  ConfigAgentType,
   ProjectId,
   WorkspaceName,
 } from "@shared/api/types";

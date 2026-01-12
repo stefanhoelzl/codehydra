@@ -41,8 +41,10 @@ const mockApi = vi.hoisted(() => ({
   },
   // Flat API structure - lifecycle namespace
   lifecycle: {
-    getState: vi.fn().mockResolvedValue("ready"),
+    getState: vi.fn().mockResolvedValue({ state: "ready", agent: "opencode" }),
     setup: vi.fn().mockResolvedValue({ success: true }),
+    startServices: vi.fn().mockResolvedValue({ success: true }),
+    setAgent: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn().mockResolvedValue(undefined),
   },
   // on() for event subscriptions

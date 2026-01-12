@@ -210,11 +210,70 @@ export type SetupResult =
 
 /**
  * Application state for lifecycle management.
+ * - "agent-selection": Agent selection is required (first run)
  * - "setup": Initial setup is required
  * - "loading": Services are starting (shows loading screen)
  * - "ready": Application is fully operational
  */
-export type AppState = "setup" | "loading" | "ready";
+export type AppState = "agent-selection" | "setup" | "loading" | "ready";
+
+/**
+ * Agent types that can be selected by the user.
+ */
+export type ConfigAgentType = "claude" | "opencode";
+
+/**
+ * Result of lifecycle.getState().
+ * Includes both the current state and the selected agent (if any).
+ */
+export interface AppStateResult {
+  /** Current application state */
+  readonly state: AppState;
+  /** Selected agent type (null if not yet selected) */
+  readonly agent: ConfigAgentType | null;
+}
+
+// =============================================================================
+// Setup Screen Progress Types
+// =============================================================================
+
+/**
+ * Identifiers for setup screen rows.
+ * - "vscode": VSCode/code-server download and setup
+ * - "agent": Agent binary (Claude/OpenCode) download
+ * - "setup": Extensions and configuration
+ */
+export type SetupRowId = "vscode" | "agent" | "setup";
+
+/**
+ * Status of a setup row.
+ */
+export type SetupRowStatus = "pending" | "running" | "done" | "failed";
+
+/**
+ * Progress update for a single setup row.
+ */
+export interface SetupRowProgress {
+  /** Row identifier */
+  readonly id: SetupRowId;
+  /** Current status */
+  readonly status: SetupRowStatus;
+  /** Progress percentage (0-100), only valid when status is "running" */
+  readonly progress?: number;
+  /** Status message to display */
+  readonly message?: string;
+  /** Error message when status is "failed" */
+  readonly error?: string;
+}
+
+/**
+ * Full setup screen progress state.
+ * Sent with each progress update containing all row states.
+ */
+export interface SetupScreenProgress {
+  /** Progress for each row */
+  readonly rows: readonly SetupRowProgress[];
+}
 
 // =============================================================================
 // Blocking Process Types

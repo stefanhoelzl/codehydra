@@ -24,9 +24,9 @@ import type { AgentType, AgentSetupInfo, AgentServerManager, AgentProvider } fro
 import { OpenCodeSetupInfo } from "./opencode/setup-info";
 import { OpenCodeServerManager } from "./opencode/server-manager";
 import { OpenCodeProvider } from "./opencode/provider";
-import { ClaudeCodeSetupInfo } from "./claude-code/setup-info";
-import { ClaudeCodeServerManager } from "./claude-code/server-manager";
-import { ClaudeCodeProvider } from "./claude-code/provider";
+import { ClaudeCodeSetupInfo } from "./claude/setup-info";
+import { ClaudeCodeServerManager } from "./claude/server-manager";
+import { ClaudeCodeProvider } from "./claude/provider";
 
 // Re-export types for convenience
 export type {
@@ -48,6 +48,7 @@ export { AgentStatusManager, type StatusChangedCallback } from "./status-manager
  */
 export interface SetupInfoDeps {
   readonly fileSystem: FileSystemLayer;
+  readonly httpClient: HttpClient;
   readonly platform: "darwin" | "linux" | "win32";
   readonly arch: SupportedArch;
 }
@@ -92,10 +93,12 @@ export function getAgentSetupInfo(type: AgentType, deps: SetupInfoDeps): AgentSe
         platform: deps.platform,
         arch: deps.arch,
       });
-    case "claude-code":
+    case "claude":
       return new ClaudeCodeSetupInfo({
         fileSystem: deps.fileSystem,
+        httpClient: deps.httpClient,
         platform: deps.platform,
+        arch: deps.arch,
       });
   }
 }
@@ -121,7 +124,7 @@ export function createAgentServerManager(
         deps.pathProvider,
         deps.logger
       );
-    case "claude-code":
+    case "claude":
       return new ClaudeCodeServerManager({
         portManager: deps.portManager,
         pathProvider: deps.pathProvider,
@@ -143,7 +146,7 @@ export function createAgentProvider(type: AgentType, deps: ProviderDeps): AgentP
   switch (type) {
     case "opencode":
       return new OpenCodeProvider(deps.workspacePath, deps.logger, deps.sdkFactory);
-    case "claude-code":
+    case "claude":
       if (!deps.serverManager) {
         throw new Error("ClaudeCodeProvider requires serverManager in deps");
       }

@@ -5,8 +5,7 @@
 
 import { Path } from "../../services/platform/path";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
-import type { AgentSetupInfo } from "../types";
-import type { SupportedArch } from "../../services/platform/platform-info";
+import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
 
 // Import the config template as a JSON object
 import mcpConfigTemplate from "./opencode.codehydra.json";
@@ -17,11 +16,6 @@ import mcpConfigTemplate from "./opencode.codehydra.json";
 export const OPENCODE_VERSION = "1.0.223";
 
 /**
- * Supported operating system platforms for OpenCode.
- */
-type SupportedPlatform = "darwin" | "linux" | "win32";
-
-/**
  * Architecture name mappings for OpenCode releases.
  */
 const OPENCODE_ARCH: Record<SupportedArch, string> = {
@@ -30,7 +24,33 @@ const OPENCODE_ARCH: Record<SupportedArch, string> = {
 };
 
 /**
- * Get the download URL for OpenCode.
+ * Get the download URL for OpenCode for a specific version.
+ *
+ * @param version - Version string (e.g., "1.0.223")
+ * @param platform - Operating system platform
+ * @param arch - CPU architecture
+ * @returns Download URL for the OpenCode release
+ * @throws Error if platform/arch combination is not supported
+ */
+export function getOpencodeUrlForVersion(
+  version: string,
+  platform: SupportedPlatform,
+  arch: SupportedArch
+): string {
+  if (platform === "win32") {
+    if (arch !== "x64") {
+      throw new Error(`Windows OpenCode builds only support x64, got: ${arch}`);
+    }
+    return `https://github.com/sst/opencode/releases/download/v${version}/opencode-windows-x64.zip`;
+  }
+  const archName = OPENCODE_ARCH[arch];
+  const os = platform === "darwin" ? "darwin" : "linux";
+  const ext = platform === "darwin" ? "zip" : "tar.gz";
+  return `https://github.com/sst/opencode/releases/download/v${version}/opencode-${os}-${archName}.${ext}`;
+}
+
+/**
+ * Get the download URL for OpenCode using the default version.
  *
  * @param platform - Operating system platform
  * @param arch - CPU architecture
@@ -38,16 +58,7 @@ const OPENCODE_ARCH: Record<SupportedArch, string> = {
  * @throws Error if platform/arch combination is not supported
  */
 export function getOpencodeUrl(platform: SupportedPlatform, arch: SupportedArch): string {
-  if (platform === "win32") {
-    if (arch !== "x64") {
-      throw new Error(`Windows OpenCode builds only support x64, got: ${arch}`);
-    }
-    return `https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-windows-x64.zip`;
-  }
-  const archName = OPENCODE_ARCH[arch];
-  const os = platform === "darwin" ? "darwin" : "linux";
-  const ext = platform === "darwin" ? "zip" : "tar.gz";
-  return `https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-${os}-${archName}.${ext}`;
+  return getOpencodeUrlForVersion(OPENCODE_VERSION, platform, arch);
 }
 
 /**
@@ -69,6 +80,9 @@ export interface OpenCodeSetupInfoDeps {
 /**
  * OpenCode implementation of AgentSetupInfo.
  * Provides version, URLs, and config generation for OpenCode agent.
+ *
+ * Note: OpenCode uses a pinned version, so getLatestVersion() returns
+ * the pinned version rather than fetching from a remote endpoint.
  */
 export class OpenCodeSetupInfo implements AgentSetupInfo {
   readonly version = OPENCODE_VERSION;
@@ -91,6 +105,34 @@ export class OpenCodeSetupInfo implements AgentSetupInfo {
 
   getBinaryUrl(): string {
     return getOpencodeUrl(this.platform, this.arch);
+  }
+
+  /**
+   * Get download URL for a specific version and platform/arch.
+   * Used by BinaryDownloadService for downloading specific versions.
+   *
+   * @param version - Version string (e.g., "1.0.223")
+   * @param platform - Operating system platform
+   * @param arch - CPU architecture
+   * @returns Download URL for the binary
+   */
+  getBinaryUrlForVersion(
+    version: string,
+    platform: SupportedPlatform,
+    arch: SupportedArch
+  ): string {
+    return getOpencodeUrlForVersion(version, platform, arch);
+  }
+
+  /**
+   * Get the latest available version.
+   * OpenCode uses a pinned version, so this returns the constant.
+   *
+   * @returns The pinned version string
+   */
+  async getLatestVersion(): Promise<string> {
+    // OpenCode uses pinned versions, return the constant
+    return OPENCODE_VERSION;
   }
 
   /**

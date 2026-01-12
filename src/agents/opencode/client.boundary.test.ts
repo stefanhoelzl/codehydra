@@ -14,35 +14,24 @@
  */
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { existsSync } from "node:fs";
 import { OpenCodeClient } from "./client";
 import { withOpencode } from "./boundary-test-utils";
 import { CI_TIMEOUT_MS } from "../../services/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 import { SILENT_LOGGER } from "../../services/logging";
-import { DefaultPathProvider } from "../../services/platform/path-provider";
-import { NodePlatformInfo } from "../../main/platform-info";
-import { createMockBuildInfo } from "../../services/platform/build-info.test-utils";
+import {
+  ensureBinaryForTests,
+  getBinaryPathForTests,
+} from "../../services/test-utils/ensure-binaries";
 import type { ClientStatus } from "./types";
 
 describe("OpenCodeClient boundary tests", () => {
   let binaryPath: string;
 
-  // Check binary exists before running any tests
-  beforeAll(() => {
-    const buildInfo = createMockBuildInfo({
-      isDevelopment: true,
-      appPath: process.cwd(),
-    });
-    const platformInfo = new NodePlatformInfo();
-    const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-    binaryPath = pathProvider.opencodeBinaryPath.toString();
-
-    if (!existsSync(binaryPath)) {
-      throw new Error(
-        `OpenCode binary not found at ${binaryPath}. Run 'pnpm install' to download binaries.`
-      );
-    }
+  // Ensure binary is available before running any tests
+  beforeAll(async () => {
+    await ensureBinaryForTests("opencode");
+    binaryPath = getBinaryPathForTests("opencode");
   });
 
   // ===========================================================================

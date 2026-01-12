@@ -12,9 +12,11 @@ import type {
   WorkspaceStatus,
   BaseInfo,
   SetupResult,
-  AppState,
+  AppStateResult,
+  ConfigAgentType,
   InitialPrompt,
   AgentSession,
+  SetupScreenProgress,
 } from "./types";
 import type { UIMode, UIModeChangedEvent } from "../ipc";
 import type { IDisposable, Unsubscribe } from "../types";
@@ -171,7 +173,13 @@ export interface IUiApi {
 }
 
 export interface ILifecycleApi {
-  getState(): Promise<AppState>;
+  getState(): Promise<AppStateResult>;
+  /**
+   * Set the selected agent type.
+   * Called after user selects an agent in the selection dialog.
+   * Saves selection to config and returns success/failure.
+   */
+  setAgent(agent: ConfigAgentType): Promise<SetupResult>;
   setup(): Promise<SetupResult>;
   /**
    * Start application services (code-server, OpenCode, etc.).
@@ -214,6 +222,7 @@ export interface ApiEvents {
     readonly value: string | null; // null means deleted
   }) => void;
   "ui:mode-changed": (event: UIModeChangedEvent) => void;
+  "lifecycle:setup-progress": (event: SetupScreenProgress) => void;
 }
 
 // =============================================================================

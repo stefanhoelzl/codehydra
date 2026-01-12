@@ -24,6 +24,13 @@ import {
 
 import { listInstalledExtensions, removeFromExtensionsJson } from "./extension-utils";
 import type { BinaryDownloadService } from "../binary-download/binary-download-service";
+import { CODE_SERVER_VERSION, BINARY_CONFIGS } from "../binary-download/versions";
+
+/**
+ * Agent binary type for download operations.
+ * Excludes "code-server" since that's handled separately.
+ */
+type AgentBinaryType = Exclude<BinaryType, "code-server">;
 
 /**
  * Service for managing VS Code setup process.
@@ -36,6 +43,7 @@ export class VscodeSetupService implements IVscodeSetup {
   private readonly binaryDownloadService: BinaryDownloadService | null;
   private readonly logger: Logger | undefined;
   private readonly agentExtensionId: string | undefined;
+  private readonly agentBinaryType: AgentBinaryType;
 
   constructor(
     processRunner: ProcessRunner,
@@ -44,7 +52,8 @@ export class VscodeSetupService implements IVscodeSetup {
     _platformInfo?: PlatformInfo, // Kept for backward compatibility, no longer used
     binaryDownloadService?: BinaryDownloadService,
     logger?: Logger,
-    agentExtensionId?: string
+    agentExtensionId?: string,
+    agentBinaryType: AgentBinaryType = "opencode"
   ) {
     this.processRunner = processRunner;
     this.pathProvider = pathProvider;
@@ -53,6 +62,7 @@ export class VscodeSetupService implements IVscodeSetup {
     this.binaryDownloadService = binaryDownloadService ?? null;
     this.logger = logger;
     this.agentExtensionId = agentExtensionId;
+    this.agentBinaryType = agentBinaryType;
   }
 
   /**
@@ -87,10 +97,17 @@ export class VscodeSetupService implements IVscodeSetup {
         if (!codeServerInstalled) {
           missingBinaries.push("code-server");
         }
-        const opencodeInstalled = await this.binaryDownloadService.isInstalled("opencode");
-        if (!opencodeInstalled) {
-          missingBinaries.push("opencode");
+        // Check for the configured agent binary type (opencode or claude)
+        // Skip check for binaries without pinned versions (version: null) - they prefer system binary
+        const agentConfig = BINARY_CONFIGS[this.agentBinaryType];
+        if (agentConfig.version !== null) {
+          const agentInstalled = await this.binaryDownloadService.isInstalled(this.agentBinaryType);
+          if (!agentInstalled) {
+            missingBinaries.push(this.agentBinaryType);
+          }
         }
+        // Note: When version is null, the agent prefers system binary.
+        // The BinaryResolutionService handles this at runtime.
       }
 
       // Load extensions manifest
@@ -259,7 +276,7 @@ export class VscodeSetupService implements IVscodeSetup {
   }
 
   /**
-   * Download code-server and opencode binaries if not already installed.
+   * Download code-server and agent binaries in parallel if not already installed.
    * @param onProgress Optional callback for progress updates
    * @param missingBinaries Optional list of binaries to download (from preflight)
    * @returns Result indicating success or failure
@@ -281,46 +298,121 @@ export class VscodeSetupService implements IVscodeSetup {
         ? !(await this.binaryDownloadService.isInstalled("code-server"))
         : missingBinaries.includes("code-server");
 
-    const shouldDownloadOpencode =
-      missingBinaries === undefined
-        ? !(await this.binaryDownloadService.isInstalled("opencode"))
-        : missingBinaries.includes("opencode");
+    // For agent binary, skip download if version is null (prefers system binary)
+    const agentConfig = BINARY_CONFIGS[this.agentBinaryType];
+    const shouldDownloadAgent =
+      agentConfig.version === null
+        ? false // Skip download - agent prefers system binary
+        : missingBinaries === undefined
+          ? !(await this.binaryDownloadService.isInstalled(this.agentBinaryType))
+          : missingBinaries.includes(this.agentBinaryType);
 
-    // Download code-server
+    // Collect download tasks for parallel execution
+    const downloadTasks: Array<{
+      binary: BinaryType;
+      promise: () => Promise<void>;
+    }> = [];
+
+    // Helper to create progress callback for a specific binary
+    const createProgressCallback = (binary: BinaryType) => {
+      return (downloadProgress: {
+        phase: "downloading" | "extracting";
+        bytesDownloaded: number;
+        totalBytes: number | null;
+      }) => {
+        // Handle extracting phase - show indeterminate progress
+        if (downloadProgress.phase === "extracting") {
+          onProgress?.({
+            step: "binary-download",
+            message: `Extracting ${binary}...`,
+            binaryType: binary,
+            // No percent = indeterminate progress bar
+          });
+          return;
+        }
+
+        // Downloading phase - show percentage if available
+        const percent =
+          downloadProgress.totalBytes !== null
+            ? Math.round((downloadProgress.bytesDownloaded / downloadProgress.totalBytes) * 100)
+            : undefined;
+        const message =
+          percent !== undefined
+            ? `Downloading ${binary}... ${percent}%`
+            : `Downloading ${binary}...`;
+        onProgress?.({
+          step: "binary-download",
+          message,
+          binaryType: binary,
+          ...(percent !== undefined && { percent }),
+        });
+      };
+    };
+
     if (shouldDownloadCodeServer) {
       this.logger?.info("Downloading binary", { binary: "code-server" });
-      onProgress?.({ step: "binary-download", message: "Setting up code-server..." });
-      try {
-        await this.binaryDownloadService.download("code-server");
-        this.logger?.info("Binary download complete", { binary: "code-server" });
-      } catch (error) {
-        return {
-          success: false,
-          error: {
-            type: "network",
-            message: `Failed to download code-server: ${getErrorMessage(error)}`,
-            code: "BINARY_DOWNLOAD_FAILED",
-          },
-        };
-      }
+      onProgress?.({
+        step: "binary-download",
+        message: "Downloading code-server...",
+        binaryType: "code-server",
+        percent: 0,
+      });
+      downloadTasks.push({
+        binary: "code-server",
+        promise: () =>
+          this.binaryDownloadService!.download(
+            "code-server",
+            createProgressCallback("code-server")
+          ),
+      });
     }
 
-    // Download opencode
-    if (shouldDownloadOpencode) {
-      this.logger?.info("Downloading binary", { binary: "opencode" });
-      onProgress?.({ step: "binary-download", message: "Setting up opencode..." });
-      try {
-        await this.binaryDownloadService.download("opencode");
-        this.logger?.info("Binary download complete", { binary: "opencode" });
-      } catch (error) {
+    if (shouldDownloadAgent) {
+      this.logger?.info("Downloading binary", { binary: this.agentBinaryType });
+      onProgress?.({
+        step: "binary-download",
+        message: `Downloading ${this.agentBinaryType}...`,
+        binaryType: this.agentBinaryType,
+        percent: 0,
+      });
+      downloadTasks.push({
+        binary: this.agentBinaryType,
+        promise: () =>
+          this.binaryDownloadService!.download(
+            this.agentBinaryType,
+            createProgressCallback(this.agentBinaryType)
+          ),
+      });
+    }
+
+    // If no downloads needed, return success immediately
+    if (downloadTasks.length === 0) {
+      return { success: true };
+    }
+
+    // Download all binaries in parallel
+    const results = await Promise.allSettled(downloadTasks.map((task) => task.promise()));
+
+    // Check for failures
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const task = downloadTasks[i];
+      if (result && result.status === "rejected") {
+        const errorMessage = getErrorMessage(result.reason);
+        this.logger?.warn("Binary download failed", {
+          binary: task?.binary ?? "unknown",
+          error: errorMessage,
+        });
         return {
           success: false,
           error: {
             type: "network",
-            message: `Failed to download opencode: ${getErrorMessage(error)}`,
+            message: `Failed to download ${task?.binary ?? "binary"}: ${errorMessage}`,
             code: "BINARY_DOWNLOAD_FAILED",
           },
         };
+      } else if (result && result.status === "fulfilled") {
+        this.logger?.info("Binary download complete", { binary: task?.binary ?? "unknown" });
       }
     }
 
@@ -538,7 +630,8 @@ export class VscodeSetupService implements IVscodeSetup {
    * @returns Result indicating success or failure
    */
   private async runInstallExtension(extensionIdOrPath: string): Promise<SetupResult> {
-    const proc = this.processRunner.run(this.pathProvider.codeServerBinaryPath.toNative(), [
+    const codeServerPath = this.pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION);
+    const proc = this.processRunner.run(codeServerPath.toNative(), [
       "--install-extension",
       extensionIdOrPath,
       "--extensions-dir",

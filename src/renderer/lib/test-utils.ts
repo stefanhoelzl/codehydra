@@ -11,9 +11,10 @@ import { MOCK_WORKSPACE_API_DEFAULTS } from "@shared/test-fixtures";
  * Creates a mock API object with all functions mocked.
  *
  * Setup operations use lifecycle API:
- * - lifecycle.getState() returns "setup" | "loading"
+ * - lifecycle.getState() returns { state: "setup" | "loading" | "agent-selection", agent: ConfigAgentType | null }
  * - lifecycle.setup() runs setup and returns success/failure (does NOT start services)
  * - lifecycle.startServices() starts services and returns success/failure
+ * - lifecycle.setAgent() saves agent selection to config
  * - lifecycle.quit() quits the app
  */
 export function createMockApi(): Api {
@@ -48,9 +49,10 @@ export function createMockApi(): Api {
       setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
-      getState: vi.fn().mockResolvedValue("loading"),
+      getState: vi.fn().mockResolvedValue({ state: "loading", agent: "opencode" }),
       setup: vi.fn().mockResolvedValue({ success: true }),
       startServices: vi.fn().mockResolvedValue({ success: true }),
+      setAgent: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn().mockResolvedValue(undefined),
     },
     log: {

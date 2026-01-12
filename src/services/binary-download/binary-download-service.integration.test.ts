@@ -62,8 +62,7 @@ describe("BinaryDownloadService (integration)", () => {
 
         // Create PathProvider pointing to temp directory
         const pathProvider = createMockPathProvider({
-          codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
-          opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
+          bundlesRootDir: tempDir,
           dataRootDir: tempDir,
         });
 
@@ -126,8 +125,7 @@ describe("BinaryDownloadService (integration)", () => {
           const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
           const archiveExtractor = new DefaultArchiveExtractor();
           const pathProvider = createMockPathProvider({
-            codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
-            opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
+            bundlesRootDir: tempDir,
             dataRootDir: tempDir,
           });
           const platformInfo = createMockPlatformInfo({
@@ -177,8 +175,7 @@ describe("BinaryDownloadService (integration)", () => {
         const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
         const archiveExtractor = new DefaultArchiveExtractor();
         const pathProvider = createMockPathProvider({
-          codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
-          opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
+          bundlesRootDir: tempDir,
           dataRootDir: tempDir,
         });
         const platformInfo = createMockPlatformInfo({
@@ -229,8 +226,7 @@ describe("BinaryDownloadService (integration)", () => {
         const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
         const archiveExtractor = new DefaultArchiveExtractor();
         const pathProvider = createMockPathProvider({
-          codeServerDir: `${tempDir}/code-server/${CODE_SERVER_VERSION}`,
-          opencodeDir: `${tempDir}/opencode/${OPENCODE_VERSION}`,
+          bundlesRootDir: tempDir,
           dataRootDir: tempDir,
         });
         const platformInfo = createMockPlatformInfo({
@@ -246,7 +242,11 @@ describe("BinaryDownloadService (integration)", () => {
           platformInfo
         );
 
-        const progressUpdates: { bytesDownloaded: number; totalBytes: number | null }[] = [];
+        const progressUpdates: {
+          phase: "downloading" | "extracting";
+          bytesDownloaded: number;
+          totalBytes: number | null;
+        }[] = [];
         await service.download("opencode", (progress) => {
           progressUpdates.push(progress);
         });
@@ -254,10 +254,18 @@ describe("BinaryDownloadService (integration)", () => {
         // Verify progress was reported
         expect(progressUpdates.length).toBeGreaterThan(0);
 
-        // Last progress should have final bytes
-        const lastProgress = progressUpdates[progressUpdates.length - 1];
-        expect(lastProgress?.bytesDownloaded).toBe(archiveContent.length);
-        expect(lastProgress?.totalBytes).toBe(archiveContent.length);
+        // Filter to downloading phase updates
+        const downloadUpdates = progressUpdates.filter((p) => p.phase === "downloading");
+        expect(downloadUpdates.length).toBeGreaterThan(0);
+
+        // Last downloading progress should have final bytes
+        const lastDownloadProgress = downloadUpdates[downloadUpdates.length - 1];
+        expect(lastDownloadProgress?.bytesDownloaded).toBe(archiveContent.length);
+        expect(lastDownloadProgress?.totalBytes).toBe(archiveContent.length);
+
+        // Should have extracting phase at the end
+        const extractUpdates = progressUpdates.filter((p) => p.phase === "extracting");
+        expect(extractUpdates.length).toBe(1);
       } finally {
         await cleanupTestArchive(archivePath);
       }

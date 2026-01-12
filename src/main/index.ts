@@ -22,6 +22,7 @@ import {
   type LoggingService,
 } from "../services";
 import { VscodeSetupService } from "../services/vscode-setup";
+import { ConfigService } from "../services/config/config-service";
 import { ExecaProcessRunner } from "../services/platform/process";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
@@ -35,9 +36,17 @@ import {
   DefaultBinaryDownloadService,
   DefaultArchiveExtractor,
   type BinaryDownloadService,
+  CODE_SERVER_VERSION,
+  OPENCODE_VERSION,
 } from "../services/binary-download";
-import { AgentStatusManager, getAgentSetupInfo, type AgentType } from "../agents";
-import { ClaudeCodeServerManager } from "../agents/claude-code/server-manager";
+import {
+  AgentStatusManager,
+  getAgentSetupInfo,
+  type AgentType,
+  type AgentServerManager,
+} from "../agents";
+import { ClaudeCodeServerManager } from "../agents/claude/server-manager";
+import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import { PluginServer } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { wirePluginApi } from "./api/wire-plugin-api";
@@ -110,9 +119,6 @@ if (buildInfo.isDevelopment) {
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-// Agent type configuration - determines which agent extension to install and use
-const AGENT_TYPE: AgentType = "claude-code";
-
 // Create logging service - must be before any code that needs to log
 const loggingService: LoggingService = new ElectronLogService(buildInfo, pathProvider);
 const appLogger = loggingService.createLogger("app");
@@ -173,13 +179,13 @@ redirectElectronDataPaths();
  */
 function createCodeServerConfig(): CodeServerConfig {
   return {
-    binaryPath: pathProvider.codeServerBinaryPath.toNative(),
+    binaryPath: pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toNative(),
     runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
     extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
     userDataDir: pathProvider.vscodeUserDataDir.toNative(),
     binDir: pathProvider.binDir.toNative(),
-    codeServerDir: pathProvider.codeServerDir.toNative(),
-    opencodeDir: pathProvider.opencodeDir.toNative(),
+    codeServerDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
+    opencodeDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
   };
 }
 
@@ -190,7 +196,7 @@ let appState: AppState | null = null;
 let codeServerManager: CodeServerManager | null = null;
 let agentStatusManager: AgentStatusManager | null = null;
 let badgeManager: BadgeManager | null = null;
-let serverManager: ClaudeCodeServerManager | null = null;
+let serverManager: AgentServerManager | null = null;
 let mcpServerManager: McpServerManager | null = null;
 let codeHydraApi: ICodeHydraApi | null = null;
 let apiEventCleanup: Unsubscribe | null = null;
@@ -266,6 +272,12 @@ let sessionLayer: SessionLayer | null = null;
 let imageLayer: ImageLayer | null = null;
 
 /**
+ * ConfigService for loading/saving agent selection.
+ * Created in bootstrap(), used in startServices() to determine which agent to use.
+ */
+let configService: import("../services/config/config-service").ConfigService | null = null;
+
+/**
  * Starts all application services after setup completes.
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
@@ -279,6 +291,14 @@ async function startServices(): Promise<void> {
   if (servicesStarted) return;
   if (!windowManager || !viewManager) return;
   servicesStarted = true;
+
+  // Load agent type from config (saved by user via agent selection dialog)
+  // Guard: configService must be initialized by bootstrap()
+  if (!configService) {
+    throw new Error("ConfigService not initialized - startServices called before bootstrap");
+  }
+  const appConfig = await configService.load();
+  const selectedAgentType: AgentType = appConfig.agent ?? "opencode"; // Default to opencode if not set
 
   // Start code-server
   const config = createCodeServerConfig();
@@ -389,22 +409,35 @@ async function startServices(): Promise<void> {
     port,
     fileSystemLayer,
     loggingService,
-    AGENT_TYPE,
+    selectedAgentType,
     workspaceFileService,
     pathProvider.claudeCodeWrapperPath.toString()
   );
 
-  // Initialize Claude Code services
-  // Create ClaudeCodeServerManager - single HTTP bridge server for all workspaces
-  serverManager = new ClaudeCodeServerManager({
-    portManager: networkLayer,
-    pathProvider,
-    fileSystem: fileSystemLayer,
-    logger: loggingService.createLogger("claude-code"),
-  });
+  // Initialize agent-specific services based on selected agent type
+  // Create AgentStatusManager with appropriate logger
+  const agentLoggerName = selectedAgentType === "claude" ? "claude" : "opencode";
+  agentStatusManager = new AgentStatusManager(loggingService.createLogger(agentLoggerName));
 
-  // Create AgentStatusManager (receives status via callbacks from serverManager)
-  agentStatusManager = new AgentStatusManager(loggingService.createLogger("claude-code"));
+  // Create agent-specific server manager
+  if (selectedAgentType === "claude") {
+    serverManager = new ClaudeCodeServerManager({
+      portManager: networkLayer,
+      pathProvider,
+      fileSystem: fileSystemLayer,
+      logger: loggingService.createLogger("claude"),
+    });
+  } else {
+    // OpenCode: create OpenCodeServerManager to spawn and manage opencode serve processes
+    const { OpenCodeServerManager } = await import("../agents/opencode/server-manager");
+    serverManager = new OpenCodeServerManager(
+      processRunner,
+      networkLayer,
+      networkLayer,
+      pathProvider,
+      loggingService.createLogger("opencode")
+    );
+  }
 
   // Create and connect BadgeManager
   // Uses shared imageLayer (created in bootstrap) so ImageHandles are resolvable by WindowLayer
@@ -423,7 +456,9 @@ async function startServices(): Promise<void> {
 
   // Inject services into AppState and wire callbacks
   appState.setAgentStatusManager(agentStatusManager);
-  appState.setServerManager(serverManager);
+  if (serverManager) {
+    appState.setServerManager(serverManager);
+  }
 
   // Guard: bootstrapResult must be initialized by bootstrap()
   if (!bootstrapResult) {
@@ -529,16 +564,29 @@ async function startServices(): Promise<void> {
     // Register callback for wrapper start (Claude Code only)
     // This signals when the wrapper has started (before Claude shows dialogs)
     // Allows loading screen to clear immediately rather than waiting for MCP or timeout
-    if (serverManager) {
-      wrapperReadyCleanup = serverManager.onWorkspaceReady((workspacePath) => {
+    if (selectedAgentType === "claude" && serverManager) {
+      // Type narrowing: cast to ClaudeCodeServerManager which has onWorkspaceReady
+      const claudeServerManager = serverManager as ClaudeCodeServerManager;
+      wrapperReadyCleanup = claudeServerManager.onWorkspaceReady((workspacePath) => {
         // setWorkspaceLoaded is idempotent, safe if both WrapperStart and MCP first request fire
         viewManagerRef.setWorkspaceLoaded(workspacePath);
       });
     }
 
-    // Configure Claude Code bridge server to connect to MCP
-    if (serverManager) {
-      serverManager.setMcpConfig({
+    // Configure server manager to connect to MCP
+    // Each manager has its own setMcpConfig signature, so we cast to the specific type
+    if (serverManager && selectedAgentType === "claude") {
+      // Claude Code: only needs port (config files are generated per-workspace)
+      const claudeManager = serverManager as ClaudeCodeServerManager;
+      claudeManager.setMcpConfig({
+        port: mcpServerManager.getPort()!,
+      });
+    } else if (serverManager) {
+      // OpenCode: needs configPath (shared config) and port
+      // Cast to the OpenCodeServerManager type which has the full setMcpConfig signature
+      const opencodeManager = serverManager as OpenCodeServerManager;
+      opencodeManager.setMcpConfig({
+        configPath: pathProvider.opencodeConfig.toString(),
         port: mcpServerManager.getPort()!,
       });
     }
@@ -649,7 +697,14 @@ async function bootstrap(): Promise<void> {
   menuLayer = new DefaultMenuLayer(loggingService.createLogger("menu"));
   menuLayer.setApplicationMenu(null);
 
-  // 2. Create VscodeSetupService early (needed for LifecycleModule)
+  // 2. Create ConfigService first to load agent selection
+  configService = new ConfigService({
+    fileSystem: fileSystemLayer,
+    pathProvider,
+    logger: loggingService.createLogger("config"),
+  });
+
+  // 3. Create VscodeSetupService early (needed for LifecycleModule)
   // Note: Process tree provider is created lazily in startServices() using the factory
 
   // Store processRunner in module-level variable for reuse by CodeServerManager
@@ -669,22 +724,37 @@ async function bootstrap(): Promise<void> {
     loggingService.createLogger("binary-download")
   );
 
-  // Get agent setup info to retrieve extension ID
-  const agentSetupInfo = getAgentSetupInfo(AGENT_TYPE, {
-    fileSystem: fileSystemLayer,
-    platform: platformInfo.platform as "darwin" | "linux" | "win32",
-    arch: platformInfo.arch,
-  });
+  // Factory to create VscodeSetupService for the current agent type
+  // This is called each time setup needs to run, ensuring it uses the latest agent selection
+  // Capture references to avoid null checks (they're set by the time the factory is called)
+  const configServiceRef = configService;
+  const processRunnerRef = processRunner;
+  const createVscodeSetupService = async (): Promise<VscodeSetupService> => {
+    // Re-read config to get current agent selection
+    const currentConfig = await configServiceRef.load();
+    const currentAgentType: AgentType = currentConfig.agent ?? "opencode";
 
-  vscodeSetupService = new VscodeSetupService(
-    processRunner,
-    pathProvider,
-    fileSystemLayer,
-    platformInfo,
-    binaryDownloadService,
-    loggingService.createLogger("vscode-setup"),
-    agentSetupInfo.extensionId
-  );
+    const agentSetupInfo = getAgentSetupInfo(currentAgentType, {
+      fileSystem: fileSystemLayer,
+      httpClient: networkLayerForSetup,
+      platform: platformInfo.platform as "darwin" | "linux" | "win32",
+      arch: platformInfo.arch,
+    });
+
+    return new VscodeSetupService(
+      processRunnerRef,
+      pathProvider,
+      fileSystemLayer,
+      platformInfo,
+      binaryDownloadService,
+      loggingService.createLogger("vscode-setup"),
+      agentSetupInfo.extensionId,
+      currentAgentType // Pass agent binary type for download operations
+    );
+  };
+
+  // Create initial VscodeSetupService for bootstrap operations (preflight, bin directory)
+  vscodeSetupService = await createVscodeSetupService();
 
   // 3. Regenerate wrapper scripts (cheap operation, ensures they always exist)
   await vscodeSetupService.setupBinDirectory();
@@ -754,7 +824,9 @@ async function bootstrap(): Promise<void> {
     ipcLayer,
     // Lifecycle module deps - available now
     lifecycleDeps: {
-      vscodeSetup: vscodeSetupService ?? undefined,
+      // Factory to create VscodeSetupService with current agent type from config
+      getVscodeSetup: createVscodeSetupService,
+      configService,
       app,
       doStartServices: async () => {
         appLogger.info("Starting services");
@@ -842,6 +914,15 @@ async function bootstrap(): Promise<void> {
 
   // Note: IPC handlers for lifecycle.* are now registered by LifecycleModule
   // No need to call registerLifecycleHandlers() separately
+
+  // Wire lifecycle:setup-progress events to IPC immediately (before UI loads)
+  // This is needed because setup runs before startServices() which wires other events
+  bootstrapResult.registry.on("lifecycle:setup-progress", (payload) => {
+    const webContents = viewManager?.getUIWebContents();
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
+    }
+  });
 
   // 8. Services are NOT started here anymore
   // The renderer will call lifecycle.startServices() after loading

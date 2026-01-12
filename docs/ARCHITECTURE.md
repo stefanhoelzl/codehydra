@@ -875,11 +875,12 @@ The v2 API uses `api:` prefixed IPC channels:
 
 ### Main Process Startup Architecture
 
-The main process uses a two-phase startup where services ONLY start when the renderer explicitly requests them:
+The main process uses a multi-phase startup where services ONLY start when the renderer explicitly requests them:
 
 ```
 bootstrap()                                    # Infrastructure only
     │
+    ├── Create ConfigService, BinaryResolutionService
     ├── Create vscodeSetupService
     ├── Create LifecycleApi (standalone)
     ├── Register lifecycle handlers (api:lifecycle:*)
@@ -887,30 +888,67 @@ bootstrap()                                    # Infrastructure only
               │
               v
     UI loads → lifecycle.getState() called
+              │
+              └─► Returns { state, agent }
                                │
-               ┌───────────────┴───────────────┐
-               │ "loading"                     │ "setup"
-               │ (no setup needed)             │ (setup needed)
-               v                               v
-        Show loading screen           Show SetupScreen
-        "Starting services..."              │
-               │                      lifecycle.setup()
-               │                             │
-               │                      (runs setup, emits progress)
-               │                             │
-               │                      setup success → appMode="loading"
-               │                             │
-               └──────────────┬──────────────┘
-                              │
-                              v
-                    lifecycle.startServices()
-                              │
-               ┌──────────────┴──────────────┐
-               │ success                     │ failure
-               v                             v
-        appMode = "ready"              SetupError
-        MainView loads                 (Retry/Quit)
+               ┌───────────────┴───────────────────────────┐
+               │ "agent-selection"  │ "loading"  │ "setup" │
+               │ (agent not chosen) │ (ready)    │ (needed)│
+               v                    v            v
+        AgentSelectionDialog   Loading      SetupScreen
+               │               Screen       (3 rows)
+               │                  │              │
+        lifecycle.setAgent()      │       lifecycle.setup()
+               │                  │              │
+               └───────┬──────────┘              │
+                       │                         │
+                       v                         │
+                Check binaries ◄─────────────────┘
+                       │
+               ┌───────┴───────┐
+               │ missing?      │
+               v               v
+        SetupScreen         Loading
+        (downloads)         Screen
+               │               │
+               └───────┬───────┘
+                       │
+                       v
+             lifecycle.startServices()
+                       │
+               ┌───────┴───────┐
+               │ success       │ failure
+               v               v
+        appMode = "ready"   SetupError
+        MainView loads      (Retry/Quit)
 ```
+
+### First-Run Flow
+
+On first startup (no `config.json` exists), the application follows this flow:
+
+1. **Config Loading**: `ConfigService.load()` reads `{dataRootDir}/config.json`. If missing, returns defaults with `agent: null`.
+
+2. **Agent Selection**: When `agent` is null, UI shows `AgentSelectionDialog`. User selects Claude or OpenCode, which calls `lifecycle.setAgent()` to save the choice.
+
+3. **Binary Resolution**: `BinaryResolutionService.resolve()` determines binary availability:
+   - For code-server (pinned version): Check exact version in bundles directory
+   - For agents with null version (Claude, OpenCode):
+     1. Check system binary via `which`/`where`
+     2. If not found, check bundles directory for any version
+     3. Use latest available or mark for download
+
+4. **Setup Screen**: Shows 3 progress rows (VSCode, Agent, Setup). Downloads run in parallel. Row statuses:
+   - `pending`: Waiting to start
+   - `running`: In progress (with percentage or indeterminate)
+   - `done`: Complete (green checkmark)
+   - `failed`: Error occurred (red X, shows Retry/Quit buttons)
+
+5. **Service Startup**: After all binaries available, `lifecycle.startServices()` initializes:
+   - Project store
+   - Code-server manager
+   - Agent server manager
+   - Plugin server
 
 **Key invariant**: The renderer ALWAYS goes through "loading" before "ready". Services ONLY start when the renderer calls `startServices()`. This allows the UI to display a loading screen during service startup.
 

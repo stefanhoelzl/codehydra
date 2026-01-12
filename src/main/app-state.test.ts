@@ -160,7 +160,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -178,7 +178,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -204,7 +204,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -222,7 +222,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -245,7 +245,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -265,7 +265,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -283,7 +283,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -314,7 +314,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -342,7 +342,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -373,7 +373,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -397,7 +397,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -432,7 +432,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -465,7 +465,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -486,7 +486,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -505,7 +505,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -524,7 +524,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -545,7 +545,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -564,7 +564,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -582,7 +582,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -604,7 +604,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -623,7 +623,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -646,7 +646,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -670,7 +670,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -693,7 +693,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -726,7 +726,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -757,7 +757,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -778,7 +778,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -797,7 +797,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -822,7 +822,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -846,7 +846,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -868,7 +868,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -890,7 +890,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -911,7 +911,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -934,7 +934,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -956,7 +956,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -976,7 +976,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -994,7 +994,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -1021,7 +1021,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -1039,7 +1039,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -1064,7 +1064,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -1090,7 +1090,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -1124,7 +1124,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -1144,7 +1144,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
@@ -1183,7 +1183,7 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude-code",
+        "claude",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
