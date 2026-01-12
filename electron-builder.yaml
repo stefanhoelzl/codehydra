@@ -67,11 +67,12 @@ linux:
     - target: AppImage
       arch: [x64]
   icon: resources/icon.png
-  category: Development
+  category: Development;IDE;TextEditor
   synopsis: Multi-workspace IDE for parallel AI agent development
-  description: |
-    CodeHydra is a multi-workspace IDE designed for parallel AI agent development.
-    Each workspace runs in an isolated environment with its own VS Code instance.
+  description: CodeHydra is a multi-workspace IDE designed for parallel AI agent development. Each workspace runs in an isolated environment with its own VS Code instance.
+  desktop:
+    entry:
+      StartupWMClass: codehydra
 
 # AppImage-specific settings
 appImage:
