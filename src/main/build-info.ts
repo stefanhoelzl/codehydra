@@ -40,6 +40,7 @@ export class ElectronBuildInfo implements BuildInfo {
   readonly isDevelopment: boolean;
   readonly gitBranch?: string;
   readonly appPath: string;
+  readonly resourcesPath?: string;
 
   constructor(gitBranchFn: () => string = getGitBranch) {
     // Cache at construction time - these values should never change during runtime
@@ -55,5 +56,11 @@ export class ElectronBuildInfo implements BuildInfo {
     // In dev: returns project root (same as process.cwd())
     // In prod: returns path inside ASAR archive
     this.appPath = app.getAppPath();
+
+    // Resources path for external process access (outside ASAR)
+    // Only set in production - dev mode accesses files directly from appPath
+    if (!this.isDevelopment) {
+      this.resourcesPath = process.resourcesPath;
+    }
   }
 }

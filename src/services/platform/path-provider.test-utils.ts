@@ -36,6 +36,9 @@ export interface MockPathProviderOptions {
   scriptsDir?: Path | string;
   appIconPath?: Path | string;
   binAssetsDir?: Path | string;
+  binRuntimeDir?: Path | string;
+  scriptsRuntimeDir?: Path | string;
+  extensionsRuntimeDir?: Path | string;
   claudeCodeConfigDir?: Path | string;
   claudeCodeHookHandlerPath?: Path | string;
   claudeCodeWrapperPath?: Path | string;
@@ -122,6 +125,12 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     scriptsDir: ensurePath(overrides?.scriptsDir, "/mock/assets/scripts"),
     appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
     binAssetsDir: ensurePath(overrides?.binAssetsDir, "/mock/assets/bin"),
+
+    // Runtime paths (same as assets in dev mode, resourcesPath in prod)
+    binRuntimeDir: ensurePath(overrides?.binRuntimeDir, "/mock/assets/bin"),
+    scriptsRuntimeDir: ensurePath(overrides?.scriptsRuntimeDir, "/mock/assets/scripts"),
+    extensionsRuntimeDir: ensurePath(overrides?.extensionsRuntimeDir, "/mock/assets"),
+
     claudeCodeConfigDir: ensurePath(overrides?.claudeCodeConfigDir, "/test/app-data/claude-code"),
     claudeCodeHookHandlerPath: ensurePath(
       overrides?.claudeCodeHookHandlerPath,

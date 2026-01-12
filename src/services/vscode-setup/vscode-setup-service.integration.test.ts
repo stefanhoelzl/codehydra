@@ -139,6 +139,9 @@ describe("VscodeSetupService Integration", () => {
       vscodeAssetsDir: mockPaths.assetsDir,
       binDir: mockPaths.binDir,
       binAssetsDir: join(mockPaths.assetsDir, "bin"),
+      binRuntimeDir: join(mockPaths.assetsDir, "bin"), // Same as assets in dev mode
+      extensionsRuntimeDir: mockPaths.assetsDir, // Same as assets in dev mode
+      scriptsRuntimeDir: join(mockPaths.assetsDir, "scripts"), // Same as assets in dev mode
       opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
     });
   });
@@ -159,8 +162,8 @@ describe("VscodeSetupService Integration", () => {
 
       expect(result.success).toBe(true);
 
-      // Verify vsix was copied to vscodeDir
-      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.3.vsix");
+      // Verify vsix exists in extensionsRuntimeDir (no copy - installed directly)
+      const vsixPath = join(mockPaths.assetsDir, "codehydra-sidekick-0.0.3.vsix");
       const vsixContent = await readFile(vsixPath, "utf-8");
       expect(vsixContent).toBe("mock-vsix-content");
 
@@ -223,15 +226,16 @@ describe("VscodeSetupService Integration", () => {
       await expect(access(mockPaths.markerPath)).rejects.toThrow();
     });
 
-    it("bundled vsix is copied before extension install is attempted", async () => {
+    it("bundled vsix exists in extensionsRuntimeDir for install", async () => {
       const processRunner = createTestProcessRunner(1, "Failed");
       const service = new VscodeSetupService(processRunner, testPathProvider, fsLayer);
       const preflight = createFullSetupPreflightResult();
 
       await service.setup(preflight);
 
-      // Vsix file should be copied (happens before install command)
-      const vsixPath = join(mockPaths.vscodeDir, "codehydra-sidekick-0.0.3.vsix");
+      // Vsix file should exist in extensionsRuntimeDir (created by createMockAssets)
+      // No copy needed - code-server reads directly from this location
+      const vsixPath = join(mockPaths.assetsDir, "codehydra-sidekick-0.0.3.vsix");
       const vsixContent = await readFile(vsixPath, "utf-8");
       expect(vsixContent).toBe("mock-vsix-content");
     });
@@ -360,6 +364,9 @@ describe("VscodeSetupService Integration", () => {
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
         binAssetsDir: join(mockPaths.assetsDir, "bin"),
+        binRuntimeDir: join(mockPaths.assetsDir, "bin"),
+        extensionsRuntimeDir: mockPaths.assetsDir,
+        scriptsRuntimeDir: join(mockPaths.assetsDir, "scripts"),
         opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
       });
 
@@ -392,6 +399,9 @@ describe("VscodeSetupService Integration", () => {
         vscodeAssetsDir: mockPaths.assetsDir,
         binDir,
         binAssetsDir: join(mockPaths.assetsDir, "bin"),
+        binRuntimeDir: join(mockPaths.assetsDir, "bin"),
+        extensionsRuntimeDir: mockPaths.assetsDir,
+        scriptsRuntimeDir: join(mockPaths.assetsDir, "scripts"),
         opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
       });
 
