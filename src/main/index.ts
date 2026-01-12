@@ -3,6 +3,14 @@
  * Initializes all components and manages the application lifecycle.
  */
 
+// Fix fontconfig for AppImage builds.
+// Must be set BEFORE any Electron/Chromium code runs.
+// AppImage sets APPIMAGE or APPDIR environment variables.
+if (process.env.APPIMAGE || process.env.APPDIR) {
+  // Point fontconfig to system fonts instead of any bundled config
+  process.env.FONTCONFIG_PATH = "/etc/fonts";
+}
+
 import { app } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
