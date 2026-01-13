@@ -13,7 +13,8 @@ const gitignorePath = path.resolve(__dirname, ".gitignore");
 export default tseslint.config(
   includeIgnoreFile(gitignorePath),
   // Ignore VS Code extensions node_modules and dist, but lint source
-  { ignores: ["extensions/**/node_modules/", "extensions/**/dist/"] },
+  // Ignore packages/ - standalone npm/PyPI launchers with own conventions
+  { ignores: ["extensions/**/node_modules/", "extensions/**/dist/", "packages/"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...svelte.configs.recommended,

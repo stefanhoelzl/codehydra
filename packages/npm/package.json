@@ -1,0 +1,36 @@
+{
+  "name": "codehydra",
+  "version": "0.0.0",
+  "description": "Multi-workspace IDE for parallel AI agent development",
+  "bin": {
+    "codehydra": "./codehydra.js"
+  },
+  "scripts": {
+    "test": "echo \"Manual testing required - see planning/NPM_PYPI_LAUNCHERS.md\" && exit 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stefanhoelzl/codehydra.git"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "ide",
+    "vscode",
+    "git",
+    "worktree"
+  ],
+  "author": "Stefan Hoelzl",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/stefanhoelzl/codehydra/issues"
+  },
+  "homepage": "https://github.com/stefanhoelzl/codehydra#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "codehydra.js",
+    "README.md"
+  ]
+}

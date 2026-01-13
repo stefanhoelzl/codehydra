@@ -24,3 +24,25 @@ jobs:
 
   build:
     uses: ./.github/workflows/build.yaml
+
+  build-packages:
+    name: Build Packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - name: Build npm package
+        working-directory: packages/npm
+        run: pnpm pack
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build PyPI package
+        working-directory: packages/pypi
+        run: uv build
