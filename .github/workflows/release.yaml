@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release
@@ -61,26 +62,45 @@ jobs:
             --generate-notes \
             release-assets/*
 
-  summary:
+  publish-npm:
     needs: [build, release]
     runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version-file: package.json
+          registry-url: https://registry.npmjs.org
 
-      - run: |
-          CODE_SERVER=$(grep -oP 'CODE_SERVER_VERSION\s*=\s*"\K[^"]+' src/services/binary-download/versions.ts)
-          OPENCODE=$(grep -oP 'OPENCODE_VERSION\s*=\s*"\K[^"]+' src/services/binary-download/versions.ts)
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          # CodeHydra ${{ needs.build.outputs.version }}
+      - run: pnpm version $VERSION --no-git-tag-version
+        working-directory: packages/npm
 
-          **[View Release](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.build.outputs.version }})**
+      - run: pnpm publish --access public --no-git-checks
+        working-directory: packages/npm
 
-          ## Bundled Versions
-          - [code-server](https://coder.com/docs/code-server): [${CODE_SERVER}](https://github.com/coder/code-server/releases/tag/v${CODE_SERVER})
-          - [opencode](https://opencode.ai): [${OPENCODE}](https://github.com/sst/opencode/releases/tag/v${OPENCODE})
+  publish-pypi:
+    needs: [build, release]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
 
-          ## Commits
-          EOF
-          git log --format="- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" -20 >> $GITHUB_STEP_SUMMARY
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Set package version
+        working-directory: packages/pypi
+        run: |
+          sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" pyproject.toml
+
+      - run: uv build
+        working-directory: packages/pypi
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/pypi/dist/

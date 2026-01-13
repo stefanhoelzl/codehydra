@@ -1,0 +1,35 @@
+[build-system]
+requires = ["uv_build>=0.9.23,<0.10"]
+build-backend = "uv_build"
+
+[project]
+name = "codehydra"
+version = "0.0.0"
+description = "Multi-workspace IDE for parallel AI agent development"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Stefan Hoelzl" }]
+keywords = ["ai", "agent", "ide", "vscode", "git", "worktree"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/stefanhoelzl/codehydra"
+Repository = "https://github.com/stefanhoelzl/codehydra"
+Issues = "https://github.com/stefanhoelzl/codehydra/issues"
+
+[project.scripts]
+codehydra = "codehydra:main"

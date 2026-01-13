@@ -10,8 +10,8 @@
 <Header />
 <main id="main-content">
   <Hero />
+  <QuickStart />
   <Features />
   <Screenshot />
-  <QuickStart />
 </main>
 <Footer />

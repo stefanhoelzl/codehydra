@@ -45,6 +45,62 @@ To reset the extension version scheme (e.g., after breaking changes):
 
 ---
 
+## npm and PyPI Publishing
+
+The release workflow automatically publishes launcher packages to npm and PyPI after creating the GitHub Release. These launcher packages download the appropriate platform binary on first run.
+
+### npm Package
+
+- **Package name**: `codehydra`
+- **Registry**: https://www.npmjs.com/package/codehydra
+- **Usage**: `npx codehydra`
+
+### PyPI Package
+
+- **Package name**: `codehydra`
+- **Registry**: https://pypi.org/project/codehydra/
+- **Usage**: `uvx codehydra` or `pip install codehydra && codehydra`
+
+### Trusted Publisher Setup
+
+Both packages use OIDC trusted publishing for secure, token-free deployments.
+
+#### npm Setup (one-time)
+
+1. Create the initial package manually:
+
+   ```bash
+   cd packages/npm
+   pnpm publish --access public
+   ```
+
+2. Configure trusted publisher at https://www.npmjs.com/package/codehydra/access:
+   - Scroll to "Trusted Publishers" section
+   - Click "Add GitHub Actions"
+   - **Owner**: `stefanhoelzl`
+   - **Repository**: `codehydra`
+   - **Workflow filename**: `release.yaml`
+   - **Environment**: (leave empty)
+
+3. Recommended: Enable "Require two-factor authentication"
+
+#### PyPI Setup (one-time)
+
+1. Go to https://pypi.org/manage/account/publishing/
+
+2. Add a pending publisher:
+   - Click "Add a new pending publisher"
+   - Select "GitHub Actions"
+   - **PyPI Project Name**: `codehydra`
+   - **Owner**: `stefanhoelzl`
+   - **Repository name**: `codehydra`
+   - **Workflow name**: `release.yaml`
+   - **Environment name**: (leave empty)
+
+The pending publisher automatically converts to a regular publisher on first successful publish.
+
+---
+
 ## code-server Windows Builds
 
 code-server doesn't publish Windows binaries. CodeHydra automatically builds and publishes Windows versions via GitHub Actions.

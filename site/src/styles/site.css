@@ -105,7 +105,7 @@ a:hover {
 
 /* Section spacing */
 section {
-  padding: 4rem 0;
+  padding: 2rem 0;
 }
 
 /* Feature grid - mobile first */
@@ -214,12 +214,12 @@ code {
 /* Responsive text sizes */
 @media (min-width: 640px) {
   section {
-    padding: 5rem 0;
+    padding: 2.5rem 0;
   }
 }
 
 @media (min-width: 1024px) {
   section {
-    padding: 6rem 0;
+    padding: 3rem 0;
   }
 }

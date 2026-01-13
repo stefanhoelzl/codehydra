@@ -13,23 +13,12 @@
       Run multiple AI coding assistants simultaneously in isolated git worktrees with real-time
       status monitoring.
     </p>
-    <div class="hero-actions">
-      <a href="#quickstart" class="btn btn-primary">Get Started</a>
-      <a
-        href="https://github.com/stefanhoelzl/codehydra"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="btn btn-secondary"
-      >
-        View on GitHub
-      </a>
-    </div>
   </div>
 </section>
 
 <style>
   .hero {
-    padding: 6rem 0;
+    padding: 3rem 0;
     text-align: center;
     background: linear-gradient(180deg, var(--site-bg-secondary) 0%, var(--site-bg-primary) 100%);
   }
@@ -61,14 +50,6 @@
     color: var(--site-text-secondary);
     max-width: 600px;
     margin: 0;
-  }
-
-  .hero-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    justify-content: center;
-    margin-top: 1rem;
   }
 
   @media (min-width: 640px) {
