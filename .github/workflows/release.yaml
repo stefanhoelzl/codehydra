@@ -78,7 +78,7 @@ jobs:
       - run: npm version $VERSION --no-git-tag-version
         working-directory: packages/npm
 
-      - run: npm publish --access public
+      - run: npm publish --access public --tag latest
         working-directory: packages/npm
 
   publish-pypi:
