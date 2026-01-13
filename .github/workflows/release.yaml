@@ -3,6 +3,9 @@ name: Release
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: release
   cancel-in-progress: false
@@ -13,8 +16,53 @@ jobs:
     with:
       release: true
 
-  summary:
+  release:
     needs: build
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: CodeHydra-*
+          merge-multiple: false
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+
+          # Copy file artifacts
+          cp artifacts/CodeHydra-linux-x64.AppImage/CodeHydra-linux-x64.AppImage \
+             release-assets/CodeHydra-linux-x64.AppImage
+          cp artifacts/CodeHydra-win-installer-x64.exe/CodeHydra-win-installer-x64.exe \
+             release-assets/CodeHydra-win-installer-x64.exe
+
+          # Zip directory artifacts
+          cd artifacts
+          zip -r ../release-assets/CodeHydra-win-portable-x64.zip CodeHydra-win-portable-x64
+          zip -r ../release-assets/CodeHydra-darwin-x64.zip CodeHydra-darwin-x64
+          zip -r ../release-assets/CodeHydra-darwin-arm64.zip CodeHydra-darwin-arm64
+
+      - name: Generate checksums
+        working-directory: release-assets
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            --repo "${{ github.repository }}" \
+            --title "CodeHydra $VERSION" \
+            --generate-notes \
+            release-assets/*
+
+  summary:
+    needs: [build, release]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +74,8 @@ jobs:
           OPENCODE=$(grep -oP 'OPENCODE_VERSION\s*=\s*"\K[^"]+' src/services/binary-download/versions.ts)
           cat >> $GITHUB_STEP_SUMMARY << EOF
           # CodeHydra ${{ needs.build.outputs.version }}
+
+          **[View Release](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.build.outputs.version }})**
 
           ## Bundled Versions
           - [code-server](https://coder.com/docs/code-server): [${CODE_SERVER}](https://github.com/coder/code-server/releases/tag/v${CODE_SERVER})

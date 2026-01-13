@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       release:
-        description: "Use release versioning (YYYY.MM.DD)"
+        description: "Use release versioning (YYYY.M.D or YYYY.M.D.N for same-day releases)"
         type: boolean
         default: false
     outputs:
@@ -25,9 +25,39 @@ jobs:
 
       - name: Compute version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "${{ inputs.release }}" == "true" ]]; then
-            echo "version=$(date -u +%Y.%m.%d)" >> $GITHUB_OUTPUT
+            # Format: YYYY.M.D (no leading zeros)
+            YEAR=$(date -u +%Y)
+            MONTH=$(date -u +%-m)
+            DAY=$(date -u +%-d)
+            BASE_VERSION="${YEAR}.${MONTH}.${DAY}"
+
+            # Check for existing releases with this date
+            # Escape dots for regex matching
+            BASE_PATTERN="${BASE_VERSION//./\\.}"
+            EXISTING=$(gh release list --repo "${{ github.repository }}" --json tagName --jq '.[].tagName' 2>/dev/null | grep -E "^v${BASE_PATTERN}(\.[0-9]+)?$" || true)
+
+            if [[ -z "$EXISTING" ]]; then
+              # No existing release for today
+              VERSION="$BASE_VERSION"
+            else
+              # Find highest suffix
+              MAX_SUFFIX=0
+              for TAG in $EXISTING; do
+                if [[ "$TAG" == "v${BASE_VERSION}" ]]; then
+                  # Base version exists, need at least .1
+                  [[ $MAX_SUFFIX -lt 1 ]] && MAX_SUFFIX=1
+                elif [[ "$TAG" =~ ^v${BASE_PATTERN}\.([0-9]+)$ ]]; then
+                  SUFFIX="${BASH_REMATCH[1]}"
+                  [[ $SUFFIX -ge $MAX_SUFFIX ]] && MAX_SUFFIX=$((SUFFIX + 1))
+                fi
+              done
+              VERSION="${BASE_VERSION}.${MAX_SUFFIX}"
+            fi
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
           else
             DATE=$(git log -1 --format=%cs | tr '-' '.')
             HASH=$(git rev-parse --short=8 HEAD)
