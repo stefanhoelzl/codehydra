@@ -70,17 +70,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version-file: package.json
+          node-version: "24"
           registry-url: https://registry.npmjs.org
 
-      - run: pnpm version $VERSION --no-git-tag-version
+      - run: npm version $VERSION --no-git-tag-version
         working-directory: packages/npm
 
-      - run: pnpm publish --access public --no-git-checks
+      - run: npm publish --access public
         working-directory: packages/npm
 
   publish-pypi:
