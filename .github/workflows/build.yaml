@@ -11,12 +11,16 @@ on:
       version:
         description: "The computed version string"
         value: ${{ jobs.prepare.outputs.version }}
+      is_base_version:
+        description: "Whether this is a base version (no .N suffix) for npm/PyPI"
+        value: ${{ jobs.prepare.outputs.is_base_version }}
 
 jobs:
   prepare:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
+      is_base_version: ${{ steps.version.outputs.is_base_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,6 +62,13 @@ jobs:
               VERSION="${BASE_VERSION}.${MAX_SUFFIX}"
             fi
             echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+            # Check if this is a base version (no .N suffix)
+            if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "is_base_version=true" >> $GITHUB_OUTPUT
+            else
+              echo "is_base_version=false" >> $GITHUB_OUTPUT
+            fi
           else
             DATE=$(git log -1 --format=%cs | tr '-' '.')
             HASH=$(git rev-parse --short=8 HEAD)
