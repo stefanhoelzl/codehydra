@@ -473,6 +473,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
       "workbench.action.closeAuxiliaryBar",
       "workbench.action.editorLayoutSingle",
       "workbench.action.closeAllEditors",
+      "codehydra.dictation.openPanel",
     ];
     for (const command of preLayoutCommands) {
       try {
@@ -486,19 +487,9 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     // Open agent terminal if env vars and agent type are available
     if (config.env !== null && config.agentType !== null) {
       openAgentTerminal(config.agentType, config.env);
-    }
-
-    // Execute post-terminal layout commands
-    const postLayoutCommands = [
-      "codehydra.dictation.openPanel", // Open dictation tab in background (no-op if no API key)
-    ];
-    for (const command of postLayoutCommands) {
-      try {
-        await vscode.commands.executeCommand(command);
-      } catch (err: unknown) {
-        const error = err instanceof Error ? err.message : String(err);
-        codehydraApi.log.warn("Layout command failed", { command, error });
-      }
+      // Wait for terminal to be ready before focusing
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vscode.commands.executeCommand("workbench.action.terminal.focus");
     }
 
     // Register debug commands in development mode
