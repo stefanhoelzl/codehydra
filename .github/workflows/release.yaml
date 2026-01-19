@@ -64,6 +64,7 @@ jobs:
 
   publish-npm:
     needs: [build, release]
+    if: needs.build.outputs.is_base_version == 'true'
     runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.build.outputs.version }}
@@ -83,6 +84,7 @@ jobs:
 
   publish-pypi:
     needs: [build, release]
+    if: needs.build.outputs.is_base_version == 'true'
     runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.build.outputs.version }}
