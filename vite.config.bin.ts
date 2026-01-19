@@ -34,7 +34,7 @@ export default defineConfig({
         {
           src: "out/main/agents/hook-handler.cjs",
           dest: "../../../dist/bin",
-          rename: "claude-hook-handler.cjs",
+          rename: "claude-code-hook-handler.cjs",
         },
       ],
       hook: "closeBundle",
