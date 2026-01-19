@@ -22,7 +22,7 @@ import type { SpawnedProcess } from "../platform/process";
 const RESOURCES_BIN_DIR = resolve(__dirname, "../../../resources/bin");
 
 /**
- * Path to compiled opencode wrapper (built by pnpm build:wrappers).
+ * Path to compiled wrappers (built by pnpm build:wrappers).
  */
 const DIST_BIN_DIR = resolve(__dirname, "../../../dist/bin");
 
@@ -50,13 +50,13 @@ async function setupBinAssets(binAssetsDir: string): Promise<void> {
   await mkdir(binAssetsDir, { recursive: true });
 
   // Copy shell scripts from resources/bin/
-  const shellScripts = ["code", "code.cmd", "opencode", "opencode.cmd"];
+  const shellScripts = ["code", "code.cmd", "ch-opencode", "ch-opencode.cmd"];
   for (const script of shellScripts) {
     await copyFile(join(RESOURCES_BIN_DIR, script), join(binAssetsDir, script));
   }
 
-  // Copy compiled opencode.cjs from dist/bin/
-  await copyFile(join(DIST_BIN_DIR, "opencode.cjs"), join(binAssetsDir, "opencode.cjs"));
+  // Copy compiled ch-opencode.cjs from dist/bin/
+  await copyFile(join(DIST_BIN_DIR, "ch-opencode.cjs"), join(binAssetsDir, "ch-opencode.cjs"));
 }
 
 describe("VscodeSetupService.setupBinDirectory (boundary)", () => {

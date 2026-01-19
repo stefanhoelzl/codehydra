@@ -112,11 +112,6 @@ export class ClaudeSetupInfo implements AgentSetupInfo {
    */
   readonly wrapperEntryPoint = "agents/claude-wrapper.cjs";
 
-  /**
-   * VS Code marketplace extension ID for Claude Code.
-   */
-  readonly extensionId = "anthropic.claude-code";
-
   private readonly fileSystem: FileSystemLayer;
   private readonly httpClient: HttpClient;
   private readonly platform: SupportedPlatform;

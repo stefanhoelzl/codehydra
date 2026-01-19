@@ -59,7 +59,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
   }
 
   describe("config event on connection", () => {
-    it("sends config with startup commands when client connects", async () => {
+    it("sends config with agent type when client connects", async () => {
       let receivedConfig: PluginConfig | null = null;
       const client = createClient("/test/workspace");
 
@@ -71,7 +71,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
       // Register onConfigData callback
       server.onConfigData(() => ({
         env: null,
-        agentCommand: "myagent.command",
+        agentType: "opencode",
       }));
 
       // Connect and wait
@@ -82,10 +82,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
       expect(receivedConfig).not.toBeNull();
       const config = receivedConfig!;
       expect(config.isDevelopment).toBe(false);
-      expect(config.startupCommands).toBeDefined();
-      expect(config.startupCommands.length).toBeGreaterThan(0);
-      // Check that agent command is included
-      expect(config.startupCommands).toContain("myagent.command");
+      expect(config.agentType).toBe("opencode");
     });
 
     it("sends config with environment variables", async () => {
@@ -100,7 +97,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
       // Register onConfigData callback with env vars
       server.onConfigData(() => ({
         env: { TEST_VAR: "test-value", ANOTHER_VAR: "another" },
-        agentCommand: undefined,
+        agentType: null,
       }));
 
       await waitForConnect(client);
@@ -120,7 +117,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
 
       server.onConfigData(() => ({
         env: null,
-        agentCommand: undefined,
+        agentType: null,
       }));
 
       await waitForConnect(client);
@@ -148,7 +145,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
       // Register onConfigData that returns different env for different workspaces
       server.onConfigData((workspacePath) => ({
         env: { WORKSPACE: workspacePath },
-        agentCommand: undefined,
+        agentType: "opencode",
       }));
 
       // Connect both clients

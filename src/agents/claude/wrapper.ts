@@ -18,9 +18,7 @@
  */
 
 import { spawnSync, execSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { request } from "node:http";
-import { join } from "node:path";
 
 // Exit codes
 const EXIT_ENV_ERROR = 1;
@@ -46,22 +44,6 @@ function getUserArgs(): string[] {
 }
 
 /**
- * Common installation paths for Claude CLI.
- */
-const COMMON_PATHS_UNIX = [
-  "/usr/local/bin/claude",
-  "/usr/bin/claude",
-  join(process.env.HOME ?? "", ".local/bin/claude"),
-  join(process.env.HOME ?? "", ".npm-global/bin/claude"),
-];
-
-const COMMON_PATHS_WINDOWS = [
-  join(process.env.LOCALAPPDATA ?? "", "Programs\\Anthropic\\claude.exe"),
-  join(process.env.APPDATA ?? "", "npm\\claude.cmd"),
-  join(process.env.PROGRAMFILES ?? "", "Anthropic\\claude.exe"),
-];
-
-/**
  * Find the system-installed claude binary.
  * First tries PATH lookup, then falls back to common installation locations.
  */
@@ -73,27 +55,10 @@ function findSystemClaude(): string | null {
     const cmd = isWindows ? "where claude" : "which claude";
     const result = execSync(cmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
     const path = result.trim().split("\n")[0]?.trim();
-
-    // On Windows, 'where' might return our wrapper - skip if it's in CodeHydra's bin dir
-    if (path && existsSync(path)) {
-      // Check if this is our own wrapper by looking for CODEHYDRA in the path
-      // The wrapper is installed at <dataRoot>/bin/claude(.cmd)
-      if (!path.includes("codehydra") || !path.includes("bin")) {
-        return path;
-      }
-    }
+    return path || null;
   } catch {
-    // which/where failed, try common paths
+    return null;
   }
-
-  // 2. Try common installation paths
-  const commonPaths = isWindows ? COMMON_PATHS_WINDOWS : COMMON_PATHS_UNIX;
-  for (const path of commonPaths) {
-    if (existsSync(path)) {
-      return path;
-    }
-  }
-
   return null;
 }
 
@@ -179,6 +144,7 @@ async function main(): Promise<never> {
   // User args can override these if they come after
   const isWindows = process.platform === "win32";
   const args = [
+    "--allow-dangerously-skip-permissions",
     "--ide",
     "--settings",
     settingsPath,

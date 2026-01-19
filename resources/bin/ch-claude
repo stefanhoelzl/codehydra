@@ -4,4 +4,4 @@ if [ -z "$CODEHYDRA_CODE_SERVER_DIR" ]; then
   exit 1
 fi
 BINDIR="$(dirname "$0")"
-exec "$CODEHYDRA_CODE_SERVER_DIR/lib/node" "$BINDIR/claude.cjs" "$@"
+exec "$CODEHYDRA_CODE_SERVER_DIR/lib/node" "$BINDIR/ch-claude.cjs" "$@"

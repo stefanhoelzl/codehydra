@@ -33,12 +33,6 @@ export interface ClaudeCodeProviderDeps {
  * - Environment variables tell sidekick how to configure Claude CLI
  */
 export class ClaudeCodeProvider implements AgentProvider {
-  /**
-   * VS Code commands to execute on workspace activation.
-   * Uses the Claude Code VS Code extension's terminal.open command to open the terminal.
-   */
-  readonly startupCommands: readonly string[] = ["claude-vscode.terminal.open"] as const;
-
   private readonly serverManager: ClaudeCodeServerManager;
   private readonly workspacePath: string;
   private readonly logger: Logger;

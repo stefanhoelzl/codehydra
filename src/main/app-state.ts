@@ -119,16 +119,13 @@ export class AppState {
   }
 
   /**
-   * Get the startup command for the agent in a workspace.
-   * Returns the first command from the provider's startupCommands array,
-   * or falls back to OpenCode's default command if provider not found.
+   * Get the agent type configured for this application.
+   * Used by the sidekick extension to determine which CLI to launch.
    *
-   * @param workspacePath - Path to the workspace
-   * @returns VS Code command to open the agent terminal
+   * @returns The configured agent type ("opencode" or "claude")
    */
-  getAgentStartupCommand(workspacePath: WorkspacePath): string {
-    const provider = this.agentStatusManager?.getProvider(workspacePath);
-    return provider?.startupCommands[0] ?? "opencode.openTerminal";
+  getAgentType(): AgentType {
+    return this.agentType;
   }
 
   /**

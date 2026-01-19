@@ -327,10 +327,4 @@ describe("ClaudeCodeProvider integration", () => {
       // Should not throw
     });
   });
-
-  describe("startupCommands", () => {
-    it("returns claude-vscode terminal.open command", () => {
-      expect(provider.startupCommands).toEqual(["claude-vscode.terminal.open"]);
-    });
-  });
 });

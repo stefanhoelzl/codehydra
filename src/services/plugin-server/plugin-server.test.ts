@@ -40,7 +40,7 @@ describe("PluginServer", () => {
       expect(() =>
         server.onConfigData(() => ({
           env: null,
-          agentCommand: undefined,
+          agentType: null,
         }))
       ).not.toThrow();
     });
@@ -48,14 +48,14 @@ describe("PluginServer", () => {
     it("allows provider to be replaced", () => {
       server.onConfigData(() => ({
         env: null,
-        agentCommand: undefined,
+        agentType: null,
       }));
 
       // Should not throw when replacing provider
       expect(() =>
         server.onConfigData(() => ({
           env: { TEST: "value" },
-          agentCommand: "test.command",
+          agentType: "opencode",
         }))
       ).not.toThrow();
     });

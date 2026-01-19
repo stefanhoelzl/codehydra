@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Boundary tests for the compiled opencode wrapper (dist/bin/opencode.cjs).
+ * Boundary tests for the compiled opencode wrapper (dist/bin/ch-opencode.cjs).
  *
  * Tests the script with real Node.js execution and mock HTTP server.
  * These tests verify:
@@ -19,10 +19,10 @@ import { createTempDir } from "../test-utils";
 const isWindows = process.platform === "win32";
 
 /**
- * Path to the compiled opencode.cjs script.
+ * Path to the compiled ch-opencode.cjs script.
  * This is built by `pnpm build:wrappers` before running tests.
  */
-const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../dist/bin/opencode.cjs");
+const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../dist/bin/ch-opencode.cjs");
 
 /**
  * Output from the fake opencode binary.
@@ -138,7 +138,7 @@ async function executeScript(
   });
 }
 
-describe("opencode.cjs boundary tests", () => {
+describe("ch-opencode.cjs boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let opencodeDir: string;
 

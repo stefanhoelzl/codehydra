@@ -48,9 +48,6 @@ export interface AgentSetupInfo {
   /** Entry point for wrapper script (e.g., "agents/opencode-wrapper.cjs") */
   readonly wrapperEntryPoint: string;
 
-  /** VS Code marketplace extension ID (e.g., "sst-dev.opencode", "anthropic.claude") */
-  readonly extensionId?: string;
-
   /** Get download URL for the binary for current platform (uses instance's version) */
   getBinaryUrl(): string;
 
@@ -148,9 +145,6 @@ export interface AgentSessionInfo {
  * to the agent server and tracks status.
  */
 export interface AgentProvider {
-  /** VS Code commands to execute on workspace activation */
-  readonly startupCommands: readonly string[];
-
   /** Connect to agent server at given port */
   connect(port: number): Promise<void>;
 
