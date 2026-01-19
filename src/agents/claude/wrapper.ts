@@ -52,7 +52,7 @@ function findSystemClaude(): string | null {
 
   // 1. Try PATH lookup using which/where
   try {
-    const cmd = isWindows ? "where claude" : "which claude";
+    const cmd = isWindows ? "where claude.cmd" : "which claude";
     const result = execSync(cmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
     const path = result.trim().split("\n")[0]?.trim();
     return path || null;
