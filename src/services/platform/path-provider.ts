@@ -210,7 +210,7 @@ export class DefaultPathProvider implements PathProvider {
     this.claudeCodeHookHandlerPath = new Path(this.binRuntimeDir, "claude-code-hook-handler.cjs");
     this.claudeCodeWrapperPath = new Path(
       this.binDir,
-      this.platform === "win32" ? "claude.cmd" : "claude"
+      this.platform === "win32" ? "ch-claude.cmd" : "ch-claude"
     );
 
     // Application config

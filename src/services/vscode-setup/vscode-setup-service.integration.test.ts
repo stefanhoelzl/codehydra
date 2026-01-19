@@ -80,9 +80,9 @@ describe("VscodeSetupService Integration", () => {
     await mkdir(binAssetsDir, { recursive: true });
     await writeFile(join(binAssetsDir, "code"), "#!/bin/sh\nexec code-server");
     await writeFile(join(binAssetsDir, "code.cmd"), "@echo off\ncall code-server");
-    await writeFile(join(binAssetsDir, "opencode"), "#!/bin/sh\nexec opencode.cjs");
-    await writeFile(join(binAssetsDir, "opencode.cmd"), "@echo off\ncall opencode.cjs");
-    await writeFile(join(binAssetsDir, "opencode.cjs"), "// opencode wrapper");
+    await writeFile(join(binAssetsDir, "ch-opencode"), "#!/bin/sh\nexec ch-opencode.cjs");
+    await writeFile(join(binAssetsDir, "ch-opencode.cmd"), "@echo off\ncall ch-opencode.cjs");
+    await writeFile(join(binAssetsDir, "ch-opencode.cjs"), "// opencode wrapper");
   }
 
   /**
@@ -100,7 +100,7 @@ describe("VscodeSetupService Integration", () => {
 
   /**
    * Create a preflight result for full setup (all components missing).
-   * Note: Agent extensions are handled separately via agentExtensionId parameter.
+   * Note: Agent CLIs are launched via terminal by sidekick extension.
    */
   function createFullSetupPreflightResult(): PreflightResult {
     return {

@@ -42,7 +42,6 @@ export class VscodeSetupService implements IVscodeSetup {
   private readonly assetsDir: Path;
   private readonly binaryDownloadService: BinaryDownloadService | null;
   private readonly logger: Logger | undefined;
-  private readonly agentExtensionId: string | undefined;
   private readonly agentBinaryType: AgentBinaryType;
 
   constructor(
@@ -52,7 +51,7 @@ export class VscodeSetupService implements IVscodeSetup {
     _platformInfo?: PlatformInfo, // Kept for backward compatibility, no longer used
     binaryDownloadService?: BinaryDownloadService,
     logger?: Logger,
-    agentExtensionId?: string,
+    _agentExtensionId?: string, // Kept for backward compatibility, no longer used
     agentBinaryType: AgentBinaryType = "opencode"
   ) {
     this.processRunner = processRunner;
@@ -61,7 +60,6 @@ export class VscodeSetupService implements IVscodeSetup {
     this.assetsDir = pathProvider.vscodeAssetsDir;
     this.binaryDownloadService = binaryDownloadService ?? null;
     this.logger = logger;
-    this.agentExtensionId = agentExtensionId;
     this.agentBinaryType = agentBinaryType;
   }
 
@@ -136,14 +134,6 @@ export class VscodeSetupService implements IVscodeSetup {
           missingExtensions.push(ext.id);
         } else if (installedVersion !== ext.version) {
           outdatedExtensions.push(ext.id);
-        }
-      }
-
-      // Check agent extension (marketplace - no version pinning, just check if installed)
-      if (this.agentExtensionId) {
-        const isAgentExtensionInstalled = installedExtensions.has(this.agentExtensionId);
-        if (!isAgentExtensionInstalled) {
-          missingExtensions.push(this.agentExtensionId);
         }
       }
 
@@ -602,20 +592,6 @@ export class VscodeSetupService implements IVscodeSetup {
       // Install the extension directly from runtime directory
       // No copy needed - code-server can read from the runtime path
       const result = await this.runInstallExtension(vsixPath.toNative());
-      if (!result.success) {
-        return result;
-      }
-    }
-
-    // Install agent extension from marketplace (if configured and needed)
-    if (this.agentExtensionId && shouldInstall(this.agentExtensionId)) {
-      this.logger?.info("Installing agent extension from marketplace", {
-        extensionId: this.agentExtensionId,
-      });
-      onProgress?.({ step: "extensions", message: `Installing ${this.agentExtensionId}...` });
-
-      // Install directly from marketplace using extension ID
-      const result = await this.runInstallExtension(this.agentExtensionId);
       if (!result.success) {
         return result;
       }

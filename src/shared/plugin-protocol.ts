@@ -39,6 +39,11 @@ export interface CommandRequest {
 // ============================================================================
 
 /**
+ * Agent type for terminal launching.
+ */
+export type AgentType = "opencode" | "claude";
+
+/**
  * Configuration sent from server to client on connection.
  * Contains all data needed for extension startup.
  */
@@ -47,8 +52,8 @@ export interface PluginConfig {
   readonly isDevelopment: boolean;
   /** Agent environment variables for terminal integration (null if agent not ready) */
   readonly env: Record<string, string> | null;
-  /** VS Code commands to execute on startup */
-  readonly startupCommands: readonly string[];
+  /** Agent type for terminal launching (null if no agent configured) */
+  readonly agentType: AgentType | null;
 }
 
 // ============================================================================

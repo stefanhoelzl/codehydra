@@ -24,12 +24,12 @@ export default defineConfig({
         {
           src: "out/main/agents/opencode-wrapper.cjs",
           dest: "../../../dist/bin",
-          rename: "opencode.cjs",
+          rename: "ch-opencode.cjs",
         },
         {
           src: "out/main/agents/claude-wrapper.cjs",
           dest: "../../../dist/bin",
-          rename: "claude.cjs",
+          rename: "ch-claude.cjs",
         },
         {
           src: "out/main/agents/hook-handler.cjs",

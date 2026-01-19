@@ -11,6 +11,7 @@ import type {
   WorkspaceCreateRequest,
   InitialPrompt,
   AgentSession,
+  AgentType,
 } from "./types";
 import {
   reconstructVscodeObjects,
@@ -51,6 +52,62 @@ let debugOutputChannel: vscode.OutputChannel | null = null;
 let currentWorkspacePath = "";
 let currentPluginPort: number | null = null;
 let extensionContext: vscode.ExtensionContext | null = null;
+
+// ============================================================================
+// Agent Terminal Management
+// ============================================================================
+
+/** Singleton terminal for agent CLI */
+let agentTerminal: vscode.Terminal | null = null;
+
+/** Disposable for terminal close listener */
+let terminalCloseListener: vscode.Disposable | null = null;
+
+/**
+ * Open agent terminal in the editor area.
+ * Creates a new terminal if none exists, otherwise focuses the existing one.
+ *
+ * @param agentType - The type of agent ("opencode" or "claude")
+ * @param env - Environment variables to set for the terminal
+ */
+function openAgentTerminal(agentType: AgentType, env: Record<string, string>): void {
+  // If terminal exists and not disposed, just focus it
+  if (agentTerminal) {
+    agentTerminal.show();
+    return;
+  }
+
+  const terminalName = agentType === "claude" ? "Claude" : "OpenCode";
+  const command = agentType === "claude" ? "ch-claude" : "ch-opencode";
+
+  // Create terminal in editor area using viewColumn
+  agentTerminal = vscode.window.createTerminal({
+    name: terminalName,
+    location: { viewColumn: vscode.ViewColumn.Active },
+    env: env,
+  });
+
+  agentTerminal.show();
+  agentTerminal.sendText(command);
+
+  codehydraApi.log.debug("Agent terminal opened", { agentType, command });
+}
+
+/**
+ * Set up terminal close listener to reset the singleton reference.
+ */
+function setupTerminalCloseListener(): void {
+  if (terminalCloseListener) {
+    return;
+  }
+
+  terminalCloseListener = vscode.window.onDidCloseTerminal((terminal) => {
+    if (terminal === agentTerminal) {
+      agentTerminal = null;
+      codehydraApi.log.debug("Agent terminal closed");
+    }
+  });
+}
 
 // ============================================================================
 // API Utilities
@@ -405,29 +462,42 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     codehydraApi.log.debug("Config received", {
       isDevelopment,
       hasEnv: config.env !== null,
-      startupCommandsCount: config.startupCommands?.length ?? 0,
+      agentType: config.agentType,
     });
 
     await vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
 
-    // Apply agent environment variables
-    if (config.env !== null && extensionContext) {
-      for (const [key, value] of Object.entries(config.env)) {
-        extensionContext.environmentVariableCollection.replace(key, value);
-      }
-      codehydraApi.log.debug("Set agent env vars", {
-        count: Object.keys(config.env).length,
-      });
-    }
-
-    // Execute startup commands sequentially to preserve order
-    for (const command of config.startupCommands ?? []) {
+    // Execute pre-terminal layout commands
+    const preLayoutCommands = [
+      "workbench.action.closeSidebar",
+      "workbench.action.closeAuxiliaryBar",
+      "workbench.action.editorLayoutSingle",
+      "workbench.action.closeAllEditors",
+    ];
+    for (const command of preLayoutCommands) {
       try {
         await vscode.commands.executeCommand(command);
-        codehydraApi.log.debug("Startup command executed", { command });
       } catch (err: unknown) {
         const error = err instanceof Error ? err.message : String(err);
-        codehydraApi.log.warn("Startup command failed", { command, error });
+        codehydraApi.log.warn("Layout command failed", { command, error });
+      }
+    }
+
+    // Open agent terminal if env vars and agent type are available
+    if (config.env !== null && config.agentType !== null) {
+      openAgentTerminal(config.agentType, config.env);
+    }
+
+    // Execute post-terminal layout commands
+    const postLayoutCommands = [
+      "codehydra.dictation.openPanel", // Open dictation tab in background (no-op if no API key)
+    ];
+    for (const command of postLayoutCommands) {
+      try {
+        await vscode.commands.executeCommand(command);
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err.message : String(err);
+        codehydraApi.log.warn("Layout command failed", { command, error });
       }
     }
 
@@ -499,6 +569,9 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 export function activate(context: vscode.ExtensionContext): { codehydra: typeof codehydraApi } {
   extensionContext = context;
 
+  // Set up terminal close listener for singleton management
+  setupTerminalCloseListener();
+
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.restartAgentServer", async () => {
       try {
@@ -550,9 +623,14 @@ export function deactivate(): void {
   }
   isConnected = false;
 
-  if (extensionContext) {
-    extensionContext.environmentVariableCollection.clear();
+  // Clean up terminal close listener
+  if (terminalCloseListener) {
+    terminalCloseListener.dispose();
+    terminalCloseListener = null;
   }
+
+  // Reset terminal reference (don't dispose - let VS Code handle it)
+  agentTerminal = null;
 
   if (debugOutputChannel) {
     debugOutputChannel.dispose();

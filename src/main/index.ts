@@ -47,12 +47,7 @@ import {
   CODE_SERVER_VERSION,
   OPENCODE_VERSION,
 } from "../services/binary-download";
-import {
-  AgentStatusManager,
-  getAgentSetupInfo,
-  type AgentType,
-  type AgentServerManager,
-} from "../agents";
+import { AgentStatusManager, type AgentType, type AgentServerManager } from "../agents";
 import { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import { PluginServer } from "../services/plugin-server";
@@ -339,7 +334,7 @@ async function startServices(): Promise<void> {
     loggingService.createLogger("app").info("PluginServer started", { port: pluginPort });
 
     // Wire up config data provider - called when workspace extension connects
-    // Provides environment variables and startup command for each workspace
+    // Provides environment variables and agent type for terminal launching
     pluginServer.onConfigData((workspacePath) => {
       // Get agent environment variables for terminal integration
       const env =
@@ -347,13 +342,11 @@ async function startServices(): Promise<void> {
           ?.getAgentStatusManager()
           ?.getEnvironmentVariables(workspacePath as import("../shared/ipc").WorkspacePath) ?? null;
 
-      // Get the agent startup command for this workspace (e.g., "opencode.openTerminal" or "claude-vscode.terminal.open")
-      // Note: appState may be null during early startup, in which case we fall back to default
-      const agentCommand = appState?.getAgentStartupCommand(
-        workspacePath as import("../shared/ipc").WorkspacePath
-      );
+      // Get the agent type for terminal launching
+      // Note: appState may be null during early startup
+      const agentType = appState?.getAgentType() ?? null;
 
-      return { env, agentCommand };
+      return { env, agentType };
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -742,13 +735,6 @@ async function bootstrap(): Promise<void> {
     const currentConfig = await configServiceRef.load();
     const currentAgentType: AgentType = currentConfig.agent ?? "opencode";
 
-    const agentSetupInfo = getAgentSetupInfo(currentAgentType, {
-      fileSystem: fileSystemLayer,
-      httpClient: networkLayerForSetup,
-      platform: platformInfo.platform as "darwin" | "linux" | "win32",
-      arch: platformInfo.arch,
-    });
-
     return new VscodeSetupService(
       processRunnerRef,
       pathProvider,
@@ -756,7 +742,7 @@ async function bootstrap(): Promise<void> {
       platformInfo,
       binaryDownloadService,
       loggingService.createLogger("vscode-setup"),
-      agentSetupInfo.extensionId,
+      undefined, // Agent extension ID no longer used
       currentAgentType // Pass agent binary type for download operations
     );
   };

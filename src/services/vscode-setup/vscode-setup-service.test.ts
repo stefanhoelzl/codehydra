@@ -56,16 +56,14 @@ function createBinAssetsEntries() {
     "/mock/assets/bin": directory(),
     "/mock/assets/bin/code": file("#!/bin/sh\nexec code-server"),
     "/mock/assets/bin/code.cmd": file("@echo off\ncall code-server"),
-    "/mock/assets/bin/opencode": file("#!/bin/sh\nexec opencode.cjs"),
-    "/mock/assets/bin/opencode.cmd": file("@echo off\ncall opencode.cjs"),
-    "/mock/assets/bin/opencode.cjs": file("// opencode wrapper"),
+    "/mock/assets/bin/ch-opencode": file("#!/bin/sh\nexec ch-opencode.cjs"),
+    "/mock/assets/bin/ch-opencode.cmd": file("@echo off\ncall ch-opencode.cjs"),
+    "/mock/assets/bin/ch-opencode.cjs": file("// opencode wrapper"),
   };
 }
 
 /**
  * Create default mock manifest.json content (bundled extensions only).
- * Note: Agent extensions (opencode, claude) are installed from marketplace,
- * not bundled. They are handled via agentExtensionId parameter.
  */
 function createManifestConfig(): string {
   return JSON.stringify([
@@ -79,7 +77,6 @@ function createManifestConfig(): string {
 
 /**
  * Create a preflight result for full setup (all components missing).
- * Note: Agent extensions are included in missingExtensions when agentExtensionId is set.
  */
 function createFullSetupPreflightResult(): {
   success: true;
@@ -316,54 +313,6 @@ describe("VscodeSetupService", () => {
       expect(progressMessages).toContain("Installing codehydra.sidekick...");
     });
 
-    it("installs agent extension from marketplace when agentExtensionId is set", async () => {
-      mockFs = createFileSystemMock({
-        entries: {
-          "/mock/assets/manifest.json": file(createManifestConfig()),
-          "/mock/assets/codehydra-sidekick-0.0.3.vsix": file("vsix-content"),
-          "/mock/vscode": directory(),
-        },
-      });
-      mockProcessRunner = createMockProcessRunner({
-        defaultResult: { stdout: "Extension installed", stderr: "", exitCode: 0 },
-      });
-      const progressCallback = vi.fn();
-
-      // Create service with agentExtensionId
-      const service = new VscodeSetupService(
-        mockProcessRunner,
-        mockPathProvider,
-        mockFs,
-        mockPlatformInfo,
-        undefined, // no binary download service
-        undefined, // no logger
-        "sst-dev.opencode" // agent extension ID
-      );
-
-      // Preflight includes agent extension in missingExtensions
-      await service.installExtensions(progressCallback, ["codehydra.sidekick", "sst-dev.opencode"]);
-
-      // Verify bundled extension installed from extensionsRuntimeDir
-      // And agent extension installed from marketplace by ID
-      expect(mockProcessRunner).toHaveSpawned([
-        {
-          args: expect.arrayContaining([
-            new Path("/mock/assets", "codehydra-sidekick-0.0.3.vsix").toNative(),
-          ]),
-        },
-        {
-          args: expect.arrayContaining(["--install-extension", "sst-dev.opencode"]),
-        },
-      ]);
-
-      // Verify progress messages include agent extension
-      const progressMessages = progressCallback.mock.calls.map(
-        (call) => (call[0] as { message: string }).message
-      );
-      expect(progressMessages).toContain("Installing codehydra.sidekick...");
-      expect(progressMessages).toContain("Installing sst-dev.opencode...");
-    });
-
     it("returns error on non-zero exit code", async () => {
       mockFs = createFileSystemMock({
         entries: {
@@ -571,10 +520,10 @@ describe("VscodeSetupService", () => {
       );
       await service.setupBinDirectory();
 
-      // Should call makeExecutable for each Unix script (code, opencode)
+      // Should call makeExecutable for each Unix script (code, ch-opencode)
       // Note: .cjs and .cmd files are not made executable
       expect(mockFs).toBeExecutable("/mock/bin/code");
-      expect(mockFs).toBeExecutable("/mock/bin/opencode");
+      expect(mockFs).toBeExecutable("/mock/bin/ch-opencode");
     });
 
     it("does not call makeExecutable on Windows scripts (.cmd)", async () => {

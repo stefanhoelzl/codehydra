@@ -23,11 +23,6 @@ import type { Logger } from "../../services/logging";
  * Implements AgentProvider interface for use in the agent abstraction layer.
  */
 export class OpenCodeProvider implements AgentProvider, IDisposable {
-  /**
-   * VS Code commands to execute on workspace activation.
-   */
-  readonly startupCommands = ["opencode.openTerminal"] as const;
-
   private client: OpenCodeClient | null = null;
   private clientStatus: ClientStatus = "idle";
   private readonly sdkFactory: SdkClientFactory | undefined;

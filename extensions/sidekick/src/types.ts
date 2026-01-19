@@ -28,10 +28,13 @@ export interface CommandRequest {
   readonly args?: readonly unknown[];
 }
 
+/** Agent type for terminal launching */
+export type AgentType = "opencode" | "claude";
+
 export interface PluginConfig {
   readonly isDevelopment: boolean;
   readonly env: Record<string, string> | null;
-  readonly startupCommands: readonly string[];
+  readonly agentType: AgentType | null;
 }
 
 export interface SetMetadataRequest {

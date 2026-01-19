@@ -1115,8 +1115,8 @@ describe("AppState", () => {
     });
   });
 
-  describe("getAgentStartupCommand", () => {
-    it("returns default command when agentStatusManager is not set", async () => {
+  describe("getAgentType", () => {
+    it("returns configured agent type for claude", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
@@ -1129,14 +1129,10 @@ describe("AppState", () => {
         MOCK_WRAPPER_PATH
       );
 
-      // Without agentStatusManager set, should return default
-      const command = appState.getAgentStartupCommand(
-        "/project/.worktrees/feature-1" as import("../shared/ipc").WorkspacePath
-      );
-      expect(command).toBe("opencode.openTerminal");
+      expect(appState.getAgentType()).toBe("claude");
     });
 
-    it("returns default command when provider not found", async () => {
+    it("returns configured agent type for opencode", () => {
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
@@ -1144,87 +1140,12 @@ describe("AppState", () => {
         8080,
         mockFileSystemLayer,
         mockLoggingService,
-        "claude",
+        "opencode",
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
 
-      // Create a mock AgentStatusManager
-      const mockAgentStatusManager = {
-        getProvider: vi.fn().mockReturnValue(undefined),
-        addProvider: vi.fn(),
-        hasProvider: vi.fn(),
-        removeWorkspace: vi.fn(),
-        disconnectWorkspace: vi.fn(),
-        reconnectWorkspace: vi.fn(),
-        markActive: vi.fn(),
-        clearTuiTracking: vi.fn(),
-        onStatusChanged: vi.fn(),
-        dispose: vi.fn(),
-        getLogger: vi.fn(),
-        getSdkFactory: vi.fn(),
-      };
-      appState.setAgentStatusManager(
-        mockAgentStatusManager as unknown as import("../agents").AgentStatusManager
-      );
-
-      // Provider not found, should return default
-      const command = appState.getAgentStartupCommand(
-        "/project/.worktrees/feature-1" as import("../shared/ipc").WorkspacePath
-      );
-      expect(command).toBe("opencode.openTerminal");
-    });
-
-    it("returns provider startup command when provider found", async () => {
-      const appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager as unknown as IViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-
-      // Create a mock provider with startupCommands
-      const mockProvider = {
-        startupCommands: ["claude-vscode.terminal.open"] as readonly string[],
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        reconnect: vi.fn(),
-        onStatusChange: vi.fn(),
-        getSession: vi.fn(),
-        getEnvironmentVariables: vi.fn(),
-        markActive: vi.fn(),
-        dispose: vi.fn(),
-      };
-
-      // Create a mock AgentStatusManager that returns the provider
-      const mockAgentStatusManager = {
-        getProvider: vi.fn().mockReturnValue(mockProvider),
-        addProvider: vi.fn(),
-        hasProvider: vi.fn(),
-        removeWorkspace: vi.fn(),
-        disconnectWorkspace: vi.fn(),
-        reconnectWorkspace: vi.fn(),
-        markActive: vi.fn(),
-        clearTuiTracking: vi.fn(),
-        onStatusChanged: vi.fn(),
-        dispose: vi.fn(),
-        getLogger: vi.fn(),
-        getSdkFactory: vi.fn(),
-      };
-      appState.setAgentStatusManager(
-        mockAgentStatusManager as unknown as import("../agents").AgentStatusManager
-      );
-
-      // Provider found, should return provider's startup command
-      const command = appState.getAgentStartupCommand(
-        "/project/.worktrees/feature-1" as import("../shared/ipc").WorkspacePath
-      );
-      expect(command).toBe("claude-vscode.terminal.open");
+      expect(appState.getAgentType()).toBe("opencode");
     });
   });
 });

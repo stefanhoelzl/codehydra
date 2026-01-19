@@ -131,6 +131,9 @@ export interface ApiCallHandlers {
   create(workspacePath: string, request: WorkspaceCreateRequest): Promise<PluginResult<Workspace>>;
 }
 
+/** Agent type for terminal launching */
+type AgentType = "opencode" | "claude";
+
 /**
  * Provider for config data sent to extensions on connection.
  * Called when a workspace connects to get its startup configuration.
@@ -139,49 +142,12 @@ export interface ConfigDataProvider {
   /**
    * Get config data for a workspace.
    * @param workspacePath - Normalized workspace path
-   * @returns Config data including env vars and agent command for startup
+   * @returns Config data including env vars and agent type for terminal launching
    */
   (workspacePath: string): {
     env: Record<string, string> | null;
-    agentCommand: string | undefined;
+    agentType: AgentType | null;
   };
-}
-
-// ============================================================================
-// Startup Commands
-// ============================================================================
-
-/**
- * Default agent command used when none is specified.
- * Falls back to OpenCode terminal command for backward compatibility.
- */
-const DEFAULT_AGENT_COMMAND = "opencode.openTerminal";
-
-/**
- * VS Code commands sent to each workspace on extension connection.
- *
- * These commands configure the workspace layout:
- * - Close sidebars to maximize editor space
- * - Open agent tab for AI workflow (OpenCode or Claude Code)
- * - Close all other editors to show only the agent
- * - Hide the terminal panel
- * - Open dictation panel in background (no-op if not configured)
- *
- * @param agentCommand - The VS Code command to open the agent tab
- * @returns Array of VS Code commands to execute
- */
-function getStartupCommands(agentCommand: string = DEFAULT_AGENT_COMMAND): readonly string[] {
-  return [
-    "workbench.action.closeSidebar", // Hide left sidebar to maximize editor
-    "workbench.action.closeAuxiliaryBar", // Hide right sidebar (auxiliary bar)
-    agentCommand,
-    "workbench.action.closeOtherEditors", // Close other editors in current group
-    "workbench.action.closeEditorsInOtherGroups", // Close editors in other groups
-    "workbench.action.unlockEditorGroup", // Unlock editor group for tab reuse
-    "workbench.action.editorLayoutSingle",
-    "codehydra.dictation.openPanel", // Open dictation tab in background (no-op if no API key)
-    "workbench.action.terminal.focus",
-  ];
 }
 
 // ============================================================================
@@ -591,12 +557,12 @@ export class PluginServer {
 
       // Get config data from provider
       let env: Record<string, string> | null = null;
-      let startupCommands: readonly string[] = getStartupCommands();
+      let agentType: AgentType | null = null;
       if (this.configDataProvider) {
         try {
           const configData = this.configDataProvider(workspacePath);
           env = configData.env;
-          startupCommands = getStartupCommands(configData.agentCommand);
+          agentType = configData.agentType;
         } catch (error) {
           this.logger.error("Config data provider error", {
             workspace: workspacePath,
@@ -609,14 +575,14 @@ export class PluginServer {
       const config: PluginConfig = {
         isDevelopment: this.isDevelopment,
         env,
-        startupCommands,
+        agentType,
       };
       socket.emit("config", config);
       this.logger.debug("Config sent", {
         workspace: workspacePath,
         isDevelopment: this.isDevelopment,
         hasEnv: env !== null,
-        startupCommandCount: startupCommands.length,
+        agentType,
       });
 
       // Handle disconnection
