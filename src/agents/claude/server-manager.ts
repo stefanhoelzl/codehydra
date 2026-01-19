@@ -128,8 +128,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.logger = deps.logger;
 
     // Default hook handler path uses runtime dir (outside ASAR in production)
+    // Use toString() for POSIX-style paths - works on all platforms including Windows
     this.hookHandlerPath =
-      deps.config?.hookHandlerPath ?? this.pathProvider.claudeCodeHookHandlerPath.toNative();
+      deps.config?.hookHandlerPath ?? this.pathProvider.claudeCodeHookHandlerPath.toString();
   }
 
   /**
