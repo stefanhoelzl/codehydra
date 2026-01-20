@@ -1052,6 +1052,31 @@ interface BlockingProcess {
 
 ---
 
+## Environment Variables
+
+CodeHydra sets environment variables in workspace terminals for integration with extensions and tools.
+
+### General Variables
+
+| Variable                | Description                                            |
+| ----------------------- | ------------------------------------------------------ |
+| `CODEHYDRA_PLUGIN_PORT` | Socket.IO plugin server port for WebSocket connections |
+
+### Claude Provider Variables
+
+These variables are set when using the Claude agent provider.
+
+| Variable                        | Description                                                                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CODEHYDRA_CLAUDE_SETTINGS`     | Path to hooks configuration file                                                                                                                |
+| `CODEHYDRA_CLAUDE_MCP_CONFIG`   | Path to MCP configuration file                                                                                                                  |
+| `CODEHYDRA_BRIDGE_PORT`         | HTTP bridge server port for hook notifications                                                                                                  |
+| `CODEHYDRA_MCP_PORT`            | Main MCP server port                                                                                                                            |
+| `CODEHYDRA_WORKSPACE_PATH`      | Absolute path to the workspace directory                                                                                                        |
+| `CODEHYDRA_INITIAL_PROMPT_FILE` | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper. |
+
+---
+
 ## Source Files
 
 | Purpose              | File                                     |

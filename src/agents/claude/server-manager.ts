@@ -31,6 +31,7 @@ import {
 } from "./types";
 import hooksConfigTemplate from "./hooks.template.json";
 import mcpConfigTemplate from "./mcp.template.json";
+import type { NormalizedInitialPrompt } from "../../shared/api/types";
 
 /**
  * Per-workspace state tracked by the server manager.
@@ -44,6 +45,8 @@ export interface WorkspaceState {
   statusCallbacks: Set<(status: AgentStatus) => void>;
   /** Flag set after PermissionRequest, cleared on PreToolUse */
   awaitingPermissionResolution?: boolean;
+  /** Path to the initial prompt file (for getInitialPromptPath) */
+  initialPromptPath?: Path;
 }
 
 /**
@@ -384,6 +387,73 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    */
   getMcpConfig(): McpConfig | null {
     return this.mcpConfig;
+  }
+
+  /**
+   * Set the initial prompt for a workspace.
+   * Creates a temp directory and writes the prompt config to a JSON file.
+   * The wrapper script will read and delete this file on first invocation.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @param config - Normalized initial prompt configuration
+   */
+  async setInitialPrompt(workspacePath: string, config: NormalizedInitialPrompt): Promise<void> {
+    const normalizedPath = new Path(workspacePath).toString();
+    const state = this.workspaces.get(normalizedPath);
+
+    if (!state) {
+      this.logger.warn("setInitialPrompt called for unknown workspace", {
+        workspacePath: normalizedPath,
+      });
+      return;
+    }
+
+    try {
+      // Create temp directory for the initial prompt file
+      const tempDir = await this.fileSystem.mkdtemp("codehydra-initial-prompt-");
+
+      // Build JSON content - extract modelID from model if present
+      const jsonContent: { prompt: string; model?: string; agent?: string } = {
+        prompt: config.prompt,
+      };
+      if (config.model !== undefined) {
+        jsonContent.model = config.model.modelID;
+      }
+      if (config.agent !== undefined) {
+        jsonContent.agent = config.agent;
+      }
+
+      // Write the initial prompt file
+      const promptFilePath = new Path(tempDir, "initial-prompt.json");
+      await this.fileSystem.writeFile(promptFilePath, JSON.stringify(jsonContent, null, 2));
+
+      // Store the path for later retrieval
+      state.initialPromptPath = promptFilePath;
+
+      this.logger.info("Initial prompt file created", {
+        workspacePath: normalizedPath,
+        path: promptFilePath.toString(),
+      });
+    } catch (error) {
+      this.logger.error(
+        "Failed to create initial prompt file",
+        { workspacePath: normalizedPath },
+        error instanceof Error ? error : undefined
+      );
+      // Don't throw - initial prompt is optional, workspace should still work
+    }
+  }
+
+  /**
+   * Get the path to the initial prompt file for a workspace.
+   * Returns undefined if no initial prompt was set.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @returns Path to the initial prompt file, or undefined
+   */
+  getInitialPromptPath(workspacePath: string): Path | undefined {
+    const normalizedPath = new Path(workspacePath).toString();
+    return this.workspaces.get(normalizedPath)?.initialPromptPath;
   }
 
   /**

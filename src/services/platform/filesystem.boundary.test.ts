@@ -639,4 +639,32 @@ describe("DefaultFileSystemLayer", () => {
       }
     });
   });
+
+  describe("mkdtemp", () => {
+    it("creates unique temporary directory with prefix", async () => {
+      const result = await fs.mkdtemp("initial-prompt-");
+
+      // Verify directory was created
+      const entries = await fs.readdir(result);
+      expect(entries).toEqual([]);
+
+      // Verify path contains prefix
+      expect(result.toString()).toContain("initial-prompt-");
+
+      // Cleanup
+      await fs.rm(result, { recursive: true, force: true });
+    });
+
+    it("creates directories with unique paths", async () => {
+      const result1 = await fs.mkdtemp("test-");
+      const result2 = await fs.mkdtemp("test-");
+
+      // Verify paths are different
+      expect(result1.toString()).not.toBe(result2.toString());
+
+      // Cleanup
+      await fs.rm(result1, { recursive: true, force: true });
+      await fs.rm(result2, { recursive: true, force: true });
+    });
+  });
 });

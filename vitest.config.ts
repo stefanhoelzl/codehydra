@@ -54,6 +54,7 @@ export default defineConfig({
             "src/shared/**/*.{test,spec}.{js,ts}",
             "src/preload/**/*.{test,spec}.{js,ts}",
             "src/bin/**/*.{test,spec}.{js,ts}",
+            "src/agents/**/*.{test,spec}.{js,ts}",
           ],
           exclude: ["**/*.boundary.test.{js,ts}"],
           setupFiles: ["./src/test/setup.ts", "./src/test/setup-matchers.ts"],
@@ -70,6 +71,7 @@ export default defineConfig({
           include: [
             "src/main/**/*.boundary.test.{js,ts}",
             "src/services/**/*.boundary.test.{js,ts}",
+            "src/agents/**/*.boundary.test.{js,ts}",
           ],
           setupFiles: ["./src/test/setup.ts", "./src/test/setup-matchers.ts"],
           pool: "forks",
