@@ -1069,6 +1069,139 @@ it("should switch workspace", async () => {
 
 ---
 
+## Test Anti-Patterns
+
+These patterns lead to fragile tests, unclear failures, or maintenance burden. Avoid them.
+
+### Rule 1: No Reset → beforeEach Creates
+
+**Current pattern (problematic):**
+
+```typescript
+const { mockGit } = vi.hoisted(() => ({
+  mockGit: { createWorktree: vi.fn() }
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();  // Reset shared mocks
+  mockGit.createWorktree.mockResolvedValue({...});
+});
+```
+
+**New pattern:**
+
+```typescript
+beforeEach(() => {
+  // Create fresh mocks each test - no reset needed
+  gitClient = createMockGitClient({
+    repositories: { "/project": { branches: ["main"] } },
+  });
+});
+```
+
+**Rationale:** Fresh mocks per test eliminate state leakage and make tests more predictable. If you need to reset, you're sharing state.
+
+---
+
+### Rule 2: No Direct State Access for Assertions
+
+**Current pattern (problematic):**
+
+```typescript
+expect(mock.$.entries.has("/data/config.json")).toBe(true);
+expect(mock.$.sessions.size).toBe(2);
+```
+
+**New pattern:**
+
+```typescript
+expect(mock).toHaveFile("/data/config.json");
+expect(mock).toHaveSession("ses-0001");
+expect(mock).toHaveSession("ses-0002");
+```
+
+**Rationale:** Custom matchers provide better error messages, encapsulate state structure, and are more resilient to mock implementation changes. The `$` property is for triggering actions (like `$.emitEvent()`), not for assertions.
+
+---
+
+### Rule 3: No Tests for Test Infrastructure
+
+**Rule:** Do not write tests specifically for mock implementations, test helpers, or test utilities.
+
+**Rationale:**
+
+- Mocks are validated indirectly through the integration tests that use them
+- Boundary tests define the contracts mocks must follow
+- Testing test infrastructure is self-referential and adds maintenance burden
+
+**Exception:** If a helper function has complex logic (like `createTestGitRepo`), it may warrant focused tests.
+
+---
+
+### Rule 4: Use Factory Functions, Not Setup Methods
+
+**Current pattern (problematic):**
+
+```typescript
+let mock: MockGitClient;
+
+beforeEach(() => {
+  mock = createMockGitClient();
+  mock.addRepository("/project"); // Setup method
+  mock.setBranches(["main", "dev"]); // Setup method
+  mock.setCurrentBranch("main"); // Setup method
+});
+```
+
+**New pattern:**
+
+```typescript
+beforeEach(() => {
+  mock = createMockGitClient({
+    repositories: {
+      "/project": {
+        branches: ["main", "dev"],
+        currentBranch: "main",
+      },
+    },
+  });
+});
+```
+
+**Rationale:** Factory functions with configuration objects are:
+
+- Declarative (describe desired state, not steps to reach it)
+- Immutable (can't accidentally modify after creation)
+- Self-documenting (all config visible at once)
+- Easier to compose (spread options, merge configs)
+
+---
+
+### Rule 5: Explicit Expectations, Not Call Counts
+
+**Current pattern (problematic):**
+
+```typescript
+expect(mockServer.stop).toHaveBeenCalledTimes(1);
+expect(mockApi.fetch).toHaveBeenCalledTimes(3);
+```
+
+**New pattern:**
+
+```typescript
+expect(mockServer).toBeStopped();
+expect(runner).toHaveSpawned([{ command: "code-server", cwd: "/workspace" }]);
+```
+
+**Rationale:**
+
+- Call counts verify implementation, not behavior
+- "Called 3 times" doesn't explain _why_ 3 times
+- Explicit matchers verify the actual outcome
+- Tests are more resilient to refactoring (e.g., batching calls)
+
+---
+
 ## Efficient Coverage Workflow
 
 For AI agent implementation work, use efficient coverage instead of strict TDD.
