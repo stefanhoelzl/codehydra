@@ -85,6 +85,18 @@ export interface FileSystemMockState extends MockState {
   readonly entries: ReadonlyMap<string, Entry>;
 
   /**
+   * Counter for generating unique mkdtemp paths.
+   * Increments with each mkdtemp call for deterministic unique paths.
+   */
+  readonly mkdtempCounter: number;
+
+  /**
+   * If set to true, mkdtemp will throw an error.
+   * Useful for testing error handling in code that uses mkdtemp.
+   */
+  mkdtempShouldFail: boolean;
+
+  /**
    * Set an entry in the filesystem.
    * Normalizes the path and auto-creates parent directories.
    * This is a test helper - it does NOT follow real filesystem semantics.
@@ -229,6 +241,8 @@ function getParentPath(normalizedPath: string): string | null {
 
 class FileSystemMockStateImpl implements FileSystemMockState {
   private readonly _entries: Map<string, Entry>;
+  private _mkdtempCounter: number = 0;
+  mkdtempShouldFail: boolean = false;
 
   constructor(initialEntries?: Map<string, Entry>) {
     this._entries = new Map(initialEntries);
@@ -236,6 +250,14 @@ class FileSystemMockStateImpl implements FileSystemMockState {
 
   get entries(): ReadonlyMap<string, Entry> {
     return this._entries;
+  }
+
+  get mkdtempCounter(): number {
+    return this._mkdtempCounter;
+  }
+
+  incrementMkdtempCounter(): number {
+    return this._mkdtempCounter++;
   }
 
   setEntry(path: string | Path, entry: Entry): void {
@@ -680,6 +702,19 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
 
       (state as FileSystemMockStateImpl)["_entries"].delete(srcPath);
     },
+
+    async mkdtemp(prefix: string): Promise<Path> {
+      // Check if mkdtemp should fail (for error handling tests)
+      if ((state as FileSystemMockStateImpl).mkdtempShouldFail) {
+        throw new FileSystemError("EACCES", "/tmp", "Mock mkdtemp failure: permission denied");
+      }
+
+      // Generate unique path using counter
+      const counter = (state as FileSystemMockStateImpl).incrementMkdtempCounter();
+      const tempPath = `/tmp/${prefix}${counter.toString(16).padStart(6, "0")}`;
+      state.setEntry(tempPath, directory());
+      return new Path(tempPath);
+    },
   };
 
   return Object.assign(layer, { $: state });
@@ -948,6 +983,7 @@ export interface SpyFileSystemLayer extends FileSystemLayer {
   writeFileBuffer: Mock<FileSystemLayer["writeFileBuffer"]>;
   symlink: Mock<FileSystemLayer["symlink"]>;
   rename: Mock<FileSystemLayer["rename"]>;
+  mkdtemp: Mock<FileSystemLayer["mkdtemp"]>;
   /** State access for behavioral mock */
   $: FileSystemMockState;
 }
@@ -984,6 +1020,7 @@ export function createSpyFileSystemLayer(options?: MockFileSystemOptions): SpyFi
     writeFileBuffer: vi.fn(mock.writeFileBuffer.bind(mock)),
     symlink: vi.fn(mock.symlink.bind(mock)),
     rename: vi.fn(mock.rename.bind(mock)),
+    mkdtemp: vi.fn(mock.mkdtemp.bind(mock)),
     $: mock.$,
   } as SpyFileSystemLayer;
 }

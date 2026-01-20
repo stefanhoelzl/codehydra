@@ -256,6 +256,20 @@ export interface FileSystemLayer {
    * await fs.rename('/path/to/file.tmp', '/path/to/file');
    */
   rename(oldPath: PathLike, newPath: PathLike): Promise<void>;
+
+  /**
+   * Create a unique temporary directory.
+   * The directory is created inside the system temp directory.
+   *
+   * @param prefix - Prefix string to use for the directory name
+   * @returns Path to the newly created temporary directory
+   * @throws FileSystemError with code EACCES if permission denied
+   *
+   * @example Create temp dir for initial prompt
+   * const tempDir = await fs.mkdtemp('initial-prompt-');
+   * // tempDir might be /tmp/initial-prompt-abc123
+   */
+  mkdtemp(prefix: string): Promise<Path>;
 }
 
 // ============================================================================
@@ -559,6 +573,24 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       this.logger.warn("Rename failed", {
         oldPath: nativeOldPath,
         newPath: nativeNewPath,
+        code: fsError.fsCode,
+        error: fsError.message,
+      });
+      throw fsError;
+    }
+  }
+
+  async mkdtemp(prefix: string): Promise<Path> {
+    this.logger.debug("Mkdtemp", { prefix });
+    try {
+      const tmpDir = await import("node:os").then((os) => os.tmpdir());
+      const created = await fs.mkdtemp(`${tmpDir}/${prefix}`);
+      this.logger.debug("Mkdtemp created", { path: created });
+      return new Path(created);
+    } catch (error) {
+      const fsError = mapError(error, prefix);
+      this.logger.warn("Mkdtemp failed", {
+        prefix,
         code: fsError.fsCode,
         error: fsError.message,
       });

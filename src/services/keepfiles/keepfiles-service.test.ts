@@ -157,6 +157,7 @@ describe("KeepFilesService", () => {
           makeExecutable: vi.fn(),
           symlink: vi.fn(),
           rename: vi.fn(),
+          mkdtemp: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -227,6 +228,7 @@ describe("KeepFilesService", () => {
           makeExecutable: vi.fn(),
           symlink: vi.fn(),
           rename: vi.fn(),
+          mkdtemp: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -266,6 +268,7 @@ describe("KeepFilesService", () => {
           makeExecutable: vi.fn(),
           symlink: vi.fn(),
           rename: vi.fn(),
+          mkdtemp: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
@@ -300,6 +303,7 @@ describe("KeepFilesService", () => {
           makeExecutable: vi.fn(),
           symlink: vi.fn(),
           rename: vi.fn(),
+          mkdtemp: vi.fn(),
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 

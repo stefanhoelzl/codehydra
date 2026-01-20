@@ -15,6 +15,7 @@ import {
 } from "../platform/filesystem.state-mock";
 import { FileSystemError } from "../errors";
 import type { FileSystemLayer, PathLike, MkdirOptions, RmOptions } from "../platform/filesystem";
+import { Path } from "../platform/path";
 
 /** Convert PathLike to string for testing */
 const pathString = (p: PathLike): string => (typeof p === "string" ? p : p.toString());
@@ -49,6 +50,7 @@ function createTrackingMock(
     writeFileBuffer: vi.fn(async () => {}),
     symlink: vi.fn(async () => {}),
     rename: vi.fn(async () => {}),
+    mkdtemp: vi.fn(async () => new Path("/tmp/test-000000")),
   };
 }
 

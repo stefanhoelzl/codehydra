@@ -14,6 +14,7 @@ import type { ProcessRunner } from "../services/platform/process";
 import type { PortManager, HttpClient } from "../services/platform/network";
 import type { PathProvider } from "../services/platform/path-provider";
 import type { Logger } from "../services/logging";
+import type { NormalizedInitialPrompt } from "../shared/api/types";
 
 // Re-export AggregatedAgentStatus from shared/ipc (single source of truth)
 export type { AggregatedAgentStatus, InternalAgentCounts } from "../shared/ipc";
@@ -125,6 +126,16 @@ export interface AgentServerManager {
 
   /** Callback when server stops */
   onServerStopped(callback: (workspacePath: string, ...args: unknown[]) => void): () => void;
+
+  /**
+   * Set the initial prompt for a workspace.
+   * Optional - only Claude Code implements this method.
+   * Should be called after startServer() but before the workspace view is created.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @param config - Normalized initial prompt configuration
+   */
+  setInitialPrompt?(workspacePath: string, config: NormalizedInitialPrompt): Promise<void>;
 
   /** Dispose the manager, stopping all servers */
   dispose(): Promise<void>;
