@@ -78,38 +78,38 @@ const TEST_WORKSPACE: Workspace = {
 // =============================================================================
 
 describe("formatWindowTitle", () => {
-  it("formats title with project, workspace, and dev branch", () => {
+  it("formats title with project, workspace, and version", () => {
     const title = formatWindowTitle("my-app", "feature-login", "main");
 
     expect(title).toBe("CodeHydra - my-app / feature-login - (main)");
   });
 
-  it("formats title with project and workspace, no dev branch", () => {
+  it("formats title with project and workspace, no version", () => {
     const title = formatWindowTitle("my-app", "feature-login", undefined);
 
     expect(title).toBe("CodeHydra - my-app / feature-login");
   });
 
-  it("formats title with only dev branch when no workspace", () => {
+  it("formats title with only version when no workspace", () => {
     const title = formatWindowTitle(undefined, undefined, "main");
 
     expect(title).toBe("CodeHydra - (main)");
   });
 
-  it("formats title as plain CodeHydra when no workspace and no dev branch", () => {
+  it("formats title as plain CodeHydra when no workspace and no version", () => {
     const title = formatWindowTitle(undefined, undefined, undefined);
 
     expect(title).toBe("CodeHydra");
   });
 
-  it("formats title without project name (uses only dev branch)", () => {
+  it("formats title without project name (uses only version)", () => {
     // Edge case: workspace name provided but no project name
     const title = formatWindowTitle(undefined, "feature", "main");
 
     expect(title).toBe("CodeHydra - (main)");
   });
 
-  it("formats title without workspace name (uses only dev branch)", () => {
+  it("formats title without workspace name (uses only version)", () => {
     // Edge case: project name provided but no workspace name
     const title = formatWindowTitle("my-app", undefined, "main");
 
@@ -233,7 +233,7 @@ describe("wireApiEvents", () => {
       wireApiEvents(mockApi, () => mockWebContents as never, {
         setTitle: mockSetTitle,
         defaultTitle: "CodeHydra - (main)",
-        devBranch: "main",
+        version: "main",
         getProjectName: () => "my-project",
       });
 
@@ -251,7 +251,7 @@ describe("wireApiEvents", () => {
       wireApiEvents(mockApi, () => mockWebContents as never, {
         setTitle: mockSetTitle,
         defaultTitle: "CodeHydra - (main)",
-        devBranch: "main",
+        version: "main",
         getProjectName: () => "my-project",
       });
 
@@ -265,7 +265,7 @@ describe("wireApiEvents", () => {
       wireApiEvents(mockApi, () => mockWebContents as never, {
         setTitle: mockSetTitle,
         defaultTitle: "CodeHydra - (dev)",
-        devBranch: "dev",
+        version: "dev",
         getProjectName: () => undefined, // Project not found
       });
 
@@ -276,15 +276,15 @@ describe("wireApiEvents", () => {
         path: "/home/user/.worktrees/feature-x",
       });
 
-      // Without project name, falls back to just dev branch
+      // Without project name, falls back to just version
       expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - (dev)");
     });
 
-    it("formats title without dev branch in production", () => {
+    it("formats title without version in production", () => {
       wireApiEvents(mockApi, () => mockWebContents as never, {
         setTitle: mockSetTitle,
         defaultTitle: "CodeHydra",
-        // No devBranch - production mode
+        // No version - production mode without version display
         getProjectName: () => "my-project",
       });
 

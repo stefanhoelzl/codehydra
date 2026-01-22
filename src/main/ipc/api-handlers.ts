@@ -21,8 +21,8 @@ export interface TitleConfig {
   setTitle: (title: string) => void;
   /** Default title (used when no workspace active) */
   defaultTitle: string;
-  /** Dev branch name (from buildInfo.gitBranch), undefined in production */
-  devBranch?: string;
+  /** Version suffix for title (branch in dev mode, version in packaged mode) */
+  version?: string;
   /** Function to resolve project name from workspace path */
   getProjectName: (workspacePath: string) => string | undefined;
 }
@@ -30,27 +30,27 @@ export interface TitleConfig {
 /**
  * Formats the window title based on current workspace.
  *
- * Format: "CodeHydra - <project> / <workspace> - (<devBranch>)"
- * No workspace: "CodeHydra - (<devBranch>)" or "CodeHydra"
+ * Format: "CodeHydra - <project> / <workspace> - (<version>)"
+ * No workspace: "CodeHydra - (<version>)" or "CodeHydra"
  *
  * @param projectName - Name of the active project, or undefined
  * @param workspaceName - Name of the active workspace, or undefined
- * @param devBranch - Development branch name (from buildInfo.gitBranch), or undefined
+ * @param version - Version suffix (branch in dev mode, version in packaged mode), or undefined
  * @returns Formatted window title
  */
 export function formatWindowTitle(
   projectName: string | undefined,
   workspaceName: string | undefined,
-  devBranch?: string
+  version?: string
 ): string {
   const base = "CodeHydra";
-  const devSuffix = devBranch ? ` - (${devBranch})` : "";
+  const versionSuffix = version ? ` - (${version})` : "";
 
   if (projectName && workspaceName) {
-    return `${base} - ${projectName} / ${workspaceName}${devSuffix}`;
+    return `${base} - ${projectName} / ${workspaceName}${versionSuffix}`;
   }
 
-  return `${base}${devSuffix}`;
+  return `${base}${versionSuffix}`;
 }
 
 // =============================================================================
@@ -123,7 +123,7 @@ export function wireApiEvents(
       if (titleConfig) {
         if (event) {
           const projectName = titleConfig.getProjectName(event.path);
-          const title = formatWindowTitle(projectName, event.workspaceName, titleConfig.devBranch);
+          const title = formatWindowTitle(projectName, event.workspaceName, titleConfig.version);
           titleConfig.setTitle(title);
         } else {
           titleConfig.setTitle(titleConfig.defaultTitle);

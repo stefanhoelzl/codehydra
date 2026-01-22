@@ -478,8 +478,11 @@ async function startServices(): Promise<void> {
     wirePluginApi(pluginServer, codeHydraApi, appState, loggingService.createLogger("plugin"));
   }
 
+  // Title suffix: branch in dev mode, version in packaged mode
+  const titleSuffix = buildInfo.gitBranch ?? buildInfo.version;
+
   // Default window title (used when no workspace is active)
-  const defaultTitle = formatWindowTitle(undefined, undefined, buildInfo.gitBranch);
+  const defaultTitle = formatWindowTitle(undefined, undefined, titleSuffix);
 
   // Capture references for closures (TypeScript narrow refinement doesn't persist)
   const windowManagerRef = windowManager;
@@ -490,7 +493,7 @@ async function startServices(): Promise<void> {
   apiEventCleanup = wireApiEvents(codeHydraApi, () => viewManager?.getUIWebContents() ?? null, {
     setTitle: (title) => windowManagerRef?.setTitle(title),
     defaultTitle,
-    ...(buildInfo.gitBranch && { devBranch: buildInfo.gitBranch }),
+    ...(titleSuffix && { version: titleSuffix }),
     getProjectName: (workspacePath) => {
       const project = appStateRef?.findProjectForWorkspace(workspacePath);
       return project?.name;
@@ -655,7 +658,7 @@ async function startServices(): Promise<void> {
       // so renderer will get correct state via getActiveWorkspace() on mount)
       const projectName = projects[0]?.name;
       const workspaceName = nodePath.basename(firstWorkspace.path);
-      const title = formatWindowTitle(projectName, workspaceName, buildInfo.gitBranch);
+      const title = formatWindowTitle(projectName, workspaceName, titleSuffix);
       windowManager.setTitle(title);
     }
   }
