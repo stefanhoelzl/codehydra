@@ -9,7 +9,7 @@
  * In production, binaries are downloaded during app setup to the same paths.
  *
  * For binaries with null version (like Claude), the script first checks if
- * the binary is available on the system (via which/where). If not, it fetches
+ * the binary is available on the system (via --version check). If not, it fetches
  * the latest version and downloads to the versioned directory.
  *
  * Wrapper scripts are copied separately via `pnpm build:wrappers` which
@@ -94,12 +94,12 @@ function createProgressCallback(binary: string): (progress: DownloadProgress) =>
 }
 
 /**
- * Check if a binary is available on the system PATH.
+ * Check if a binary is available and executable on the system.
+ * Uses --version to confirm the binary works, not just exists.
  */
 function isSystemBinaryAvailable(binaryName: string): boolean {
-  const command = process.platform === "win32" ? "where" : "which";
   try {
-    execSync(`${command} ${binaryName}`, { stdio: "ignore" });
+    execSync(`${binaryName} --version`, { stdio: "ignore" });
     return true;
   } catch {
     return false;

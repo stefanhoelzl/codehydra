@@ -4,7 +4,7 @@
  * This service resolves binaries using the following priority:
  * 1. For pinned versions: check exact version in bundlesRoot
  * 2. For null versions (prefer system):
- *    a. Check system binary via which/where
+ *    a. Check system binary via --version (confirms it's executable)
  *    b. Check downloaded versions (use highest version)
  *    c. Return not-found if neither available
  */
@@ -24,7 +24,6 @@ export interface BinaryResolutionServiceDeps {
   readonly processRunner: ProcessRunner;
   readonly pathProvider: PathProvider;
   readonly logger: Logger;
-  readonly platform: "darwin" | "linux" | "win32";
 }
 
 /**
@@ -35,14 +34,12 @@ export class BinaryResolutionService {
   private readonly processRunner: ProcessRunner;
   private readonly pathProvider: PathProvider;
   private readonly logger: Logger;
-  private readonly platform: "darwin" | "linux" | "win32";
 
   constructor(deps: BinaryResolutionServiceDeps) {
     this.fileSystem = deps.fileSystem;
     this.processRunner = deps.processRunner;
     this.pathProvider = deps.pathProvider;
     this.logger = deps.logger;
-    this.platform = deps.platform;
   }
 
   /**
@@ -64,14 +61,14 @@ export class BinaryResolutionService {
     }
 
     // Null version: prefer system, fall back to downloaded
-    // First check system binary
-    const systemPath = await this.findSystemBinary(type);
-    if (systemPath) {
-      this.logger.debug("Found system binary", { type, path: systemPath.toString() });
+    // First check system binary (--version confirms it's executable)
+    const systemAvailable = await this.findSystemBinary(type);
+    if (systemAvailable) {
+      this.logger.debug("Found system binary", { type });
       return {
         available: true,
         source: "system",
-        path: systemPath,
+        // path is undefined for system binaries - spawn by name
       };
     }
 
@@ -100,41 +97,25 @@ export class BinaryResolutionService {
   }
 
   /**
-   * Find a system-installed binary using which (Unix) or where (Windows).
+   * Check if a system-installed binary is available using --version.
+   * This confirms the binary is both found and executable.
    *
    * @param type - Binary type to find
-   * @returns Path to binary or null if not found
+   * @returns true if binary is available, false otherwise
    */
-  async findSystemBinary(type: ResolvableBinaryType): Promise<Path | null> {
+  async findSystemBinary(type: ResolvableBinaryType): Promise<boolean> {
     // code-server is never system-installed
     if (type === "code-server") {
-      return null;
+      return false;
     }
 
     const binaryName = type; // 'claude' or 'opencode'
-    const command = this.platform === "win32" ? "where" : "which";
 
-    const proc = this.processRunner.run(command, [binaryName]);
+    // Verify binary works with --version
+    const proc = this.processRunner.run(binaryName, ["--version"]);
     const result = await proc.wait();
 
-    // Exit code 0 means found
-    if (result.exitCode === 0 && result.stdout.trim()) {
-      // On Windows, 'where' can return multiple lines - use first
-      const lines = result.stdout.trim().split("\n");
-      const firstLine = lines[0];
-      if (!firstLine) {
-        return null;
-      }
-      const firstPath = firstLine.trim();
-
-      // Verify the path is executable
-      const isExecutable = await this.verifyExecutable(firstPath);
-      if (isExecutable) {
-        return new Path(firstPath);
-      }
-    }
-
-    return null;
+    return result.exitCode === 0;
   }
 
   /**
@@ -219,20 +200,6 @@ export class BinaryResolutionService {
    */
   private getBinaryPath(type: ResolvableBinaryType, version: string): Path {
     return this.pathProvider.getBinaryPath(type, version);
-  }
-
-  /**
-   * Verify that a path is an executable file.
-   */
-  private async verifyExecutable(pathStr: string): Promise<boolean> {
-    try {
-      // Try to read the file to verify it exists
-      // On Unix, we could check permissions, but this is sufficient
-      await this.fileSystem.readFile(new Path(pathStr));
-      return true;
-    } catch {
-      return false;
-    }
   }
 }
 
