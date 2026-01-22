@@ -32,89 +32,51 @@ describe("BinaryResolutionService", () => {
     logger = createMockLogger();
   });
 
-  function createService(
-    platform: "darwin" | "linux" | "win32" = "linux"
-  ): BinaryResolutionService {
+  function createService(): BinaryResolutionService {
     return new BinaryResolutionService({
       fileSystem,
       processRunner,
       pathProvider,
       logger,
-      platform,
     });
   }
 
   describe("findSystemBinary", () => {
-    it("returns null for code-server (never system-installed)", async () => {
+    it("returns false for code-server (never system-installed)", async () => {
       const service = createService();
 
       const result = await service.findSystemBinary("code-server");
 
-      expect(result).toBeNull();
+      expect(result).toBe(false);
     });
 
-    it("finds system binary on Unix using which", async () => {
-      const expectedPath = "/usr/local/bin/claude";
+    it("finds system binary using --version", async () => {
       processRunner = createMockProcessRunner({
-        onSpawn: (command) => {
-          if (command === "which") {
-            return { exitCode: 0, stdout: expectedPath + "\n" };
+        onSpawn: (command, args) => {
+          if (command === "claude" && args?.[0] === "--version") {
+            return { exitCode: 0, stdout: "claude 1.0.58\n" };
           }
           return { exitCode: 1 };
         },
       });
-      // Mock the file exists check
-      fileSystem.$.setEntry(expectedPath, file("binary content"));
 
       const service = new BinaryResolutionService({
         fileSystem,
         processRunner,
         pathProvider,
         logger,
-        platform: "linux",
       });
 
       const result = await service.findSystemBinary("claude");
 
-      expect(result).not.toBeNull();
-      expect(result?.toString()).toBe(expectedPath);
-      expect(processRunner).toHaveSpawned([{ command: "which", args: ["claude"] }]);
+      expect(result).toBe(true);
+      expect(processRunner).toHaveSpawned([{ command: "claude", args: ["--version"] }]);
     });
 
-    it("finds system binary on Windows using where", async () => {
-      // Note: We use Unix-style paths for the mock filesystem since it runs on Linux.
-      // The test validates that 'where' command is used on Windows platform.
-      const expectedPath = "/c/Program Files/claude/claude.exe";
-      processRunner = createMockProcessRunner({
-        onSpawn: (command) => {
-          if (command === "where") {
-            return { exitCode: 0, stdout: expectedPath + "\n" };
-          }
-          return { exitCode: 1 };
-        },
-      });
-      // Mock the file exists check
-      fileSystem.$.setEntry(expectedPath, file("binary content"));
-
-      const service = new BinaryResolutionService({
-        fileSystem,
-        processRunner,
-        pathProvider,
-        logger,
-        platform: "win32",
-      });
-
-      const result = await service.findSystemBinary("claude");
-
-      expect(result).not.toBeNull();
-      expect(result?.toString()).toContain("claude.exe");
-      expect(processRunner).toHaveSpawned([{ command: "where", args: ["claude"] }]);
-    });
-
-    it("returns null when which/where returns exit code 1", async () => {
+    it("returns false when --version fails", async () => {
       processRunner = createMockProcessRunner({
         onSpawn: () => {
-          return { exitCode: 1, stdout: "", stderr: "not found" };
+          return { exitCode: 1, stdout: "", stderr: "command not found" };
         },
       });
 
@@ -123,34 +85,11 @@ describe("BinaryResolutionService", () => {
         processRunner,
         pathProvider,
         logger,
-        platform: "linux",
       });
 
       const result = await service.findSystemBinary("claude");
 
-      expect(result).toBeNull();
-    });
-
-    it("returns null when binary file does not exist", async () => {
-      // which succeeds but file doesn't exist
-      processRunner = createMockProcessRunner({
-        onSpawn: () => {
-          return { exitCode: 0, stdout: "/some/path/claude\n" };
-        },
-      });
-      // Don't add the file to filesystem
-
-      const service = new BinaryResolutionService({
-        fileSystem,
-        processRunner,
-        pathProvider,
-        logger,
-        platform: "linux",
-      });
-
-      const result = await service.findSystemBinary("claude");
-
-      expect(result).toBeNull();
+      expect(result).toBe(false);
     });
   });
 
@@ -212,34 +151,31 @@ describe("BinaryResolutionService", () => {
 
   describe("resolve", () => {
     it("returns system binary when available and version not pinned", async () => {
-      const systemPath = "/usr/local/bin/opencode";
       processRunner = createMockProcessRunner({
-        onSpawn: (command) => {
-          if (command === "which") {
-            return { exitCode: 0, stdout: systemPath };
+        onSpawn: (command, args) => {
+          if (command === "opencode" && args?.[0] === "--version") {
+            return { exitCode: 0, stdout: "opencode 0.1.0\n" };
           }
           return { exitCode: 1 };
         },
       });
-      fileSystem.$.setEntry(systemPath, file("binary"));
 
       const service = new BinaryResolutionService({
         fileSystem,
         processRunner,
         pathProvider,
         logger,
-        platform: "linux",
       });
 
       const result = await service.resolve("opencode");
 
       expect(result.available).toBe(true);
       expect(result.source).toBe("system");
-      expect(result.path?.toString()).toBe(systemPath);
+      expect(result.path).toBeUndefined(); // No path for system binaries
     });
 
     it("falls back to downloaded when system not available", async () => {
-      // System binary not found
+      // System binary not found (--version fails)
       processRunner = createMockProcessRunner({
         onSpawn: () => ({ exitCode: 1 }),
       });
@@ -255,7 +191,6 @@ describe("BinaryResolutionService", () => {
         processRunner,
         pathProvider,
         logger,
-        platform: "linux",
       });
 
       const result = await service.resolve("claude");
@@ -266,11 +201,10 @@ describe("BinaryResolutionService", () => {
     });
 
     it("skips system check for pinned version", async () => {
-      // Set up system binary that would be found
+      // Set up system binary that would be found via --version
       processRunner = createMockProcessRunner({
-        onSpawn: () => ({ exitCode: 0, stdout: "/usr/local/bin/claude" }),
+        onSpawn: () => ({ exitCode: 0, stdout: "claude 1.0.58\n" }),
       });
-      fileSystem.$.setEntry("/usr/local/bin/claude", file("binary"));
 
       // Set up downloaded version
       const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
@@ -283,7 +217,6 @@ describe("BinaryResolutionService", () => {
         processRunner,
         pathProvider,
         logger,
-        platform: "linux",
       });
 
       const result = await service.resolve("claude", { pinnedVersion: "1.0.58" });
@@ -292,7 +225,7 @@ describe("BinaryResolutionService", () => {
       expect(result.available).toBe(true);
       expect(result.source).toBe("downloaded");
       expect(result.version).toBe("1.0.58");
-      // Should not have called which
+      // Should not have called --version for pinned versions
       expect(processRunner).toHaveSpawned([]);
     });
 
@@ -315,7 +248,6 @@ describe("BinaryResolutionService", () => {
         processRunner,
         pathProvider,
         logger,
-        platform: "linux",
       });
 
       const result = await service.resolve("claude");
@@ -336,7 +268,7 @@ describe("BinaryResolutionService", () => {
 
       expect(result.available).toBe(true);
       expect(result.source).toBe("downloaded");
-      // Should not have called which for code-server
+      // Should not have called --version for code-server
       expect(processRunner).toHaveSpawned([]);
     });
   });

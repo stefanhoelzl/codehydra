@@ -134,17 +134,13 @@ function getUserArgs(): string[] {
 
 /**
  * Find the system-installed claude binary.
- * First tries PATH lookup, then falls back to common installation locations.
+ * Uses --version to verify the binary is executable and functional.
+ * Returns the binary name (not full path) - spawn uses PATH resolution.
  */
 function findSystemClaude(): string | null {
-  const isWindows = process.platform === "win32";
-
-  // 1. Try PATH lookup using which/where
   try {
-    const cmd = isWindows ? "where claude.cmd" : "which claude";
-    const result = execSync(cmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
-    const path = result.trim().split("\n")[0]?.trim();
-    return path || null;
+    execSync("claude --version", { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+    return "claude"; // Binary name, not full path - spawn will use PATH resolution
   } catch {
     return null;
   }
@@ -251,9 +247,10 @@ async function main(): Promise<never> {
   await notifyHook("WrapperStart");
 
   // 6. Spawn Claude
+  // Use shell on Windows to resolve binary name via PATH (handles .cmd shims)
   const result = spawnSync(claudeBinary, args, {
     stdio: "inherit",
-    shell: isWindows && claudeBinary.endsWith(".cmd"),
+    shell: isWindows,
   });
 
   // 7. Notify wrapper end (Claude has exited)
