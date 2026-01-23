@@ -11,5 +11,11 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     reportCompressedSize: false,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        docs: resolve(__dirname, "docs.html"),
+      },
+    },
   },
 });
