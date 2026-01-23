@@ -113,9 +113,9 @@
               <path d="M5 18H3" />
             </svg>
           </span>
-          OpenCode Powered
+          Multi-Agent Support
         </h3>
-        <p>Built-in OpenCode AI agent integration with real-time status monitoring</p>
+        <p>Built-in OpenCode and Claude Code integration with real-time status monitoring</p>
       </div>
       <div class="feature-card">
         <h3>
