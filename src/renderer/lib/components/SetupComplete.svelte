@@ -30,6 +30,9 @@
     <Icon name="check" size={48} />
   </span>
   <p>Setup complete!</p>
+  <p class="hint">
+    Press <vscode-badge>Alt+X</vscode-badge> for keyboard shortcuts
+  </p>
 </div>
 
 <style>
@@ -48,5 +51,11 @@
     margin: 0;
     font-size: 1.25rem;
     font-weight: 500;
+  }
+
+  .hint {
+    font-size: 0.875rem;
+    font-weight: 400;
+    opacity: 0.7;
   }
 </style>
