@@ -34,14 +34,6 @@
   function handleContinue(): void {
     onselect(selectedAgent);
   }
-
-  /** Handle keyboard activation of Continue button */
-  function handleContinueKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      handleContinue();
-    }
-  }
 </script>
 
 <div class="agent-selection">
@@ -98,14 +90,8 @@
     </button>
   </div>
 
-  <vscode-button
-    role="button"
-    tabindex="0"
-    onclick={handleContinue}
-    onkeydown={handleContinueKeydown}
-  >
-    Continue
-  </vscode-button>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <vscode-button onclick={handleContinue}> Continue </vscode-button>
 </div>
 
 <style>
