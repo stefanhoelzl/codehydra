@@ -169,7 +169,7 @@ describe("VscodeSetupService Integration", () => {
 
       // Verify marker file
       const marker = JSON.parse(await readFile(mockPaths.markerPath, "utf-8")) as SetupMarker;
-      expect(marker.schemaVersion).toBe(1);
+      expect(marker.schemaVersion).toBe(2);
       expect(marker.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
@@ -262,7 +262,7 @@ describe("VscodeSetupService Integration", () => {
       // Create marker with current schemaVersion
       await mkdir(mockPaths.vscodeDir, { recursive: true });
       const marker: SetupMarker = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         completedAt: new Date().toISOString(),
       };
       await writeFile(mockPaths.markerPath, JSON.stringify(marker), "utf-8");
@@ -272,6 +272,76 @@ describe("VscodeSetupService Integration", () => {
 
       const isComplete = await service.isSetupComplete();
       expect(isComplete).toBe(true);
+    });
+
+    it("preflight returns needsSetup when marker has old schemaVersion", async () => {
+      // Create installed extension so preflight doesn't fail on missing extensions
+      await mkdir(join(mockPaths.extensionsDir, "codehydra.sidekick-0.0.3"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(mockPaths.extensionsDir, "codehydra.sidekick-0.0.3", "package.json"),
+        JSON.stringify({ name: "codehydra.sidekick", version: "0.0.3" })
+      );
+
+      // Create marker with old schemaVersion (pre-bin-fix)
+      const oldMarker: SetupMarker = {
+        schemaVersion: 1,
+        completedAt: new Date().toISOString(),
+      };
+      await writeFile(mockPaths.markerPath, JSON.stringify(oldMarker), "utf-8");
+
+      const processRunner = createTestProcessRunner();
+      const service = new VscodeSetupService(processRunner, testPathProvider, fsLayer);
+
+      const result = await service.preflight();
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.needsSetup).toBe(true);
+      }
+    });
+
+    it("preflight returns needsSetup=false when marker has current schemaVersion", async () => {
+      // Create installed extension
+      await mkdir(join(mockPaths.extensionsDir, "codehydra.sidekick-0.0.3"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(mockPaths.extensionsDir, "codehydra.sidekick-0.0.3", "package.json"),
+        JSON.stringify({ name: "codehydra.sidekick", version: "0.0.3" })
+      );
+
+      // Create marker with current schemaVersion
+      const currentMarker: SetupMarker = {
+        schemaVersion: 2,
+        completedAt: new Date().toISOString(),
+      };
+      await writeFile(mockPaths.markerPath, JSON.stringify(currentMarker), "utf-8");
+
+      const processRunner = createTestProcessRunner();
+      const service = new VscodeSetupService(processRunner, testPathProvider, fsLayer);
+
+      const result = await service.preflight();
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.needsSetup).toBe(false);
+      }
+    });
+
+    it("setup writes marker with current schemaVersion", async () => {
+      const processRunner = createTestProcessRunner();
+      const service = new VscodeSetupService(processRunner, testPathProvider, fsLayer);
+      const preflight = createFullSetupPreflightResult();
+
+      const result = await service.setup(preflight);
+      expect(result.success).toBe(true);
+
+      // Read and verify marker
+      const markerContent = await readFile(mockPaths.markerPath, "utf-8");
+      const marker = JSON.parse(markerContent) as SetupMarker;
+      expect(marker.schemaVersion).toBe(2);
     });
 
     it("cleanVscodeDir removes entire directory", async () => {
@@ -420,6 +490,49 @@ describe("VscodeSetupService Integration", () => {
       });
 
       expect(progressMessages).toContain("Creating CLI wrapper scripts...");
+    });
+
+    it("setupBinDirectory removes stale scripts before copying new ones", async () => {
+      const binDir = join(tempDir, "bin");
+      testPathProvider = createMockPathProvider({
+        dataRootDir: tempDir,
+        vscodeDir: mockPaths.vscodeDir,
+        vscodeExtensionsDir: mockPaths.extensionsDir,
+        vscodeUserDataDir: mockPaths.userDataDir,
+        setupMarkerPath: mockPaths.markerPath,
+        vscodeAssetsDir: mockPaths.assetsDir,
+        binDir,
+        binAssetsDir: join(mockPaths.assetsDir, "bin"),
+        binRuntimeDir: join(mockPaths.assetsDir, "bin"),
+        extensionsRuntimeDir: mockPaths.assetsDir,
+        scriptsRuntimeDir: join(mockPaths.assetsDir, "scripts"),
+        opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
+      });
+
+      // Create bin directory with a stale script
+      await mkdir(binDir, { recursive: true });
+      await writeFile(join(binDir, "stale-script.sh"), "#!/bin/sh\necho stale");
+
+      const processRunner = createTestProcessRunner();
+      const service = new VscodeSetupService(
+        processRunner,
+        testPathProvider,
+        fsLayer,
+        createMockPlatformInfo({ platform: "linux" })
+      );
+      const preflight = createFullSetupPreflightResult();
+
+      const result = await service.setup(preflight);
+
+      expect(result.success).toBe(true);
+
+      // Verify stale script was removed
+      const entries = await import("node:fs/promises").then((fs) => fs.readdir(binDir));
+      expect(entries).not.toContain("stale-script.sh");
+
+      // Verify expected scripts exist
+      expect(entries).toContain("code");
+      expect(entries).toContain("code.cmd");
     });
   });
 

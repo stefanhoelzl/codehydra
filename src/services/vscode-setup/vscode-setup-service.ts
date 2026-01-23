@@ -69,8 +69,8 @@ export class VscodeSetupService implements IVscodeSetup {
    */
   async isSetupComplete(): Promise<boolean> {
     const marker = await this.readMarker();
-    // schemaVersion 1 is the current version; 0 indicates legacy format
-    return marker !== null && marker.schemaVersion === 1;
+    // schemaVersion 2 is the current version; 0 indicates legacy format, 1 was pre-bin-fix
+    return marker !== null && marker.schemaVersion === 2;
   }
 
   /**
@@ -139,7 +139,7 @@ export class VscodeSetupService implements IVscodeSetup {
 
       // Check marker file
       const marker = await this.readMarker();
-      const hasValidMarker = marker !== null && marker.schemaVersion === 1;
+      const hasValidMarker = marker !== null && marker.schemaVersion === 2;
 
       const needsSetup =
         missingBinaries.length > 0 ||
@@ -153,6 +153,7 @@ export class VscodeSetupService implements IVscodeSetup {
         missingExtensions: missingExtensions.join(",") || "none",
         outdatedExtensions: outdatedExtensions.join(",") || "none",
         hasValidMarker,
+        markerSchemaVersion: marker?.schemaVersion ?? "none",
       });
 
       return {
@@ -464,7 +465,7 @@ export class VscodeSetupService implements IVscodeSetup {
     onProgress?.({ step: "finalize", message: "Finalizing setup..." });
 
     const marker: SetupMarker = {
-      schemaVersion: 1, // Current marker schema version
+      schemaVersion: 2, // Current marker schema version (v2 adds bin script cleanup)
       completedAt: new Date().toISOString(),
     };
 
@@ -491,6 +492,15 @@ export class VscodeSetupService implements IVscodeSetup {
   }
 
   /**
+   * Remove the bin directory to ensure stale scripts are cleaned up.
+   * Called before setupBinDirectory to remove any outdated scripts.
+   */
+  private async cleanBinDir(): Promise<void> {
+    const binDir = this.pathProvider.binDir;
+    await this.fs.rm(binDir, { recursive: true, force: true });
+  }
+
+  /**
    * Set up the bin directory with CLI wrapper scripts.
    * Copies pre-built scripts from assets/bin/ to <app-data>/bin/.
    *
@@ -498,6 +508,9 @@ export class VscodeSetupService implements IVscodeSetup {
    */
   async setupBinDirectory(onProgress?: ProgressCallback): Promise<void> {
     onProgress?.({ step: "config", message: "Creating CLI wrapper scripts..." });
+
+    // Clean bin directory to remove stale scripts before copying new ones
+    await this.cleanBinDir();
 
     const binDir = this.pathProvider.binDir;
     const binAssetsDir = this.pathProvider.binAssetsDir;
