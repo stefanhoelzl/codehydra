@@ -55,6 +55,20 @@ Understand the problem space before discussing solutions:
 
 Stay in this phase until the problem is clearly understood. Don't jump to solutions yet.
 
+**Using AskUserQuestion for scope:**
+
+When you need to clarify boundaries or have open questions, use AskUserQuestion:
+
+AskUserQuestion example:
+
+- question: "What should be in scope for this feature?"
+- header: "Scope"
+- options:
+  - label: "[Specific capability A]", description: "Include this functionality"
+  - label: "[Specific capability B]", description: "Include this functionality"
+  - label: "Minimal MVP", description: "Only the core requirement"
+- multiSelect: true
+
 ### Phase 2: Option Exploration
 
 Explore implementation approaches:
@@ -64,28 +78,24 @@ Explore implementation approaches:
 3. **Discuss tradeoffs** - Performance, maintainability, complexity, risk
 4. **Get explicit agreement** - User must agree on the chosen approach
 
-Example transition:
+**Presenting options:**
 
-```
-Based on our exploration, I see 3 approaches:
+First explain each option in detail, then ALWAYS use AskUserQuestion for selection:
 
-**Option A: [Name]**
-- Approach: [brief description]
-- Pros: [list]
-- Cons: [list]
+1. Describe each option with full context (approach, pros, cons)
+2. Use AskUserQuestion for the user to select (required):
 
-**Option B: [Name]**
-- Approach: [brief description]
-- Pros: [list]
-- Cons: [list]
+AskUserQuestion example:
 
-**Option C: [Name]**
-- Approach: [brief description]
-- Pros: [list]
-- Cons: [list]
+- question: "Which implementation approach should we use?"
+- header: "Approach"
+- options:
+  - label: "Option A: [Name]", description: "[Key tradeoff summary]"
+  - label: "Option B: [Name]", description: "[Key tradeoff summary]"
+  - label: "Option C: [Name]", description: "[Key tradeoff summary]"
+- multiSelect: false
 
-Which approach would you like to pursue?
-```
+If user selects "Other", discuss their alternative approach.
 
 ### Phase 3: Section Coverage
 
@@ -100,6 +110,21 @@ For the chosen approach, ensure all plan sections are discussed:
 
 Track coverage internally. Before proceeding to Phase 4, verify all applicable sections have been discussed.
 
+**Determining applicable sections:**
+
+If unclear which sections apply, use AskUserQuestion:
+
+AskUserQuestion example:
+
+- question: "Which areas does this feature involve?"
+- header: "Areas"
+- options:
+  - label: "UI changes", description: "User interface modifications"
+  - label: "API/IPC changes", description: "Interface contracts (requires approval)"
+  - label: "New dependencies", description: "External packages (requires approval)"
+  - label: "Backend only", description: "No UI or interface changes"
+- multiSelect: true
+
 ### Phase 4: Approval Check
 
 Before proceeding to plan writing, explicitly surface any items requiring user approval per CLAUDE.md:
@@ -110,18 +135,21 @@ Before proceeding to plan writing, explicitly surface any items requiring user a
 - **New boundary interfaces** - Any new abstraction interfaces (`*Layer`, `*Client`, `*Provider`)
 - **New dependencies** - Any packages to add (user must approve before implementation)
 
-Example:
+**Getting approvals:**
 
-```
-## Approval Required
+List all items requiring approval, then ALWAYS use AskUserQuestion:
 
-Before we proceed to the plan, these items need your explicit approval:
+AskUserQuestion example:
 
-1. **New IPC channel**: `api:workspace:newMethod` - [reason needed]
-2. **New dependency**: `some-package` - [why needed]
+- question: "Do you approve these items?"
+- header: "Approval"
+- options:
+  - label: "Approve all", description: "Proceed with all listed items"
+  - label: "Approve with changes", description: "I want to modify some items"
+  - label: "Discuss further", description: "I have concerns to address"
+- multiSelect: false
 
-Do you approve these? (yes/no for each)
-```
+If multiple distinct approval categories exist, you can ask up to 4 questions in one call.
 
 If no approval items: State "No items requiring explicit approval identified."
 
@@ -217,6 +245,38 @@ Next steps:
 - Use WebFetch for external documentation
 - Ask user questions via AskUserQuestion
 - Write to the planning file
+
+---
+
+## Using AskUserQuestion
+
+**ALWAYS use AskUserQuestion when:**
+
+1. You have options the user needs to decide between
+2. You have open questions that need user input
+
+This is REQUIRED, not optional. The tool provides faster, clearer interactions.
+
+**Mandatory use cases:**
+
+- Scope decisions (Phase 1) - clarifying what's in/out of scope
+- Approach selection (Phase 2) - choosing between implementation options
+- Section applicability (Phase 3) - which plan sections apply
+- Approvals (Phase 4) - getting explicit yes/no on required items
+- Any open question where you need user input
+
+**When conversation is acceptable:**
+
+- Pure information sharing (no decision needed)
+- When more than 4 options exist (present in text, then use tool for top choices)
+- Follow-up clarification after user selects "Other"
+
+**Tool constraints:**
+
+- 1-4 questions per call
+- 2-4 options per question
+- Headers max 12 characters
+- Users can always select "Other" for custom input
 
 ---
 
