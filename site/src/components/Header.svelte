@@ -9,15 +9,18 @@
       <img src="{base}logo.png" alt="CodeHydra Logo" width="32" height="32" />
       <span>CodeHydra</span>
     </a>
-    <a
-      href="https://github.com/stefanhoelzl/codehydra"
-      target="_blank"
-      rel="noopener noreferrer"
-      class="github-link"
-      aria-label="View on GitHub"
-    >
-      <img src="{base}github.svg" alt="" class="github-icon" aria-hidden="true" />
-    </a>
+    <div class="header-nav">
+      <a href="{base}docs.html" class="nav-link">Docs</a>
+      <a
+        href="https://github.com/stefanhoelzl/codehydra"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="github-link"
+        aria-label="View on GitHub"
+      >
+        <img src="{base}github.svg" alt="" class="github-icon" aria-hidden="true" />
+      </a>
+    </div>
   </div>
 </nav>
 
@@ -52,6 +55,26 @@
 
   .logo img {
     display: block;
+  }
+
+  .header-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .nav-link {
+    color: var(--site-text-secondary);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    transition: background-color 0.2s;
+    font-weight: 500;
+  }
+
+  .nav-link:hover {
+    background: var(--site-bg-card);
+    text-decoration: none;
+    color: var(--site-text-primary);
   }
 
   .github-link {
