@@ -51,6 +51,7 @@ export interface WebPreferences {
   readonly sandbox?: boolean;
   readonly partition?: string;
   readonly preload?: string;
+  readonly webviewTag?: boolean;
 }
 
 /**

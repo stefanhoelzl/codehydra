@@ -112,6 +112,21 @@ export interface SessionLayer {
   setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler | null): void;
 
   /**
+   * Set a handler for modifying response headers.
+   *
+   * Used to strip headers like X-Frame-Options that would block loading
+   * external content in iframes or webviews.
+   *
+   * @param handle - Handle to the session
+   * @param handler - Handler function that receives headers and returns modified headers
+   * @throws ShellError with code SESSION_NOT_FOUND if handle is invalid
+   */
+  setHeadersReceivedHandler(
+    handle: SessionHandle,
+    handler: ((headers: Record<string, string[]>) => Record<string, string[]>) | null
+  ): void;
+
+  /**
    * Dispose of all resources.
    */
   dispose(): Promise<void>;
@@ -197,6 +212,30 @@ export class DefaultSessionLayer implements SessionLayer {
     }
 
     this.logger.debug("Permission check handler set", {
+      id: handle.id,
+      hasHandler: handler !== null,
+    });
+  }
+
+  setHeadersReceivedHandler(
+    handle: SessionHandle,
+    handler: ((headers: Record<string, string[]>) => Record<string, string[]>) | null
+  ): void {
+    const state = this.getSession(handle);
+
+    if (handler === null) {
+      // Remove the handler by setting an empty one that passes through all headers
+      state.session.webRequest.onHeadersReceived(null);
+    } else {
+      state.session.webRequest.onHeadersReceived((details, callback) => {
+        // Convert Electron's header format to our interface format and back
+        const headers = details.responseHeaders ?? {};
+        const modifiedHeaders = handler(headers as Record<string, string[]>);
+        callback({ responseHeaders: modifiedHeaders });
+      });
+    }
+
+    this.logger.debug("Headers received handler set", {
       id: handle.id,
       hasHandler: handler !== null,
     });

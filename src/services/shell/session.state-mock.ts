@@ -37,6 +37,7 @@ export interface MockSessionState {
   readonly cleared: boolean;
   readonly hasPermissionRequestHandler: boolean;
   readonly hasPermissionCheckHandler: boolean;
+  readonly hasHeadersReceivedHandler: boolean;
 }
 
 /**
@@ -73,6 +74,7 @@ interface MutableSessionState {
   cleared: boolean;
   hasPermissionRequestHandler: boolean;
   hasPermissionCheckHandler: boolean;
+  hasHeadersReceivedHandler: boolean;
 }
 
 class SessionLayerMockStateImpl implements SessionLayerMockState {
@@ -148,6 +150,7 @@ export interface SessionLayerMockOptions {
       cleared?: boolean;
       hasPermissionRequestHandler?: boolean;
       hasPermissionCheckHandler?: boolean;
+      hasHeadersReceivedHandler?: boolean;
     }
   >;
 }
@@ -195,6 +198,7 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
         cleared: sessionState.cleared ?? false,
         hasPermissionRequestHandler: sessionState.hasPermissionRequestHandler ?? false,
         hasPermissionCheckHandler: sessionState.hasPermissionCheckHandler ?? false,
+        hasHeadersReceivedHandler: sessionState.hasHeadersReceivedHandler ?? false,
       });
       partitionToId.set(partition, id);
     }
@@ -223,6 +227,7 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
         cleared: false,
         hasPermissionRequestHandler: false,
         hasPermissionCheckHandler: false,
+        hasHeadersReceivedHandler: false,
       });
       partitionToId.set(partition, id);
 
@@ -245,6 +250,14 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
     setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler | null): void {
       const session = getSession(handle);
       session.hasPermissionCheckHandler = handler !== null;
+    },
+
+    setHeadersReceivedHandler(
+      handle: SessionHandle,
+      handler: ((headers: Record<string, string[]>) => Record<string, string[]>) | null
+    ): void {
+      const session = getSession(handle);
+      session.hasHeadersReceivedHandler = handler !== null;
     },
 
     async dispose(): Promise<void> {

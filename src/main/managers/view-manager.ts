@@ -327,6 +327,25 @@ export class ViewManager implements IViewManager {
       );
     });
 
+    // Configure headers handler to allow external content in iframes
+    // VS Code's simple browser uses iframes, and external sites send X-Frame-Options
+    // headers that would block loading. Strip these headers to allow embedding.
+    this.sessionLayer.setHeadersReceivedHandler(sessionHandle, (headers) => {
+      const modifiedHeaders = { ...headers };
+      // Remove headers that block embedding (case-insensitive header names)
+      for (const header of Object.keys(modifiedHeaders)) {
+        const lower = header.toLowerCase();
+        if (
+          lower === "x-frame-options" ||
+          lower === "content-security-policy" ||
+          lower === "content-security-policy-report-only"
+        ) {
+          delete modifiedHeaders[header];
+        }
+      }
+      return modifiedHeaders;
+    });
+
     // Create workspace view with security settings and partition for session isolation
     // Note: No preload script - keyboard capture is handled via main-process before-input-event
     const viewHandle = this.viewLayer.createView({
@@ -335,6 +354,7 @@ export class ViewManager implements IViewManager {
         contextIsolation: true,
         sandbox: true,
         partition: partitionName,
+        webviewTag: true,
       },
     });
 
