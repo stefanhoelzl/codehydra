@@ -152,6 +152,9 @@
   {#if subtitle}
     <p class="subtitle">{subtitle}</p>
   {/if}
+  <p class="hint">
+    Press <vscode-badge>Alt+X</vscode-badge> for keyboard shortcuts
+  </p>
 
   {#if !hideProgress}
     <div class="progress-container" role="status" aria-live="polite" aria-atomic="false">
@@ -219,6 +222,12 @@
     margin: 0;
     font-size: 0.875rem;
     opacity: 0.8;
+  }
+
+  .hint {
+    margin: 0;
+    font-size: 0.875rem;
+    opacity: 0.7;
   }
 
   .progress-container {
