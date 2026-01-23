@@ -30,6 +30,11 @@
         "category": "CodeHydra"
       },
       {
+        "command": "codehydra.openAgent",
+        "title": "Open Agent",
+        "category": "CodeHydra"
+      },
+      {
         "command": "codehydra.debug.getStatus",
         "title": "CodeHydra Debug: Get Workspace Status",
         "enablement": "codehydra.isDevelopment"
@@ -48,6 +53,13 @@
         "command": "codehydra.debug.connectionInfo",
         "title": "CodeHydra Debug: Show Connection Info",
         "enablement": "codehydra.isDevelopment"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "codehydra.openAgent",
+        "key": "ctrl+;",
+        "mac": "cmd+;"
       }
     ],
     "configurationDefaults": {
