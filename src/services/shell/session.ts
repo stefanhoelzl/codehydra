@@ -75,20 +75,10 @@ export interface SessionLayer {
    * Partition names starting with "persist:" are persisted across app restarts.
    * Other partitions are in-memory only.
    *
-   * @param partition - The partition name (e.g., "persist:project/workspace")
+   * @param partition - The partition name (e.g., "persist:codehydra-global")
    * @returns Handle to the session
    */
   fromPartition(partition: string): SessionHandle;
-
-  /**
-   * Clear all storage data for a session.
-   *
-   * Clears localStorage, cookies, cache, etc.
-   *
-   * @param handle - Handle to the session
-   * @throws ShellError with code SESSION_NOT_FOUND if handle is invalid
-   */
-  clearStorageData(handle: SessionHandle): Promise<void>;
 
   /**
    * Set a handler for permission requests.
@@ -173,12 +163,6 @@ export class DefaultSessionLayer implements SessionLayer {
     return createSessionHandle(id);
   }
 
-  async clearStorageData(handle: SessionHandle): Promise<void> {
-    const state = this.getSession(handle);
-    await state.session.clearStorageData();
-    this.logger.debug("Session storage cleared", { id: handle.id, partition: state.partition });
-  }
-
   setPermissionRequestHandler(
     handle: SessionHandle,
     handler: PermissionRequestHandler | null
@@ -242,14 +226,8 @@ export class DefaultSessionLayer implements SessionLayer {
   }
 
   async dispose(): Promise<void> {
-    // Clear storage for all sessions
-    for (const state of this.sessions.values()) {
-      try {
-        await state.session.clearStorageData();
-      } catch {
-        // Ignore errors during cleanup
-      }
-    }
+    // Just clear the sessions map. We don't clear storage data because
+    // we use persistent sessions that should survive app restarts.
     this.sessions.clear();
   }
 

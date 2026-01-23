@@ -3,11 +3,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ViewManager, SIDEBAR_MINIMIZED_WIDTH, type ViewManagerDeps } from "./view-manager";
+import {
+  ViewManager,
+  SIDEBAR_MINIMIZED_WIDTH,
+  GLOBAL_SESSION_PARTITION,
+  type ViewManagerDeps,
+} from "./view-manager";
 import type { WindowManager } from "./window-manager";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createViewLayerMock, type MockViewLayer } from "../../services/shell/view.state-mock";
-import { createSessionLayerMock } from "../../services/shell/session.state-mock";
+import {
+  createSessionLayerMock,
+  type MockSessionLayer,
+} from "../../services/shell/session.state-mock";
 import {
   createWindowLayerInternalMock,
   type MockWindowLayerInternal,
@@ -88,6 +96,7 @@ function createViewManagerWindowLayer(): MockWindowLayerInternal & {
 function createViewManagerDeps(): ViewManagerDeps & {
   viewLayer: MockViewLayer;
   windowLayer: MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
+  sessionLayer: MockSessionLayer;
 } {
   const windowLayer = createViewManagerWindowLayer();
   const viewLayer = createViewLayerMock();
@@ -350,6 +359,83 @@ describe("ViewManager", () => {
     });
   });
 
+  describe("shared session model", () => {
+    it("all workspaces share the same session (same SessionHandle.id)", () => {
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project1"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project2"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace3",
+        "http://127.0.0.1:8080/?folder=/path3",
+        "/path/to/project1" // Same project as workspace1
+      );
+
+      // All workspaces should share the same session (only one session created)
+      expect(deps.sessionLayer).toHaveSessionCount(1);
+      expect(deps.sessionLayer).toHaveSession("session-1", {
+        partition: GLOBAL_SESSION_PARTITION,
+      });
+    });
+
+    it("session data persists after workspace deletion", async () => {
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+
+      // Create two workspaces
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project"
+      );
+
+      // Delete workspace1
+      await manager.destroyWorkspaceView("/path/to/workspace1");
+
+      // Session should still exist (workspace2 still needs the shared session)
+      expect(deps.sessionLayer).toHaveSessionCount(1);
+      expect(deps.sessionLayer).toHaveSession("session-1", {
+        partition: GLOBAL_SESSION_PARTITION,
+      });
+    });
+
+    it("uses global partition constant for all workspaces", () => {
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+
+      // Create workspaces in different projects
+      manager.createWorkspaceView(
+        "/path/to/project-a/workspace1",
+        "http://127.0.0.1:8080/?folder=/path-a",
+        "/path/to/project-a"
+      );
+      manager.createWorkspaceView(
+        "/path/to/project-b/workspace2",
+        "http://127.0.0.1:8080/?folder=/path-b",
+        "/path/to/project-b"
+      );
+
+      // Verify the partition name is the global constant
+      const session = deps.sessionLayer.$.sessions.get("session-1");
+      expect(session?.partition).toBe(GLOBAL_SESSION_PARTITION);
+      expect(session?.partition).toBe("persist:codehydra-global");
+    });
+  });
+
   describe("destroyWorkspaceView", () => {
     it("removes view from internal map", async () => {
       const deps = createViewManagerDeps();
@@ -419,6 +505,29 @@ describe("ViewManager", () => {
 
       expect(result).toBeInstanceOf(Promise);
       await result;
+    });
+
+    it("does not clear session storage (shared across workspaces)", async () => {
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Get the session handle id before destroying
+      const sessions = [...deps.sessionLayer.$.sessions.entries()];
+      const globalSessionId = sessions.find(
+        ([, s]) => s.partition === GLOBAL_SESSION_PARTITION
+      )?.[0];
+      expect(globalSessionId).toBeDefined();
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Session should still exist (data preserved for shared session)
+      expect(deps.sessionLayer).toHaveSession(globalSessionId!);
     });
   });
 

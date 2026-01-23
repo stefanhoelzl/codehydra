@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createSessionLayerMock, type MockSessionLayer } from "./session.state-mock";
-import { ShellError, isShellErrorWithCode } from "./errors";
+import { ShellError } from "./errors";
 
 describe("SessionLayer (integration)", () => {
   let sessionLayer: MockSessionLayer;
@@ -43,37 +43,6 @@ describe("SessionLayer (integration)", () => {
       const handle = sessionLayer.fromPartition(partition);
 
       expect(sessionLayer).toHaveSession(handle.id, { partition });
-    });
-  });
-
-  describe("clearStorageData", () => {
-    it("marks session as cleared", async () => {
-      const handle = sessionLayer.fromPartition("persist:clear-test");
-
-      await sessionLayer.clearStorageData(handle);
-
-      expect(sessionLayer).toHaveSession(handle.id, { cleared: true });
-    });
-
-    it("can be called multiple times", async () => {
-      const handle = sessionLayer.fromPartition("persist:clear-multiple");
-
-      await sessionLayer.clearStorageData(handle);
-      await sessionLayer.clearStorageData(handle);
-
-      expect(sessionLayer).toHaveSession(handle.id, { cleared: true });
-    });
-
-    it("throws SESSION_NOT_FOUND for invalid handle", async () => {
-      const fakeHandle = { id: "session-999", __brand: "SessionHandle" as const };
-
-      await expect(sessionLayer.clearStorageData(fakeHandle)).rejects.toThrow(ShellError);
-
-      try {
-        await sessionLayer.clearStorageData(fakeHandle);
-      } catch (error) {
-        expect(isShellErrorWithCode(error, "SESSION_NOT_FOUND")).toBe(true);
-      }
     });
   });
 
@@ -132,7 +101,7 @@ describe("SessionLayer (integration)", () => {
   });
 
   describe("dispose", () => {
-    it("clears all sessions", async () => {
+    it("removes all sessions from tracking", async () => {
       sessionLayer.fromPartition("persist:dispose-1");
       sessionLayer.fromPartition("persist:dispose-2");
 

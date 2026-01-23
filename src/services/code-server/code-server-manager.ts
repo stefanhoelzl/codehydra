@@ -4,6 +4,9 @@
  */
 
 import { join, delimiter } from "node:path";
+
+/** Fixed port for code-server to maintain consistent origin for IndexedDB storage */
+export const CODE_SERVER_PORT = 25448;
 import type { CodeServerConfig, InstanceState } from "./types";
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
 import {
@@ -77,7 +80,6 @@ export class CodeServerManager {
   private readonly config: CodeServerConfig;
   private readonly processRunner: ProcessRunner;
   private readonly httpClient: HttpClient;
-  private readonly portManager: PortManager;
   private readonly logger: Logger;
   private state: InstanceState = "stopped";
   private currentPort: number | null = null;
@@ -90,13 +92,12 @@ export class CodeServerManager {
     config: CodeServerConfig,
     processRunner: ProcessRunner,
     httpClient: HttpClient,
-    portManager: PortManager,
+    _portManager: PortManager,
     logger: Logger
   ) {
     this.config = config;
     this.processRunner = processRunner;
     this.httpClient = httpClient;
-    this.portManager = portManager;
     this.logger = logger;
   }
 
@@ -186,8 +187,9 @@ export class CodeServerManager {
   private async doStart(): Promise<number> {
     this.logger.info("Starting code-server");
 
-    // Find an available port
-    const port = await this.portManager.findFreePort();
+    // Use fixed port to maintain consistent origin for IndexedDB storage.
+    // This ensures extension settings persist across app restarts.
+    const port = CODE_SERVER_PORT;
     this.currentPort = port;
 
     // Build command arguments

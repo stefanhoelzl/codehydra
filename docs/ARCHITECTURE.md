@@ -275,44 +275,48 @@ The UI shows a scrollable list of blocking processes (with files and CWD) and of
 - Re-checks worktree registration before each deletion (TOCTOU protection)
 - Concurrency guard prevents multiple cleanups running simultaneously
 
-### Workspace Session Isolation
+### Workspace Session Model
 
-Each workspace uses a dedicated Electron session partition to isolate localStorage, cookies, and cache:
-
-**Partition Naming Convention:**
+All workspaces share a single global Electron session to enable extension storage (globalState, secrets) to be shared across workspaces.
 
 ```
-persist:<project-dir-name>/<workspace-name>
-
-Example:
-  Project: /home/user/repos/my-app
-  Workspace: feature-auth
-  Partition: persist:my-app-a1b2c3d4/feature-auth
+┌─────────────────────────────────────────────────────────────────────┐
+│                    ALL WORKSPACES                                   │
+│            partition: persist:codehydra-global                      │
+│ ┌─────────────────────────────────────────────────────────────────┐ │
+│ │         IndexedDB, localStorage (globalState, secrets)          │ │
+│ │                         SHARED                                  │ │
+│ └─────────────────────────────────────────────────────────────────┘ │
+│                                                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │
+│  │ Workspace A  │  │ Workspace B  │  │ Workspace C  │              │
+│  │ ?folder=/a   │  │ ?folder=/b   │  │ ?folder=/c   │              │
+│  └──────────────┘  └──────────────┘  └──────────────┘              │
+│  code-server uses folder path for workspace-specific state          │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-The `persist:` prefix ensures VS Code state survives app restarts. The project directory name includes a hash for uniqueness (via `projectDirName()` from `src/services/platform/paths.ts`).
+**Key Points:**
+
+- All WebContentsViews share the same Electron session (`persist:codehydra-global`)
+- Session storage (IndexedDB, localStorage, cookies) is global
+- code-server distinguishes workspaces via the `?folder=` URL parameter
+- VS Code's workspace-specific state uses the folder path, not browser storage
+- Extension `globalState` and `secretStorage` are shared across all workspaces
 
 **View Destruction Cleanup:**
 
 When a workspace is deleted, the ViewManager performs these cleanup steps:
 
 1. **Navigate to about:blank**: Releases any resources held by the loaded page
-2. **Clear partition storage**: Calls `session.fromPartition(name).clearStorageData()`
-3. **Close view**: Destroys the WebContentsView
+2. **Close view**: Destroys the WebContentsView
 
 ```typescript
 // Cleanup sequence in ViewManager.destroyWorkspaceView()
 await view.webContents.loadURL("about:blank"); // Wait with timeout
-const sess = session.fromPartition(partitionName);
-await sess.clearStorageData(); // Best-effort, errors logged
 view.webContents.close();
+// NOTE: Session storage is NOT cleared - it's shared with other workspaces
 ```
-
-**Benefits:**
-
-- Workspaces have isolated localStorage (no data leakage between workspaces)
-- VS Code extensions can store workspace-specific state
-- Clean resource release prevents memory leaks
 
 **Note:** The `about:blank` navigation uses a timeout to prevent hanging if the view is unresponsive.
 
