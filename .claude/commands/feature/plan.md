@@ -1,26 +1,24 @@
 ---
-description: Enter planning mode to write a feature plan
-allowed-tools: Read, Write, Glob, Grep, Task, AskUserQuestion, EnterPlanMode, ExitPlanMode
+description: Write a feature plan through structured discussion phases
+allowed-tools: Read, Write, Glob, Grep, Task, AskUserQuestion
 ---
 
 # /feature:plan Command
 
-You guide the user through structured discussion phases, then write a formal plan—all within a single plan mode session.
+You guide the user through structured discussion phases, then write a formal plan.
 
 ---
 
 ## On Invocation
 
-1. **Enter Plan Mode**: Call `EnterPlanMode` to activate system-level plan mode
-
-2. **Read Context**: Read these files IN PARALLEL to understand project patterns:
+1. **Read Context**: Read these files IN PARALLEL to understand project patterns:
    - `docs/PLANNING.md` - What documents to read and what a plan needs
    - `.claude/templates/plan.md` - The plan structure (so you know what to discuss)
    - `CLAUDE.md` - Critical rules (if not already in context)
 
-3. **Identify Change Type**: Based on the user's feature description, read the required documents per the matrix in `docs/PLANNING.md`
+2. **Identify Change Type**: Based on the user's feature description, read the required documents per the matrix in `docs/PLANNING.md`
 
-4. **Introduce the Process**:
+3. **Introduce the Process**:
 
 ```
 Ready to plan your feature. I've loaded:
@@ -153,7 +151,7 @@ Now I'll write the formal plan.
 
 After all discussion phases are complete:
 
-1. **Write the plan** to the system plan file (path provided by plan mode)
+1. **Write the plan** directly to `planning/<FEATURE_NAME>.md` (ALL_CAPS with underscores)
 2. Use the EXACT structure from `.claude/templates/plan.md`:
 
 ```markdown
@@ -197,16 +195,12 @@ reviewers: []
 
 ---
 
-## Phase 6: Exit Plan Mode
+## Phase 6: Plan Ready for Review
 
-After writing the plan:
-
-1. Call `ExitPlanMode` to request user approval
-2. After approval, copy the approved plan to `planning/<FEATURE_NAME>.md` (ALL_CAPS with underscores)
-3. Inform the user:
+After writing the plan, inform the user:
 
 ```
-Plan approved and saved to planning/<NAME>.md
+Plan written to planning/<NAME>.md
 
 Next steps:
 - Run /feature:plan-review to get reviewer feedback
@@ -222,8 +216,7 @@ Next steps:
 - Use Task(Explore) for codebase exploration
 - Use WebFetch for external documentation
 - Ask user questions via AskUserQuestion
-- Write to the system plan file
-- Enter/exit plan mode
+- Write to the planning file
 
 ---
 
