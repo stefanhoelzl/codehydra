@@ -5,9 +5,7 @@
 <article class="docs-content">
   <header class="docs-header">
     <h1>Getting Started</h1>
-    <p class="docs-lead">
-      Run multiple AI agents in parallel, each in its own isolated workspace.
-    </p>
+    <p class="docs-lead">Run multiple AI agents in parallel, each in its own isolated workspace.</p>
   </header>
 
   <nav class="docs-toc">
@@ -25,8 +23,8 @@
     <h2>Why CodeHydra?</h2>
     <p>
       Ever had an AI agent make changes to files you were actively working on? Or waited for one
-      task to finish before starting the next? CodeHydra solves these problems by giving each
-      AI agent its own isolated workspace.
+      task to finish before starting the next? CodeHydra solves these problems by giving each AI
+      agent its own isolated workspace.
     </p>
 
     <img
@@ -36,12 +34,15 @@
     />
 
     <p>
-      Imagine starting your morning by spinning up three workspaces: one for the sprint task,
-      one for that refactoring you've been meaning to do, and one for the AI to investigate a
-      flaky test. All running in parallel, none stepping on each other's toes.
+      Imagine starting your morning by spinning up three workspaces: one for the sprint task, one
+      for that refactoring you've been meaning to do, and one for the AI to investigate a flaky
+      test. All running in parallel, none stepping on each other's toes.
     </p>
     <ul>
-      <li><strong>No more conflicts</strong> &mdash; Each agent works in its own git branch with its own files</li>
+      <li>
+        <strong>No more conflicts</strong> &mdash; Each agent works in its own git branch with its own
+        files
+      </li>
       <li><strong>No more waiting</strong> &mdash; Run multiple tasks simultaneously</li>
       <li><strong>No more context switching</strong> &mdash; Jump between workspaces instantly</li>
     </ul>
@@ -58,12 +59,16 @@
     <div class="code-block">
       <code>uvx --refresh codehydra</code>
     </div>
-    <p>Or download from <a href="https://github.com/stefanhoelzl/codehydra/releases">GitHub Releases</a>.</p>
+    <p>
+      Or download from <a href="https://github.com/stefanhoelzl/codehydra/releases"
+        >GitHub Releases</a
+      >.
+    </p>
 
     <p>
-      On first launch, CodeHydra will guide you through opening a project and creating your
-      first workspace. Want to run multiple agents? Just create more workspaces &mdash; each one
-      gets its own worktree and agent session.
+      On first launch, CodeHydra will guide you through opening a project and creating your first
+      workspace. Want to run multiple agents? Just create more workspaces &mdash; each one gets its
+      own worktree and agent session.
     </p>
   </section>
 
@@ -86,9 +91,7 @@
     </div>
 
     <h3>Agent Status</h3>
-    <p>
-      The sidebar shows each workspace's agent status at a glance:
-    </p>
+    <p>The sidebar shows each workspace's agent status at a glance:</p>
 
     <div class="status-grid">
       <div class="status-item">
@@ -125,9 +128,16 @@
 
     <h3>Managing Workspaces</h3>
     <ul>
-      <li><strong>Create</strong> &mdash; Click <strong>+</strong> or press <kbd>Enter</kbd> in shortcut mode</li>
-      <li><strong>Switch</strong> &mdash; Click a workspace or use <kbd>1</kbd>-<kbd>0</kbd> to jump directly</li>
-      <li><strong>Delete</strong> &mdash; Hover and click the delete icon, or press <kbd>Delete</kbd></li>
+      <li>
+        <strong>Create</strong> &mdash; Click <strong>+</strong> or press <kbd>Enter</kbd> in shortcut
+        mode
+      </li>
+      <li>
+        <strong>Switch</strong> &mdash; Click a workspace or use <kbd>1</kbd>-<kbd>0</kbd> to jump directly
+      </li>
+      <li>
+        <strong>Delete</strong> &mdash; Hover and click the delete icon, or press <kbd>Delete</kbd>
+      </li>
     </ul>
 
     <h3>Keyboard Shortcuts</h3>
