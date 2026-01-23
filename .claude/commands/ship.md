@@ -1,6 +1,6 @@
 ---
 description: Create PR with auto-merge, wait for merge via client-side queue
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(npx:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(npx:*), Bash(pnpm:*)
 ---
 
 # /ship Command
@@ -48,6 +48,20 @@ git branch --show-current
 ```
 
 If on main: ABORT with "Cannot ship from main branch"
+
+**Check formatting:**
+
+```bash
+pnpm format:check
+```
+
+If formatting check fails: ABORT with:
+
+```
+Cannot ship with formatting issues.
+
+Run `pnpm format` to fix, then commit and run `/ship` again.
+```
 
 ### 0.5. Resolve issue selection (if --resolves ? was passed)
 
