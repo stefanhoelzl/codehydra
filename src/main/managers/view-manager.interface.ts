@@ -63,12 +63,13 @@ export interface IViewManager {
    * The view starts in a detached state to minimize GPU usage.
    * URL is loaded lazily when the workspace is first activated via setActiveWorkspace.
    *
-   * Uses per-workspace Electron partitions for session isolation (localStorage, cookies).
-   * Partition name format: persist:<projectDirName>/<workspaceName>
+   * All workspaces share a global Electron session partition (`persist:codehydra-global`)
+   * to enable extension storage (globalState, secrets) to be shared across workspaces.
    *
    * @param workspacePath - Absolute path to the workspace directory
    * @param url - URL to load in the view (code-server URL) - stored for lazy loading
-   * @param projectPath - Absolute path to the project directory (for partition naming)
+   * @param projectPath - Absolute path to the project directory.
+   *                      Retained for API stability; not currently used for partition naming.
    * @param isNew - If true, marks workspace as loading until OpenCode client attaches.
    *                Defaults to false (existing workspaces loaded on startup skip loading state).
    * @returns Handle to the created view (detached, URL not loaded)

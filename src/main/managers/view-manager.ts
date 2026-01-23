@@ -12,8 +12,6 @@ import { ApiIpcChannels } from "../../shared/ipc";
 import type { WindowManager } from "./window-manager";
 import { openExternal } from "../utils/external-url";
 import { ShortcutController } from "../shortcut-controller";
-import { projectDirName } from "../../services/platform/paths";
-import type { WorkspaceName } from "../../shared/api/types";
 import type { Logger } from "../../services/logging";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { ViewLayer, WindowOpenDetails } from "../../services/shell/view";
@@ -26,6 +24,15 @@ import type { ViewHandle, SessionHandle, WindowHandle } from "../../services/she
  * Workspace views start at this offset, with expanded sidebar overlaying them.
  */
 export const SIDEBAR_MINIMIZED_WIDTH = 20;
+
+/**
+ * Global session partition name shared by all workspaces.
+ * Using a single partition enables extension storage (globalState, secrets)
+ * to be shared across all workspaces.
+ *
+ * The `persist:` prefix ensures data survives app restarts.
+ */
+export const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
 
 /**
  * Minimum window dimensions.
@@ -262,7 +269,7 @@ export class ViewManager implements IViewManager {
    *
    * @param workspacePath - Absolute path to the workspace directory
    * @param url - URL to load in the view (code-server URL)
-   * @param projectPath - Absolute path to the project directory (for partition naming)
+   * @param _projectPath - Retained for API stability; not currently used for partition naming.
    * @param isNew - If true, marks workspace as loading until OpenCode client attaches.
    *                Defaults to false (existing workspaces loaded on startup skip loading state).
    * @returns Handle to the created view
@@ -270,14 +277,12 @@ export class ViewManager implements IViewManager {
   createWorkspaceView(
     workspacePath: string,
     url: string,
-    projectPath: string,
+    _projectPath: string,
     isNew = false
   ): ViewHandle {
-    // Generate partition name for session isolation
-    // Format: persist:<projectDirName>/<workspaceName>
-    // Using persist: prefix to enable persistent storage across app restarts
-    const workspaceName = basename(workspacePath) as WorkspaceName;
-    const partitionName = `persist:${projectDirName(projectPath)}/${workspaceName}`;
+    // Use global partition for all workspaces to share extension storage
+    const workspaceName = basename(workspacePath);
+    const partitionName = GLOBAL_SESSION_PARTITION;
 
     // Get or create session for this partition
     const sessionHandle = this.sessionLayer.fromPartition(partitionName);
@@ -501,14 +506,6 @@ export class ViewManager implements IViewManager {
         this.viewLayer.destroy(state.handle);
       } catch {
         // View might already be destroyed - ignore
-      }
-
-      // Clear partition storage (best-effort - log errors and continue)
-      try {
-        await this.sessionLayer.clearStorageData(state.sessionHandle);
-      } catch {
-        // Intentional empty catch: Best-effort cleanup - storage clearing may fail
-        // if session is in use or already cleared. We continue regardless.
       }
     } catch {
       // Ignore errors during cleanup - view may be in an inconsistent state

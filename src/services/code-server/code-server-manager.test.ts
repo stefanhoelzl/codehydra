@@ -6,7 +6,7 @@
 
 import path from "path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { CodeServerManager, urlForFolder } from "./code-server-manager";
+import { CodeServerManager, urlForFolder, CODE_SERVER_PORT } from "./code-server-manager";
 import { createMockProcessRunner, type MockProcessRunner } from "../platform/process.state-mock";
 import { createPortManagerMock } from "../platform/network.test-utils";
 import { createMockHttpClient } from "../platform/http-client.state-mock";
@@ -156,10 +156,9 @@ describe("CodeServerManager", () => {
   });
 
   describe("ensureRunning", () => {
-    it("uses portManager.findFreePort()", async () => {
+    it("uses fixed CODE_SERVER_PORT for consistent IndexedDB storage", async () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
       mockHttpClient = { fetch: fetchMock };
-      const portManager = createPortManagerMock([9999]);
       manager = new CodeServerManager(
         {
           binaryPath: "/usr/bin/code-server",
@@ -172,14 +171,13 @@ describe("CodeServerManager", () => {
         },
         mockProcessRunner,
         mockHttpClient,
-        portManager,
+        mockPortManager,
         testLogger
       );
 
       const port = await manager.ensureRunning();
 
-      expect(port).toBe(9999);
-      expect(portManager.$.allocatedPorts).toContain(9999);
+      expect(port).toBe(CODE_SERVER_PORT);
     });
 
     it("returns same port when already running", async () => {
@@ -255,7 +253,7 @@ describe("CodeServerManager", () => {
       // Should complete successfully (health check passed)
       const port = await manager.ensureRunning();
 
-      expect(port).toBe(8080);
+      expect(port).toBe(CODE_SERVER_PORT);
       expect(manager.isRunning()).toBe(true);
     });
 
@@ -289,7 +287,7 @@ describe("CodeServerManager", () => {
 
       const port = await manager.ensureRunning();
 
-      expect(port).toBe(8080);
+      expect(port).toBe(CODE_SERVER_PORT);
       expect(callCount).toBeGreaterThanOrEqual(3);
     });
 
@@ -323,7 +321,7 @@ describe("CodeServerManager", () => {
 
       const port = await manager.ensureRunning();
 
-      expect(port).toBe(8080);
+      expect(port).toBe(CODE_SERVER_PORT);
       expect(callCount).toBeGreaterThanOrEqual(3);
     });
   });
@@ -463,7 +461,12 @@ describe("CodeServerManager (with full DI)", () => {
       expect(processRunner).toHaveSpawned([
         {
           command: config.binaryPath,
-          args: expect.arrayContaining(["--port", "8080", "--auth", "none"]) as unknown as string[],
+          args: expect.arrayContaining([
+            "--port",
+            String(CODE_SERVER_PORT),
+            "--auth",
+            "none",
+          ]) as unknown as string[],
           cwd: config.runtimeDir,
         },
       ]);

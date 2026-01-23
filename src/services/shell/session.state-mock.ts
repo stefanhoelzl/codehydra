@@ -10,8 +10,8 @@
  * @example
  * const mock = createSessionLayerMock();
  * const handle = mock.fromPartition("persist:test");
- * await mock.clearStorageData(handle);
- * expect(mock).toHaveSession(handle.id, { cleared: true });
+ * mock.setPermissionRequestHandler(handle, () => true);
+ * expect(mock).toHaveSession(handle.id, { requestHandler: true });
  */
 
 import { expect } from "vitest";
@@ -34,7 +34,6 @@ import type {
  */
 export interface MockSessionState {
   readonly partition: string;
-  readonly cleared: boolean;
   readonly hasPermissionRequestHandler: boolean;
   readonly hasPermissionCheckHandler: boolean;
   readonly hasHeadersReceivedHandler: boolean;
@@ -71,7 +70,6 @@ export interface SessionLayerMockState extends MockState {
  */
 interface MutableSessionState {
   partition: string;
-  cleared: boolean;
   hasPermissionRequestHandler: boolean;
   hasPermissionCheckHandler: boolean;
   hasHeadersReceivedHandler: boolean;
@@ -120,7 +118,7 @@ class SessionLayerMockStateImpl implements SessionLayerMockState {
 
   toString(): string {
     const entries = [...this._sessions.entries()]
-      .map(([id, s]) => `${id}: ${s.partition} (cleared=${s.cleared})`)
+      .map(([id, s]) => `${id}: ${s.partition}`)
       .join(", ");
     return `SessionLayerMockState { ${entries} }`;
   }
@@ -147,7 +145,6 @@ export interface SessionLayerMockOptions {
   sessions?: Record<
     string,
     {
-      cleared?: boolean;
       hasPermissionRequestHandler?: boolean;
       hasPermissionCheckHandler?: boolean;
       hasHeadersReceivedHandler?: boolean;
@@ -195,7 +192,6 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
       const id = `session-${nextId++}`;
       state.setSession(id, {
         partition,
-        cleared: sessionState.cleared ?? false,
         hasPermissionRequestHandler: sessionState.hasPermissionRequestHandler ?? false,
         hasPermissionCheckHandler: sessionState.hasPermissionCheckHandler ?? false,
         hasHeadersReceivedHandler: sessionState.hasHeadersReceivedHandler ?? false,
@@ -224,7 +220,6 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
       const id = `session-${nextId++}`;
       state.setSession(id, {
         partition,
-        cleared: false,
         hasPermissionRequestHandler: false,
         hasPermissionCheckHandler: false,
         hasHeadersReceivedHandler: false,
@@ -232,11 +227,6 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
       partitionToId.set(partition, id);
 
       return { id, __brand: "SessionHandle" };
-    },
-
-    async clearStorageData(handle: SessionHandle): Promise<void> {
-      const session = getSession(handle);
-      session.cleared = true;
     },
 
     setPermissionRequestHandler(
@@ -277,8 +267,6 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
  * Expected state for session assertions.
  */
 interface SessionExpected {
-  /** Whether storage has been cleared */
-  cleared?: boolean;
   /** Whether a permission request handler is set (maps to hasPermissionRequestHandler) */
   requestHandler?: boolean;
   /** Whether a permission check handler is set (maps to hasPermissionCheckHandler) */
@@ -347,10 +335,6 @@ export const sessionLayerMatchers: MatcherImplementationsFor<
 
     // Check each expected property
     const mismatches: string[] = [];
-
-    if (expected.cleared !== undefined && session.cleared !== expected.cleared) {
-      mismatches.push(`cleared: expected ${expected.cleared}, got ${session.cleared}`);
-    }
 
     if (
       expected.requestHandler !== undefined &&
