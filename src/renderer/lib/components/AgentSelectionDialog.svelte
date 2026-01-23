@@ -3,6 +3,7 @@
    * Agent selection dialog component.
    * Displayed on first run to let users choose their preferred AI agent.
    */
+  import { onMount } from "svelte";
   import Logo from "./Logo.svelte";
   import Icon from "./Icon.svelte";
   import type { ConfigAgentType } from "@shared/api/types";
@@ -14,6 +15,9 @@
 
   const { onselect }: Props = $props();
 
+  /** Available agents in order */
+  const agents: ConfigAgentType[] = ["claude", "opencode"];
+
   /** Currently selected agent */
   let selectedAgent = $state<ConfigAgentType>("claude");
 
@@ -22,11 +26,48 @@
     selectedAgent = agent;
   }
 
-  /** Handle keyboard selection on cards */
+  /** Focus the card for the given agent */
+  function focusCard(agent: ConfigAgentType): void {
+    const card = document.querySelector(`[data-agent="${agent}"]`) as HTMLElement | null;
+    card?.focus();
+  }
+
+  /** Auto-focus selected card on mount for immediate keyboard navigation */
+  onMount(() => {
+    focusCard(selectedAgent);
+  });
+
+  /** Handle keyboard navigation on cards */
   function handleCardKeydown(event: KeyboardEvent, agent: ConfigAgentType): void {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      selectAgent(agent);
+    const currentIndex = agents.indexOf(agent);
+
+    switch (event.key) {
+      case "ArrowUp":
+      case "ArrowLeft": {
+        event.preventDefault();
+        const prevIndex = currentIndex === 0 ? agents.length - 1 : currentIndex - 1;
+        const prevAgent = agents[prevIndex] as ConfigAgentType;
+        selectAgent(prevAgent);
+        focusCard(prevAgent);
+        break;
+      }
+      case "ArrowDown":
+      case "ArrowRight": {
+        event.preventDefault();
+        const nextIndex = currentIndex === agents.length - 1 ? 0 : currentIndex + 1;
+        const nextAgent = agents[nextIndex] as ConfigAgentType;
+        selectAgent(nextAgent);
+        focusCard(nextAgent);
+        break;
+      }
+      case "Enter":
+        event.preventDefault();
+        handleContinue();
+        break;
+      case " ":
+        event.preventDefault();
+        selectAgent(agent);
+        break;
     }
   }
 
@@ -50,6 +91,7 @@
       role="radio"
       aria-checked={selectedAgent === "claude"}
       tabindex={selectedAgent === "claude" ? 0 : -1}
+      data-agent="claude"
       onclick={() => selectAgent("claude")}
       onkeydown={(e) => handleCardKeydown(e, "claude")}
     >
@@ -73,6 +115,7 @@
       role="radio"
       aria-checked={selectedAgent === "opencode"}
       tabindex={selectedAgent === "opencode" ? 0 : -1}
+      data-agent="opencode"
       onclick={() => selectAgent("opencode")}
       onkeydown={(e) => handleCardKeydown(e, "opencode")}
     >

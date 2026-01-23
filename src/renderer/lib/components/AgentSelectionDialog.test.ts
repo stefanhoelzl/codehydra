@@ -53,6 +53,13 @@ describe("AgentSelectionDialog component", () => {
       const radios = screen.getAllByRole("radio");
       expect(radios).toHaveLength(2);
     });
+
+    it("selected card (Claude) has focus when dialog renders", () => {
+      render(AgentSelectionDialog, { props: defaultProps });
+
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
+      expect(document.activeElement).toBe(claudeCard);
+    });
   });
 
   describe("selection behavior", () => {
@@ -97,16 +104,18 @@ describe("AgentSelectionDialog component", () => {
   });
 
   describe("keyboard navigation", () => {
-    it("Enter key selects a card", async () => {
-      render(AgentSelectionDialog, { props: defaultProps });
+    it("Enter key on card calls onselect (continues with current selection)", async () => {
+      const onselect = vi.fn();
+      render(AgentSelectionDialog, { props: { onselect } });
 
-      const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
 
       // Focus the card and press Enter
-      opencodeCard.focus();
-      await fireEvent.keyDown(opencodeCard, { key: "Enter" });
+      claudeCard.focus();
+      await fireEvent.keyDown(claudeCard, { key: "Enter" });
 
-      expect(opencodeCard).toHaveAttribute("aria-checked", "true");
+      expect(onselect).toHaveBeenCalledTimes(1);
+      expect(onselect).toHaveBeenCalledWith("claude");
     });
 
     it("Space key selects a card", async () => {
@@ -119,6 +128,94 @@ describe("AgentSelectionDialog component", () => {
       await fireEvent.keyDown(opencodeCard, { key: " " });
 
       expect(opencodeCard).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("ArrowDown navigates from Claude to OpenCode", async () => {
+      render(AgentSelectionDialog, { props: defaultProps });
+
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
+      const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
+
+      claudeCard.focus();
+      await fireEvent.keyDown(claudeCard, { key: "ArrowDown" });
+
+      expect(opencodeCard).toHaveAttribute("aria-checked", "true");
+      expect(claudeCard).toHaveAttribute("aria-checked", "false");
+      expect(document.activeElement).toBe(opencodeCard);
+    });
+
+    it("ArrowUp navigates from OpenCode to Claude", async () => {
+      render(AgentSelectionDialog, { props: defaultProps });
+
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
+      const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
+
+      // First select OpenCode
+      await fireEvent.click(opencodeCard);
+      opencodeCard.focus();
+      await fireEvent.keyDown(opencodeCard, { key: "ArrowUp" });
+
+      expect(claudeCard).toHaveAttribute("aria-checked", "true");
+      expect(opencodeCard).toHaveAttribute("aria-checked", "false");
+      expect(document.activeElement).toBe(claudeCard);
+    });
+
+    it("ArrowDown wraps from OpenCode to Claude", async () => {
+      render(AgentSelectionDialog, { props: defaultProps });
+
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
+      const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
+
+      // First select OpenCode
+      await fireEvent.click(opencodeCard);
+      opencodeCard.focus();
+      await fireEvent.keyDown(opencodeCard, { key: "ArrowDown" });
+
+      expect(claudeCard).toHaveAttribute("aria-checked", "true");
+      expect(opencodeCard).toHaveAttribute("aria-checked", "false");
+      expect(document.activeElement).toBe(claudeCard);
+    });
+
+    it("ArrowUp wraps from Claude to OpenCode", async () => {
+      render(AgentSelectionDialog, { props: defaultProps });
+
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
+      const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
+
+      claudeCard.focus();
+      await fireEvent.keyDown(claudeCard, { key: "ArrowUp" });
+
+      expect(opencodeCard).toHaveAttribute("aria-checked", "true");
+      expect(claudeCard).toHaveAttribute("aria-checked", "false");
+      expect(document.activeElement).toBe(opencodeCard);
+    });
+
+    it("ArrowRight navigates from Claude to OpenCode", async () => {
+      render(AgentSelectionDialog, { props: defaultProps });
+
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
+      const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
+
+      claudeCard.focus();
+      await fireEvent.keyDown(claudeCard, { key: "ArrowRight" });
+
+      expect(opencodeCard).toHaveAttribute("aria-checked", "true");
+      expect(document.activeElement).toBe(opencodeCard);
+    });
+
+    it("ArrowLeft navigates from OpenCode to Claude", async () => {
+      render(AgentSelectionDialog, { props: defaultProps });
+
+      const claudeCard = screen.getByRole("radio", { name: /claude/i });
+      const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
+
+      // First select OpenCode
+      await fireEvent.click(opencodeCard);
+      opencodeCard.focus();
+      await fireEvent.keyDown(opencodeCard, { key: "ArrowLeft" });
+
+      expect(claudeCard).toHaveAttribute("aria-checked", "true");
+      expect(document.activeElement).toBe(claudeCard);
     });
 
     it("Tab can focus Continue button", async () => {
