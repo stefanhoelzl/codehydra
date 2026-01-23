@@ -52,6 +52,8 @@ let debugOutputChannel: vscode.OutputChannel | null = null;
 let currentWorkspacePath = "";
 let currentPluginPort: number | null = null;
 let extensionContext: vscode.ExtensionContext | null = null;
+let currentAgentType: AgentType | null = null;
+let currentAgentEnv: Record<string, string> | null = null;
 
 // ============================================================================
 // Agent Terminal Management
@@ -486,6 +488,8 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 
     // Open agent terminal if env vars and agent type are available
     if (config.env !== null && config.agentType !== null) {
+      currentAgentType = config.agentType;
+      currentAgentEnv = config.env;
       openAgentTerminal(config.agentType, config.env);
       // Wait for terminal to be ready before focusing
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -575,6 +579,16 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.openAgent", () => {
+      if (currentAgentType === null || currentAgentEnv === null) {
+        void vscode.window.showWarningMessage("Agent not yet configured");
+        return;
+      }
+      openAgentTerminal(currentAgentType, currentAgentEnv);
+    })
+  );
+
   const pluginPortStr = process.env.CODEHYDRA_PLUGIN_PORT;
   if (!pluginPortStr) {
     return { codehydra: codehydraApi };
@@ -622,6 +636,10 @@ export function deactivate(): void {
 
   // Reset terminal reference (don't dispose - let VS Code handle it)
   agentTerminal = null;
+
+  // Reset agent config
+  currentAgentType = null;
+  currentAgentEnv = null;
 
   if (debugOutputChannel) {
     debugOutputChannel.dispose();
