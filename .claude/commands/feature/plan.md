@@ -1,6 +1,6 @@
 ---
 description: Write a feature plan through structured discussion phases
-allowed-tools: Read, Write, Glob, Grep, Task, AskUserQuestion
+allowed-tools: Read, Write, Glob, Grep, Task, AskUserQuestion, mcp__codehydra__workspace_execute_command
 ---
 
 # /feature:plan Command
@@ -180,7 +180,14 @@ Now I'll write the formal plan.
 After all discussion phases are complete:
 
 1. **Write the plan** directly to `planning/<FEATURE_NAME>.md` (ALL_CAPS with underscores)
-2. Use the EXACT structure from `.claude/templates/plan.md`:
+2. **Open the plan** in VS Code using the MCP tool:
+   ```
+   mcp__codehydra__workspace_execute_command({
+     command: "vscode.open",
+     args: [{ "$vscode": "Uri", "value": "file://<absolute-path-to-plan>" }]
+   })
+   ```
+3. Use the EXACT structure from `.claude/templates/plan.md`:
 
 ```markdown
 ---
