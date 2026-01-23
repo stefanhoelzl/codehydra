@@ -117,9 +117,9 @@ describe("VscodeSetupService", () => {
   });
 
   describe("isSetupComplete", () => {
-    it("returns true when marker exists with schemaVersion 1", async () => {
+    it("returns true when marker exists with current schemaVersion", async () => {
       const marker: SetupMarker = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         completedAt: "2025-12-09T10:00:00.000Z",
       };
       mockFs = createFileSystemMock({
@@ -144,9 +144,9 @@ describe("VscodeSetupService", () => {
       expect(result).toBe(false);
     });
 
-    it("returns false when schemaVersion is not 1 (legacy)", async () => {
+    it("returns false when schemaVersion is not current (legacy)", async () => {
       const marker: SetupMarker = {
-        schemaVersion: 0, // Legacy format (maps from old version field)
+        schemaVersion: 1, // Old schemaVersion (pre-bin-fix)
         completedAt: "2025-12-09T10:00:00.000Z",
       };
       mockFs = createFileSystemMock({
@@ -384,7 +384,7 @@ describe("VscodeSetupService", () => {
       // Verify content structure
       const markerContent = await mockFs.readFile("/mock/.setup-completed");
       const marker = JSON.parse(markerContent) as SetupMarker;
-      expect(marker.schemaVersion).toBe(1);
+      expect(marker.schemaVersion).toBe(2);
       expect(marker.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
       // Verify progress callback called
@@ -547,11 +547,13 @@ describe("VscodeSetupService", () => {
       // Files are not executable by default in the mock
     });
 
-    it("handles mkdir failure when file exists at path", async () => {
-      // Using a file where a directory should be creates EEXIST error
+    it("cleans existing bin directory before creating new one", async () => {
+      // Setup with existing bin directory and stale file
       mockFs = createFileSystemMock({
         entries: {
-          "/mock/bin": file("not a directory"),
+          "/mock": directory(),
+          "/mock/bin": directory(),
+          "/mock/bin/stale-script.sh": file("#!/bin/sh\necho stale"),
           ...createBinAssetsEntries(),
         },
       });
@@ -563,7 +565,13 @@ describe("VscodeSetupService", () => {
         mockPlatformInfo
       );
 
-      await expect(service.setupBinDirectory()).rejects.toThrow("File exists at path: /mock/bin");
+      await service.setupBinDirectory();
+
+      // Stale file should be gone (bin dir was cleaned)
+      await expect(mockFs.readFile("/mock/bin/stale-script.sh")).rejects.toThrow();
+
+      // New files should exist
+      expect(mockFs).toHaveFile("/mock/bin/code");
     });
 
     // Note: The "handles writeFile failure" test was removed during migration

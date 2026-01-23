@@ -12,8 +12,9 @@ export type { ProcessRunner, ProcessResult } from "../platform/process";
  *
  * Version history:
  * - v6: Added binary download phase (code-server + opencode) before extension installation
+ * - v7: Track setupVersion in marker to force bin/ script updates on version changes
  */
-export const CURRENT_SETUP_VERSION = 6;
+export const CURRENT_SETUP_VERSION = 7;
 
 /**
  * Setup steps for progress tracking.
@@ -41,7 +42,7 @@ export type ProgressCallback = (progress: SetupProgress) => void;
  * New marker file content indicating setup completion (schemaVersion 1+).
  */
 export interface SetupMarker {
-  /** Schema version of the marker file. Only changes for marker format changes. */
+  /** Schema version of the marker file. Increment to force re-setup on existing installs. */
   readonly schemaVersion: number;
   /** ISO timestamp when setup completed */
   readonly completedAt: string;
