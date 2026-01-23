@@ -271,6 +271,9 @@ export class DefaultViewLayer implements ViewLayer {
     if (options.webPreferences?.preload !== undefined) {
       webPreferences.preload = options.webPreferences.preload;
     }
+    if (options.webPreferences?.webviewTag !== undefined) {
+      webPreferences.webviewTag = options.webPreferences.webviewTag;
+    }
 
     const view = new WebContentsView({ webPreferences });
 
