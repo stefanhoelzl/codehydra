@@ -60,7 +60,7 @@ This allows resuming after a plan update without re-doing completed work.
 
 ## After ALL Implementation Steps Complete
 
-Run the validation commands specified in the invocation (typically `pnpm validate:fix` then `pnpm test:boundary`). Fix any issues and re-run until all pass.
+Run the validation commands specified in the invocation (typically `pnpm validate:fix`). Fix any issues and re-run until all pass.
 
 ## Fix Mode
 
