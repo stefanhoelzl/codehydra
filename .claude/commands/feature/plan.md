@@ -106,7 +106,19 @@ For the chosen approach, ensure all plan sections are discussed:
 - [ ] **UI Design** (if applicable) - User interactions, wireframe approach
 - [ ] **Dependencies** - Any new packages needed?
 - [ ] **Risks** - What could go wrong? Mitigations?
-- [ ] **Documentation** - What docs need updating?
+- [ ] **Documentation** - Analyze the plan and determine which docs need updating:
+
+**Documentation Sync Checklist (evaluate each):**
+
+| If the plan...                                   | Then update...           |
+| ------------------------------------------------ | ------------------------ |
+| Changes components, IPC handlers, system design  | `docs/ARCHITECTURE.md`   |
+| Changes UI flows, dialogs, keyboard shortcuts    | `docs/USER_INTERFACE.md` |
+| Changes API methods, events, types, IPC channels | `docs/API.md`            |
+| Introduces new patterns or conventions           | `CLAUDE.md`              |
+
+For each doc that needs updating, determine WHAT specifically will change (not just "update docs").
+Include these as explicit implementation steps in the plan.
 
 Track coverage internally. Before proceeding to Phase 4, verify all applicable sections have been discussed.
 
@@ -167,7 +179,7 @@ When all 4 phases are complete, confirm before writing:
 We've completed all discussion phases:
 - [x] Problem understood: [one-line summary]
 - [x] Agreed approach: [option name]
-- [x] Sections covered: Architecture, Testing, [others as applicable]
+- [x] Sections covered: Architecture, Testing, Documentation, [others as applicable]
 - [x] Approvals: [list or "None required"]
 
 Now I'll write the formal plan.
