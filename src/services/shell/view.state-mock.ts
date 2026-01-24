@@ -42,6 +42,7 @@ export interface ViewStateSnapshot {
   readonly attachedTo: string | null;
   readonly options: ViewOptions;
   readonly hasWindowOpenHandler: boolean;
+  readonly focused: boolean;
 }
 
 /**
@@ -59,6 +60,8 @@ export interface ViewExpectation {
   bounds?: Rectangle | null;
   /** true = must have handler, false = must not have handler */
   hasWindowOpenHandler?: boolean;
+  /** true = must be focused, false = must not be focused */
+  focused?: boolean;
 }
 
 /**
@@ -111,6 +114,7 @@ interface ViewState {
   attachedTo: string | null;
   options: ViewOptions;
   hasWindowOpenHandler: boolean;
+  focused: boolean;
 }
 
 // =============================================================================
@@ -227,6 +231,7 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
       attachedTo: state.attachedTo,
       options: state.options,
       hasWindowOpenHandler: state.hasWindowOpenHandler,
+      focused: state.focused,
     };
   }
 
@@ -290,6 +295,7 @@ export function createViewLayerMock(): MockViewLayer {
         attachedTo: null,
         options,
         hasWindowOpenHandler: false,
+        focused: false,
       });
       state.didFinishLoadCallbacks.set(id, new Set());
       state.willNavigateCallbacks.set(id, new Set());
@@ -348,8 +354,14 @@ export function createViewLayerMock(): MockViewLayer {
       view.backgroundColor = color;
     },
 
-    focus(_handle: ViewHandle): void {
-      getView(_handle); // Validate handle exists
+    focus(handle: ViewHandle): void {
+      const view = getView(handle);
+      // Clear focus from all other views
+      for (const v of state.views.values()) {
+        v.focused = false;
+      }
+      // Set focus on this view
+      view.focused = true;
     },
 
     attachToWindow(handle: ViewHandle, windowHandle: WindowHandle, index?: number): void {
@@ -566,6 +578,16 @@ export const viewLayerMatchers: MatcherImplementationsFor<MockViewLayer, ViewLay
           pass: false,
           message: () =>
             `Expected view "${id}" to have hasWindowOpenHandler ${expected.hasWindowOpenHandler} but got ${view.hasWindowOpenHandler}`,
+        };
+      }
+    }
+
+    if ("focused" in expected) {
+      if (view.focused !== expected.focused) {
+        return {
+          pass: false,
+          message: () =>
+            `Expected view "${id}" to have focused ${expected.focused} but got ${view.focused}`,
         };
       }
     }
