@@ -6,12 +6,18 @@
 
 import path from "path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { CodeServerManager, urlForFolder, CODE_SERVER_PORT } from "./code-server-manager";
+import {
+  CodeServerManager,
+  urlForFolder,
+  CODE_SERVER_PORT,
+  getCodeServerPort,
+} from "./code-server-manager";
 import { createMockProcessRunner, type MockProcessRunner } from "../platform/process.state-mock";
 import { createPortManagerMock } from "../platform/network.test-utils";
 import { createMockHttpClient } from "../platform/http-client.state-mock";
 import type { HttpClient, PortManager } from "../platform/network";
 import { SILENT_LOGGER } from "../logging";
+import { createMockBuildInfo } from "../platform/build-info.test-utils";
 
 const testLogger = SILENT_LOGGER;
 
@@ -55,6 +61,7 @@ describe("CodeServerManager", () => {
   let mockPortManager: PortManager;
 
   const defaultConfig = {
+    port: CODE_SERVER_PORT,
     binaryPath: "/usr/bin/code-server",
     runtimeDir: "/tmp/code-server-runtime",
     extensionsDir: "/tmp/code-server-extensions",
@@ -66,7 +73,10 @@ describe("CodeServerManager", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockProcessRunner = createMockProcessRunner();
+    // Process mock returns running: true so health check sees process is still alive
+    mockProcessRunner = createMockProcessRunner({
+      onSpawn: () => ({ pid: 12345, running: true }),
+    });
     // Mock HttpClient that returns 200 for health checks
     mockHttpClient = createMockHttpClient({
       defaultResponse: { status: 200 },
@@ -96,6 +106,7 @@ describe("CodeServerManager", () => {
       const portManager = createPortManagerMock();
       const processRunner = createMockProcessRunner();
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/usr/bin/code-server",
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
@@ -161,6 +172,7 @@ describe("CodeServerManager", () => {
       mockHttpClient = { fetch: fetchMock };
       manager = new CodeServerManager(
         {
+          port: CODE_SERVER_PORT,
           binaryPath: "/usr/bin/code-server",
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
@@ -209,6 +221,7 @@ describe("CodeServerManager", () => {
       mockHttpClient = mock;
       manager = new CodeServerManager(
         {
+          port: CODE_SERVER_PORT,
           binaryPath: "/usr/bin/code-server",
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
@@ -236,6 +249,7 @@ describe("CodeServerManager", () => {
       });
       manager = new CodeServerManager(
         {
+          port: CODE_SERVER_PORT,
           binaryPath: "/usr/bin/code-server",
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
@@ -271,6 +285,7 @@ describe("CodeServerManager", () => {
       mockHttpClient = { fetch: fetchMock };
       manager = new CodeServerManager(
         {
+          port: CODE_SERVER_PORT,
           binaryPath: "/usr/bin/code-server",
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
@@ -305,6 +320,7 @@ describe("CodeServerManager", () => {
       mockHttpClient = { fetch: fetchMock };
       manager = new CodeServerManager(
         {
+          port: CODE_SERVER_PORT,
           binaryPath: "/usr/bin/code-server",
           runtimeDir: "/tmp/code-server-runtime",
           extensionsDir: "/tmp/code-server-extensions",
@@ -410,6 +426,7 @@ describe("CodeServerManager (with full DI)", () => {
       const httpClient = createMockHttpClient();
       const portManager = createPortManagerMock();
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/usr/bin/code-server",
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
@@ -432,13 +449,14 @@ describe("CodeServerManager (with full DI)", () => {
 
     it("uses provided ProcessRunner for spawning processes", async () => {
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 99999 }),
+        onSpawn: () => ({ pid: 99999, running: true }),
       });
       const httpClient = createMockHttpClient({
         defaultResponse: { status: 200 },
       });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/usr/bin/code-server",
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
@@ -480,6 +498,7 @@ describe("CodeServerManager (with full DI)", () => {
       const processRunner = createMockProcessRunner({
         onSpawn: () => ({
           pid: 12345,
+          running: true,
           killResult: { success: true, reason: "SIGTERM" },
         }),
       });
@@ -488,6 +507,7 @@ describe("CodeServerManager (with full DI)", () => {
       });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/usr/bin/code-server",
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
@@ -517,6 +537,7 @@ describe("CodeServerManager (with full DI)", () => {
       const processRunner = createMockProcessRunner({
         onSpawn: () => ({
           pid: 12345,
+          running: true,
           signal: "SIGKILL",
           killResult: { success: true, reason: "SIGKILL" },
         }),
@@ -526,6 +547,7 @@ describe("CodeServerManager (with full DI)", () => {
       });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/usr/bin/code-server",
         runtimeDir: "/tmp/code-server-runtime",
         extensionsDir: "/tmp/code-server-extensions",
@@ -561,12 +583,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
     process.env.PATH = `/usr/bin${path.delimiter}/usr/local/bin`;
 
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -605,12 +628,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
     process.env.PATH = `/existing/path${path.delimiter}/another/path`;
 
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -652,12 +676,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
     process.env.Path = `/usr/bin${path.delimiter}/usr/local/bin`;
 
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -708,12 +733,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
     delete process.env.Path;
 
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -749,12 +775,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
 
   it("prepends binDir to PATH", async () => {
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -783,12 +810,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
     process.env.PATH = "/usr/bin:/usr/local/bin";
 
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -817,12 +845,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
 
   it("sets EDITOR with absolute path", async () => {
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -853,12 +882,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
 
   it("EDITOR includes --wait flag", async () => {
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -883,12 +913,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
 
   it("EDITOR includes --reuse-window flag", async () => {
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -913,12 +944,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
 
   it("sets GIT_SEQUENCE_EDITOR same as EDITOR", async () => {
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -943,12 +975,13 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
 
   it("sets VSCODE_PROXY_URI to empty string to disable localhost URL rewriting", async () => {
     const processRunner = createMockProcessRunner({
-      onSpawn: () => ({ pid: 12345 }),
+      onSpawn: () => ({ pid: 12345, running: true }),
     });
 
     const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
     const portManager = createPortManagerMock([8080]);
     const config = {
+      port: CODE_SERVER_PORT,
       binaryPath: "/usr/bin/code-server",
       runtimeDir: "/tmp/runtime",
       extensionsDir: "/tmp/extensions",
@@ -971,5 +1004,86 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
     // Without this, code-server rewrites localhost URLs to go through /proxy/<port>/
     const spawned = processRunner.$.spawned(0);
     expect(spawned.$.env?.VSCODE_PROXY_URI).toBe("");
+  });
+});
+
+describe("getCodeServerPort", () => {
+  it("returns fixed port in production mode", () => {
+    const buildInfo = createMockBuildInfo({ isDevelopment: false });
+
+    const port = getCodeServerPort(buildInfo);
+
+    expect(port).toBe(CODE_SERVER_PORT);
+  });
+
+  it("returns derived port in development mode", () => {
+    const buildInfo = createMockBuildInfo({
+      isDevelopment: true,
+      gitBranch: "feature/test-branch",
+    });
+
+    const port = getCodeServerPort(buildInfo);
+
+    // Port should be in the range 30000-65000
+    expect(port).toBeGreaterThanOrEqual(30000);
+    expect(port).toBeLessThan(65000);
+    // Port should NOT be the production port
+    expect(port).not.toBe(CODE_SERVER_PORT);
+  });
+
+  it("returns consistent port for same branch name", () => {
+    const buildInfo1 = createMockBuildInfo({
+      isDevelopment: true,
+      gitBranch: "feature/my-feature",
+    });
+    const buildInfo2 = createMockBuildInfo({
+      isDevelopment: true,
+      gitBranch: "feature/my-feature",
+    });
+
+    const port1 = getCodeServerPort(buildInfo1);
+    const port2 = getCodeServerPort(buildInfo2);
+
+    expect(port1).toBe(port2);
+  });
+
+  it("returns different ports for different branch names", () => {
+    const buildInfo1 = createMockBuildInfo({
+      isDevelopment: true,
+      gitBranch: "feature/branch-a",
+    });
+    const buildInfo2 = createMockBuildInfo({
+      isDevelopment: true,
+      gitBranch: "feature/branch-b",
+    });
+
+    const port1 = getCodeServerPort(buildInfo1);
+    const port2 = getCodeServerPort(buildInfo2);
+
+    expect(port1).not.toBe(port2);
+  });
+
+  it("uses 'development' fallback when gitBranch is not set", () => {
+    const buildInfo = createMockBuildInfo({
+      isDevelopment: true,
+      // gitBranch not set - should use "development" fallback
+    });
+
+    const port = getCodeServerPort(buildInfo);
+
+    // Should get a port in the valid range (using "development" as input)
+    expect(port).toBeGreaterThanOrEqual(30000);
+    expect(port).toBeLessThan(65000);
+  });
+
+  it("returns fixed port even when gitBranch is set in production", () => {
+    const buildInfo = createMockBuildInfo({
+      isDevelopment: false,
+      gitBranch: "should-be-ignored",
+    });
+
+    const port = getCodeServerPort(buildInfo);
+
+    expect(port).toBe(CODE_SERVER_PORT);
   });
 });

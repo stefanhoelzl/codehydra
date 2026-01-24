@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join, delimiter } from "node:path";
-import { CodeServerManager } from "./code-server-manager";
+import { CodeServerManager, CODE_SERVER_PORT } from "./code-server-manager";
 import { createMockProcessRunner } from "../platform/process.state-mock";
 import { createPortManagerMock } from "../platform/network.test-utils";
 import { createMockHttpClient } from "../platform/http-client.state-mock";
@@ -43,12 +43,13 @@ describe("CodeServerManager Integration", () => {
       process.env.PATH = "/usr/bin:/usr/local/bin";
 
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
@@ -74,12 +75,13 @@ describe("CodeServerManager Integration", () => {
 
     it("includes EDITOR with absolute path and flags", async () => {
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
@@ -111,12 +113,13 @@ describe("CodeServerManager Integration", () => {
 
     it("includes GIT_SEQUENCE_EDITOR same as EDITOR", async () => {
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
@@ -148,12 +151,13 @@ describe("CodeServerManager Integration", () => {
       process.env.VSCODE_CODE_CACHE_PATH = "/some/cache";
 
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
@@ -186,12 +190,13 @@ describe("CodeServerManager Integration", () => {
       process.env.MY_CUSTOM_VAR = "custom-value";
 
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
@@ -219,12 +224,13 @@ describe("CodeServerManager Integration", () => {
 
     it("includes CODEHYDRA_PLUGIN_PORT when pluginPort configured", async () => {
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
@@ -251,12 +257,13 @@ describe("CodeServerManager Integration", () => {
 
     it("omits CODEHYDRA_PLUGIN_PORT when pluginPort undefined", async () => {
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",
@@ -283,12 +290,13 @@ describe("CodeServerManager Integration", () => {
 
     it("includes CODEHYDRA_CODE_SERVER_DIR and CODEHYDRA_OPENCODE_DIR", async () => {
       const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ pid: 12345 }),
+        onSpawn: () => ({ pid: 12345, running: true }),
       });
 
       const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
       const portManager = createPortManagerMock([8080]);
       const config = {
+        port: CODE_SERVER_PORT,
         binaryPath: "/app/code-server",
         runtimeDir: "/tmp/runtime",
         extensionsDir: "/tmp/extensions",

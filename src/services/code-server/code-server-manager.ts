@@ -5,9 +5,7 @@
 
 import { join, delimiter } from "node:path";
 
-/** Fixed port for code-server to maintain consistent origin for IndexedDB storage */
-export const CODE_SERVER_PORT = 25448;
-import type { CodeServerConfig, InstanceState } from "./types";
+import type { BuildInfo } from "../platform/build-info";
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
@@ -18,6 +16,48 @@ import { encodePathForUrl } from "../platform/paths";
 import { CodeServerError, getErrorMessage } from "../errors";
 import type { Logger } from "../logging";
 import { waitForHealthy } from "../platform/health-check";
+import type { CodeServerConfig, InstanceState } from "./types";
+
+/** Fixed port for production to maintain consistent origin for IndexedDB storage */
+export const CODE_SERVER_PORT = 25448;
+
+/**
+ * Determine the code-server port based on build info.
+ * - Production: Fixed port (25448) for IndexedDB persistence
+ * - Development: Port derived from git branch for consistency across restarts
+ *
+ * @param buildInfo - Build information including dev mode and git branch
+ * @returns Port number for code-server
+ */
+export function getCodeServerPort(buildInfo: BuildInfo): number {
+  if (!buildInfo.isDevelopment) {
+    return CODE_SERVER_PORT;
+  }
+
+  // Derive port from git branch name (or fallback)
+  const input = buildInfo.gitBranch ?? "development";
+  return derivePortFromString(input);
+}
+
+/**
+ * Derive a port number from a string using a simple hash.
+ * Returns a port in the range 30000-65000 to avoid conflicts.
+ *
+ * @param input - String to hash (e.g., git branch name)
+ * @returns Consistent port number for the input
+ */
+function derivePortFromString(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    const char = input.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  // Map to port range 30000-65000 (35000 possible ports)
+  const PORT_RANGE_START = 30000;
+  const PORT_RANGE_SIZE = 35000;
+  return PORT_RANGE_START + Math.abs(hash % PORT_RANGE_SIZE);
+}
 
 /**
  * Function to unsubscribe from PID change events.
@@ -80,6 +120,7 @@ export class CodeServerManager {
   private readonly config: CodeServerConfig;
   private readonly processRunner: ProcessRunner;
   private readonly httpClient: HttpClient;
+  private readonly portManager: PortManager;
   private readonly logger: Logger;
   private state: InstanceState = "stopped";
   private currentPort: number | null = null;
@@ -92,12 +133,13 @@ export class CodeServerManager {
     config: CodeServerConfig,
     processRunner: ProcessRunner,
     httpClient: HttpClient,
-    _portManager: PortManager,
+    portManager: PortManager,
     logger: Logger
   ) {
     this.config = config;
     this.processRunner = processRunner;
     this.httpClient = httpClient;
+    this.portManager = portManager;
     this.logger = logger;
   }
 
@@ -187,9 +229,17 @@ export class CodeServerManager {
   private async doStart(): Promise<number> {
     this.logger.info("Starting code-server");
 
-    // Use fixed port to maintain consistent origin for IndexedDB storage.
-    // This ensures extension settings persist across app restarts.
-    const port = CODE_SERVER_PORT;
+    // Use port from config (determined by getCodeServerPort)
+    const port = this.config.port;
+
+    // Check port availability before spawning
+    const portAvailable = await this.portManager.isPortAvailable(port);
+    if (!portAvailable) {
+      throw new CodeServerError(
+        `Port ${port} is already in use. Another code-server or application may be running on this port.`
+      );
+    }
+
     this.currentPort = port;
 
     // Build command arguments
@@ -284,6 +334,10 @@ export class CodeServerManager {
   /**
    * Wait for the server to become healthy.
    * Uses shared health check utility with 10s timeout.
+   *
+   * Port availability is checked BEFORE spawning code-server (in doStart),
+   * so we don't need a delay here. The health check verifies both that
+   * our process is running and that the healthz endpoint responds.
    */
   private async waitForServerHealthy(port: number): Promise<void> {
     await waitForHealthy({
@@ -295,9 +349,25 @@ export class CodeServerManager {
   }
 
   /**
-   * Check if the server is responding to health checks.
+   * Check if the server is responding to health checks AND our process is still running.
+   * This prevents false positives from another code-server instance on the same port.
    */
   private async checkHealth(port: number): Promise<boolean> {
+    // First, verify our spawned process is still running
+    if (!this.process || this.currentPid === null) {
+      this.logger.warn("Health check failed: process not available");
+      return false;
+    }
+
+    const processCheck = await this.process.wait(0);
+    if (!processCheck.running) {
+      this.logger.warn("Health check failed: process exited", {
+        exitCode: processCheck.exitCode,
+      });
+      return false;
+    }
+
+    // Then check the healthz endpoint
     try {
       const response = await this.httpClient.fetch(`http://127.0.0.1:${port}/healthz`, {
         timeout: 1000,

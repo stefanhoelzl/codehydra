@@ -34,6 +34,7 @@ export {
   CodeServerManager,
   urlForFolder,
   urlForWorkspace,
+  getCodeServerPort,
 } from "./code-server/code-server-manager";
 
 // Project store
