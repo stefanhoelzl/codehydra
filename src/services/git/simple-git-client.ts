@@ -332,9 +332,11 @@ export class SimpleGitClient implements IGitClient {
         const git = this.getGit(repoPath);
         if (remote) {
           // Use array format to ensure remote is treated as remote name, not refspec
-          await git.fetch([remote]);
+          // Include --prune to remove stale remote-tracking branches
+          await git.fetch([remote, "--prune"]);
         } else {
-          await git.fetch();
+          // Fetch all remotes with pruning
+          await git.fetch(["--all", "--prune"]);
         }
       },
       "fetch",

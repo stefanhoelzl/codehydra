@@ -20,6 +20,16 @@
     id?: string;
     debounceMs?: number;
     optionSnippet?: Snippet<[option: DropdownOption, highlighted: boolean]>;
+    /** If true, pressing Enter with no selection calls onSelect with typed text */
+    allowFreeText?: boolean;
+    /** Called after Enter key is handled (after selection or free text emit) */
+    onEnter?: (() => void) | undefined;
+    /** Called on every input change with the current text */
+    onInput?: ((value: string) => void) | undefined;
+    /** Whether to open dropdown on focus. Defaults to true. Set to false for free-text fields. */
+    openOnFocus?: boolean;
+    /** Whether to focus the input on mount */
+    autofocus?: boolean;
   }
 
   let {
@@ -32,6 +42,11 @@
     id,
     debounceMs = 200,
     optionSnippet,
+    allowFreeText = false,
+    onEnter,
+    onInput: onInputCallback,
+    openOnFocus = true,
+    autofocus = false,
   }: FilterableDropdownProps = $props();
 
   // Internal state
@@ -39,6 +54,8 @@
   let highlightedIndex = $state(-1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let debouncedFilter = $state("");
+  // Track whether user is actively typing (vs selection just happened)
+  let isTyping = $state(false);
 
   // Positioning state for fixed dropdown
   let inputRef: HTMLInputElement | undefined = $state(undefined);
@@ -76,6 +93,14 @@
     return opt !== undefined
       ? `${baseId}-option-${opt.value.replace(/[^a-zA-Z0-9-]/g, "-")}`
       : undefined;
+  });
+
+  // Scroll highlighted option into view when navigating with keyboard
+  $effect(() => {
+    if (highlightedId !== undefined) {
+      const element = document.getElementById(highlightedId);
+      element?.scrollIntoView({ block: "nearest" });
+    }
   });
 
   /**
@@ -122,25 +147,51 @@
     };
   });
 
+  // Auto-open dropdown when typing produces matches
+  $effect(() => {
+    if (isTyping && debouncedFilter !== "" && filteredSelectableOptions.length > 0 && !isOpen) {
+      isOpen = true;
+    }
+  });
+
   function handleFocus(): void {
-    if (!disabled) {
+    if (!disabled && openOnFocus) {
       isOpen = true;
     }
   }
 
   function handleBlur(event: FocusEvent): void {
     const relatedTarget = event.relatedTarget as HTMLElement | null;
-    if (relatedTarget?.closest(".filterable-dropdown")) {
+    // Only keep open if focus stays within THIS dropdown (e.g., clicking an option)
+    // Use inputRef's parent to identify this specific dropdown instance
+    const thisDropdown = inputRef?.closest(".filterable-dropdown");
+    if (thisDropdown && relatedTarget?.closest(".filterable-dropdown") === thisDropdown) {
       return;
     }
+
+    // When allowFreeText is false, revert to prop value if typed text doesn't match a valid option
+    if (!allowFreeText && localFilterOverride !== null) {
+      const exactMatch = selectableOptions.find(
+        (opt) => opt.label.toLowerCase() === localFilterOverride!.toLowerCase()
+      );
+      if (exactMatch === undefined) {
+        // No valid match - revert to original prop value
+        localFilterOverride = null;
+        debouncedFilter = "";
+      }
+    }
+
     isOpen = false;
     highlightedIndex = -1;
+    isTyping = false;
   }
 
   function handleInput(event: Event): void {
     const target = event.target as HTMLInputElement;
     localFilterOverride = target.value;
     highlightedIndex = -1;
+    isTyping = true;
+    onInputCallback?.(target.value);
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
@@ -172,17 +223,27 @@
       case "Enter":
         event.preventDefault();
         if (highlightedIndex >= 0 && highlightedIndex < selectableCount) {
+          // Selecting an option from dropdown - don't trigger onEnter
           const highlightedOption = filteredSelectableOptions[highlightedIndex];
           if (highlightedOption !== undefined) {
             selectOption(highlightedOption.value);
           }
+        } else if (allowFreeText && displayText.trim() !== "") {
+          // Free text mode: emit typed text as value when no option highlighted
+          // This is a "confirm custom value" action, so trigger onEnter
+          selectFreeText(displayText.trim());
+          onEnter?.();
         }
         break;
 
       case "Escape":
-        event.preventDefault();
-        isOpen = false;
-        highlightedIndex = -1;
+        if (isOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          isOpen = false;
+          highlightedIndex = -1;
+          isTyping = false;
+        }
         break;
 
       case "Tab":
@@ -209,7 +270,21 @@
     debouncedFilter = localFilterOverride;
     isOpen = false;
     highlightedIndex = -1;
+    isTyping = false;
     onSelect(optionValue);
+  }
+
+  /**
+   * Handle free text selection (when allowFreeText is enabled).
+   * Emits the typed text directly without matching to an option.
+   */
+  function selectFreeText(text: string): void {
+    localFilterOverride = text;
+    debouncedFilter = text;
+    isOpen = false;
+    highlightedIndex = -1;
+    isTyping = false;
+    onSelect(text);
   }
 
   /**
@@ -231,6 +306,8 @@
 <div class="filterable-dropdown">
   <input
     bind:this={inputRef}
+    id={id ? `${id}-input` : undefined}
+    data-autofocus={autofocus || undefined}
     type="text"
     role="combobox"
     aria-expanded={isOpen}
@@ -247,7 +324,7 @@
     onkeydown={handleKeyDown}
   />
 
-  {#if isOpen && dropdownPosition !== null}
+  {#if isOpen && dropdownPosition !== null && (filteredSelectableOptions.length > 0 || !allowFreeText)}
     <ul
       id={listboxId}
       class="dropdown-listbox"

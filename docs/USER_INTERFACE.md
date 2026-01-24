@@ -371,11 +371,32 @@ They can click "Open Project" to try again.
 1. Click [+] on project row
 2. Create dialog opens
 3. Select target project from dropdown (defaults to current workspace's project)
-4. Enter workspace name (validated in real-time against selected project's workspaces)
+4. Enter workspace name OR select an existing branch from the dropdown
 5. Select base branch from dropdown (the branch to create new worktree from)
 6. Click OK
 7. Git worktree created in managed location (NOT in main directory)
 8. New workspace becomes active
+
+**Name field behavior:**
+
+The Name field is a filterable dropdown that supports both:
+
+- **Custom name entry**: Type a new branch name and press Enter
+- **Existing branch selection**: Select from local branches without worktrees or remote branches without local counterparts
+
+When selecting an existing branch from the dropdown:
+
+- The name field auto-fills with the branch name
+- The base branch field auto-fills with a suggested base:
+  - For local branches: uses `codehydra.base` config or matching `origin/*` branch
+  - For remote branches: uses the full remote ref (e.g., `origin/feature-x`)
+
+When typing a custom name and pressing Enter with no dropdown selection:
+
+- The typed text is used as the new branch name
+- No auto-fill of base branch (user must select manually)
+
+Validation occurs when the user presses Enter or selects an option, not on blur.
 
 **Default branch pre-selection:**
 

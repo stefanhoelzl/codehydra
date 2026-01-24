@@ -58,6 +58,15 @@ describe("ProjectDropdown component", () => {
     onSelect: vi.fn(),
   };
 
+  /**
+   * Helper to focus input and open dropdown.
+   * When dropdown has a value, there's a 50ms delay before opening.
+   */
+  async function focusAndOpenDropdown(input: HTMLElement): Promise<void> {
+    await fireEvent.focus(input);
+    await vi.advanceTimersByTimeAsync(50);
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
@@ -74,7 +83,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
 
       expect(screen.getByText("project-alpha")).toBeInTheDocument();
       expect(screen.getByText("project-beta")).toBeInTheDocument();
@@ -85,7 +94,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
 
       const options = screen.getAllByRole("option");
       expect(options[0]).toHaveTextContent("project-alpha");
@@ -98,7 +107,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: { ...defaultProps, onSelect } });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
 
       const option = screen.getByText("project-beta");
       await fireEvent.mouseDown(option);
@@ -121,7 +130,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
       await fireEvent.input(input, { target: { value: "beta" } });
 
       // Wait for debounce
@@ -137,7 +146,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
       await fireEvent.input(input, { target: { value: "ALPHA" } });
 
       await vi.advanceTimersByTimeAsync(250);
@@ -153,7 +162,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      // ArrowDown opens the dropdown immediately
       await fireEvent.keyDown(input, { key: "ArrowDown" });
 
       const options = screen.getAllByRole("option");
@@ -165,7 +174,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: { ...defaultProps, onSelect } });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      // ArrowDown opens the dropdown immediately
       await fireEvent.keyDown(input, { key: "ArrowDown" });
       await fireEvent.keyDown(input, { key: "Enter" });
 
@@ -178,7 +187,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: { ...defaultProps, onSelect } });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
       expect(input).toHaveAttribute("aria-expanded", "true");
 
       await fireEvent.keyDown(input, { key: "Escape" });
@@ -206,7 +215,7 @@ describe("ProjectDropdown component", () => {
       });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
 
       const option = screen.getByText(longProjectName);
       expect(option).toBeInTheDocument();
@@ -243,7 +252,7 @@ describe("ProjectDropdown component", () => {
       render(ProjectDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      await focusAndOpenDropdown(input);
 
       const options = screen.getAllByRole("option");
       expect(options).toHaveLength(3);

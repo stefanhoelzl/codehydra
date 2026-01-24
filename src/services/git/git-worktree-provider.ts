@@ -189,11 +189,144 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
 
   async listBases(): Promise<readonly BaseInfo[]> {
     const branches = await this.gitClient.listBranches(this.projectRoot);
+    const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
 
-    return branches.map((branch) => ({
-      name: branch.name,
-      isRemote: branch.isRemote,
-    }));
+    // Build set of branches that have worktrees
+    const branchesWithWorktrees = new Set<string>();
+    for (const wt of worktrees) {
+      if (wt.branch) {
+        branchesWithWorktrees.add(wt.branch);
+      }
+    }
+
+    // Build set of local branch names
+    const localBranches = new Set<string>();
+    for (const branch of branches) {
+      if (!branch.isRemote) {
+        localBranches.add(branch.name);
+      }
+    }
+
+    // Compute derives for remote branches with deduplication
+    // For each derivable name, track which remote branch should get the derives field
+    // Prefer 'origin' remote, then alphabetically first
+    const derivesMap = this.computeRemoteDerives(branches, localBranches);
+
+    // Build result with derives and base
+    const result: BaseInfo[] = [];
+
+    for (const branch of branches) {
+      if (branch.isRemote) {
+        // Remote branch: derives if no local counterpart and we're the preferred remote
+        const derives = derivesMap.get(branch.name);
+        const baseInfo: BaseInfo = {
+          name: branch.name,
+          isRemote: true,
+          base: branch.name, // Remote's base is itself
+        };
+        if (derives !== undefined) {
+          result.push({ ...baseInfo, derives });
+        } else {
+          result.push(baseInfo);
+        }
+      } else {
+        // Local branch: derives if no worktree exists
+        const hasWorktree = branchesWithWorktrees.has(branch.name);
+
+        // Compute base: codehydra.base config or matching origin/* branch
+        let base: string | undefined;
+        try {
+          const configBase = await this.gitClient.getBranchConfig(
+            this.projectRoot,
+            branch.name,
+            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.base`
+          );
+          if (configBase) {
+            base = configBase;
+          } else {
+            // Check for matching origin/* branch
+            const originBranch = `origin/${branch.name}`;
+            const hasOriginBranch = branches.some((b) => b.isRemote && b.name === originBranch);
+            if (hasOriginBranch) {
+              base = originBranch;
+            }
+          }
+        } catch {
+          // Ignore config errors, base stays undefined
+        }
+
+        // Build BaseInfo with conditional optional properties
+        const baseInfo: BaseInfo = {
+          name: branch.name,
+          isRemote: false,
+        };
+        if (base !== undefined) {
+          result.push(
+            hasWorktree ? { ...baseInfo, base } : { ...baseInfo, base, derives: branch.name }
+          );
+        } else {
+          result.push(hasWorktree ? baseInfo : { ...baseInfo, derives: branch.name });
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Compute derives for remote branches with deduplication across remotes.
+   * For branches that exist on multiple remotes (e.g., origin/feature, upstream/feature),
+   * only one should get the derives field. Preference: 'origin' first, then alphabetically.
+   *
+   * @returns Map from full remote branch name to derives value (or undefined if no derives)
+   */
+  private computeRemoteDerives(
+    branches: readonly { name: string; isRemote: boolean }[],
+    localBranches: Set<string>
+  ): Map<string, string | undefined> {
+    // Map: derivable name -> array of [remote, fullBranchName]
+    const derivableToRemotes = new Map<string, Array<[string, string]>>();
+
+    for (const branch of branches) {
+      if (!branch.isRemote) continue;
+
+      // Extract remote prefix and branch name
+      // e.g., "origin/feature" -> remote="origin", branchName="feature"
+      // e.g., "origin/feature/login" -> remote="origin", branchName="feature/login"
+      const slashIndex = branch.name.indexOf("/");
+      if (slashIndex === -1) continue;
+
+      const remote = branch.name.substring(0, slashIndex);
+      const branchName = branch.name.substring(slashIndex + 1);
+
+      // Skip if local branch exists
+      if (localBranches.has(branchName)) continue;
+
+      if (!derivableToRemotes.has(branchName)) {
+        derivableToRemotes.set(branchName, []);
+      }
+      derivableToRemotes.get(branchName)!.push([remote, branch.name]);
+    }
+
+    // Build result map: prefer 'origin', then alphabetically first
+    const result = new Map<string, string | undefined>();
+
+    for (const [branchName, remotes] of derivableToRemotes) {
+      // Sort: 'origin' first, then alphabetically
+      remotes.sort(([a], [b]) => {
+        if (a === "origin") return -1;
+        if (b === "origin") return 1;
+        return a.localeCompare(b);
+      });
+
+      // First one gets derives, others get undefined
+      for (let i = 0; i < remotes.length; i++) {
+        const [, fullBranchName] = remotes[i]!;
+        result.set(fullBranchName, i === 0 ? branchName : undefined);
+      }
+    }
+
+    return result;
   }
 
   async updateBases(): Promise<UpdateBasesResult> {
@@ -229,14 +362,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     let createdBranch = false;
 
     if (branchExists) {
-      // Branch exists - baseBranch must match the branch name
-      if (baseBranch !== name) {
-        throw new WorkspaceError(
-          `Branch '${name}' already exists. To create a workspace for it, select '${name}' as the base branch.`
-        );
-      }
-
-      // Check if branch is already checked out in a worktree
+      // Branch exists - check if already checked out in a worktree
       const { checkedOut, worktreePath: existingPath } = await this.isBranchCheckedOut(name);
       if (checkedOut) {
         throw new WorkspaceError(
@@ -244,6 +370,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
         );
       }
       // Branch exists and not checked out - will use existing branch
+      // The baseBranch is saved in config for tracking purposes regardless of whether it matches
     } else {
       // Branch doesn't exist - create it
       try {
@@ -401,19 +528,27 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
 
   /**
    * Returns the default base branch for creating new workspaces.
-   * Checks for "main" first, then "master". Returns undefined if neither exists.
+   * Prefers remote branches over local to ensure proper tracking.
+   * Check order: origin/main -> main -> origin/master -> master
    *
-   * @returns Promise resolving to "main", "master", or undefined
+   * @returns Promise resolving to the default base branch, or undefined if none found
    */
   async defaultBase(): Promise<string | undefined> {
     try {
       const bases = await this.listBases();
-      const branchNames = bases.map((b) => b.name);
+      const branchNames = new Set(bases.map((b) => b.name));
 
-      if (branchNames.includes("main")) {
+      // Prefer remote branches for proper tracking
+      if (branchNames.has("origin/main")) {
+        return "origin/main";
+      }
+      if (branchNames.has("main")) {
         return "main";
       }
-      if (branchNames.includes("master")) {
+      if (branchNames.has("origin/master")) {
+        return "origin/master";
+      }
+      if (branchNames.has("master")) {
         return "master";
       }
       return undefined;

@@ -120,10 +120,6 @@ describe("FilterableDropdown component", () => {
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
-      // Wait for debounce to complete
-      await vi.advanceTimersByTimeAsync(250);
-      await tick();
-
       // ALL options should be visible, not just Apple
       expect(screen.getByText("Apple")).toBeInTheDocument();
       expect(screen.getByText("Banana")).toBeInTheDocument();
@@ -137,10 +133,6 @@ describe("FilterableDropdown component", () => {
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
-
-      // Wait for initial debounce
-      await vi.advanceTimersByTimeAsync(250);
-      await tick();
 
       // All options should be visible initially
       expect(screen.getByText("Apple")).toBeInTheDocument();
@@ -238,6 +230,46 @@ describe("FilterableDropdown component", () => {
 
       expect(screen.queryByText("Apple")).not.toBeInTheDocument();
       expect(screen.getByText("Banana")).toBeInTheDocument();
+    });
+
+    it("auto-opens dropdown when typing produces matches with openOnFocus=false", async () => {
+      // When openOnFocus is false (like NameBranchDropdown), the dropdown should
+      // still open when typing produces matches
+      render(FilterableDropdown, { props: { ...defaultProps, openOnFocus: false } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Dropdown should NOT open on focus because openOnFocus=false
+      expect(input).toHaveAttribute("aria-expanded", "false");
+
+      // Type something that matches
+      await fireEvent.input(input, { target: { value: "app" } });
+
+      // Wait for debounce
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      // Dropdown should now be open because there are matches
+      expect(input).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByText("Apple")).toBeInTheDocument();
+    });
+
+    it("does not auto-open dropdown when typing produces no matches", async () => {
+      render(FilterableDropdown, { props: { ...defaultProps, openOnFocus: false } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Type something that doesn't match
+      await fireEvent.input(input, { target: { value: "xyz" } });
+
+      // Wait for debounce
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      // Dropdown should stay closed because there are no matches
+      expect(input).toHaveAttribute("aria-expanded", "false");
     });
   });
 
@@ -383,6 +415,56 @@ describe("FilterableDropdown component", () => {
       expect(onSelect).not.toHaveBeenCalled();
     });
 
+    it("Escape when dropdown open stops immediate propagation", async () => {
+      // When dropdown is open, ESC should close it and stop propagation
+      // This prevents parent dialogs from also closing
+      // We verify this by checking stopImmediatePropagation was called
+      render(FilterableDropdown, { props: defaultProps });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      expect(input).toHaveAttribute("aria-expanded", "true");
+
+      // Create a custom event that we can spy on
+      const keyDownEvent = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      const stopPropagationSpy = vi.spyOn(keyDownEvent, "stopPropagation");
+
+      input.dispatchEvent(keyDownEvent);
+      await tick();
+
+      // Verify stopPropagation was called (preventing parent handlers)
+      expect(stopPropagationSpy).toHaveBeenCalled();
+      // Dropdown should be closed
+      expect(input).toHaveAttribute("aria-expanded", "false");
+    });
+
+    it("Escape when dropdown closed does not stop propagation", async () => {
+      // When dropdown is already closed, ESC should propagate to parent
+      // so that parent dialog can close
+      render(FilterableDropdown, { props: { ...defaultProps, openOnFocus: false } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      expect(input).toHaveAttribute("aria-expanded", "false");
+
+      const keyDownEvent = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      const stopPropagationSpy = vi.spyOn(keyDownEvent, "stopPropagation");
+
+      input.dispatchEvent(keyDownEvent);
+      await tick();
+
+      // Verify stopPropagation was NOT called (allowing event to bubble to dialog)
+      expect(stopPropagationSpy).not.toHaveBeenCalled();
+    });
+
     it("aria-activedescendant updates on navigation", async () => {
       render(FilterableDropdown, { props: defaultProps });
 
@@ -396,6 +478,41 @@ describe("FilterableDropdown component", () => {
 
       const activeId = input.getAttribute("aria-activedescendant");
       expect(activeId).toBeTruthy();
+    });
+
+    it("Arrow Down calls scrollIntoView on highlighted option", async () => {
+      render(FilterableDropdown, { props: defaultProps });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Get the first option and spy on scrollIntoView
+      const options = screen.getAllByRole("option");
+      const scrollSpy = vi.fn();
+      options[0]!.scrollIntoView = scrollSpy;
+
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+      expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
+    });
+
+    it("Arrow Up calls scrollIntoView on highlighted option", async () => {
+      render(FilterableDropdown, { props: defaultProps });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Navigate down first, then up
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+      // Get the last option (wrap around) and spy on scrollIntoView
+      const options = screen.getAllByRole("option");
+      const scrollSpy = vi.fn();
+      options[2]!.scrollIntoView = scrollSpy;
+
+      await fireEvent.keyDown(input, { key: "ArrowUp" });
+
+      expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
     });
   });
 
@@ -567,6 +684,202 @@ describe("FilterableDropdown component", () => {
       // Options should still have option role
       const options = screen.getAllByRole("option");
       expect(options).toHaveLength(2);
+    });
+  });
+
+  describe("allowFreeText", () => {
+    it("Enter with no selection does nothing when allowFreeText is false", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: false } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "custom-value" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("Enter with no selection calls onSelect with typed text when allowFreeText is true", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: true } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "my-custom-branch" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).toHaveBeenCalledWith("my-custom-branch");
+    });
+
+    it("Enter with highlighted option still selects option when allowFreeText is true", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: true } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).toHaveBeenCalledWith("Apple");
+    });
+
+    it("Enter with empty text does nothing when allowFreeText is true", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: true } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "   " } }); // whitespace only
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("trims whitespace from free text input", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: true } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "  my-branch  " } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).toHaveBeenCalledWith("my-branch");
+    });
+
+    it("reverts to prop value on blur when allowFreeText is false and no valid match", async () => {
+      render(FilterableDropdown, {
+        props: { ...defaultProps, value: "Banana", allowFreeText: false },
+      });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+
+      await fireEvent.focus(input);
+
+      // Type invalid text
+      await fireEvent.input(input, { target: { value: "invalid-option" } });
+      expect(input.value).toBe("invalid-option");
+
+      // Blur should revert to original value
+      await fireEvent.blur(input);
+
+      expect(input.value).toBe("Banana");
+    });
+
+    it("keeps valid match on blur when allowFreeText is false", async () => {
+      render(FilterableDropdown, {
+        props: { ...defaultProps, value: "Banana", allowFreeText: false },
+      });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+
+      await fireEvent.focus(input);
+
+      // Type valid option label (case-insensitive match)
+      await fireEvent.input(input, { target: { value: "apple" } });
+      expect(input.value).toBe("apple");
+
+      // Blur should keep the valid value
+      await fireEvent.blur(input);
+
+      expect(input.value).toBe("apple");
+    });
+
+    it("does not revert on blur when allowFreeText is true", async () => {
+      render(FilterableDropdown, {
+        props: { ...defaultProps, value: "Banana", allowFreeText: true },
+      });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+
+      await fireEvent.focus(input);
+
+      // Type anything
+      await fireEvent.input(input, { target: { value: "custom-text" } });
+
+      // Blur should keep the custom text (free text allowed)
+      await fireEvent.blur(input);
+
+      expect(input.value).toBe("custom-text");
+    });
+  });
+
+  describe("id attribute", () => {
+    it("sets id on input element when id prop is provided", async () => {
+      render(FilterableDropdown, { props: { ...defaultProps, id: "my-dropdown" } });
+
+      const input = screen.getByRole("combobox");
+      expect(input).toHaveAttribute("id", "my-dropdown-input");
+    });
+
+    it("does not set id on input when id prop is not provided", async () => {
+      render(FilterableDropdown, { props: defaultProps });
+
+      const input = screen.getByRole("combobox");
+      expect(input).not.toHaveAttribute("id");
+    });
+  });
+
+  describe("onEnter callback", () => {
+    it("does not call onEnter when selecting option with Enter", async () => {
+      // Selecting an existing option should not trigger onEnter
+      // (user can still click the Submit button manually)
+      const onEnter = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onEnter } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onEnter).not.toHaveBeenCalled();
+    });
+
+    it("calls onEnter after free text selection with Enter", async () => {
+      // Free text + Enter = confirm custom value and trigger onEnter
+      const onEnter = vi.fn();
+      render(FilterableDropdown, {
+        props: { ...defaultProps, onEnter, allowFreeText: true },
+      });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "custom-value" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onEnter).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not call onEnter when allowFreeText is false", async () => {
+      // No free text allowed = Enter does nothing, no onEnter
+      const onEnter = vi.fn();
+      render(FilterableDropdown, {
+        props: { ...defaultProps, onEnter, allowFreeText: false },
+      });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "custom-value" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onEnter).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("autofocus", () => {
+    it("sets data-autofocus attribute when autofocus is true", async () => {
+      render(FilterableDropdown, { props: { ...defaultProps, autofocus: true } });
+
+      const input = screen.getByRole("combobox");
+      expect(input).toHaveAttribute("data-autofocus");
+    });
+
+    it("does not set data-autofocus attribute when autofocus is false", async () => {
+      render(FilterableDropdown, { props: { ...defaultProps, autofocus: false } });
+
+      const input = screen.getByRole("combobox");
+      expect(input).not.toHaveAttribute("data-autofocus");
     });
   });
 });

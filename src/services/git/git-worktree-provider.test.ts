@@ -412,6 +412,255 @@ describe("GitWorktreeProvider", () => {
       expect(bases.find((b) => b.name === "main" && !b.isRemote)).toBeDefined();
       expect(bases.find((b) => b.name === "origin/main" && b.isRemote)).toBeDefined();
     });
+
+    it("returns derives for local branch without worktree", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            // No worktrees for feature-x
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const featureX = bases.find((b) => b.name === "feature-x");
+      expect(featureX?.derives).toBe("feature-x");
+    });
+
+    it("excludes derives for local branch with worktree", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+            ],
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const featureX = bases.find((b) => b.name === "feature-x");
+      expect(featureX?.derives).toBeUndefined();
+    });
+
+    it("returns derives for remote without local counterpart", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remoteBranches: ["origin/feature-payments"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const remote = bases.find((b) => b.name === "origin/feature-payments");
+      expect(remote?.derives).toBe("feature-payments");
+    });
+
+    it("excludes derives for remote with local counterpart", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-payments"],
+            remoteBranches: ["origin/feature-payments"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const remote = bases.find((b) => b.name === "origin/feature-payments");
+      expect(remote?.derives).toBeUndefined();
+    });
+
+    it("deduplicates remotes for derives (prefers origin)", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remoteBranches: ["origin/feature-x", "upstream/feature-x"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const originBranch = bases.find((b) => b.name === "origin/feature-x");
+      const upstreamBranch = bases.find((b) => b.name === "upstream/feature-x");
+
+      // Origin should get derives, upstream should not
+      expect(originBranch?.derives).toBe("feature-x");
+      expect(upstreamBranch?.derives).toBeUndefined();
+    });
+
+    it("returns base from codehydra.base config for local branch", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            branchConfigs: {
+              "feature-x": { "codehydra.base": "develop" },
+            },
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const featureX = bases.find((b) => b.name === "feature-x");
+      expect(featureX?.base).toBe("develop");
+    });
+
+    it("returns base from matching remote when no config", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            remoteBranches: ["origin/feature-x"],
+            currentBranch: "main",
+            // No config for feature-x
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const featureX = bases.find((b) => b.name === "feature-x" && !b.isRemote);
+      expect(featureX?.base).toBe("origin/feature-x");
+    });
+
+    it("returns undefined base when no config and no matching remote", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            // No config, no matching remote
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const featureX = bases.find((b) => b.name === "feature-x");
+      expect(featureX?.base).toBeUndefined();
+    });
+
+    it("returns full ref as base for remote branches", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remoteBranches: ["origin/feature-x"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const remote = bases.find((b) => b.name === "origin/feature-x");
+      expect(remote?.base).toBe("origin/feature-x");
+    });
+
+    it("handles remote branch with slashes in name", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remoteBranches: ["origin/feature/login"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const remote = bases.find((b) => b.name === "origin/feature/login");
+      expect(remote?.derives).toBe("feature/login");
+    });
   });
 
   describe("updateBases", () => {
@@ -497,6 +746,54 @@ describe("GitWorktreeProvider", () => {
       expect(result.fetchedRemotes).toHaveLength(0);
       expect(result.failedRemotes).toHaveLength(0);
     });
+
+    it("removes stale remote refs after fetch (prune behavior)", async () => {
+      // Setup: Repository has a remote branch that will be "deleted on remote"
+      // The mock simulates prune by removing the stale branch when fetch is called
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remoteBranches: ["origin/main", "origin/stale-feature"],
+            remotes: ["origin"],
+            currentBranch: "main",
+          },
+        },
+      });
+
+      // Verify stale branch exists before fetch
+      const branchesBefore = await mockClient.listBranches(PROJECT_ROOT);
+      expect(branchesBefore.find((b) => b.name === "origin/stale-feature")).toBeDefined();
+
+      // Override fetch to simulate prune behavior: remove the stale remote branch
+      const originalFetch = mockClient.fetch.bind(mockClient);
+      mockClient.fetch = vi.fn().mockImplementation(async (repoPath: Path, remote?: string) => {
+        // Simulate prune: remove the stale-feature branch from remoteBranches
+        const repo = mockClient.$.repositories.get(PROJECT_ROOT.toString());
+        if (repo) {
+          // Access the mutable internal state to remove the stale branch
+          (repo.remoteBranches as Set<string>).delete("origin/stale-feature");
+        }
+        return originalFetch(repoPath, remote);
+      });
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      // Act: Call updateBases which triggers fetch with prune
+      await provider.updateBases();
+
+      // Assert: listBases should no longer return the stale branch
+      const bases = await provider.listBases();
+      expect(bases.find((b) => b.name === "origin/stale-feature")).toBeUndefined();
+      // origin/main should still exist
+      expect(bases.find((b) => b.name === "origin/main")).toBeDefined();
+    });
   });
 
   describe("createWorkspace", () => {
@@ -576,15 +873,18 @@ describe("GitWorktreeProvider", () => {
       expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
-    it("throws WorkspaceError when branch creation fails", async () => {
+    it("throws WorkspaceError when git createBranch fails", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"], // Branch already exists
+            branches: ["main"], // Branch doesn't exist - will try to create
             currentBranch: "main",
           },
         },
       });
+      // Make createBranch fail
+      mockClient.createBranch = vi.fn().mockRejectedValue(new Error("Git error"));
+
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -623,7 +923,7 @@ describe("GitWorktreeProvider", () => {
       expect(localBranches).toHaveLength(2);
     });
 
-    it("throws WorkspaceError when branch exists but baseBranch differs", async () => {
+    it("creates workspace for existing branch with different baseBranch and saves base in config", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -640,12 +940,13 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      await expect(provider.createWorkspace("existing-branch", "main")).rejects.toThrow(
-        WorkspaceError
-      );
-      await expect(provider.createWorkspace("existing-branch", "main")).rejects.toThrow(
-        /already exists.*select 'existing-branch' as the base branch/
-      );
+      // Should succeed even though baseBranch differs from branch name
+      const workspace = await provider.createWorkspace("existing-branch", "main");
+
+      expect(workspace.name).toBe("existing-branch");
+      expect(workspace.branch).toBe("existing-branch");
+      // The base branch should be saved in metadata
+      expect(workspace.metadata.base).toBe("main");
     });
 
     it("throws WorkspaceError when branch is already checked out in worktree", async () => {
@@ -1386,7 +1687,30 @@ describe("GitWorktreeProvider", () => {
   });
 
   describe("defaultBase", () => {
-    it("returns 'main' when main branch exists", async () => {
+    it("prefers origin/main over local main", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature"],
+            remoteBranches: ["origin/main"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const result = await provider.defaultBase();
+
+      expect(result).toBe("origin/main");
+    });
+
+    it("returns local main when origin/main does not exist", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1408,7 +1732,30 @@ describe("GitWorktreeProvider", () => {
       expect(result).toBe("main");
     });
 
-    it("returns 'master' when only master exists (no main)", async () => {
+    it("prefers origin/master over local master when no main exists", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["master", "feature"],
+            remoteBranches: ["origin/master"],
+            currentBranch: "master",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const result = await provider.defaultBase();
+
+      expect(result).toBe("origin/master");
+    });
+
+    it("returns local master when only master exists (no main or remotes)", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1430,11 +1777,12 @@ describe("GitWorktreeProvider", () => {
       expect(result).toBe("master");
     });
 
-    it("returns 'main' when both main and master exist", async () => {
+    it("returns origin/main when both main and master exist", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["master", "main", "feature"],
+            remoteBranches: ["origin/main", "origin/master"],
             currentBranch: "main",
           },
         },
@@ -1449,7 +1797,7 @@ describe("GitWorktreeProvider", () => {
 
       const result = await provider.defaultBase();
 
-      expect(result).toBe("main");
+      expect(result).toBe("origin/main");
     });
 
     it("returns undefined when neither main nor master exists", async () => {
