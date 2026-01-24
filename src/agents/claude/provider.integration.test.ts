@@ -33,7 +33,10 @@ async function sendHook(
 ): Promise<Response> {
   return fetch(`http://127.0.0.1:${port}/hook/${hookName}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Connection: "close", // Disable keep-alive to prevent server isolation issues
+    },
     body: JSON.stringify(payload),
   });
 }
@@ -176,8 +179,7 @@ describe("ClaudeCodeProvider integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle", "none"]);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("multiple subscribers receive changes", async () => {
+    it("multiple subscribers receive changes", async () => {
       const port = await serverManager.startServer(workspacePath);
       await provider.connect(port);
 
@@ -192,8 +194,7 @@ describe("ClaudeCodeProvider integration", () => {
       expect(statusChanges2).toEqual(["idle"]);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("unsubscribe stops notifications", async () => {
+    it("unsubscribe stops notifications", async () => {
       const port = await serverManager.startServer(workspacePath);
       await provider.connect(port);
 
@@ -222,8 +223,7 @@ describe("ClaudeCodeProvider integration", () => {
       expect(provider.getSession()).toBeNull();
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("returns session info after SessionStart hook", async () => {
+    it("returns session info after SessionStart hook", async () => {
       const port = await serverManager.startServer(workspacePath);
       await provider.connect(port);
 
@@ -325,8 +325,7 @@ describe("ClaudeCodeProvider integration", () => {
   });
 
   describe("dispose", () => {
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("clears all state", async () => {
+    it("clears all state", async () => {
       const port = await serverManager.startServer(workspacePath);
       await provider.connect(port);
 

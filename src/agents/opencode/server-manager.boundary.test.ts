@@ -65,8 +65,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     }
   });
 
-  // TODO: These tests require OpenCode binary to be installed and may timeout in CI
-  it.skip(
+  it(
     "opencode serve starts and listens on allocated port",
     async () => {
       manager = new OpenCodeServerManager(
@@ -89,8 +88,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     CI_TIMEOUT_MS
   );
 
-  // TODO: These tests require OpenCode binary to be installed and may timeout in CI
-  it.skip(
+  it(
     "health check to /path succeeds after startup",
     async () => {
       manager = new OpenCodeServerManager(
