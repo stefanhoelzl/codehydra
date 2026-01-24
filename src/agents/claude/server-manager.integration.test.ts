@@ -32,7 +32,10 @@ async function sendHook(
 ): Promise<Response> {
   return fetch(`http://127.0.0.1:${port}/hook/${hookName}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Connection: "close", // Disable keep-alive to prevent server isolation issues
+    },
     body: JSON.stringify(payload),
   });
 }
@@ -156,8 +159,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(startedCallback).toHaveBeenCalledTimes(1);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("onWorkspaceReady fires when status changes to idle", async () => {
+    it("onWorkspaceReady fires when status changes to idle", async () => {
       const readyCallback = vi.fn();
       serverManager.onWorkspaceReady(readyCallback);
 
@@ -174,8 +176,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(readyCallback).not.toHaveBeenCalled(); // No change, already idle
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("onWorkspaceReady unsubscribe works", async () => {
+    it("onWorkspaceReady unsubscribe works", async () => {
       const readyCallback = vi.fn();
       const unsubscribe = serverManager.onWorkspaceReady(readyCallback);
 
@@ -189,8 +190,7 @@ describe("ClaudeCodeServerManager integration", () => {
   });
 
   describe("hook handling", () => {
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("routes hooks to correct workspace based on workspacePath", async () => {
+    it("routes hooks to correct workspace based on workspacePath", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       await serverManager.startServer("/workspace/feature-b");
 
@@ -219,8 +219,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChangesB).toEqual(["busy"]);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("WrapperStart -> idle", async () => {
+    it("WrapperStart -> idle", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -233,8 +232,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("WrapperEnd -> none", async () => {
+    it("WrapperEnd -> none", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -250,8 +248,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("SessionStart -> idle", async () => {
+    it("SessionStart -> idle", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -268,8 +265,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getSessionId("/workspace/feature-a")).toBe("test-session");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("UserPromptSubmit -> busy", async () => {
+    it("UserPromptSubmit -> busy", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -285,8 +281,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("PermissionRequest -> idle", async () => {
+    it("PermissionRequest -> idle", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -303,8 +298,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("Stop -> idle", async () => {
+    it("Stop -> idle", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -320,8 +314,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("SessionEnd -> none", async () => {
+    it("SessionEnd -> none", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -336,8 +329,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("PreToolUse does not change status without prior PermissionRequest", async () => {
+    it("PreToolUse does not change status without prior PermissionRequest", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -359,8 +351,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("PreToolUse transitions to busy after PermissionRequest", async () => {
+    it("PreToolUse transitions to busy after PermissionRequest", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -385,8 +376,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("PreToolUse flag is cleared after use", async () => {
+    it("PreToolUse flag is cleared after use", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -414,8 +404,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("ignores hooks for unknown workspaces", async () => {
+    it("ignores hooks for unknown workspaces", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
 
       // Send hook for unknown workspace - should not throw
@@ -426,8 +415,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(response.ok).toBe(true);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("returns 400 for invalid hook name", async () => {
+    it("returns 400 for invalid hook name", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
 
       const response = await sendHook(port, "InvalidHook", {
@@ -437,25 +425,24 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(response.status).toBe(400);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("returns 400 for invalid JSON body", async () => {
+    it("returns 400 for invalid JSON body", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
 
       const response = await fetch(`http://127.0.0.1:${port}/hook/SessionStart`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Connection: "close" },
         body: "not json",
       });
 
       expect(response.status).toBe(400);
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("returns 405 for non-POST requests", async () => {
+    it("returns 405 for non-POST requests", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
 
       const response = await fetch(`http://127.0.0.1:${port}/hook/SessionStart`, {
         method: "GET",
+        headers: { Connection: "close" },
       });
 
       expect(response.status).toBe(405);
@@ -540,8 +527,7 @@ describe("ClaudeCodeServerManager integration", () => {
       }
     });
 
-    // TODO: Fix HTTP server isolation issue - socket closed before request completes
-    it.skip("resets status and preserves callbacks", async () => {
+    it("resets status and preserves callbacks", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {

@@ -8,9 +8,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile, readFile, rm, access } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
+import { Path } from "../platform/path";
+import { CODE_SERVER_VERSION } from "../binary-download/versions";
 import { VscodeSetupService } from "./vscode-setup-service";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { SILENT_LOGGER } from "../logging";
@@ -618,34 +621,98 @@ describe("VscodeSetupService Integration", () => {
   });
 
   /**
-   * Real code-server tests - skipped by default.
-   * Run manually with: pnpm test -- --run vscode-setup-service.integration --no-skip
+   * Real code-server tests that use actual code-server binary.
+   * Uses isolated temp directory for vscode data, safe for CI.
+   * Requires code-server binary and built assets (pnpm build).
+   * Skipped if build assets don't exist (e.g., in CI before build step).
    */
-  describe.skip("Real code-server tests (manual only)", () => {
+  const realAssetsDir = join(process.cwd(), "out", "main", "assets");
+  const hasBuildAssets = existsSync(realAssetsDir);
+
+  describe.skipIf(!hasBuildAssets)("Real code-server tests", () => {
+    /**
+     * Get the bundles root directory for the current platform.
+     */
+    function getBundlesRootDir(): string {
+      const home = homedir();
+      switch (process.platform) {
+        case "darwin":
+          return join(home, "Library", "Application Support", "Codehydra");
+        case "win32":
+          return join(home, "AppData", "Roaming", "Codehydra");
+        default:
+          return join(home, ".local", "share", "codehydra");
+      }
+    }
+
     it("extension install with real code-server", async () => {
       const { ExecaProcessRunner } = await import("../platform/process");
       const realProcessRunner = new ExecaProcessRunner(SILENT_LOGGER);
 
-      const service = new VscodeSetupService(realProcessRunner, testPathProvider, fsLayer);
-      const preflight = createFullSetupPreflightResult();
+      // Create path provider that uses real code-server and real built assets
+      const bundlesRoot = getBundlesRootDir();
+      const realPathProvider = createMockPathProvider({
+        dataRootDir: tempDir,
+        vscodeDir: mockPaths.vscodeDir,
+        vscodeExtensionsDir: mockPaths.extensionsDir,
+        vscodeUserDataDir: mockPaths.userDataDir,
+        setupMarkerPath: mockPaths.markerPath,
+        vscodeAssetsDir: realAssetsDir,
+        binDir: mockPaths.binDir,
+        binAssetsDir: join(realAssetsDir, "bin"),
+        binRuntimeDir: join(realAssetsDir, "bin"),
+        extensionsRuntimeDir: realAssetsDir,
+        scriptsRuntimeDir: join(realAssetsDir, "scripts"),
+        opencodeConfig: join(tempDir, "opencode", "opencode.codehydra.json"),
+        // Override getBinaryPath to return real code-server binary
+        getBinaryPath: (type, version) => {
+          const isWindows = process.platform === "win32";
+          const binaryRelPath =
+            type === "code-server"
+              ? isWindows
+                ? "bin/code-server.cmd"
+                : "bin/code-server"
+              : type === "opencode"
+                ? isWindows
+                  ? "opencode.exe"
+                  : "opencode"
+                : isWindows
+                  ? "claude.exe"
+                  : "claude";
+          return new Path(bundlesRoot, type, version, binaryRelPath);
+        },
+      });
+
+      const service = new VscodeSetupService(realProcessRunner, realPathProvider, fsLayer);
+
+      // Use empty preflight - real setup will read manifest from extensionsRuntimeDir
+      const preflight: PreflightResult = {
+        success: true,
+        needsSetup: true,
+        missingBinaries: [],
+        missingExtensions: ["codehydra.sidekick"],
+        outdatedExtensions: [],
+      };
 
       // Clean up any existing state first
       await service.cleanVscodeDir();
 
       const result = await service.setup(preflight);
 
-      // Verify extensions were installed from bundled vsix files
+      // Verify sidekick extension was installed from bundled vsix
       if (result.success) {
         const extensionsDir = mockPaths.extensionsDir;
         const entries = await import("node:fs/promises").then((fs) => fs.readdir(extensionsDir));
         const hasSidekick = entries.some((e) => e.includes("sidekick"));
-        const hasOpenCode = entries.some((e) => e.includes("opencode"));
         expect(hasSidekick).toBe(true);
-        expect(hasOpenCode).toBe(true);
       } else {
-        // Skip assertion if installation failure
-        console.warn("Skipping real code-server test:", result);
+        // Test should fail if installation failed
+        expect.fail(
+          `Extension installation failed: ${result.error.message}. ` +
+            `Ensure code-server ${CODE_SERVER_VERSION} is installed at ${bundlesRoot}/code-server/${CODE_SERVER_VERSION}/ ` +
+            `and assets are built with 'pnpm build'.`
+        );
       }
-    }, 180000); // 3 minute timeout for extension installation
+    }, 60000); // 1 minute timeout for extension installation
   });
 });
