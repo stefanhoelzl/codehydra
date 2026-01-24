@@ -106,6 +106,56 @@ describe("TestServer helper", () => {
 // ============================================================================
 
 describe("DefaultNetworkLayer boundary tests", () => {
+  describe("PortManager.isPortAvailable()", () => {
+    let networkLayer: PortManager;
+
+    beforeEach(() => {
+      networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
+    });
+
+    it("returns true for unused port", async () => {
+      // Find a free port first
+      const port = await networkLayer.findFreePort();
+
+      const available = await networkLayer.isPortAvailable(port);
+      expect(available).toBe(true);
+    });
+
+    it("returns false when port is in use", async () => {
+      const server = createServer();
+
+      // Bind to a random port
+      await new Promise<void>((resolve) => {
+        server.listen(0, "127.0.0.1", () => resolve());
+      });
+      const address = server.address();
+      const port = (address as { port: number }).port;
+
+      try {
+        const available = await networkLayer.isPortAvailable(port);
+        expect(available).toBe(false);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it("returns true after port is released", async () => {
+      const server = createServer();
+
+      // Bind and release
+      await new Promise<void>((resolve) => {
+        server.listen(0, "127.0.0.1", () => resolve());
+      });
+      const address = server.address();
+      const port = (address as { port: number }).port;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+
+      // Port should now be available
+      const available = await networkLayer.isPortAvailable(port);
+      expect(available).toBe(true);
+    });
+  });
+
   describe("PortManager.findFreePort()", () => {
     let networkLayer: PortManager;
 

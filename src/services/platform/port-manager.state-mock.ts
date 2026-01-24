@@ -9,15 +9,28 @@ import type { PortManager } from "./network";
 import type { MockState, MockWithState, Snapshot } from "../../test/state-mock";
 
 /**
+ * Configuration options for the PortManager mock.
+ */
+export interface PortManagerMockOptions {
+  /** Ports to return sequentially from findFreePort(). Default: [8080] */
+  readonly ports?: readonly number[];
+  /** Ports that should be reported as unavailable by isPortAvailable(). Default: [] */
+  readonly unavailablePorts?: readonly number[];
+}
+
+/**
  * State for the PortManager mock.
  * Tracks remaining ports to allocate and ports already allocated.
  */
 export class PortManagerMockState implements MockState {
   private _remainingPorts: number[];
   private _allocatedPorts: number[] = [];
+  private _unavailablePorts: Set<number>;
+  private _portAvailabilityChecks: number[] = [];
 
-  constructor(ports: readonly number[]) {
+  constructor(ports: readonly number[], unavailablePorts: readonly number[] = []) {
     this._remainingPorts = [...ports];
+    this._unavailablePorts = new Set(unavailablePorts);
   }
 
   /**
@@ -35,6 +48,13 @@ export class PortManagerMockState implements MockState {
   }
 
   /**
+   * Ports checked via isPortAvailable() (in order of checking).
+   */
+  get portAvailabilityChecks(): readonly number[] {
+    return this._portAvailabilityChecks;
+  }
+
+  /**
    * Allocate the next available port.
    * @throws Error if no ports available
    */
@@ -47,6 +67,29 @@ export class PortManagerMockState implements MockState {
     return port;
   }
 
+  /**
+   * Check if a port is available.
+   * Records the check and returns false if port is in the unavailable set.
+   */
+  checkPortAvailable(port: number): boolean {
+    this._portAvailabilityChecks.push(port);
+    return !this._unavailablePorts.has(port);
+  }
+
+  /**
+   * Mark a port as unavailable for isPortAvailable checks.
+   */
+  markPortUnavailable(port: number): void {
+    this._unavailablePorts.add(port);
+  }
+
+  /**
+   * Mark a port as available for isPortAvailable checks.
+   */
+  markPortAvailable(port: number): void {
+    this._unavailablePorts.delete(port);
+  }
+
   snapshot(): Snapshot {
     return {
       __brand: "Snapshot",
@@ -55,7 +98,7 @@ export class PortManagerMockState implements MockState {
   }
 
   toString(): string {
-    return `PortManagerMockState { remaining: [${this._remainingPorts.join(", ")}], allocated: [${this._allocatedPorts.join(", ")}] }`;
+    return `PortManagerMockState { remaining: [${this._remainingPorts.join(", ")}], allocated: [${this._allocatedPorts.join(", ")}], unavailable: [${[...this._unavailablePorts].join(", ")}] }`;
   }
 }
 
@@ -70,7 +113,7 @@ export type MockPortManager = PortManager & MockWithState<PortManagerMockState>;
  * The mock tracks state via the `$` property, following the behavioral mock pattern.
  * When all ports are exhausted, `findFreePort()` throws an error.
  *
- * @param ports - Array of ports to return sequentially. Default: `[8080]`
+ * @param portsOrOptions - Array of ports to return sequentially, or options object. Default: `[8080]`
  * @returns MockPortManager with `$` property for state inspection
  *
  * @example Basic usage - single port
@@ -117,14 +160,38 @@ export type MockPortManager = PortManager & MockWithState<PortManagerMockState>;
  * await portManager.findFreePort();
  * expect(portManager).not.toBeUnchanged(before);
  * ```
+ *
+ * @example Configure unavailable ports for isPortAvailable
+ * ```ts
+ * const portManager = createPortManagerMock({ ports: [8080], unavailablePorts: [25448] });
+ * expect(await portManager.isPortAvailable(25448)).toBe(false);
+ * expect(await portManager.isPortAvailable(8080)).toBe(true);
+ * ```
  */
-export function createPortManagerMock(ports: readonly number[] = [8080]): MockPortManager {
-  const state = new PortManagerMockState(ports);
+export function createPortManagerMock(
+  portsOrOptions: readonly number[] | PortManagerMockOptions = [8080]
+): MockPortManager {
+  // Type guard: if it's an array, wrap it in options object
+  const isPortsArray = (
+    val: readonly number[] | PortManagerMockOptions
+  ): val is readonly number[] => Array.isArray(val);
+
+  const options: PortManagerMockOptions = isPortsArray(portsOrOptions)
+    ? { ports: portsOrOptions }
+    : portsOrOptions;
+
+  const ports = options.ports ?? [8080];
+  const unavailablePorts = options.unavailablePorts ?? [];
+
+  const state = new PortManagerMockState(ports, unavailablePorts);
 
   return {
     $: state,
     async findFreePort(): Promise<number> {
       return state.allocateNext();
+    },
+    async isPortAvailable(port: number): Promise<boolean> {
+      return state.checkPortAvailable(port);
     },
   };
 }

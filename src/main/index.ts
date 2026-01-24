@@ -24,6 +24,7 @@ import {
   createWorkspaceLockHandler,
   WorkspaceFileService,
   createWorkspaceFileConfig,
+  getCodeServerPort,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -182,6 +183,7 @@ redirectElectronDataPaths();
  */
 function createCodeServerConfig(): CodeServerConfig {
   return {
+    port: getCodeServerPort(buildInfo),
     binaryPath: pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toNative(),
     runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
     extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
@@ -368,23 +370,9 @@ async function startServices(): Promise<void> {
     loggingService.createLogger("code-server")
   );
 
-  try {
-    await codeServerManager.ensureRunning();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    // Guard: dialogLayer must be initialized by bootstrap()
-    if (dialogLayer) {
-      await dialogLayer.showMessageBox({
-        type: "error",
-        title: "Code Server Error",
-        message: "Failed to start code-server",
-        detail: `${message}\n\nThe application cannot continue without code-server.`,
-        buttons: ["Quit"],
-      });
-    }
-    app.quit();
-    return;
-  }
+  // Start code-server - errors propagate to lifecycle module which returns
+  // failure to the renderer, which shows the error screen with retry/quit options
+  await codeServerManager.ensureRunning();
 
   // Port is guaranteed to be set after successful ensureRunning()
   const port = codeServerManager.port()!;

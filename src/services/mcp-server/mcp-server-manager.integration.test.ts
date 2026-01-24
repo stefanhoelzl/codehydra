@@ -34,11 +34,26 @@ async function findFreePort(): Promise<number> {
 }
 
 /**
+ * Check if a port is available for binding.
+ */
+async function isPortAvailable(port: number): Promise<boolean> {
+  const { createServer } = await import("node:net");
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+/**
  * Create a real port manager that finds free ports.
  */
 function createRealPortManager(): PortManager {
   return {
     findFreePort,
+    isPortAvailable,
   };
 }
 

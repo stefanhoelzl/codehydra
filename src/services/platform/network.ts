@@ -73,6 +73,15 @@ export interface PortManager {
    * @returns Available port number (1024-65535)
    */
   findFreePort(): Promise<number>;
+
+  /**
+   * Check if a specific port is available for binding.
+   * Uses TCP server bind to test - if successful, port is free.
+   *
+   * @param port - Port number to check
+   * @returns true if port is available, false if in use
+   */
+  isPortAvailable(port: number): Promise<boolean>;
 }
 
 // ============================================================================
@@ -167,6 +176,28 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
         }
       });
       server.on("error", reject);
+    });
+  }
+
+  async isPortAvailable(port: number): Promise<boolean> {
+    const { createServer } = await import("net");
+
+    return new Promise((resolve) => {
+      const server = createServer();
+      server.once("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          this.logger.debug("Port in use", { port });
+          resolve(false);
+        } else {
+          // Other errors (permissions, etc.) - treat as unavailable
+          this.logger.warn("Port check error", { port, error: err.message });
+          resolve(false);
+        }
+      });
+      server.listen(port, "127.0.0.1", () => {
+        this.logger.debug("Port available", { port });
+        server.close(() => resolve(true));
+      });
     });
   }
 }

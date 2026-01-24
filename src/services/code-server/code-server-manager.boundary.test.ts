@@ -72,9 +72,13 @@ function isProcessRunning(pid: number): boolean {
 /**
  * Create test config with proper typing.
  * Uses the real code-server binary but temp directories for runtime data.
+ *
+ * @param baseDir - Base directory for runtime files
+ * @param port - Port for code-server (use 0 or dynamic port for boundary tests)
  */
-function createTestConfig(baseDir: string): CodeServerConfig {
+function createTestConfig(baseDir: string, port: number): CodeServerConfig {
   return {
+    port,
     binaryPath: getCodeServerBinaryPath(),
     runtimeDir: baseDir,
     extensionsDir: `${baseDir}/extensions`,
@@ -118,6 +122,7 @@ describe("CodeServerManager (boundary)", () => {
   let manager: CodeServerManager;
   let tempDir: string;
   let cleanup: () => Promise<void>;
+  let testPort: number;
 
   // Ensure binaries are available before running tests
   beforeAll(async () => {
@@ -136,8 +141,12 @@ describe("CodeServerManager (boundary)", () => {
     const runner = new ExecaProcessRunner(logger);
     const networkLayer = new DefaultNetworkLayer(logger);
 
+    // Allocate a free port for each test to avoid conflicts
+    // when running alongside a packaged version or other tests
+    testPort = await networkLayer.findFreePort();
+
     manager = new CodeServerManager(
-      createTestConfig(tempDir),
+      createTestConfig(tempDir, testPort),
       runner,
       networkLayer,
       networkLayer,
