@@ -711,6 +711,9 @@ export class ViewManager implements IViewManager {
         if (state) {
           this.viewLayer.focus(state.handle);
         }
+      } else if (workspacePath === null) {
+        // No workspace active - ensure something is focused for keyboard shortcuts
+        this.focusActiveWorkspace();
       }
 
       // Notify subscribers of workspace change
@@ -742,9 +745,12 @@ export class ViewManager implements IViewManager {
   /**
    * Focuses the active workspace view.
    * Use this to return focus to the workspace (e.g., after exiting shortcut mode).
+   * When no workspace is active, focuses UI as fallback to ensure keyboard shortcuts work.
    */
   focusActiveWorkspace(): void {
     if (!this.activeWorkspacePath) {
+      // No workspace active - focus UI to ensure keyboard shortcuts still work
+      this.focusUI();
       return;
     }
 

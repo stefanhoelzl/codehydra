@@ -746,6 +746,26 @@ describe("ViewManager", () => {
       expect(manager.getActiveWorkspacePath()).toBeNull();
     });
 
+    it("focuses UI when setting active workspace to null", () => {
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setWorkspaceLoaded("/path/to/workspace");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Set active to null (simulates closing last workspace)
+      manager.setActiveWorkspace(null);
+
+      // UI should be focused to receive keyboard events
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
+
     it("updates active workspace path", () => {
       const deps = createViewManagerDeps();
       const manager = ViewManager.create(deps);
@@ -763,12 +783,15 @@ describe("ViewManager", () => {
   });
 
   describe("focusActiveWorkspace", () => {
-    it("does nothing when no active workspace", () => {
+    it("focuses UI when no active workspace", () => {
       const deps = createViewManagerDeps();
       const manager = ViewManager.create(deps);
 
-      // Should not throw
-      expect(() => manager.focusActiveWorkspace()).not.toThrow();
+      manager.focusActiveWorkspace();
+
+      // UI should be focused as fallback
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
     });
   });
 
