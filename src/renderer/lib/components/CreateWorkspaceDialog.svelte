@@ -2,6 +2,7 @@
   import Dialog from "./Dialog.svelte";
   import BranchDropdown from "./BranchDropdown.svelte";
   import ProjectDropdown from "./ProjectDropdown.svelte";
+  import NameBranchDropdown, { type NameBranchSelection } from "./NameBranchDropdown.svelte";
   import { workspaces, ui, type Workspace, type ProjectId } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
   import { getProjectById } from "$lib/stores/projects.svelte.js";
@@ -82,25 +83,33 @@
     }
   }
 
-  // Handle name input
-  function handleNameInput(event: Event): void {
-    const target = event.target as HTMLInputElement;
-    name = target.value;
-    if (touched) {
-      nameError = validateName(name);
-    }
+  // Handle name input changes (tracks typed text for form validation)
+  function handleNameInput(value: string): void {
+    name = value;
+    // Don't show validation errors while typing - only update form validity
+    // Errors will be shown on selection (Enter key or dropdown click)
   }
 
-  // Handle name blur (validate on blur)
-  function handleNameBlur(): void {
+  // Handle name selection from NameBranchDropdown.
+  // Validation happens on selection (Enter key or dropdown click), not on blur.
+  // This is intentional: the NameBranchDropdown triggers onSelect when the user
+  // commits a value via Enter or selection, providing immediate feedback.
+  function handleNameSelect(selection: NameBranchSelection): void {
+    name = selection.name;
+
+    // Auto-fill base branch when selecting an existing branch
+    if (selection.isExistingBranch && selection.suggestedBase) {
+      selectedBranch = selection.suggestedBase;
+    }
+
+    // Validate on selection
     touched = true;
     nameError = validateName(name);
   }
 
-  // Handle Enter key on name input to submit form
-  function handleNameKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && isFormValid && !isSubmitting) {
-      event.preventDefault();
+  // Handle Enter key in name input - submit if form is valid
+  function handleEnterInName(): void {
+    if (isFormValid) {
       handleSubmit();
     }
   }
@@ -162,19 +171,16 @@
 
     <div class="ch-form-field">
       <label for="workspace-name" class="ch-form-label">Name</label>
-      <vscode-textfield
-        data-autofocus
+      <NameBranchDropdown
         id="workspace-name"
-        role="textbox"
-        tabindex="0"
+        projectId={selectedProjectId}
         value={name}
-        oninput={handleNameInput}
-        onblur={handleNameBlur}
-        onkeydown={handleNameKeydown}
+        onSelect={handleNameSelect}
+        onInput={handleNameInput}
         disabled={isSubmitting}
-        aria-describedby={nameErrorId}
-        invalid={nameError ? true : undefined}
-      ></vscode-textfield>
+        onEnter={handleEnterInName}
+        autofocus={true}
+      />
       {#if nameError}
         <vscode-form-helper id={nameErrorId}>
           <span class="error-text">{nameError}</span>
@@ -221,11 +227,6 @@
 
 <style>
   /* Component-specific styles only - shared styles in variables.css */
-  vscode-textfield {
-    width: 100%;
-    --vscode-font-size: 13px;
-  }
-
   .error-text {
     color: var(--ch-error-fg);
   }

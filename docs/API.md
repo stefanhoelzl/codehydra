@@ -945,8 +945,17 @@ interface AgentStatusCounts {
 interface BaseInfo {
   readonly name: string;
   readonly isRemote: boolean;
+  readonly base?: string;
+  readonly derives?: string;
 }
 ```
+
+| Field      | Type      | Description                                                                                                                                                         |
+| ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | `string`  | Full branch reference (e.g., "main" or "origin/main")                                                                                                               |
+| `isRemote` | `boolean` | Whether this is a remote-tracking branch                                                                                                                            |
+| `base`     | `string?` | Suggested base branch for creating a workspace. For local branches: `codehydra.base` config value, or matching `origin/*` branch. For remote branches: the full ref |
+| `derives`  | `string?` | Derivable workspace name if a workspace can be created from this branch. Set for local branches without worktrees or remote branches without local counterparts     |
 
 #### `UIMode`
 

@@ -325,6 +325,49 @@ describe("SimpleGitClient", () => {
         await expect(client.fetch(new Path(path), "nonexistent")).rejects.toThrow(GitError);
       });
     }, 15000);
+
+    it("prunes stale remote-tracking branches after fetch", async () => {
+      await withTempRepoWithRemote(async (path, remotePath) => {
+        // Create a branch in remote, fetch it, then delete from remote
+        const tempClone = await createTempDir();
+        try {
+          const cloneGit = simpleGit(tempClone.path);
+          await cloneGit.clone(remotePath, ".", ["--branch", "main"]);
+          await cloneGit.addConfig("user.email", "test@test.com");
+          await cloneGit.addConfig("user.name", "Test User");
+          await cloneGit.checkoutLocalBranch("feature-to-delete");
+          await fs.writeFile(nodePath.join(tempClone.path, "temp.txt"), "temp");
+          await cloneGit.add("temp.txt");
+          await cloneGit.commit("Temp commit");
+          await cloneGit.push(["-u", "origin", "feature-to-delete"]);
+
+          // Fetch in working repo to get the remote branch
+          await client.fetch(new Path(path), "origin");
+
+          // Verify remote-tracking branch exists
+          let branches = await client.listBranches(new Path(path));
+          const hasRemoteBranch = branches.some(
+            (b) => b.name === "origin/feature-to-delete" && b.isRemote
+          );
+          expect(hasRemoteBranch).toBe(true);
+
+          // Delete branch from remote
+          await cloneGit.push(["origin", "--delete", "feature-to-delete"]);
+
+          // Fetch with prune - should remove stale remote-tracking branch
+          await client.fetch(new Path(path), "origin");
+
+          // Verify remote-tracking branch is gone
+          branches = await client.listBranches(new Path(path));
+          const stillHasRemoteBranch = branches.some(
+            (b) => b.name === "origin/feature-to-delete" && b.isRemote
+          );
+          expect(stillHasRemoteBranch).toBe(false);
+        } finally {
+          await tempClone.cleanup();
+        }
+      });
+    }, 30000);
   });
 
   describe("listRemotes", () => {

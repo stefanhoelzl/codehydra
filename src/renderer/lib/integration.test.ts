@@ -337,11 +337,11 @@ describe("Integration tests", () => {
         expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
 
-      // Verify the dialog has project dropdown, name input, and branch dropdown
-      // Note: vscode-textfield is a web component, so we query by id
-      expect(document.getElementById("workspace-name")).toBeInTheDocument();
-      // Should have 2 comboboxes: project dropdown and branch dropdown
-      expect(screen.getAllByRole("combobox")).toHaveLength(2);
+      // Verify the dialog has project dropdown, name/branch dropdown, and base branch dropdown
+      // NameBranchDropdown is a filterable combobox, query its container
+      expect(document.querySelector(".name-branch-dropdown")).toBeInTheDocument();
+      // Should have 3 comboboxes: project dropdown, name dropdown, and branch dropdown
+      expect(screen.getAllByRole("combobox")).toHaveLength(3);
 
       // Simulate workspace:created event (v2 format uses projectId)
       // Get actual projectId from store (ID is regenerated from path)
@@ -520,11 +520,11 @@ describe("Integration tests", () => {
         expect(screen.getByRole("dialog")).toBeInTheDocument();
       });
 
-      // Verify dialog opened with correct context (has project dropdown, name input, and branch dropdown)
-      // Note: vscode-textfield is a web component, so we query by id
-      expect(document.getElementById("workspace-name")).toBeInTheDocument();
-      // Should have 2 comboboxes: project dropdown and branch dropdown
-      expect(screen.getAllByRole("combobox")).toHaveLength(2);
+      // Verify dialog opened with correct context (has project dropdown, name dropdown, and branch dropdown)
+      // NameBranchDropdown is a filterable combobox, query its container
+      expect(document.querySelector(".name-branch-dropdown")).toBeInTheDocument();
+      // Should have 3 comboboxes: project dropdown, name dropdown, and branch dropdown
+      expect(screen.getAllByRole("combobox")).toHaveLength(3);
     });
 
     it("removeWorkspace uses fire-and-forget pattern → dialog closes immediately", async () => {

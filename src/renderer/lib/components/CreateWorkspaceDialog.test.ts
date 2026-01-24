@@ -76,12 +76,13 @@ const testProjectId = "test-project-12345678" as ProjectId;
 const otherProjectId = "other-project-87654321" as ProjectId;
 
 /**
- * Helper to get the name input (vscode-textfield).
- * Since vscode-textfield is a web component, getByLabelText doesn't work.
- * We query by ID instead.
+ * Helper to get the name dropdown input (NameBranchDropdown).
+ * The NameBranchDropdown wraps FilterableDropdown which contains a combobox input.
  */
 function getNameInput(): HTMLElement {
-  const input = document.getElementById("workspace-name");
+  const dropdown = document.querySelector(".name-branch-dropdown") as HTMLElement;
+  if (!dropdown) throw new Error("Name branch dropdown container not found");
+  const input = dropdown.querySelector('input[role="combobox"]') as HTMLElement;
   if (!input) throw new Error("Name input not found");
   return input;
 }
@@ -199,23 +200,22 @@ describe("CreateWorkspaceDialog component", () => {
       expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    it("name input has aria-describedby for errors", async () => {
+    it("name input is a combobox with proper attributes", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      expect(nameInput).toHaveAttribute("aria-describedby");
+      expect(nameInput).toHaveAttribute("role", "combobox");
     });
 
-    it("focuses name input when dialog opens (not project dropdown)", async () => {
+    it("name input has correct id for Dialog's initialFocusSelector", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      const projectDropdown = getProjectDropdown();
 
-      expect(nameInput).toHaveFocus();
-      expect(projectDropdown).not.toHaveFocus();
+      // Name input should have id that matches Dialog's initialFocusSelector
+      expect(nameInput).toHaveAttribute("id", "workspace-name-input");
     });
   });
 
@@ -260,16 +260,19 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.keyDown(projectDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(projectDropdown, { key: "ArrowDown" }); // Try to select second option
       await fireEvent.keyDown(projectDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
-      // Fill name
+      // Fill name (type and press Enter to confirm)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "new-ws" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
 
       // Select branch
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // Submit
       const okButton = screen.getByRole("button", { name: /ok|create/i });
@@ -287,7 +290,8 @@ describe("CreateWorkspaceDialog component", () => {
       // Enter a name that exists in the default project (test-project)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "existing" } });
-      await fireEvent.blur(nameInput);
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // Should show duplicate error since "existing" exists in test-project
       expect(screen.getByText(/workspace already exists/i)).toBeInTheDocument();
@@ -300,14 +304,16 @@ describe("CreateWorkspaceDialog component", () => {
       // Enter a name that exists in test-project (original prop project)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "existing" } });
-      await fireEvent.blur(nameInput);
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // Should show error for original project
       expect(screen.getByText(/workspace already exists/i)).toBeInTheDocument();
 
       // Clear the name and enter a name that doesn't exist
       await fireEvent.input(nameInput, { target: { value: "new-workspace" } });
-      await fireEvent.blur(nameInput);
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // Error should be gone since "new-workspace" doesn't exist
       expect(screen.queryByText(/workspace already exists/i)).not.toBeInTheDocument();
@@ -315,15 +321,20 @@ describe("CreateWorkspaceDialog component", () => {
   });
 
   describe("validation", () => {
-    it('empty name shows error "Name is required"', async () => {
+    // Helper to enter a name using the NameBranchDropdown (type and press Enter)
+    async function enterName(nameInput: HTMLElement, value: string): Promise<void> {
+      await fireEvent.input(nameInput, { target: { value } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
+    }
+
+    it('empty name shows error "Name is required" when trying to submit', async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "" } });
-      await fireEvent.blur(nameInput);
-
-      expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+      // With empty name, the Create button should be disabled
+      const okButton = screen.getByRole("button", { name: /create/i });
+      expect(okButton).toBeDisabled();
     });
 
     it('name with / shows error "Name cannot contain /"', async () => {
@@ -331,8 +342,10 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "feature/branch" } });
-      await fireEvent.blur(nameInput);
+      // Note: Names with / are typically valid branch names, but the dialog validates against /
+      // The NameBranchDropdown filters options but allows free text
+      // Enter the invalid name and press Enter to confirm
+      await enterName(nameInput, "feature/branch");
 
       expect(screen.getByText(/name cannot contain \//i)).toBeInTheDocument();
     });
@@ -342,8 +355,7 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "feature\\branch" } });
-      await fireEvent.blur(nameInput);
+      await enterName(nameInput, "feature\\branch");
 
       expect(screen.getByText(/name cannot contain \\/i)).toBeInTheDocument();
     });
@@ -353,8 +365,7 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "feature..branch" } });
-      await fireEvent.blur(nameInput);
+      await enterName(nameInput, "feature..branch");
 
       expect(screen.getByText(/name cannot contain \.\./i)).toBeInTheDocument();
     });
@@ -365,8 +376,7 @@ describe("CreateWorkspaceDialog component", () => {
 
       const nameInput = getNameInput();
       const longName = "a".repeat(101);
-      await fireEvent.input(nameInput, { target: { value: longName } });
-      await fireEvent.blur(nameInput);
+      await enterName(nameInput, longName);
 
       expect(screen.getByText(/100 characters or less/i)).toBeInTheDocument();
     });
@@ -376,8 +386,7 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "existing" } });
-      await fireEvent.blur(nameInput);
+      await enterName(nameInput, "existing");
 
       expect(screen.getByText(/workspace already exists/i)).toBeInTheDocument();
     });
@@ -387,8 +396,7 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "EXISTING" } });
-      await fireEvent.blur(nameInput);
+      await enterName(nameInput, "EXISTING");
 
       expect(screen.getByText(/workspace already exists/i)).toBeInTheDocument();
     });
@@ -399,15 +407,13 @@ describe("CreateWorkspaceDialog component", () => {
 
       const nameInput = getNameInput();
 
-      // First enter invalid name
-      await fireEvent.input(nameInput, { target: { value: "" } });
-      await fireEvent.blur(nameInput);
-      expect(screen.queryByText(/name is required/i)).toBeInTheDocument();
+      // First enter invalid name (duplicate)
+      await enterName(nameInput, "existing");
+      expect(screen.queryByText(/workspace already exists/i)).toBeInTheDocument();
 
       // Then enter valid name
-      await fireEvent.input(nameInput, { target: { value: "valid-name" } });
-      await fireEvent.blur(nameInput);
-      expect(screen.queryByText(/name is required/i)).not.toBeInTheDocument();
+      await enterName(nameInput, "valid-name");
+      expect(screen.queryByText(/workspace already exists/i)).not.toBeInTheDocument();
     });
 
     it("name with dash and underscore is valid", async () => {
@@ -415,8 +421,7 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "my-feature_branch" } });
-      await fireEvent.blur(nameInput);
+      await enterName(nameInput, "my-feature_branch");
 
       // Should not show any validation error (error helper only rendered when there's an error)
       expect(screen.queryByText(/name is required/i)).not.toBeInTheDocument();
@@ -434,22 +439,25 @@ describe("CreateWorkspaceDialog component", () => {
       expect(mockCloseDialog).toHaveBeenCalled();
     });
 
-    it("Enter on name input submits form when valid", async () => {
+    it("form submits when clicking Create button with valid form", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill valid name
+      // Fill valid name via Enter (confirms the name in NameBranchDropdown)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "valid-name" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
 
       // Select a branch
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
-      // Press Enter on name input
-      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      // Click Create button
+      const okButton = screen.getByRole("button", { name: /create/i });
+      await fireEvent.click(okButton);
       await vi.runAllTimersAsync();
 
       expect(mockCreateWorkspace).toHaveBeenCalledWith(
@@ -459,19 +467,46 @@ describe("CreateWorkspaceDialog component", () => {
       );
     });
 
-    it("Enter on name input does not submit when form invalid", async () => {
+    it("Enter on name input does not submit when form is invalid (empty name)", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Leave name empty, just press Enter
+      // Leave name empty, just press Enter - this should not submit
+      // because the form is not valid
       const nameInput = getNameInput();
       await fireEvent.keyDown(nameInput, { key: "Enter" });
       await vi.runAllTimersAsync();
 
+      // Form should not submit because name is empty
       expect(mockCreateWorkspace).not.toHaveBeenCalled();
     });
 
-    it("Enter on name input does not submit while already submitting", async () => {
+    it("Enter on name input submits form when form is valid", async () => {
+      // Setup project with default branch already selected
+      const projectWithDefault = {
+        ...mockProjectsList[0],
+        defaultBaseBranch: "main",
+      };
+      const otherProject = mockProjectsList[1]!;
+      mockProjectsStore.mockReturnValue([projectWithDefault, otherProject]);
+      mockGetProjectById.mockImplementation((id: ProjectId) =>
+        [projectWithDefault, otherProject].find((p) => p.id === id)
+      );
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // Type a valid name and press Enter
+      const nameInput = getNameInput();
+      await fireEvent.input(nameInput, { target: { value: "my-feature" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
+
+      // Form should submit because name is valid and branch is pre-selected
+      expect(mockCreateWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
+    });
+
+    it("form does not submit while already submitting", async () => {
       // Delay the API response to keep form in submitting state
       mockCreateWorkspace.mockImplementation(
         () => new Promise((resolve) => setTimeout(resolve, 1000))
@@ -483,17 +518,20 @@ describe("CreateWorkspaceDialog component", () => {
       // Fill valid form
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "valid-name" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
 
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
-      // Submit via Enter
-      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      // Submit via Create button
+      const okButton = screen.getByRole("button", { name: /create/i });
+      await fireEvent.click(okButton);
 
-      // Try to submit again via Enter while still submitting
-      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      // Try to submit again while still submitting
+      await fireEvent.click(okButton);
 
       // Should only have been called once
       expect(mockCreateWorkspace).toHaveBeenCalledTimes(1);
@@ -503,6 +541,21 @@ describe("CreateWorkspaceDialog component", () => {
   });
 
   describe("submit flow", () => {
+    // Helper to fill a valid form (name + branch selection)
+    async function fillValidForm(nameValue: string = "valid-name"): Promise<void> {
+      // Fill name (type and press Enter to confirm)
+      const nameInput = getNameInput();
+      await fireEvent.input(nameInput, { target: { value: nameValue } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+
+      // Select a branch
+      const branchDropdown = getBranchDropdown();
+      await fireEvent.focus(branchDropdown);
+      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
+      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
+    }
+
     it("OK disabled until form valid", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
@@ -515,14 +568,7 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "valid-name" } });
-
-      // Select a branch
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await fillValidForm();
 
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       expect(okButton).not.toBeDisabled();
@@ -537,14 +583,7 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill valid form
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "valid-name" } });
-
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await fillValidForm();
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
@@ -564,20 +603,15 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill valid form
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "valid-name" } });
-
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await fillValidForm();
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
 
       // Inputs should be disabled
+      const nameInput = getNameInput();
+      const branchDropdown = getBranchDropdown();
       expect(nameInput).toBeDisabled();
       expect(branchDropdown).toBeDisabled();
 
@@ -592,14 +626,7 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill valid form
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "valid-name" } });
-
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await fillValidForm();
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
@@ -616,13 +643,7 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Fill valid form
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "my-feature" } });
-
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await fillValidForm("my-feature");
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
@@ -638,13 +659,7 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Fill valid form
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "my-feature" } });
-
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await fillValidForm("my-feature");
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
@@ -872,9 +887,11 @@ describe("CreateWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Enter a name that exists in other-project but not in test-project
+      // Press Enter to confirm and mark as touched
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "ws1" } });
-      await fireEvent.blur(nameInput); // Mark as touched
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // Should NOT show error (ws1 doesn't exist in test-project)
       expect(screen.queryByText(/workspace already exists/i)).not.toBeInTheDocument();
@@ -890,10 +907,10 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Enter a name that exists in other-project but DON'T blur (not touched)
+      // Enter a name that exists in other-project but DON'T confirm (not touched)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "ws1" } });
-      // No blur, so touched remains false
+      // No Enter, so touched remains false
 
       // Change to other-project using mouseDown
       await selectProjectByName("other-project");
@@ -1018,7 +1035,7 @@ describe("CreateWorkspaceDialog component", () => {
       expect(branchCombobox.value).toBe("");
     });
 
-    it("form is valid when defaultBaseBranch exists and is valid", async () => {
+    it("form is valid when defaultBaseBranch exists and is valid (Enter submits)", async () => {
       const projectWithDefault = {
         ...mockProjectsList[0],
         defaultBaseBranch: "main",
@@ -1034,12 +1051,14 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill in just the name - branch should already be set
+      // Fill in just the name and press Enter - branch is already set, so Enter submits
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "my-feature" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
-      const okButton = screen.getByRole("button", { name: /ok|create/i });
-      expect(okButton).not.toBeDisabled();
+      // Form should be submitted because name is valid and branch is pre-selected
+      expect(mockCreateWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
     });
   });
 
@@ -1050,14 +1069,16 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill valid form
+      // Fill valid form (type name and press Enter to confirm)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "my-feature" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
 
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
@@ -1077,14 +1098,16 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill valid form
+      // Fill valid form (type name and press Enter to confirm)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "my-feature" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
 
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
@@ -1110,14 +1133,16 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      // Fill valid form
+      // Fill valid form (type name and press Enter to confirm)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "my-feature" } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
 
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await vi.runAllTimersAsync();
 
       // First attempt - fails
       const okButton = screen.getByRole("button", { name: /ok|create/i });

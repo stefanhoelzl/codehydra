@@ -184,8 +184,24 @@ export interface AgentStatusCounts {
  * Information about a base branch.
  */
 export interface BaseInfo {
+  /** Full branch reference (e.g., "main" or "origin/main") */
   readonly name: string;
+  /** Whether this is a remote-tracking branch */
   readonly isRemote: boolean;
+  /**
+   * Suggested base branch for creating a workspace from this branch.
+   * For local branches: codehydra.base config value, or matching origin/* branch if exists.
+   * For remote branches: the full ref itself (e.g., "origin/feature-x").
+   */
+  readonly base?: string;
+  /**
+   * Derivable workspace name if a workspace can be created from this branch.
+   * Set when:
+   * - Local branch without an existing worktree (derives = branch name)
+   * - Remote branch without a local counterpart (derives = name without remote prefix, e.g., "feature-x")
+   * Undefined when a workspace already exists or local counterpart exists.
+   */
+  readonly derives?: string;
 }
 
 /**
