@@ -4,7 +4,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
+import { tick } from "svelte";
 import type { ProjectId } from "@shared/api/types";
+
+import type { BaseInfo } from "@shared/api/types";
 
 // Create mock functions with vi.hoisted - using pattern from working ProjectDropdown tests
 const {
@@ -14,6 +17,7 @@ const {
   mockProjectsStore,
   mockGetProjectById,
   mockSwitchWorkspace,
+  basesUpdatedHandlers,
 } = vi.hoisted(() => ({
   mockCreateWorkspace: vi.fn(),
   mockFetchBases: vi.fn(),
@@ -21,6 +25,8 @@ const {
   mockProjectsStore: vi.fn(),
   mockGetProjectById: vi.fn(),
   mockSwitchWorkspace: vi.fn(),
+  // Store handlers to trigger bases-updated events in tests
+  basesUpdatedHandlers: new Set<(event: { projectId: string; bases: BaseInfo[] }) => void>(),
 }));
 
 // Mock $lib/api - using v2 API
@@ -41,7 +47,6 @@ vi.mock("$lib/api", () => ({
   onWorkspaceRemoved: vi.fn(() => vi.fn()),
   onWorkspaceSwitched: vi.fn(() => vi.fn()),
   // Event subscription (needed by BranchDropdown)
-  on: vi.fn(() => vi.fn()),
   // Flat API structure
   workspaces: {
     create: mockCreateWorkspace,
@@ -51,6 +56,14 @@ vi.mock("$lib/api", () => ({
   },
   ui: {
     switchWorkspace: mockSwitchWorkspace,
+  },
+  // Event subscription mock for BranchDropdown
+  on: (event: string, handler: (event: { projectId: string; bases: BaseInfo[] }) => void) => {
+    if (event === "project:bases-updated") {
+      basesUpdatedHandlers.add(handler);
+      return () => basesUpdatedHandlers.delete(handler);
+    }
+    return () => {};
   },
 }));
 
@@ -141,9 +154,30 @@ describe("CreateWorkspaceDialog component", () => {
     },
   ];
 
+  // Helper to emit bases-updated event
+  function emitBasesUpdated(
+    projectId: string,
+    bases: BaseInfo[] = [
+      { name: "main", isRemote: false },
+      { name: "develop", isRemote: false },
+    ]
+  ): void {
+    basesUpdatedHandlers.forEach((handler) => handler({ projectId, bases }));
+  }
+
+  // Helper to complete loading for all known projects
+  async function completeAllLoading(): Promise<void> {
+    await vi.runAllTimersAsync();
+    // Emit bases-updated for both test projects
+    emitBasesUpdated(testProjectId);
+    emitBasesUpdated(otherProjectId);
+    await tick();
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    basesUpdatedHandlers.clear();
     // Setup projects store mock with both projects
     mockProjectsStore.mockReturnValue(mockProjectsList);
     // Setup getProjectById to return project when called
@@ -175,14 +209,14 @@ describe("CreateWorkspaceDialog component", () => {
   describe("structure", () => {
     it("uses Dialog base component", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       expect(screen.getByRole("dialog")).toBeInTheDocument();
     });
 
     it("renders project dropdown, name input, and branch dropdown", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       expect(getProjectDropdown()).toBeInTheDocument();
       expect(getNameInput()).toBeInTheDocument();
@@ -191,7 +225,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("renders project dropdown above name input in DOM order", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const projectDropdown = getProjectDropdown();
       const nameInput = getNameInput();
@@ -204,7 +238,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("name input is a combobox with proper attributes", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       expect(nameInput).toHaveAttribute("role", "combobox");
@@ -212,7 +246,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("name input has correct id for Dialog's initialFocusSelector", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
 
@@ -224,7 +258,7 @@ describe("CreateWorkspaceDialog component", () => {
   describe("project dropdown", () => {
     it("shows projectPath prop value as default selection", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const projectDropdown = getProjectDropdown() as HTMLInputElement;
       // Should show the project name, not the path
@@ -233,14 +267,14 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("displays all open projects in dropdown", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const projectDropdown = getProjectDropdown();
       await fireEvent.focus(projectDropdown);
 
       // Clear the filter to show all options (debounce would otherwise filter to current value)
       await fireEvent.input(projectDropdown, { target: { value: "" } });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Both projects should be shown in the dropdown
       expect(screen.getByText("test-project")).toBeInTheDocument();
@@ -254,7 +288,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("form submits with selected project using keyboard", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Navigate to a different project using keyboard (if multiple are available)
       const projectDropdown = getProjectDropdown();
@@ -262,7 +296,7 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.keyDown(projectDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(projectDropdown, { key: "ArrowDown" }); // Try to select second option
       await fireEvent.keyDown(projectDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill name (type and press Enter to confirm)
       const nameInput = getNameInput();
@@ -274,12 +308,12 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Submit
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Should have called workspaces.create (project ID depends on what was selected)
       expect(workspaces.create).toHaveBeenCalled();
@@ -287,13 +321,13 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("validation checks selected project's workspaces", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Enter a name that exists in the default project (test-project)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "existing" } });
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Should show duplicate error since "existing" exists in test-project
       expect(screen.getByText(/workspace already exists/i)).toBeInTheDocument();
@@ -301,13 +335,13 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("validation uses selected project for duplicate check", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Enter a name that exists in test-project (original prop project)
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "existing" } });
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Should show error for original project
       expect(screen.getByText(/workspace already exists/i)).toBeInTheDocument();
@@ -315,7 +349,7 @@ describe("CreateWorkspaceDialog component", () => {
       // Clear the name and enter a name that doesn't exist
       await fireEvent.input(nameInput, { target: { value: "new-workspace" } });
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Error should be gone since "new-workspace" doesn't exist
       expect(screen.queryByText(/workspace already exists/i)).not.toBeInTheDocument();
@@ -327,12 +361,12 @@ describe("CreateWorkspaceDialog component", () => {
     async function enterName(nameInput: HTMLElement, value: string): Promise<void> {
       await fireEvent.input(nameInput, { target: { value } });
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     }
 
     it('empty name shows error "Name is required" when trying to submit', async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // With empty name, the Create button should be disabled
       const okButton = screen.getByRole("button", { name: /create/i });
@@ -341,7 +375,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it('name with / shows error "Name cannot contain /"', async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       // Note: Names with / are typically valid branch names, but the dialog validates against /
@@ -354,7 +388,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it('name with \\ shows error "Name cannot contain \\"', async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       await enterName(nameInput, "feature\\branch");
@@ -364,7 +398,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it('name with .. shows error "Name cannot contain .."', async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       await enterName(nameInput, "feature..branch");
@@ -374,7 +408,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("name > 100 chars shows error", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       const longName = "a".repeat(101);
@@ -385,7 +419,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it('duplicate name shows error "Workspace already exists"', async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       await enterName(nameInput, "existing");
@@ -395,7 +429,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("duplicate name is case-insensitive", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       await enterName(nameInput, "EXISTING");
@@ -405,7 +439,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("valid name clears error", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
 
@@ -420,7 +454,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("name with dash and underscore is valid", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const nameInput = getNameInput();
       await enterName(nameInput, "my-feature_branch");
@@ -434,7 +468,7 @@ describe("CreateWorkspaceDialog component", () => {
   describe("keyboard navigation", () => {
     it("Escape closes dialog", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       await fireEvent.keyDown(document.body, { key: "Escape" });
 
@@ -443,7 +477,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("form submits when clicking Create button with valid form", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill valid name via Enter (confirms the name in NameBranchDropdown)
       const nameInput = getNameInput();
@@ -455,12 +489,12 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Click Create button
       const okButton = screen.getByRole("button", { name: /create/i });
       await fireEvent.click(okButton);
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       expect(mockCreateWorkspace).toHaveBeenCalledWith(
         defaultProps.projectId,
@@ -471,13 +505,13 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("Enter on name input does not submit when form is invalid (empty name)", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Leave name empty, just press Enter - this should not submit
       // because the form is not valid
       const nameInput = getNameInput();
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Form should not submit because name is empty
       expect(mockCreateWorkspace).not.toHaveBeenCalled();
@@ -496,13 +530,13 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Type a valid name and press Enter
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "my-feature" } });
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Form should submit because name is valid and branch is pre-selected
       expect(mockCreateWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
@@ -515,7 +549,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill valid form
       const nameInput = getNameInput();
@@ -526,7 +560,7 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Submit via Create button
       const okButton = screen.getByRole("button", { name: /create/i });
@@ -538,7 +572,7 @@ describe("CreateWorkspaceDialog component", () => {
       // Should only have been called once
       expect(mockCreateWorkspace).toHaveBeenCalledTimes(1);
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     });
   });
 
@@ -555,12 +589,12 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     }
 
     it("OK disabled until form valid", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       expect(okButton).toBeDisabled();
@@ -568,7 +602,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("OK enabled when form is valid", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       await fillValidForm();
 
@@ -583,7 +617,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       await fillValidForm();
 
@@ -594,7 +628,7 @@ describe("CreateWorkspaceDialog component", () => {
       // Should show submitting state in the button
       expect(screen.getByRole("button", { name: /creating/i })).toBeInTheDocument();
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     });
 
     it("all inputs disabled during submit", async () => {
@@ -603,7 +637,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       await fillValidForm();
 
@@ -617,7 +651,7 @@ describe("CreateWorkspaceDialog component", () => {
       expect(nameInput).toBeDisabled();
       expect(branchDropdown).toBeDisabled();
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     });
 
     it('aria-busy="true" during submit', async () => {
@@ -626,7 +660,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       await fillValidForm();
 
@@ -637,12 +671,12 @@ describe("CreateWorkspaceDialog component", () => {
       const dialog = screen.getByRole("dialog");
       expect(dialog).toHaveAttribute("aria-busy", "true");
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     });
 
     it("api.createWorkspace called with correct params", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill valid form
       await fillValidForm("my-feature");
@@ -651,14 +685,14 @@ describe("CreateWorkspaceDialog component", () => {
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       expect(workspaces.create).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
     });
 
     it("success switches to new workspace and closes dialog", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill valid form
       await fillValidForm("my-feature");
@@ -667,7 +701,7 @@ describe("CreateWorkspaceDialog component", () => {
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Should switch to the newly created workspace
       expect(mockSwitchWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature");
@@ -680,7 +714,7 @@ describe("CreateWorkspaceDialog component", () => {
     // This tests the mousedown selection pattern that prevents blur-before-click timing issues.
     it("branch dropdown click selection works within dialog", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
@@ -698,7 +732,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("branch dropdown is visible and not clipped by dialog overflow", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const branchDropdown = getBranchDropdown();
       await fireEvent.focus(branchDropdown);
@@ -732,10 +766,17 @@ describe("CreateWorkspaceDialog component", () => {
     async function selectProjectByName(projectName: string): Promise<void> {
       const projectDropdown = getProjectDropdown();
       await fireEvent.focus(projectDropdown);
+      await tick(); // Ensure Svelte processes the focus and opens dropdown
 
-      // Clear the filter to show all options (debounce would otherwise filter to current value)
+      // Type something first, then clear - this ensures the debounce effect sees a change
+      await fireEvent.input(projectDropdown, { target: { value: "x" } });
+      await vi.advanceTimersByTimeAsync(250); // Wait for debounce
+      await tick();
+
+      // Now clear the filter to show all options
       await fireEvent.input(projectDropdown, { target: { value: "" } });
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(250); // Wait for debounce
+      await tick();
 
       // Find the project dropdown's listbox (not the branch dropdown's)
       const projectListbox = document.getElementById("project-dropdown-listbox");
@@ -755,7 +796,7 @@ describe("CreateWorkspaceDialog component", () => {
       }
 
       await fireEvent.mouseDown(option);
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     }
 
     it("changing project clears branch selection", async () => {
@@ -779,7 +820,7 @@ describe("CreateWorkspaceDialog component", () => {
       });
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Select a branch in the default project
       let branchDropdown = getBranchDropdown();
@@ -793,35 +834,40 @@ describe("CreateWorkspaceDialog component", () => {
       // Now change to a different project using mouseDown
       await selectProjectByName("other-project");
 
+      // Wait for branch fetch to complete and validation to clear the value
+      await completeAllLoading();
+
       // Re-query the branch dropdown (component was remounted after project change)
       branchDropdown = getBranchDropdown();
 
-      // Branch selection should be cleared
+      // Branch selection should be cleared (other-project doesn't have "main")
       expect((branchDropdown as HTMLInputElement).value).toBe("");
     });
 
     it("branch dropdown shows new project's branches after project change", async () => {
       // Setup mock to return different branches per project ID
+      const testBranches: BaseInfo[] = [
+        { name: "main", isRemote: false },
+        { name: "develop", isRemote: false },
+      ];
+      const otherBranches: BaseInfo[] = [
+        { name: "feature-branch", isRemote: false },
+        { name: "release", isRemote: false },
+      ];
       mockFetchBases.mockImplementation((projectId: ProjectId) => {
         if (projectId === testProjectId) {
-          return Promise.resolve({
-            bases: [
-              { name: "main", isRemote: false },
-              { name: "develop", isRemote: false },
-            ],
-          });
+          return Promise.resolve({ bases: testBranches });
         } else {
-          return Promise.resolve({
-            bases: [
-              { name: "feature-branch", isRemote: false },
-              { name: "release", isRemote: false },
-            ],
-          });
+          return Promise.resolve({ bases: otherBranches });
         }
       });
 
       render(CreateWorkspaceDialog, { props: defaultProps });
+      // Complete loading with correct branches for each project
       await vi.runAllTimersAsync();
+      emitBasesUpdated(testProjectId, testBranches);
+      emitBasesUpdated(otherProjectId, otherBranches);
+      await tick();
 
       // Initial branches should be from test-project
       let branchDropdown = getBranchDropdown();
@@ -840,7 +886,10 @@ describe("CreateWorkspaceDialog component", () => {
 
       // Open branch dropdown again - should show new project's branches
       await fireEvent.focus(branchDropdown);
+      // Emit bases-updated for other-project
       await vi.runAllTimersAsync();
+      emitBasesUpdated(otherProjectId, otherBranches);
+      await tick();
 
       expect(screen.getByText("feature-branch")).toBeInTheDocument();
       expect(screen.getByText("release")).toBeInTheDocument();
@@ -848,7 +897,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("sequential project changes clear branch each time", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Select a branch
       let branchDropdown = getBranchDropdown();
@@ -860,10 +909,13 @@ describe("CreateWorkspaceDialog component", () => {
       // Change project (to other-project) using mouseDown
       await selectProjectByName("other-project");
 
+      // Wait for branch fetch to complete and validation to clear the value
+      await completeAllLoading();
+
       // Re-query after project change (component remounted)
       branchDropdown = getBranchDropdown();
 
-      // Branch should be cleared
+      // Branch should be cleared (other-project has different branches by default mock)
       expect((branchDropdown as HTMLInputElement).value).toBe("");
 
       // Select a branch again
@@ -875,10 +927,13 @@ describe("CreateWorkspaceDialog component", () => {
       // Change project again (back to test-project) using mouseDown
       await selectProjectByName("test-project");
 
+      // Wait for branch fetch to complete
+      await completeAllLoading();
+
       // Re-query after project change (component remounted)
       branchDropdown = getBranchDropdown();
 
-      // Branch should be cleared again
+      // Branch should be cleared again (test-project has "main" so value stays - but branch was reset by parent)
       expect((branchDropdown as HTMLInputElement).value).toBe("");
     });
 
@@ -886,14 +941,14 @@ describe("CreateWorkspaceDialog component", () => {
       // Projects have different existing workspaces:
       // test-project has "existing", other-project has "ws1"
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Enter a name that exists in other-project but not in test-project
       // Press Enter to confirm and mark as touched
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "ws1" } });
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Should NOT show error (ws1 doesn't exist in test-project)
       expect(screen.queryByText(/workspace already exists/i)).not.toBeInTheDocument();
@@ -907,7 +962,7 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("name does not re-validate when project changes if not touched", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Enter a name that exists in other-project but DON'T confirm (not touched)
       const nameInput = getNameInput();
@@ -937,7 +992,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const branchCombobox = getBranchDropdown() as HTMLInputElement;
       expect(branchCombobox.value).toBe("develop");
@@ -961,7 +1016,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Initially branch should be empty (test-project has no default)
       let branchCombobox = getBranchDropdown() as HTMLInputElement;
@@ -971,7 +1026,7 @@ describe("CreateWorkspaceDialog component", () => {
       const projectDropdown = getProjectDropdown();
       await fireEvent.focus(projectDropdown);
       await fireEvent.input(projectDropdown, { target: { value: "" } });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const projectListbox = document.getElementById("project-dropdown-listbox");
       const options = projectListbox?.querySelectorAll('[role="option"]');
@@ -979,7 +1034,7 @@ describe("CreateWorkspaceDialog component", () => {
         (opt) => opt.textContent?.trim() === "other-project"
       ) as HTMLElement;
       await fireEvent.mouseDown(otherProjectOption);
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Re-query the dropdown and check that it's now set to the new project's default
       branchCombobox = getBranchDropdown() as HTMLInputElement;
@@ -996,7 +1051,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // User selects a branch manually
       const branchDropdown = getBranchDropdown();
@@ -1020,7 +1075,7 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       // Trigger reactivity
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // User's selection should NOT be overwritten
       expect((branchDropdown as HTMLInputElement).value).toBe("main");
@@ -1031,7 +1086,7 @@ describe("CreateWorkspaceDialog component", () => {
       mockProjectsStore.mockReturnValue(mockProjectsList);
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       const branchCombobox = getBranchDropdown() as HTMLInputElement;
       expect(branchCombobox.value).toBe("");
@@ -1051,13 +1106,13 @@ describe("CreateWorkspaceDialog component", () => {
       );
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill in just the name and press Enter - branch is already set, so Enter submits
       const nameInput = getNameInput();
       await fireEvent.input(nameInput, { target: { value: "my-feature" } });
       await fireEvent.keyDown(nameInput, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Form should be submitted because name is valid and branch is pre-selected
       expect(mockCreateWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
@@ -1069,7 +1124,7 @@ describe("CreateWorkspaceDialog component", () => {
       mockCreateWorkspace.mockRejectedValue(new Error("Network error"));
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill valid form (type name and press Enter to confirm)
       const nameInput = getNameInput();
@@ -1080,13 +1135,13 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // The submit error is displayed
       const errorElement = screen.getByText(/network error/i);
@@ -1098,7 +1153,7 @@ describe("CreateWorkspaceDialog component", () => {
       mockCreateWorkspace.mockRejectedValue(new Error("Network error"));
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill valid form (type name and press Enter to confirm)
       const nameInput = getNameInput();
@@ -1109,13 +1164,13 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Click OK
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Form should be re-enabled
       expect(nameInput).not.toBeDisabled();
@@ -1133,7 +1188,7 @@ describe("CreateWorkspaceDialog component", () => {
       });
 
       render(CreateWorkspaceDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // Fill valid form (type name and press Enter to confirm)
       const nameInput = getNameInput();
@@ -1144,12 +1199,12 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       // First attempt - fails
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
 
       expect(screen.getByText(/network error/i)).toBeInTheDocument();
 
@@ -1158,7 +1213,7 @@ describe("CreateWorkspaceDialog component", () => {
 
       expect(screen.queryByText(/network error/i)).not.toBeInTheDocument();
 
-      await vi.runAllTimersAsync();
+      await completeAllLoading();
     });
   });
 });

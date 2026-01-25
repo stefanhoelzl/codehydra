@@ -68,6 +68,26 @@
   const displayText = $derived(localFilterOverride ?? value);
   const filterText = $derived(localFilterOverride ?? "");
 
+  // Track previous value to detect external changes (e.g., parent clears selection)
+  // This allows us to reset localFilterOverride only when value actually changes,
+  // not when user is actively typing/filtering
+  let previousValue: string | undefined;
+
+  // Reset localFilterOverride when value prop changes externally
+  $effect(() => {
+    // On first run, just capture the initial value
+    if (previousValue === undefined) {
+      previousValue = value;
+      return;
+    }
+
+    // If value changed, reset local override so displayText uses the new prop value
+    if (value !== previousValue) {
+      localFilterOverride = null;
+      previousValue = value;
+    }
+  });
+
   // IDs for ARIA
   const baseId = $derived(id ?? `filterable-dropdown-${Math.random().toString(36).slice(2, 9)}`);
   const listboxId = $derived(`${baseId}-listbox`);
