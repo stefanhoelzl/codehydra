@@ -40,6 +40,8 @@ vi.mock("$lib/api", () => ({
   onWorkspaceCreated: vi.fn(() => vi.fn()),
   onWorkspaceRemoved: vi.fn(() => vi.fn()),
   onWorkspaceSwitched: vi.fn(() => vi.fn()),
+  // Event subscription (needed by BranchDropdown)
+  on: vi.fn(() => vi.fn()),
   // Flat API structure
   workspaces: {
     create: mockCreateWorkspace,
