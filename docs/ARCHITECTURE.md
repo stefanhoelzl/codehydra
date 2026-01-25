@@ -211,6 +211,7 @@ Services are pure Node.js for testability without Electron:
 | PluginServer             | Socket.IO server for VS Code extension communication            | Implemented |
 | McpServerManager         | MCP server for AI agent workspace API access                    | Implemented |
 | TelemetryService         | PostHog analytics for DAU, version, platform, errors            | Implemented |
+| AutoUpdater              | Check for updates daily, apply on quit (electron-updater)       | Implemented |
 
 ### Workspace Cleanup
 

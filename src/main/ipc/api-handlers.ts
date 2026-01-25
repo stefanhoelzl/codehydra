@@ -25,32 +25,37 @@ export interface TitleConfig {
   version?: string;
   /** Function to resolve project name from workspace path */
   getProjectName: (workspacePath: string) => string | undefined;
+  /** Function to check if an update is available */
+  hasUpdateAvailable?: () => boolean;
 }
 
 /**
  * Formats the window title based on current workspace.
  *
- * Format: "CodeHydra - <project> / <workspace> - (<version>)"
+ * Format: "CodeHydra - <project> / <workspace> - (<version>) - (update available)"
  * No workspace: "CodeHydra - (<version>)" or "CodeHydra"
  *
  * @param projectName - Name of the active project, or undefined
  * @param workspaceName - Name of the active workspace, or undefined
  * @param version - Version suffix (branch in dev mode, version in packaged mode), or undefined
+ * @param hasUpdate - Whether an update is available
  * @returns Formatted window title
  */
 export function formatWindowTitle(
   projectName: string | undefined,
   workspaceName: string | undefined,
-  version?: string
+  version?: string,
+  hasUpdate?: boolean
 ): string {
   const base = "CodeHydra";
   const versionSuffix = version ? ` - (${version})` : "";
+  const updateSuffix = hasUpdate ? ` - (update available)` : "";
 
   if (projectName && workspaceName) {
-    return `${base} - ${projectName} / ${workspaceName}${versionSuffix}`;
+    return `${base} - ${projectName} / ${workspaceName}${versionSuffix}${updateSuffix}`;
   }
 
-  return `${base}${versionSuffix}`;
+  return `${base}${versionSuffix}${updateSuffix}`;
 }
 
 // =============================================================================
@@ -123,10 +128,19 @@ export function wireApiEvents(
       if (titleConfig) {
         if (event) {
           const projectName = titleConfig.getProjectName(event.path);
-          const title = formatWindowTitle(projectName, event.workspaceName, titleConfig.version);
+          const hasUpdate = titleConfig.hasUpdateAvailable?.() ?? false;
+          const title = formatWindowTitle(
+            projectName,
+            event.workspaceName,
+            titleConfig.version,
+            hasUpdate
+          );
           titleConfig.setTitle(title);
         } else {
-          titleConfig.setTitle(titleConfig.defaultTitle);
+          // Even with no workspace, include update suffix if available
+          const hasUpdate = titleConfig.hasUpdateAvailable?.() ?? false;
+          const title = formatWindowTitle(undefined, undefined, titleConfig.version, hasUpdate);
+          titleConfig.setTitle(title);
         }
       }
     })
