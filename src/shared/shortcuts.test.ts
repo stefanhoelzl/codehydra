@@ -171,6 +171,8 @@ describe("shortcuts type guards", () => {
       const expectedKeys = [
         "up",
         "down",
+        "left",
+        "right",
         "enter",
         "delete",
         "o",
@@ -193,6 +195,8 @@ describe("shortcuts type guards", () => {
     it.each([
       "up",
       "down",
+      "left",
+      "right",
       "enter",
       "delete",
       "o",

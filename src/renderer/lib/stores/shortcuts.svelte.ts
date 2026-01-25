@@ -23,6 +23,7 @@ import {
   activeWorkspace,
   projects,
 } from "./projects.svelte";
+import { getStatus } from "./agent-status.svelte";
 import {
   jumpKeyToIndex,
   isShortcutKey,
@@ -131,6 +132,12 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
     case "down":
       await handleNavigation("ArrowDown");
       break;
+    case "left":
+      await handleIdleNavigation(-1);
+      break;
+    case "right":
+      await handleIdleNavigation(1);
+      break;
     case "enter":
       handleDialog("Enter");
       break;
@@ -178,6 +185,63 @@ async function handleNavigation(key: NavigationKey): Promise<void> {
   } finally {
     _switchingWorkspace = false;
   }
+}
+
+/**
+ * Handle left/right arrow navigation to next idle workspace.
+ * Direction: -1 for previous (left), 1 for next (right).
+ * Wraps around if needed. No-op if no other idle workspace exists.
+ */
+async function handleIdleNavigation(direction: -1 | 1): Promise<void> {
+  if (_switchingWorkspace) return;
+
+  const workspaces = getAllWorkspaces();
+  if (workspaces.length <= 1) return;
+
+  const currentIndex = findWorkspaceIndex(activeWorkspacePath.value);
+  if (currentIndex === -1) return;
+
+  // Find next idle workspace in the given direction
+  const targetIndex = findNextIdleIndex(workspaces, currentIndex, direction);
+  if (targetIndex === -1) return;
+
+  const targetWorkspaceRef = getWorkspaceRefByIndex(targetIndex);
+  if (!targetWorkspaceRef) return;
+
+  _switchingWorkspace = true;
+  try {
+    await api.ui.switchWorkspace(
+      targetWorkspaceRef.projectId,
+      targetWorkspaceRef.workspaceName,
+      false
+    );
+  } catch (error) {
+    logWorkspaceSwitchError("navigate to idle workspace", error);
+  } finally {
+    _switchingWorkspace = false;
+  }
+}
+
+/**
+ * Find next idle workspace index in the given direction.
+ * Returns -1 if no other idle workspace exists.
+ */
+function findNextIdleIndex(
+  workspaces: { path: string }[],
+  currentIndex: number,
+  direction: -1 | 1
+): number {
+  const count = workspaces.length;
+  for (let i = 1; i < count; i++) {
+    const index = wrapIndex(currentIndex + i * direction, count);
+    const workspace = workspaces[index];
+    if (!workspace) continue;
+    const status = getStatus(workspace.path);
+    if (status.type === "idle") {
+      return index;
+    }
+  }
+  return -1;
 }
 
 /**

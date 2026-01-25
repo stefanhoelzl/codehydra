@@ -5,6 +5,7 @@
     hasActiveProject?: boolean;
     hasActiveWorkspace?: boolean;
     activeWorkspaceDeletionInProgress?: boolean;
+    idleWorkspaceCount?: number;
   }
 
   let {
@@ -13,12 +14,14 @@
     hasActiveProject = false,
     hasActiveWorkspace = false,
     activeWorkspaceDeletionInProgress = false,
+    idleWorkspaceCount = 0,
   }: Props = $props();
 
   const showNavigation = $derived(workspaceCount > 1);
   const showJump = $derived(workspaceCount > 1);
   const showNew = $derived(hasActiveProject);
   const showDelete = $derived(hasActiveWorkspace && !activeWorkspaceDeletionInProgress);
+  const showIdleNavigation = $derived(idleWorkspaceCount >= 2);
 </script>
 
 <!-- 
@@ -37,6 +40,13 @@
     aria-label="Up and Down arrows to navigate"
   >
     <vscode-badge>↑↓</vscode-badge> Navigate
+  </span>
+  <span
+    class="shortcut-hint"
+    class:shortcut-hint--hidden={!showIdleNavigation}
+    aria-label="Left and Right arrows to jump to idle"
+  >
+    <vscode-badge>←→</vscode-badge> Idle
   </span>
   <span
     class="shortcut-hint"

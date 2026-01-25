@@ -80,6 +80,21 @@ const mockDeletionStore = vi.hoisted(() => ({
 // Mock the deletion store
 vi.mock("./deletion.svelte", () => mockDeletionStore);
 
+// AgentStatus type for mock return values
+type AgentStatus =
+  | { type: "none" }
+  | { type: "idle"; counts: { idle: number; busy: number; total: number } }
+  | { type: "busy"; counts: { idle: number; busy: number; total: number } }
+  | { type: "mixed"; counts: { idle: number; busy: number; total: number } };
+
+// Create mock agent status store with vi.hoisted
+const mockAgentStatusStore = vi.hoisted(() => ({
+  getStatus: vi.fn().mockReturnValue({ type: "none" } as AgentStatus),
+}));
+
+// Mock the agent status store
+vi.mock("./agent-status.svelte", () => mockAgentStatusStore);
+
 // Import after mock setup
 import {
   handleModeChange,
@@ -506,6 +521,132 @@ describe("shortcuts store", () => {
         handleShortcutKey("down");
 
         expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
+      });
+
+      it("should-navigate-to-idle-workspace-on-left-arrow", async () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(1);
+        mockProjectsStore.activeWorkspacePath.value = "/ws2";
+
+        // ws1 is idle, ws2 is current, ws3 is busy
+        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
+          if (path === "/ws1") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
+          if (path === "/ws3") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
+          return { type: "none" };
+        });
+
+        enableShortcutMode();
+        handleShortcutKey("left");
+
+        await vi.waitFor(() => {
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
+            "test-project-12345678",
+            "ws1",
+            false
+          );
+        });
+      });
+
+      it("should-navigate-to-idle-workspace-on-right-arrow", async () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
+        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+
+        // ws1 is current, ws2 is busy, ws3 is idle
+        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
+          if (path === "/ws2") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
+          if (path === "/ws3") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
+          return { type: "none" };
+        });
+
+        enableShortcutMode();
+        handleShortcutKey("right");
+
+        await vi.waitFor(() => {
+          // Should skip ws2 (busy) and go to ws3 (idle)
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
+            "test-project-12345678",
+            "ws3",
+            false
+          );
+        });
+      });
+
+      it("should-not-navigate-when-no-idle-workspaces", () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
+        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+
+        // All other workspaces are busy
+        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
+          if (path === "/ws2" || path === "/ws3") {
+            return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
+          }
+          return { type: "none" };
+        });
+
+        enableShortcutMode();
+        handleShortcutKey("left");
+
+        expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
+      });
+
+      it("should-find-newly-idle-workspace-after-status-change", async () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
+        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+
+        // Initially ws2 and ws3 are busy
+        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
+          if (path === "/ws2" || path === "/ws3") {
+            return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
+          }
+          return { type: "none" };
+        });
+
+        enableShortcutMode();
+        handleShortcutKey("right");
+
+        // No idle workspaces, so no navigation
+        expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
+
+        // Now ws2 becomes idle (simulate status change)
+        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
+          if (path === "/ws2") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
+          if (path === "/ws3") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
+          return { type: "none" };
+        });
+
+        // Press right again - should now find ws2
+        handleShortcutKey("right");
+
+        await vi.waitFor(() => {
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
+            "test-project-12345678",
+            "ws2",
+            false
+          );
+        });
       });
 
       it("should-prevent-concurrent-navigation-during-rapid-keypresses", async () => {

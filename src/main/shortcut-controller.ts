@@ -30,6 +30,8 @@ const SHORTCUT_ACTIVATION_KEY = "x";
 const KEY_MAP: Record<string, ShortcutKey> = {
   ArrowUp: "up",
   ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
   Enter: "enter",
   Delete: "delete",
   Backspace: "delete",
