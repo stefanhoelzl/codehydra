@@ -119,13 +119,13 @@ path1.equals(path2); // equals() for comparison
 
 ## Key Concepts
 
-| Concept         | Description                                                                                              |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| Project         | Git repository path (container, not viewable)                                                            |
-| Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                          |
-| WebContentsView | Electron view for embedding (not iframe)                                                                 |
-| Shortcut Mode   | Alt+X activates keyboard navigation. Keys: ↑↓ navigate, 1-0 jump, Enter new, Delete remove, Escape exits |
-| .keepfiles      | Config listing files to copy to new workspaces. Gitignore syntax with **inverted semantics**             |
+| Concept         | Description                                                                                                                |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Project         | Git repository path (container, not viewable)                                                                              |
+| Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                                            |
+| WebContentsView | Electron view for embedding (not iframe)                                                                                   |
+| Shortcut Mode   | Alt+X activates keyboard navigation. Keys: ↑↓ navigate, ←→ navigate idle, 1-0 jump, Enter new, Delete remove, Escape exits |
+| .keepfiles      | Config listing files to copy to new workspaces. Gitignore syntax with **inverted semantics**                               |
 
 ---
 

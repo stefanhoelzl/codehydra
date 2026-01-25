@@ -771,6 +771,8 @@ The app icon displays a visual indicator showing the overall status of all works
 | Alt+X          | Activate shortcut mode                                     |
 | Alt+↑          | Previous workspace (across all projects)                   |
 | Alt+↓          | Next workspace (across all projects)                       |
+| Alt+←          | Previous idle workspace (across all projects)              |
+| Alt+→          | Next idle workspace (across all projects)                  |
 | Alt+Enter      | Create workspace (for project containing active workspace) |
 | Alt+Delete     | Remove active workspace                                    |
 | Alt+Backspace  | Remove active workspace                                    |
@@ -790,6 +792,7 @@ The app icon displays a visual indicator showing the overall status of all works
 **Navigation:**
 
 - Alt+↑/↓ moves through ALL workspaces across ALL projects
+- Alt+←/→ moves through IDLE workspaces only (skips busy workspaces)
 - Order: top to bottom as displayed in sidebar
 - Wraps: last workspace ↓ → first workspace; first workspace ↑ → last workspace
 
@@ -848,15 +851,16 @@ Index display rules:
 
 ```
 
-┌───────────────────────────────────────────────────────┐
-│ ↑↓ Navigate ⏎ New ⌫ Del 1-0 Jump                     │
-└───────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│ ↑↓ Navigate ←→ Idle ⏎ New ⌫ Del 1-0 Jump                        │
+└─────────────────────────────────────────────────────────────────┘
 
 ```
 
 **Note**: Some hints are conditionally hidden based on application state:
 
 - "↑↓ Navigate" and "1-0 Jump" only visible when more than 1 workspace exists
+- "←→ Idle" only visible when more than 1 idle workspace exists
 - "⏎ New" only visible when there's an active project
 - "⌫ Del" only visible when there's an active workspace
 
