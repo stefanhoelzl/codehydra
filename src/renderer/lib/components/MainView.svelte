@@ -56,6 +56,7 @@
   import Logo from "./Logo.svelte";
 
   import { clearDeletion, getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
+  import { getStatus } from "$lib/stores/agent-status.svelte.js";
   import { isWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import { getErrorMessage } from "@shared/error-utils";
@@ -92,6 +93,11 @@
   // Derive loading state for active workspace
   const activeLoading = $derived(
     activeWorkspacePath.value ? isWorkspaceLoading(activeWorkspacePath.value) : false
+  );
+
+  // Derive count of idle workspaces for shortcut overlay
+  const idleWorkspaceCount = $derived(
+    getAllWorkspaces().filter((ws) => getStatus(ws.path).type === "idle").length
   );
 
   // Initialize and subscribe to events on mount
@@ -320,6 +326,7 @@
     hasActiveWorkspace={activeWorkspacePath.value !== null}
     activeWorkspaceDeletionInProgress={activeWorkspacePath.value !== null &&
       getDeletionStatus(activeWorkspacePath.value) === "in-progress"}
+    {idleWorkspaceCount}
   />
 
   <!-- Backdrop/overlay shown based on workspace state -->

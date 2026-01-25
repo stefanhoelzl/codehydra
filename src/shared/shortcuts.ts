@@ -89,6 +89,8 @@ export function jumpKeyToIndex(key: JumpKey): number {
 export const SHORTCUT_KEYS = [
   "up",
   "down",
+  "left",
+  "right",
   "enter",
   "delete",
   "o",
