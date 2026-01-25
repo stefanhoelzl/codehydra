@@ -39,7 +39,8 @@ The feature agent provides output format requirements when invoking you.
 
 Before reviewing, examine:
 
-- `docs/PATTERNS.md` - TypeScript patterns and path handling
+- `docs/SERVICES.md` - Service layer patterns, platform abstractions, path handling
+- `docs/PATTERNS.md` - IPC, UI, CSS implementation patterns
 - `CLAUDE.md` - Critical rules, path requirements, and external system access rules
 - `src/services/platform/` - Platform abstraction implementations
 
