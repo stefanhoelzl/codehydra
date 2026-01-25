@@ -223,7 +223,7 @@ describe("Integration tests", () => {
   });
 
   describe("happy paths", () => {
-    it("open project: selectFolder returns path → openProject → project:opened event → UI shows project in sidebar", async () => {
+    it("open project: folder icon in Create Workspace dialog → selectFolder returns path → openProject → project:opened event → UI shows project in sidebar", async () => {
       // Start with an existing project to avoid auto-open picker
       const existingProject = createProject("existing", [
         createWorkspace("main", "/test/existing"),
@@ -240,9 +240,17 @@ describe("Integration tests", () => {
         expect(screen.getByText("existing")).toBeInTheDocument();
       });
 
-      // Click Open Project button
-      const openButton = screen.getByRole("button", { name: /open project/i });
-      await fireEvent.click(openButton);
+      // Open Create Workspace dialog via the + button
+      const addButton = screen.getByLabelText(/add workspace/i);
+      await fireEvent.click(addButton);
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+
+      // Click the folder icon to open a new project
+      const folderButton = screen.getByRole("button", { name: /open project folder/i });
+      await fireEvent.click(folderButton);
 
       // Verify selectFolder was called (v2 API)
       await waitFor(() => {
@@ -310,7 +318,7 @@ describe("Integration tests", () => {
       // Verify project is removed from sidebar
       await waitFor(() => {
         expect(screen.queryByText("my-project")).not.toBeInTheDocument();
-        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
       });
     });
 
@@ -473,8 +481,17 @@ describe("Integration tests", () => {
         expect(screen.getByText("existing")).toBeInTheDocument();
       });
 
-      const openButton = screen.getByRole("button", { name: /open project/i });
-      await fireEvent.click(openButton);
+      // Open Create Workspace dialog via the + button
+      const addButton = screen.getByLabelText(/add workspace/i);
+      await fireEvent.click(addButton);
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+
+      // Click the folder icon
+      const folderButton = screen.getByRole("button", { name: /open project folder/i });
+      await fireEvent.click(folderButton);
 
       await waitFor(() => {
         expect(mockApi.ui.selectFolder).toHaveBeenCalledTimes(1);
@@ -837,7 +854,7 @@ describe("Integration tests", () => {
 
       // Wait for initial load
       await waitFor(() => {
-        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
       });
 
       // Clear any calls from initialization
@@ -1058,40 +1075,13 @@ describe("Integration tests", () => {
       });
     });
 
-    it("should-trigger-folder-picker-on-o-key: Alt+X → O → folder picker opens", async () => {
-      render(App);
-
-      await waitFor(() => {
-        expect(screen.getByText("No projects open.")).toBeInTheDocument();
-      });
-
-      mockApi.ui.selectFolder.mockClear();
-
-      // Activate shortcut mode
-      fireApiEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-      await waitFor(() => {
-        expect(uiModeStore.shortcutModeActive.value).toBe(true);
-      });
-
-      // Fire O shortcut key
-      fireApiEvent("shortcut:key", "o");
-
-      // Verify shortcut mode deactivated
-      expect(uiModeStore.shortcutModeActive.value).toBe(false);
-
-      // Verify folder picker called
-      await waitFor(() => {
-        expect(mockApi.ui.selectFolder).toHaveBeenCalled();
-      });
-    });
-
-    it("should-handle-no-workspaces-gracefully: no workspaces → only O Open visible", async () => {
+    it("should-handle-no-workspaces-gracefully: no workspaces → navigation hints hidden", async () => {
       mockApi.projects.list.mockResolvedValue([]);
 
       render(App);
 
       await waitFor(() => {
-        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
       });
 
       // Activate shortcut mode
@@ -1106,10 +1096,6 @@ describe("Integration tests", () => {
 
       const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
       expect(jumpHint).toHaveClass("shortcut-hint--hidden");
-
-      // Verify O Open is visible
-      const openHint = screen.getByLabelText("O to open project");
-      expect(openHint).not.toHaveClass("shortcut-hint--hidden");
 
       // Pressing arrow should be no-op (fires via shortcut:key event)
       mockApi.ui.switchWorkspace.mockClear();
@@ -1216,7 +1202,7 @@ describe("Integration tests", () => {
 
       // Verify EmptyState is shown after cancel
       await waitFor(() => {
-        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
       });
 
       // Verify openProject was NOT called
@@ -1229,6 +1215,9 @@ describe("Integration tests", () => {
       ]);
       mockApi.projects.list.mockResolvedValue([existingProject]);
 
+      const projectPath = "/test/another-project";
+      mockApi.ui.selectFolder.mockResolvedValue(projectPath);
+
       render(App);
 
       // Wait for load
@@ -1236,13 +1225,17 @@ describe("Integration tests", () => {
         expect(screen.getByText("existing")).toBeInTheDocument();
       });
 
-      // Open another project with workspaces
-      const projectPath = "/test/another-project";
-      mockApi.ui.selectFolder.mockResolvedValue(projectPath);
+      // Open Create Workspace dialog via the + button
+      const addButton = screen.getByLabelText(/add workspace/i);
+      await fireEvent.click(addButton);
 
-      // Click Open Project button
-      const openButton = screen.getByRole("button", { name: /open project/i });
-      await fireEvent.click(openButton);
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+
+      // Click the folder icon to open another project
+      const folderButton = screen.getByRole("button", { name: /open project folder/i });
+      await fireEvent.click(folderButton);
 
       await waitFor(() => {
         expect(mockApi.projects.open).toHaveBeenCalledWith(projectPath);
@@ -1259,10 +1252,14 @@ describe("Integration tests", () => {
         expect(screen.getByText("another-project")).toBeInTheDocument();
       });
 
+      // Close the dialog to verify we're back to normal state
+      const cancelButton = screen.getByRole("button", { name: /cancel/i });
+      await fireEvent.click(cancelButton);
+
       // Give time for any auto-open to trigger
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify NO dialog opened
+      // Verify NO dialog opened (project has workspaces, so no auto-open)
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
@@ -1285,7 +1282,7 @@ describe("Integration tests", () => {
 
       // Verify we're in normal app mode (empty state shown)
       await waitFor(() => {
-        expect(screen.getByText("No projects open.")).toBeInTheDocument();
+        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
       });
     });
 

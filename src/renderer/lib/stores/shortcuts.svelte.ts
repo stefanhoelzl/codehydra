@@ -144,9 +144,6 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
     case "delete":
       handleDialog("Delete");
       break;
-    case "o":
-      handleProjectOpen();
-      break;
     default:
       // Digit keys: "0"-"9"
       if (/^[0-9]$/.test(key)) {
@@ -289,15 +286,6 @@ function handleDialog(key: DialogKey): void {
     setModeFromMain("workspace");
     openRemoveDialog(workspaceRef);
   }
-}
-
-/**
- * Handle O key to open project folder picker.
- * Dispatches event for MainView to handle (enables error dialog display).
- */
-function handleProjectOpen(): void {
-  exitShortcutMode();
-  window.dispatchEvent(new CustomEvent("codehydra:open-project"));
 }
 
 /**

@@ -189,20 +189,6 @@ describe("ShortcutOverlay component", () => {
       expect(delHint).toHaveClass("shortcut-hint--hidden");
     });
 
-    it("should-always-show-open-hint", () => {
-      render(ShortcutOverlay, {
-        props: {
-          ...defaultProps,
-          workspaceCount: 0,
-          hasActiveProject: false,
-          hasActiveWorkspace: false,
-        },
-      });
-
-      const openHint = screen.getByLabelText("O to open project");
-      expect(openHint).not.toHaveClass("shortcut-hint--hidden");
-    });
-
     it("should-show-all-hints-when-context-available", () => {
       render(ShortcutOverlay, { props: defaultProps });
 
@@ -210,13 +196,11 @@ describe("ShortcutOverlay component", () => {
       const newHint = screen.getByLabelText("Enter key to create new workspace");
       const delHint = screen.getByLabelText("Delete key to remove workspace");
       const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
-      const openHint = screen.getByLabelText("O to open project");
 
       expect(navigateHint).not.toHaveClass("shortcut-hint--hidden");
       expect(newHint).not.toHaveClass("shortcut-hint--hidden");
       expect(delHint).not.toHaveClass("shortcut-hint--hidden");
       expect(jumpHint).not.toHaveClass("shortcut-hint--hidden");
-      expect(openHint).not.toHaveClass("shortcut-hint--hidden");
     });
 
     it("should-hide-delete-hint-when-deletion-in-progress", () => {

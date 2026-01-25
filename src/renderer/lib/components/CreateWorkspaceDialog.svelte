@@ -3,9 +3,16 @@
   import BranchDropdown from "./BranchDropdown.svelte";
   import ProjectDropdown from "./ProjectDropdown.svelte";
   import NameBranchDropdown, { type NameBranchSelection } from "./NameBranchDropdown.svelte";
-  import { workspaces, ui, type Workspace, type ProjectId } from "$lib/api";
+  import Icon from "./Icon.svelte";
+  import {
+    workspaces,
+    ui,
+    projects as projectsApi,
+    type Workspace,
+    type ProjectId,
+  } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
-  import { getProjectById } from "$lib/stores/projects.svelte.js";
+  import { getProjectById, projects } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -14,9 +21,11 @@
   interface CreateWorkspaceDialogProps {
     open: boolean;
     projectId: ProjectId;
+    /** Called when user cancels the dialog (before closeDialog is called) */
+    onCancel?: () => void;
   }
 
-  let { open, projectId }: CreateWorkspaceDialogProps = $props();
+  let { open, projectId, onCancel }: CreateWorkspaceDialogProps = $props();
 
   // Form state
   // Track user's project selection, null means use the prop value
@@ -43,8 +52,10 @@
   let nameError = $state<string | null>(null);
   let submitError = $state<string | null>(null);
   let isSubmitting = $state(false);
+  let isOpeningProject = $state(false);
   let touched = $state(false);
   let createButtonRef: HTMLElement | undefined = $state();
+  let nameInputRef: { focus: () => void } | undefined = $state();
 
   // Get existing workspace names for duplicate validation (uses selectedProjectId)
   const existingNames = $derived.by(() => {
@@ -142,9 +153,43 @@
     }
   }
 
+  // Handle opening a project via folder picker
+  async function handleOpenProject(): Promise<void> {
+    if (isSubmitting || isOpeningProject) return;
+
+    isOpeningProject = true;
+    submitError = null;
+
+    try {
+      const path = await ui.selectFolder();
+      if (!path) {
+        // User cancelled folder picker
+        return;
+      }
+
+      try {
+        await projectsApi.open(path);
+        // Find the newly opened project (it will be the one with the matching path)
+        const newProject = projects.value.find((p) => p.path === path);
+        if (newProject) {
+          handleProjectSelect(newProject.id);
+          // Focus name input for efficient form completion
+          setTimeout(() => nameInputRef?.focus(), 0);
+        }
+      } catch (error) {
+        const message = getErrorMessage(error);
+        logger.warn("Failed to open project from dialog", { path, error: message });
+        submitError = message;
+      }
+    } finally {
+      isOpeningProject = false;
+    }
+  }
+
   // Handle cancel
   function handleCancel(): void {
     logger.debug("Dialog closed", { type: "create-workspace" });
+    onCancel?.();
     closeDialog();
   }
 
@@ -162,11 +207,25 @@
   {#snippet content()}
     <div class="ch-form-field">
       <label for="project-select" class="ch-form-label">Project</label>
-      <ProjectDropdown
-        value={selectedProjectId}
-        onSelect={handleProjectSelect}
-        disabled={isSubmitting}
-      />
+      <div class="project-row">
+        <!-- Folder icon first in tab order, but visually on the right via CSS order -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <vscode-button
+          class="folder-button"
+          appearance="icon"
+          aria-label="Open project folder"
+          title="Open project folder"
+          onclick={handleOpenProject}
+          disabled={isSubmitting || isOpeningProject}
+        >
+          <Icon name="folder-opened" />
+        </vscode-button>
+        <ProjectDropdown
+          value={selectedProjectId}
+          onSelect={handleProjectSelect}
+          disabled={isSubmitting || isOpeningProject}
+        />
+      </div>
     </div>
 
     <div class="ch-form-field">
@@ -177,9 +236,10 @@
         value={name}
         onSelect={handleNameSelect}
         onInput={handleNameInput}
-        disabled={isSubmitting}
+        disabled={isSubmitting || isOpeningProject}
         onEnter={handleEnterInName}
         autofocus={true}
+        bind:this={nameInputRef}
       />
       {#if nameError}
         <vscode-form-helper id={nameErrorId}>
@@ -194,7 +254,7 @@
         projectId={selectedProjectId}
         value={selectedBranch}
         onSelect={handleBranchSelect}
-        disabled={isSubmitting}
+        disabled={isSubmitting || isOpeningProject}
       />
     </div>
 
@@ -214,7 +274,7 @@
     <vscode-button
       bind:this={createButtonRef}
       onclick={handleSubmit}
-      disabled={!isFormValid || isSubmitting}
+      disabled={!isFormValid || isSubmitting || isOpeningProject}
     >
       {isSubmitting ? "Creating..." : "Create"}
     </vscode-button>
@@ -229,5 +289,21 @@
   /* Component-specific styles only - shared styles in variables.css */
   .error-text {
     color: var(--ch-error-fg);
+  }
+
+  .project-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  /* Folder button is first in DOM (for tab order) but visually last */
+  .project-row :global(.folder-button) {
+    order: 1;
+  }
+
+  /* ProjectDropdown stretches to fill available space */
+  .project-row :global(.project-dropdown) {
+    flex: 1;
   }
 </style>

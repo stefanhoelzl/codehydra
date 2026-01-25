@@ -321,6 +321,14 @@
   function getSelectableIndex(option: DropdownOption): number {
     return filteredSelectableOptions.findIndex((o) => o.value === option.value);
   }
+
+  /**
+   * Focus the input element.
+   * Exported for parent components to programmatically focus this dropdown.
+   */
+  export function focus(): void {
+    inputRef?.focus();
+  }
 </script>
 
 <div class="filterable-dropdown">

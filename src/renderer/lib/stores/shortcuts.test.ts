@@ -867,35 +867,6 @@ describe("shortcuts store", () => {
       });
     });
 
-    describe("project actions", () => {
-      // NOTE: These tests use handleShortcutKey (event from main process) not handleKeyDown.
-      // handleKeyDown only handles Escape; other keys come via main process events.
-      // The "o" key now dispatches an event for MainView to handle (enables error dialog display).
-      it("should-dispatch-open-project-event-on-o-key", () => {
-        const eventHandler = vi.fn();
-        window.addEventListener("codehydra:open-project", eventHandler);
-
-        enableShortcutMode();
-        handleShortcutKey("o");
-
-        expect(eventHandler).toHaveBeenCalled();
-        // API should not be called directly (handled by MainView via event)
-        expect(mockApi.ui.selectFolder).not.toHaveBeenCalled();
-
-        window.removeEventListener("codehydra:open-project", eventHandler);
-      });
-
-      it("should-deactivate-shortcut-mode-before-dispatching-event", () => {
-        enableShortcutMode();
-        expect(shortcutModeActive.value).toBe(true);
-
-        handleShortcutKey("o");
-
-        // Mode should be deactivated immediately
-        expect(shortcutModeActive.value).toBe(false);
-      });
-    });
-
     describe("error handling", () => {
       // NOTE: Uses handleShortcutKey with normalized key "down" (not "ArrowDown")
       // since key normalization happens in main process before event is sent.

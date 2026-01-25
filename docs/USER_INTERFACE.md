@@ -16,7 +16,7 @@ The UI uses `@vscode-elements/elements` for consistent VS Code styling:
 | Shortcut badges        | `<vscode-badge>`         | Sidebar, ShortcutOverlay                                                         |
 | Project dividers       | `<vscode-divider>`       | Sidebar (between projects)                                                       |
 | Form validation helper | `<vscode-form-helper>`   | CreateWorkspaceDialog                                                            |
-| Open Project button    | `<vscode-button>`        | Sidebar                                                                          |
+| Open project button    | `<vscode-button>`        | CreateWorkspaceDialog (folder icon)                                              |
 
 **Exception**: BranchDropdown uses a custom implementation with native `<input>` for filtering and grouped options (Local/Remote branches), as `<vscode-single-select>` doesn't support these features.
 
@@ -76,7 +76,7 @@ The sidebar minimizes by default to show only 20px of status indicators, maximiz
 │    └─ 🌿 feature   ░░  │                                          │
 │    └─ 🌿 bugfix    ██  │         Active workspace view            │
 │                        │         (sidebar overlays VS Code)       │
-│  [Open Project]        │                                          │
+│                        │                                          │
 │                        │                                          │
 └────────────────────────┴──────────────────────────────────────────┘
          ↑                          ↑
@@ -226,25 +226,32 @@ On first launch (after VS Code setup completes), the application automatically o
 │  PROJECTS              │
 │                        │
 │  No projects open.     │
+│  Click the + button on │
+│  a project header to   │
+│  create a workspace,   │
+│  or open a project via │
+│  the Create Workspace  │
+│  dialog.               │
 │                        │
-│  [Open Project]        │
 └────────────────────────┘
 ```
 
-They can click "Open Project" to try again.
+They can open a project by clicking the folder icon in the Create Workspace dialog.
 
 ### Opening a Project
 
 **Flow:**
 
-1. Click "Open Project" button (or press Alt+O in shortcut mode)
+1. Click the folder icon in the Create Workspace dialog (or from first-launch auto-open)
 2. System folder picker opens
 3. Select folder
-4. **If not a git repository**: Error dialog shown (see below), user can retry or cancel
+4. **If not a git repository**: Error message shown in dialog, user can try again
 5. Project added to sidebar (main git directory = project)
-6. Worktree discovery runs (finds worktrees, NOT main directory)
-7. **If 0 worktrees found**: Create workspace dialog auto-opens
-8. **If 1+ worktrees found**: First workspace activated
+6. Project auto-selected in the dropdown
+7. Focus moves to Name input for efficient form completion
+8. Worktree discovery runs (finds worktrees, NOT main directory)
+9. **If 0 worktrees found**: User can create a workspace
+10. **If 1+ worktrees found**: First workspace activated (if dialog was auto-opened)
 
 **Note**: The main git directory is the PROJECT, not a workspace. Only worktrees are workspaces.
 
@@ -368,7 +375,7 @@ They can click "Open Project" to try again.
 
 **Flow:**
 
-1. Click [+] on project row
+1. Click [+] on project row (or dialog auto-shows when workspace count becomes 0)
 2. Create dialog opens
 3. Select target project from dropdown (defaults to current workspace's project)
 4. Enter workspace name OR select an existing branch from the dropdown
@@ -376,6 +383,18 @@ They can click "Open Project" to try again.
 6. Click OK
 7. Git worktree created in managed location (NOT in main directory)
 8. New workspace becomes active
+
+**Auto-show dialog behavior:**
+
+The Create Workspace dialog automatically appears when ALL of these conditions are met:
+
+- Workspace count becomes 0 (e.g., after deleting the last workspace)
+- At least one project exists
+- Loading is complete
+- No dialog is currently open
+- No deletion is in progress
+
+The dialog is dismissible via Cancel button (returns user to logo backdrop). This prevents users from being stuck in an empty state when they have projects but no workspaces.
 
 **Name field behavior:**
 
@@ -421,23 +440,29 @@ Initial (loading branches):
 
 ```
 
-┌──────────────────────────────────────────┐
-│ Create Workspace │
-│ │
-│ Project │
-│ [my-project_______________________▼] │ ← Defaults to active project
-│ │
-│ Name │
-│ [________________________________] │
-│ │
-│ Base Branch [◐] │ ← Spinner while fetching
-│ [main_____________________________▼] │
-│ │
-│ [Cancel] [OK] │
-│ ~~~~ │ ← Disabled until valid
-└──────────────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│ Create Workspace                           │
+│                                            │
+│ Project                                    │
+│ [my-project_______________________▼] [📁]  │ ← Folder icon opens picker
+│                                            │
+│ Name                                       │
+│ [________________________________]         │
+│                                            │
+│ Base Branch [◐]                            │ ← Spinner while fetching
+│ [main_____________________________▼]       │
+│                                            │
+│                       [Cancel] [OK]        │
+│                                ~~~~        │ ← Disabled until valid
+└────────────────────────────────────────────┘
 
 ```
+
+**Folder icon behavior:**
+
+- Opens native folder picker
+- On success: adds project, auto-selects it in dropdown, focuses Name input
+- On error (not a git repo): shows error message in dialog
 
 Validation error:
 
@@ -751,7 +776,6 @@ The app icon displays a visual indicator showing the overall status of all works
 | Alt+Backspace  | Remove active workspace                                    |
 | Alt+1 to Alt+9 | Jump to workspace 1-9                                      |
 | Alt+0          | Jump to workspace 10                                       |
-| Alt+O          | Open project (folder picker)                               |
 
 ### Behavior Details
 
@@ -811,8 +835,6 @@ The app icon displays a visual indicator showing the overall status of all works
 │ 📁 other-project [+][×] │
 │ └─ 3 🌿 experiment [×] │
 │ └─ · 🌿 eleventh-ws [×] │ ← Dot for workspaces 11+
-│ │
-│ O [Open Project] │ ← "O" prefix appears
 
 ```
 
@@ -827,7 +849,7 @@ Index display rules:
 ```
 
 ┌───────────────────────────────────────────────────────┐
-│ ↑↓ Navigate ⏎ New ⌫ Del 1-0 Jump O Open │
+│ ↑↓ Navigate ⏎ New ⌫ Del 1-0 Jump                     │
 └───────────────────────────────────────────────────────┘
 
 ```
@@ -837,7 +859,6 @@ Index display rules:
 - "↑↓ Navigate" and "1-0 Jump" only visible when more than 1 workspace exists
 - "⏎ New" only visible when there's an active project
 - "⌫ Del" only visible when there's an active workspace
-- "O Open" is always visible
 
 ### Dialog Shortcuts
 
@@ -854,11 +875,16 @@ Index display rules:
 ```
 
 ┌────────────────────────┐
-│ PROJECTS │
-│ │
-│ No projects open. │
-│ │
-│ [Open Project] │
+│ PROJECTS               │
+│                        │
+│ No projects open.      │
+│ Click the + button on  │
+│ a project header to    │
+│ create a workspace,    │
+│ or open a project via  │
+│ the Create Workspace   │
+│ dialog.                │
+│                        │
 └────────────────────────┘
 
 ```

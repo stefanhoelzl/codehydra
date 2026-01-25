@@ -14,9 +14,6 @@ const JUMP_KEYS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 /** Dialog keys for opening create/remove dialogs. */
 const DIALOG_KEYS = ["Enter", "Delete", "Backspace"] as const;
 
-/** Project keys for opening folder picker. */
-const PROJECT_KEYS = ["o", "O"] as const;
-
 // ============ Types ============
 
 export type NavigationKey = (typeof NAVIGATION_KEYS)[number];
@@ -24,8 +21,7 @@ export type JumpKey = (typeof JUMP_KEYS)[number];
 export type DialogKey = (typeof DIALOG_KEYS)[number];
 
 // Internal types (not exported - only used by type guards)
-type ProjectKey = (typeof PROJECT_KEYS)[number];
-type ActionKey = NavigationKey | JumpKey | DialogKey | ProjectKey;
+type ActionKey = NavigationKey | JumpKey | DialogKey;
 
 // ============ Type Guards (internal, exported for testing only) ============
 
@@ -54,19 +50,11 @@ export function isDialogKey(key: string): key is DialogKey {
 }
 
 /**
- * Type guard for project keys (o, O).
- * @internal Exported for testing only
- */
-export function isProjectKey(key: string): key is ProjectKey {
-  return (PROJECT_KEYS as readonly string[]).includes(key);
-}
-
-/**
  * Type guard for any action key.
  * @internal Exported for testing only
  */
 export function isActionKey(key: string): key is ActionKey {
-  return isNavigationKey(key) || isJumpKey(key) || isDialogKey(key) || isProjectKey(key);
+  return isNavigationKey(key) || isJumpKey(key) || isDialogKey(key);
 }
 
 // ============ Helpers ============
@@ -93,7 +81,6 @@ export const SHORTCUT_KEYS = [
   "right",
   "enter",
   "delete",
-  "o",
   "0",
   "1",
   "2",

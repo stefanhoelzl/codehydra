@@ -69,9 +69,6 @@
   >
     <vscode-badge>⏎</vscode-badge> New
   </span>
-  <span class="shortcut-hint" aria-label="O to open project">
-    <vscode-badge>O</vscode-badge> Open
-  </span>
 </div>
 
 <style>

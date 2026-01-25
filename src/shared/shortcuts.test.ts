@@ -7,7 +7,6 @@ import {
   isNavigationKey,
   isJumpKey,
   isDialogKey,
-  isProjectKey,
   isActionKey,
   jumpKeyToIndex,
   isShortcutKey,
@@ -71,19 +70,6 @@ describe("shortcuts type guards", () => {
     });
   });
 
-  describe("isProjectKey", () => {
-    it("should-recognize-o-O-as-project-keys", () => {
-      expect(isProjectKey("o")).toBe(true);
-      expect(isProjectKey("O")).toBe(true);
-    });
-
-    it("should reject other keys", () => {
-      expect(isProjectKey("p")).toBe(false);
-      expect(isProjectKey("Open")).toBe(false);
-      expect(isProjectKey("0")).toBe(false);
-    });
-  });
-
   describe("isActionKey", () => {
     it("should-recognize-all-action-keys", () => {
       // Navigation keys
@@ -99,15 +85,13 @@ describe("shortcuts type guards", () => {
       expect(isActionKey("Enter")).toBe(true);
       expect(isActionKey("Delete")).toBe(true);
       expect(isActionKey("Backspace")).toBe(true);
-
-      // Project keys
-      expect(isActionKey("o")).toBe(true);
-      expect(isActionKey("O")).toBe(true);
     });
 
     it("should-reject-non-action-keys", () => {
       expect(isActionKey("a")).toBe(false);
       expect(isActionKey("z")).toBe(false);
+      expect(isActionKey("o")).toBe(false);
+      expect(isActionKey("O")).toBe(false);
       expect(isActionKey("Escape")).toBe(false);
       expect(isActionKey("Alt")).toBe(false);
       expect(isActionKey("Control")).toBe(false);
@@ -154,12 +138,6 @@ describe("shortcuts type guards", () => {
         const d: DialogKey = dialogKey;
         expect(d).toBe("Enter");
       }
-
-      const projectKey = "o";
-      if (isProjectKey(projectKey)) {
-        // Type narrowed to "o" | "O" by the type guard
-        expect(projectKey).toBe("o");
-      }
     });
   });
 
@@ -175,7 +153,6 @@ describe("shortcuts type guards", () => {
         "right",
         "enter",
         "delete",
-        "o",
         "0",
         "1",
         "2",
@@ -199,7 +176,6 @@ describe("shortcuts type guards", () => {
       "right",
       "enter",
       "delete",
-      "o",
       "0",
       "1",
       "2",
@@ -221,6 +197,7 @@ describe("shortcuts type guards", () => {
       "Enter", // raw Electron key
       "Delete",
       "Backspace",
+      "o", // "o" key removed
       "O", // uppercase
       "U", // not a shortcut key
       "escape", // Escape is handled by renderer, not main process
