@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { projects, type ProjectId, type BaseInfo } from "$lib/api";
+  import { projects, on, type ProjectId, type BaseInfo } from "$lib/api";
   import FilterableDropdown, { type DropdownOption } from "./FilterableDropdown.svelte";
 
   interface BranchDropdownProps {
@@ -32,6 +32,18 @@
         error = err instanceof Error ? err.message : "Failed to load branches";
         loading = false;
       });
+
+    // Subscribe to bases-updated events for this project
+    const unsubscribe = on<{ projectId: ProjectId; bases: readonly BaseInfo[] }>(
+      "project:bases-updated",
+      (event) => {
+        if (event.projectId === projectId) {
+          branches = event.bases;
+        }
+      }
+    );
+
+    return () => unsubscribe();
   });
 
   // Reset validation flag when value prop changes from parent

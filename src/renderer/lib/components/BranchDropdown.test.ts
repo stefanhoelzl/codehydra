@@ -22,8 +22,9 @@ const mockRemoteBranches: BaseInfo[] = [
 const allBranches = [...mockLocalBranches, ...mockRemoteBranches];
 
 // Use vi.hoisted to create mocks that can be referenced in vi.mock factory
-const { mockFetchBases } = vi.hoisted(() => ({
+const { mockFetchBases, mockOn } = vi.hoisted(() => ({
   mockFetchBases: vi.fn(),
+  mockOn: vi.fn<(event: string, handler: (event: unknown) => void) => () => void>(() => vi.fn()),
 }));
 
 // Mock $lib/api module
@@ -43,6 +44,8 @@ vi.mock("$lib/api", () => ({
   onWorkspaceCreated: vi.fn(() => vi.fn()),
   onWorkspaceRemoved: vi.fn(() => vi.fn()),
   onWorkspaceSwitched: vi.fn(() => vi.fn()),
+  // Event subscription
+  on: mockOn,
   // Flat API structure
   projects: {
     fetchBases: mockFetchBases,
@@ -51,7 +54,7 @@ vi.mock("$lib/api", () => ({
 
 // Import component after mock setup
 import BranchDropdown from "./BranchDropdown.svelte";
-import { projects } from "$lib/api";
+import { projects, on } from "$lib/api";
 
 // Test project ID
 const testProjectId = "test-project-12345678" as ProjectId;
@@ -733,6 +736,81 @@ describe("BranchDropdown component", () => {
       await fireEvent.keyDown(input, { key: "Enter" });
 
       expect(onSelect).toHaveBeenCalledWith("origin/main");
+    });
+  });
+
+  describe("bases-updated event", () => {
+    it("subscribes to project:bases-updated event on mount", async () => {
+      render(BranchDropdown, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      expect(on).toHaveBeenCalledWith("project:bases-updated", expect.any(Function));
+    });
+
+    it("updates branches when project:bases-updated event is received for matching projectId", async () => {
+      let eventHandler: (event: { projectId: string; bases: BaseInfo[] }) => void = () => {};
+      mockOn.mockImplementation(
+        (_event: string, handler: (event: { projectId: string; bases: BaseInfo[] }) => void) => {
+          eventHandler = handler;
+          return vi.fn();
+        }
+      );
+
+      render(BranchDropdown, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      // Verify initial branches
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      expect(screen.getByText("main")).toBeInTheDocument();
+      expect(screen.getByText("origin/feature")).toBeInTheDocument();
+
+      // Simulate bases-updated event with pruned branches
+      const updatedBases: BaseInfo[] = [
+        { name: "main", isRemote: false },
+        { name: "origin/main", isRemote: true },
+      ];
+      eventHandler({ projectId: testProjectId, bases: updatedBases });
+      await tick();
+
+      // origin/feature should be gone
+      expect(screen.queryByText("origin/feature")).not.toBeInTheDocument();
+      expect(screen.getByText("main")).toBeInTheDocument();
+    });
+
+    it("ignores project:bases-updated event for different projectId", async () => {
+      let eventHandler: (event: { projectId: string; bases: BaseInfo[] }) => void = () => {};
+      mockOn.mockImplementation(
+        (_event: string, handler: (event: { projectId: string; bases: BaseInfo[] }) => void) => {
+          eventHandler = handler;
+          return vi.fn();
+        }
+      );
+
+      render(BranchDropdown, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // Simulate event for different project
+      eventHandler({ projectId: "different-project" as ProjectId, bases: [] });
+      await tick();
+
+      // Should still have original branches
+      expect(screen.getByText("main")).toBeInTheDocument();
+    });
+
+    it("unsubscribes from event on cleanup", async () => {
+      const mockUnsubscribe = vi.fn();
+      mockOn.mockReturnValue(mockUnsubscribe);
+
+      const { unmount } = render(BranchDropdown, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      unmount();
+
+      expect(mockUnsubscribe).toHaveBeenCalled();
     });
   });
 });
