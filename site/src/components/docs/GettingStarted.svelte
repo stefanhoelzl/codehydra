@@ -158,6 +158,10 @@
           <td>Navigate workspaces</td>
         </tr>
         <tr>
+          <td><kbd>←</kbd> / <kbd>→</kbd></td>
+          <td>Navigate idle workspaces</td>
+        </tr>
+        <tr>
           <td><kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd></td>
           <td>Jump to workspace 1-10</td>
         </tr>
