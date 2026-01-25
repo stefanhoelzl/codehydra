@@ -8,5 +8,9 @@
       "Bash(pnpm --version:*)",
       "Bash(tsc --version:*)"
     ]
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "context7@claude-plugins-official": true
   }
 }
