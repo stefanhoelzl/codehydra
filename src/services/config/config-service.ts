@@ -143,6 +143,25 @@ export class ConfigService {
       return null;
     }
 
+    // Check telemetry field (optional for backwards compatibility)
+    let telemetry: { enabled: boolean; distinctId?: string } | undefined;
+    if (obj.telemetry !== undefined) {
+      if (typeof obj.telemetry !== "object" || obj.telemetry === null) {
+        return null;
+      }
+      const tel = obj.telemetry as Record<string, unknown>;
+      if (typeof tel.enabled !== "boolean") {
+        return null;
+      }
+      if (tel.distinctId !== undefined && typeof tel.distinctId !== "string") {
+        return null;
+      }
+      telemetry = {
+        enabled: tel.enabled,
+        ...(tel.distinctId !== undefined && { distinctId: tel.distinctId as string }),
+      };
+    }
+
     return {
       agent: obj.agent as ConfigAgentType,
       versions: {
@@ -150,6 +169,7 @@ export class ConfigService {
         opencode: versions.opencode as string | null,
         codeServer: versions.codeServer as string,
       },
+      ...(telemetry !== undefined && { telemetry }),
     };
   }
 }
