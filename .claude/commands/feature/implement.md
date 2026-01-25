@@ -71,5 +71,7 @@ Implementation complete!
 
 Plan status updated to IMPLEMENTATION_REVIEW.
 
-Ready for code review? Run /feature:code-review
+Starting code review...
 ```
+
+Invoke the `/feature:code-review` command.
