@@ -170,10 +170,6 @@
           <td>Remove workspace</td>
         </tr>
         <tr>
-          <td><kbd>O</kbd></td>
-          <td>Open project</td>
-        </tr>
-        <tr>
           <td><kbd>Escape</kbd></td>
           <td>Exit shortcut mode</td>
         </tr>

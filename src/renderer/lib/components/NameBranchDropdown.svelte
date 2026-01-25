@@ -144,6 +144,17 @@
       });
     }
   }
+
+  // Reference to the inner dropdown for focus delegation
+  let dropdownRef: { focus: () => void } | undefined = $state();
+
+  /**
+   * Focus the input element.
+   * Exported for parent components to programmatically focus this dropdown.
+   */
+  export function focus(): void {
+    dropdownRef?.focus();
+  }
 </script>
 
 <div class="name-branch-dropdown">
@@ -151,6 +162,7 @@
     <div class="error-message" role="alert">{error}</div>
   {:else}
     <FilterableDropdown
+      bind:this={dropdownRef}
       options={dropdownOptions}
       {value}
       onSelect={handleSelect}

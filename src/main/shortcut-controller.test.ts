@@ -579,8 +579,6 @@ describe("ShortcutController", () => {
         ["Enter", "enter"],
         ["Delete", "delete"],
         ["Backspace", "delete"],
-        ["o", "o"],
-        ["O", "o"],
         ["0", "0"],
         ["1", "1"],
         ["2", "2"],

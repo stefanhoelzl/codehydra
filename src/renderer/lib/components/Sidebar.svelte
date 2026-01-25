@@ -22,7 +22,6 @@
     loadingError: string | null;
     shortcutModeActive?: boolean;
     totalWorkspaces: number;
-    onOpenProject: () => void;
     onCloseProject: (projectId: ProjectId) => void;
     onSwitchWorkspace: (workspaceRef: WorkspaceRef) => void;
     onOpenCreateDialog: (projectId: ProjectId) => void;
@@ -36,7 +35,6 @@
     loadingError,
     shortcutModeActive = false,
     totalWorkspaces,
-    onOpenProject,
     onCloseProject,
     onSwitchWorkspace,
     onOpenCreateDialog,
@@ -272,25 +270,6 @@
         {/each}
       </ul>
     {/if}
-  </div>
-
-  <div class="sidebar-footer">
-    {#if !isExpanded}
-      <span class="expand-hint" aria-hidden="true">
-        <Icon name="chevron-right" size={12} />
-      </span>
-    {/if}
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <vscode-button
-      class="open-project-btn"
-      aria-label={"Open Project" + (shortcutModeActive ? " - Press O" : "")}
-      onclick={onOpenProject}
-    >
-      {#if shortcutModeActive}
-        <vscode-badge class="shortcut-badge" aria-hidden="true">O</vscode-badge>
-      {/if}
-      Open Project
-    </vscode-button>
   </div>
 </nav>
 
@@ -536,25 +515,6 @@
 
   .workspace-item-minimized.active .status-indicator-btn {
     background: var(--ch-list-active-bg);
-  }
-
-  .sidebar-footer {
-    display: flex;
-    align-items: center;
-    padding: 12px 16px 12px 12px;
-    border-top: 1px solid var(--ch-input-border);
-    gap: 0;
-    min-width: var(--ch-sidebar-width, 250px);
-  }
-
-  /* When minimized, expand-hint takes up left space */
-  .sidebar-footer:has(.expand-hint) {
-    padding-left: 0;
-  }
-
-  .open-project-btn {
-    flex: 1;
-    margin-left: 8px;
   }
 
   .shortcut-badge {

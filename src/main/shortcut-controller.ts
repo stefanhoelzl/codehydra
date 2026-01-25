@@ -35,8 +35,6 @@ const KEY_MAP: Record<string, ShortcutKey> = {
   Enter: "enter",
   Delete: "delete",
   Backspace: "delete",
-  o: "o",
-  O: "o",
 };
 
 /**

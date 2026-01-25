@@ -653,22 +653,9 @@ describe("MainView component", () => {
     });
   });
 
-  describe("focus management", () => {
-    it("focuses first focusable element on mount", async () => {
-      render(MainView);
-
-      // Wait for mount to complete
-      await waitFor(() => {
-        expect(mockApi.projects.list).toHaveBeenCalled();
-      });
-
-      // The "Open Project" button should be focused (it's the first focusable element in Sidebar)
-      await waitFor(() => {
-        const openProjectButton = screen.getByRole("button", { name: /open project/i });
-        expect(openProjectButton).toHaveFocus();
-      });
-    });
-  });
+  // Note: Focus management is not tested at the MainView level since focus behavior
+  // depends on the specific UI state (projects loaded, dialogs open, etc.). Focus
+  // is managed by individual components like Sidebar and dialogs.
 
   describe("auto-open project picker", () => {
     it("auto-opens project picker on mount when projects array is empty", async () => {
@@ -715,7 +702,7 @@ describe("MainView component", () => {
 
       // Should show EmptyState after cancel (no projects)
       await waitFor(() => {
-        expect(screen.getByText(/no projects/i)).toBeInTheDocument();
+        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
       });
     });
   });

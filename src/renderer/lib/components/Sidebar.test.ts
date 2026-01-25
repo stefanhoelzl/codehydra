@@ -72,7 +72,6 @@ describe("Sidebar component", () => {
     loadingError: null,
     shortcutModeActive: false,
     totalWorkspaces: 0,
-    onOpenProject: vi.fn(),
     onCloseProject: vi.fn(),
     onSwitchWorkspace: vi.fn(),
     onOpenCreateDialog: vi.fn(),
@@ -129,7 +128,7 @@ describe("Sidebar component", () => {
     it("shows empty state when no projects", () => {
       render(Sidebar, { props: defaultProps });
 
-      expect(screen.getByText("No projects open.")).toBeInTheDocument();
+      expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
     });
 
     it("shows error state with error message when loadingState is 'error'", () => {
@@ -246,19 +245,6 @@ describe("Sidebar component", () => {
         workspaceName: ws.name,
         path: ws.path,
       });
-    });
-
-    it("Open Project button triggers onOpenProject", async () => {
-      const onOpenProject = vi.fn();
-
-      const { container } = render(Sidebar, { props: { ...defaultProps, onOpenProject } });
-
-      // vscode-button is a web component; query by class name
-      const openButton = container.querySelector(".open-project-btn");
-      expect(openButton).not.toBeNull();
-      await fireEvent.click(openButton!);
-
-      expect(onOpenProject).toHaveBeenCalled();
     });
   });
 
@@ -392,39 +378,6 @@ describe("Sidebar component", () => {
         name: /my-workspace.*press 1 to jump/i,
       });
       expect(button).toBeInTheDocument();
-    });
-  });
-
-  describe("shortcut mode Open Project hint", () => {
-    it("should-show-O-on-open-project-button-when-shortcut-mode-active", () => {
-      const project = createMockProject({ path: "/p1" as ProjectPath });
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
-      });
-
-      // The button should contain "O" hint
-      expect(screen.getByText("O")).toBeInTheDocument();
-    });
-
-    it("should-hide-O-on-open-project-button-when-shortcut-mode-inactive", () => {
-      const project = createMockProject({ path: "/p1" as ProjectPath });
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: false },
-      });
-
-      // The "O" hint should not be present
-      expect(screen.queryByText("O")).not.toBeInTheDocument();
-    });
-
-    it("should-show-O-on-open-project-button-in-empty-state-when-shortcut-mode-active", () => {
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [], shortcutModeActive: true },
-      });
-
-      // The button should contain "O" hint even when no projects
-      expect(screen.getByText("O")).toBeInTheDocument();
     });
   });
 
@@ -696,28 +649,6 @@ describe("Sidebar component", () => {
       expect(headerChevron).toHaveAttribute("aria-hidden", "true");
       // Icon component renders vscode-icon for chevron
       expect(headerChevron!.querySelector("vscode-icon")).toBeInTheDocument();
-    });
-
-    it("renders expand hint chevron in footer when minimized", () => {
-      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
-      const project = createMockProject({
-        path: "/test" as ProjectPath,
-        workspaces: [ws],
-      });
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
-      });
-
-      // Sidebar is minimized - check that footer contains an expand hint chevron
-      const footer = container.querySelector(".sidebar-footer");
-      expect(footer).not.toBeNull();
-
-      const footerChevron = footer!.querySelector(".expand-hint");
-      expect(footerChevron).toBeInTheDocument();
-      expect(footerChevron).toHaveAttribute("aria-hidden", "true");
-      // Icon component renders vscode-icon for chevron
-      expect(footerChevron!.querySelector("vscode-icon")).toBeInTheDocument();
     });
 
     it("does not render expand hints when expanded", () => {

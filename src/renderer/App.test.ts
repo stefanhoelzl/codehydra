@@ -458,10 +458,6 @@ describe("App component", () => {
 
         const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
         expect(jumpHint).toHaveClass("shortcut-hint--hidden");
-
-        // Open should always be visible
-        const openHint = screen.getByLabelText("O to open project");
-        expect(openHint).not.toHaveClass("shortcut-hint--hidden");
       });
     });
 
@@ -820,23 +816,8 @@ describe("App component", () => {
       });
     });
 
-    it('shortcut "o" opens project folder picker', async () => {
-      render(App);
-
-      await waitFor(() => {
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "o"
-      fireEvent("shortcut:key", "o");
-
-      await waitFor(() => {
-        expect(mockApi.ui.selectFolder).toHaveBeenCalled();
-      });
-    });
+    // Note: "o" key shortcut for opening project was removed in OPEN_PROJECT_UX_REDESIGN.
+    // Opening a project is now done via the folder icon in the Create Workspace dialog.
 
     it("unsubscribes from shortcut events on unmount", async () => {
       const unsubShortcut = vi.fn();

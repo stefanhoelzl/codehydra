@@ -69,6 +69,10 @@
   // Error state for open project dialog
   let openProjectError = $state<string | null>(null);
 
+  // Track if user has dismissed the auto-shown Create Workspace dialog
+  // When true, the auto-show will not trigger again until a workspace is created
+  let autoShowDismissed = $state(false);
+
   // Sync dialog state to central ui-mode store
   $effect(() => {
     const isDialogOpen = dialogState.value.type !== "closed";
@@ -81,6 +85,60 @@
   $effect(() => {
     void desiredMode.value;
     syncMode();
+  });
+
+  // Auto-show Create Workspace dialog when all conditions are met:
+  // - No workspaces exist
+  // - At least one project exists
+  // - Loading is complete
+  // - No dialog is currently open
+  // - No deletion in progress
+  // - User hasn't dismissed the auto-shown dialog
+  // Uses a debounce to avoid showing during rapid state changes (e.g., after deletion)
+  let autoShowTimeout: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    // Read all reactive dependencies
+    const workspaceCount = getAllWorkspaces().length;
+    const projectList = projects.value;
+    const loading = loadingState.value;
+    const dialog = dialogState.value;
+    const deletions = deletionStates.value;
+
+    // Reset dismissed state when workspaces exist (allows auto-show in future)
+    if (workspaceCount > 0) {
+      autoShowDismissed = false;
+    }
+
+    // Check if any deletion is in progress (not completed)
+    const deletionInProgress = Array.from(deletions.values()).some((s) => !s.completed);
+
+    // Clear any pending timeout
+    if (autoShowTimeout !== null) {
+      clearTimeout(autoShowTimeout);
+      autoShowTimeout = null;
+    }
+
+    // Check all conditions
+    const firstProject = projectList[0];
+    if (
+      workspaceCount === 0 &&
+      firstProject !== undefined &&
+      loading === "loaded" &&
+      dialog.type === "closed" &&
+      !deletionInProgress &&
+      !autoShowDismissed
+    ) {
+      // Debounce to avoid showing during rapid state changes
+      autoShowTimeout = setTimeout(() => {
+        openCreateDialog(firstProject.id);
+      }, 100);
+    }
+
+    return () => {
+      if (autoShowTimeout !== null) {
+        clearTimeout(autoShowTimeout);
+      }
+    };
   });
 
   // Derive deletion state for active workspace
@@ -108,12 +166,6 @@
     const cleanupDeletion = setupDeletionProgress();
     const cleanupDomainEvents = setupDomainEventBindings(notificationService);
 
-    // Window event listener - inline (single use case, no abstraction needed)
-    const handleOpenProjectEvent = (): void => {
-      void handleOpenProject();
-    };
-    window.addEventListener("codehydra:open-project", handleOpenProjectEvent);
-
     // Initialize app (async with no-op cleanup for consistent composition)
     let cleanupInit = (): void => {};
     void initializeApp({
@@ -129,7 +181,6 @@
       cleanupDeletion();
       cleanupDomainEvents();
       cleanupInit();
-      window.removeEventListener("codehydra:open-project", handleOpenProjectEvent);
     };
   });
 
@@ -297,7 +348,6 @@
     loadingError={loadingError.value}
     shortcutModeActive={shortcutModeActive.value}
     totalWorkspaces={getAllWorkspaces().length}
-    onOpenProject={handleOpenProject}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
     onOpenCreateDialog={handleOpenCreateDialog}
@@ -305,7 +355,11 @@
   />
 
   {#if dialogState.value.type === "create"}
-    <CreateWorkspaceDialog open={true} projectId={dialogState.value.projectId} />
+    <CreateWorkspaceDialog
+      open={true}
+      projectId={dialogState.value.projectId}
+      onCancel={() => (autoShowDismissed = true)}
+    />
   {:else if dialogState.value.type === "remove"}
     <RemoveWorkspaceDialog open={true} workspaceRef={dialogState.value.workspaceRef} />
   {:else if dialogState.value.type === "close-project"}
