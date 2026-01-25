@@ -1,6 +1,7 @@
 <script lang="ts">
   import { projects, on, type ProjectId, type BaseInfo } from "$lib/api";
   import FilterableDropdown, { type DropdownOption } from "./FilterableDropdown.svelte";
+  import Icon from "./Icon.svelte";
 
   interface BranchDropdownProps {
     projectId: ProjectId;
@@ -17,33 +18,38 @@
   let error = $state<string | null>(null);
   let hasValidatedInitialValue = $state(false);
 
-  // Load branches on mount or when projectId changes
+  // Load cached branches immediately, then wait for bases-updated event
   $effect(() => {
+    const currentProjectId = projectId;
     loading = true;
     error = null;
 
+    // Fetch cached branches immediately for display
     projects
-      .fetchBases(projectId)
+      .fetchBases(currentProjectId)
       .then((result: { bases: readonly BaseInfo[] }) => {
         branches = result.bases;
-        loading = false;
+        // Keep loading=true until bases-updated event arrives
       })
       .catch((err: unknown) => {
         error = err instanceof Error ? err.message : "Failed to load branches";
         loading = false;
       });
 
-    // Subscribe to bases-updated events for this project
+    // Subscribe to bases-updated event for when fresh data arrives
     const unsubscribe = on<{ projectId: ProjectId; bases: readonly BaseInfo[] }>(
       "project:bases-updated",
       (event) => {
-        if (event.projectId === projectId) {
+        if (event.projectId === currentProjectId) {
           branches = event.bases;
+          loading = false;
         }
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+    };
   });
 
   // Reset validation flag when value prop changes from parent
@@ -119,11 +125,7 @@
 </script>
 
 <div class="branch-dropdown">
-  {#if loading}
-    <div class="loading-indicator" role="status">Loading branches...</div>
-  {:else if error}
-    <div class="error-message" role="alert">{error}</div>
-  {:else}
+  <div class="input-wrapper">
     <FilterableDropdown
       options={dropdownOptions}
       value={displayValue}
@@ -141,6 +143,14 @@
         {/if}
       {/snippet}
     </FilterableDropdown>
+    {#if loading}
+      <div class="loading-spinner" role="status" aria-label="Loading branches">
+        <Icon name="loading" spin />
+      </div>
+    {/if}
+  </div>
+  {#if error}
+    <div class="error-message" role="alert">{error}</div>
   {/if}
 </div>
 
@@ -149,15 +159,23 @@
     width: 100%;
   }
 
-  .loading-indicator {
-    padding: 8px;
-    font-size: 12px;
+  .input-wrapper {
+    position: relative;
+    width: 100%;
+  }
+
+  .loading-spinner {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
     color: var(--ch-foreground);
     opacity: 0.7;
   }
 
   .error-message {
-    padding: 8px;
+    padding: 4px 0 0;
     font-size: 12px;
     color: var(--ch-error-fg);
   }
