@@ -327,7 +327,7 @@ export class CoreModule implements IApiModule {
     // If this workspace is active and skipSwitch is not set, try to switch to next workspace
     const isActive = this.deps.viewManager.getActiveWorkspacePath() === workspace.path;
     if (isActive && !payload.skipSwitch) {
-      const switched = await this.switchToNextWorkspaceIfAvailable(projectPath, workspace.path);
+      const switched = await this.switchToNextWorkspaceIfAvailable(workspace.path);
       if (!switched) {
         // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
         // wired in index.ts, not directly here
@@ -358,7 +358,7 @@ export class CoreModule implements IApiModule {
     const wasActive = this.deps.viewManager.getActiveWorkspacePath() === workspace.path;
 
     if (wasActive) {
-      const switched = await this.switchToNextWorkspaceIfAvailable(projectPath, workspace.path);
+      const switched = await this.switchToNextWorkspaceIfAvailable(workspace.path);
       if (!switched) {
         // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
         // wired in index.ts, not directly here
@@ -553,41 +553,85 @@ export class CoreModule implements IApiModule {
     return tryResolveWorkspaceShared(payload, this.deps.appState);
   }
 
-  private async switchToNextWorkspaceIfAvailable(
-    currentProjectPath: string,
-    excludeWorkspacePath: string
-  ): Promise<boolean> {
+  private async switchToNextWorkspaceIfAvailable(currentWorkspacePath: string): Promise<boolean> {
     const allProjects = await this.deps.appState.getAllProjects();
+    const statusManager = this.deps.appState.getAgentStatusManager();
 
-    // First, try to find another workspace in the same project
-    const currentProject = allProjects.find((p) => p.path === currentProjectPath);
-    if (currentProject) {
-      const otherWorkspace = currentProject.workspaces.find(
-        (w: { path: string }) => w.path !== excludeWorkspacePath
-      );
-      if (otherWorkspace) {
-        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
-        // wired in index.ts, not directly here
-        // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
-        this.deps.viewManager.setActiveWorkspace(otherWorkspace.path, true);
-        return true;
+    // 1. Build list sorted like UI (projects alphabetically, workspaces alphabetically)
+    const sortedProjects = [...allProjects].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
+    );
+
+    const workspaces: Array<{ path: string }> = [];
+    for (const project of sortedProjects) {
+      const sortedWs = [...project.workspaces].sort((a, b) => {
+        const nameA = extractWorkspaceName(a.path);
+        const nameB = extractWorkspaceName(b.path);
+        return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
+      });
+      for (const ws of sortedWs) {
+        workspaces.push({ path: ws.path });
       }
     }
 
-    // Second, try to find a workspace from another project
-    for (const project of allProjects) {
-      if (project.path === currentProjectPath) continue;
-      const firstWorkspace = project.workspaces[0];
-      if (firstWorkspace) {
-        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
-        // wired in index.ts, not directly here
-        // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
-        this.deps.viewManager.setActiveWorkspace(firstWorkspace.path, true);
-        return true;
+    if (workspaces.length === 0) {
+      return false;
+    }
+
+    // 2. Find current workspace index (position 0 in relative indexing)
+    const currentIndex = workspaces.findIndex((w) => w.path === currentWorkspacePath);
+    if (currentIndex === -1) {
+      return false;
+    }
+
+    // 3. Calculate key for each workspace
+    // Key = statusKey * workspaces.length + positionKey
+    // Status: 0 = idle, 1 = busy, 2 = none, 3 = deleting
+    // Position: 0 = current, 1 = next, 2 = next+1, ... (wrapping)
+    const getKey = (ws: { path: string }, index: number): number => {
+      // Status key: idle > busy > none > deleting
+      let statusKey: number;
+      if (this.inProgressDeletions.has(ws.path)) {
+        statusKey = 3; // deleting
+      } else {
+        const status = statusManager?.getStatus(ws.path as WorkspacePath);
+        if (!status || status.status === "none") {
+          statusKey = 2; // none
+        } else if (status.status === "busy") {
+          statusKey = 1; // busy
+        } else {
+          statusKey = 0; // idle
+        }
+      }
+
+      // Position key: relative to current workspace (current = 0, next = 1, ...)
+      const positionKey = (index - currentIndex + workspaces.length) % workspaces.length;
+
+      return statusKey * workspaces.length + positionKey;
+    };
+
+    // 4. Find workspace with lowest key (excluding current)
+    let bestWorkspace: { path: string } | undefined;
+    let bestKey = Infinity;
+
+    for (let i = 0; i < workspaces.length; i++) {
+      if (i === currentIndex) continue; // Skip current workspace
+      const key = getKey(workspaces[i]!, i);
+      if (key < bestKey) {
+        bestKey = key;
+        bestWorkspace = workspaces[i];
       }
     }
 
-    return false;
+    if (!bestWorkspace) {
+      return false;
+    }
+
+    // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
+    // wired in index.ts, not directly here
+    // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
+    this.deps.viewManager.setActiveWorkspace(bestWorkspace.path, true);
+    return true;
   }
 
   private async fetchBasesInBackground(
