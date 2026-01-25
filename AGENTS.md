@@ -88,7 +88,7 @@ All external system access MUST go through abstraction interfaces. Direct librar
 | Electron App     | `AppLayer`                  | `app` directly              |
 | Electron Menu    | `MenuLayer`                 | `Menu` directly             |
 
-**Full details**: See [Service Layer Patterns](docs/PATTERNS.md#service-layer-patterns) for implementation examples and mock factories.
+**Full details**: See [docs/SERVICES.md](docs/SERVICES.md) for implementation examples and mock factories.
 
 ### Path Handling Requirements
 
@@ -119,7 +119,7 @@ path1 === path2;                     // ❌ Fails for "C:\foo" vs "C:/foo"
 3. **Conversion at IPC boundary** - `new Path(incoming)` and `path.toString()` for outgoing
 4. **Renderer receives normalized strings** - safe for `===` comparison (already normalized by main process)
 
-**Full details**: See [Path Handling Patterns](docs/PATTERNS.md#path-handling-patterns) for code examples.
+**Full details**: See [docs/SERVICES.md](docs/SERVICES.md#path-class-api) for code examples.
 
 ### Use 127.0.0.1 Instead of localhost
 
@@ -180,14 +180,15 @@ This also applies to other situations where you're uncertain - ask rather than g
 
 ### Key Documents
 
-| Document         | Location                       | Purpose                                          |
-| ---------------- | ------------------------------ | ------------------------------------------------ |
-| Patterns         | docs/PATTERNS.md               | Implementation patterns with code examples       |
-| Architecture     | docs/ARCHITECTURE.md           | System design, component relationships           |
-| API Reference    | docs/API.md                    | Private/Public API for internal and external use |
-| UI Specification | docs/USER_INTERFACE.md         | User flows, mockups, keyboard shortcuts          |
-| Testing Strategy | docs/TESTING.md                | Test types, conventions, commands                |
-| Migration Plan   | planning/ELECTRON_MIGRATION.md | Phase details, implementation workflow           |
+| Document         | Location               | Purpose                                           |
+| ---------------- | ---------------------- | ------------------------------------------------- |
+| Patterns         | docs/PATTERNS.md       | IPC, UI, CSS implementation patterns              |
+| Architecture     | docs/ARCHITECTURE.md   | High-level system design, component relationships |
+| Services         | docs/SERVICES.md       | Service layer patterns, platform abstractions     |
+| Agents           | docs/AGENTS.md         | Agent provider interface, status tracking, MCP    |
+| API Reference    | docs/API.md            | Private/Public API for internal and external use  |
+| UI Specification | docs/USER_INTERFACE.md | User flows, mockups, keyboard shortcuts           |
+| Testing Strategy | docs/TESTING.md        | Test types, conventions, commands                 |
 
 **Important**: Files in `planning/` are **historical records** that reflect the state at the time of planning/implementation. They may not reflect the current application state. To understand current state, read source code and `docs/` files. Read `planning/` files for design decision context and rationale.
 

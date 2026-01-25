@@ -113,6 +113,8 @@ For the chosen approach, ensure all plan sections are discussed:
 | If the plan...                                   | Then update...           |
 | ------------------------------------------------ | ------------------------ |
 | Changes components, IPC handlers, system design  | `docs/ARCHITECTURE.md`   |
+| Changes service layer or platform abstractions   | `docs/SERVICES.md`       |
+| Changes agent system or MCP integration          | `docs/AGENTS.md`         |
 | Changes UI flows, dialogs, keyboard shortcuts    | `docs/USER_INTERFACE.md` |
 | Changes API methods, events, types, IPC channels | `docs/API.md`            |
 | Introduces new patterns or conventions           | `CLAUDE.md`              |

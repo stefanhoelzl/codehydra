@@ -11,7 +11,11 @@
 | [Theming System](#theming-system)                 | CSS variables and VS Code theming  |
 | [Logging](#logging-system)                        | Log levels, files, and debugging   |
 
-For implementation patterns with code examples, see [docs/PATTERNS.md](PATTERNS.md).
+**Related Documentation:**
+
+- [SERVICES.md](SERVICES.md) - Service layer implementation patterns, platform abstractions, external system access
+- [AGENTS.md](AGENTS.md) - Agent provider interface, status tracking, MCP integration
+- [PATTERNS.md](PATTERNS.md) - IPC, UI, and CSS implementation patterns
 
 ---
 
@@ -454,249 +458,23 @@ Each layer has boundary tests (`*.boundary.test.ts`) that verify behavior agains
 
 ### Platform Abstractions Overview
 
-All external system access goes through abstraction interfaces defined in `src/services/platform/`. This architecture enables:
-
-1. **Unit testing**: Services receive mock implementations via constructor injection
-2. **Boundary testing**: Real implementations are tested against actual external systems in `*.boundary.test.ts` files
-3. **Consistent error handling**: All abstractions use `ServiceError` hierarchy
-4. **Single responsibility**: Each interface handles one external concern
+All external system access goes through abstraction interfaces defined in `src/services/platform/`. This enables unit testing with mocks and boundary testing against real systems.
 
 **CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
 
-| External System    | Interface              | Implementation                | Test Mock Factory                  |
-| ------------------ | ---------------------- | ----------------------------- | ---------------------------------- |
-| Filesystem         | `FileSystemLayer`      | `DefaultFileSystemLayer`      | `createFileSystemMock()`           |
-| HTTP requests      | `HttpClient`           | `DefaultNetworkLayer`         | `createMockHttpClient()`           |
-| Port operations    | `PortManager`          | `DefaultNetworkLayer`         | `createPortManagerMock()`          |
-| Process spawning   | `ProcessRunner`        | `ExecaProcessRunner`          | `createMockProcessRunner()`        |
-| Build info         | `BuildInfo`            | `ElectronBuildInfo`           | `createMockBuildInfo()`            |
-| Platform info      | `PlatformInfo`         | `NodePlatformInfo`            | `createMockPlatformInfo()`         |
-| Path resolution    | `PathProvider`         | `DefaultPathProvider`         | `createMockPathProvider()`         |
-| Path normalization | `Path` (class)         | Self-normalizing object       | Use `Path` directly                |
-| Blocking processes | `WorkspaceLockHandler` | `WindowsWorkspaceLockHandler` | `createMockWorkspaceLockHandler()` |
+For detailed platform abstraction documentation including interface definitions, mock factories, and usage patterns, see [SERVICES.md](SERVICES.md).
 
-**Path Class:**
-
-The `Path` class normalizes filesystem paths to a canonical internal format:
-
-- **POSIX separators**: Always forward slashes (`/`)
-- **Absolute only**: Throws on relative paths
-- **Case normalization**: Lowercase on Windows
-- **Clean format**: No trailing slashes, resolved `..` segments
-
-```typescript
-import { Path } from "../services/platform/path";
-
-const p = new Path("C:\\Users\\Name");
-p.toString(); // "c:/users/name" (Windows)
-p.toNative(); // "c:\users\name" (for OS APIs)
-p.equals("C:/users/name"); // true (case-insensitive on Windows)
-```
-
-**IPC Boundary Handling:**
-
-- **Internal services**: Use `Path` objects for all path handling
-- **IPC types (`src/shared/`)**: Use `string` (paths serialized via `toString()`)
-- **Renderer**: Receives pre-normalized strings; safe for `===` comparison
-
-See [Path Handling Patterns](PATTERNS.md#path-handling-patterns) for detailed examples.
-
-**Boundary test files:**
-
-| Abstraction                  | Boundary Test                             |
-| ---------------------------- | ----------------------------------------- |
-| `FileSystemLayer`            | `filesystem.boundary.test.ts`             |
-| `HttpClient` + `PortManager` | `network.boundary.test.ts`                |
-| `ProcessRunner`              | `process.boundary.test.ts`                |
-| `WorkspaceLockHandler`       | `workspace-lock-handler.boundary.test.ts` |
-
-### NetworkLayer Pattern
-
-NetworkLayer provides unified interfaces for all localhost network operations, designed following the Interface Segregation Principle. Consumers depend only on the specific interface(s) they need.
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         Focused Interfaces                               │
-│  ┌───────────────────┐ ┌───────────────────┐ ┌───────────────────────┐  │
-│  │    HttpClient     │ │     SseClient     │ │     PortManager       │  │
-│  │  fetch(url, opts) │ │ createSseConn()   │ │  findFreePort()       │  │
-│  │                   │ │                   │ │  getListeningPorts()  │  │
-│  └───────────────────┘ └───────────────────┘ └───────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       DefaultNetworkLayer                                │
-│                  implements HttpClient, PortManager                      │
-│                                                                          │
-│  Single class that implements both interfaces for convenience.           │
-│  Consumers inject only the interface(s) they need.                       │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-**Interface Responsibilities:**
-
-| Interface     | Methods               | Purpose                       | Used By                                                    |
-| ------------- | --------------------- | ----------------------------- | ---------------------------------------------------------- |
-| `HttpClient`  | `fetch(url, options)` | HTTP GET with timeout support | CodeServerManager, OpenCodeServerManager                   |
-| `PortManager` | `findFreePort()`      | Find available ports          | CodeServerManager, OpenCodeServerManager, McpServerManager |
-
-**Dependency Injection:**
-
-```typescript
-// DefaultNetworkLayer implements both interfaces
-const networkLayer = new DefaultNetworkLayer();
-
-// Inject only the interface(s) each consumer needs
-const serverManager = new OpenCodeServerManager(
-  runner,
-  networkLayer,
-  fsLayer,
-  networkLayer,
-  pathProvider,
-  logger
-);
-const codeServerManager = new CodeServerManager(config, runner, networkLayer, networkLayer); // HttpClient + PortManager
-```
-
-**Testing with Mock Utilities:**
-
-The module provides factory functions for creating mock implementations:
-
-| Factory                   | Returns       | Purpose                       |
-| ------------------------- | ------------- | ----------------------------- |
-| `createMockHttpClient()`  | `HttpClient`  | Mock HTTP responses or errors |
-| `createMockPortManager()` | `PortManager` | Mock port availability        |
-
-```typescript
-import { createMockHttpClient } from "../platform/network.test-utils";
-import { createPortManagerMock } from "../platform/port-manager.state-mock";
-
-const mockHttpClient = createMockHttpClient({
-  response: new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
-});
-
-const portManager = createPortManagerMock([9999]);
-
-const service = new SomeService(mockHttpClient, portManager);
-```
-
-### OpenCode SDK Integration
-
-`OpenCodeClient` uses the official `@opencode-ai/sdk` for HTTP and SSE operations:
-
-```typescript
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk";
-
-// SDK client is injected via factory for testability
-export type SdkClientFactory = (baseUrl: string) => OpencodeClient;
-
-export class OpenCodeClient implements IDisposable {
-  constructor(port: number, sdkFactory: SdkClientFactory = defaultFactory) {
-    this.baseUrl = `http://localhost:${port}`;
-    this.sdk = sdkFactory(this.baseUrl);
-  }
-
-  // connect() is async with timeout support
-  async connect(timeoutMs = 5000): Promise<void> {
-    const events = await this.sdk.event.subscribe();
-    this.processEvents(events.stream);
-  }
-}
-```
-
-**Testing OpenCodeClient:**
-
-```typescript
-import { createMockSdkClient, createMockSdkFactory, createTestSession } from "./sdk-test-utils";
-
-const mockSdk = createMockSdkClient({
-  sessions: [createTestSession({ id: "ses-1", directory: "/test" })],
-  sessionStatuses: { "ses-1": { type: "idle" } },
-});
-const factory = createMockSdkFactory(mockSdk);
-const client = new OpenCodeClient(8080, factory);
-```
-
-```
-Electron Main Process
-      ↓ imports
-App Services (pure Node.js)
-      ↓ no Electron deps
-
-Services are unit-testable without Electron runtime.
-```
-
-### Build Mode and Path Abstraction
-
-The application uses dependency injection to abstract build mode detection and path resolution, enabling testability and separation between Electron main process and pure Node.js services.
-
-**Interfaces (defined in `src/services/platform/`):**
-
-| Interface         | Purpose                                    |
-| ----------------- | ------------------------------------------ |
-| `BuildInfo`       | Build mode detection (`isDevelopment`)     |
-| `PlatformInfo`    | Platform detection (`platform`, `homeDir`) |
-| `PathProvider`    | Application path resolution                |
-| `FileSystemLayer` | Filesystem operations (read, write, mkdir) |
-
-**Implementations:**
-
-| Class                    | Location        | Description                                  |
-| ------------------------ | --------------- | -------------------------------------------- |
-| `ElectronBuildInfo`      | `src/main/`     | Uses `app.isPackaged`                        |
-| `NodePlatformInfo`       | `src/main/`     | Uses `process.platform`, `os.homedir()`      |
-| `DefaultPathProvider`    | `src/services/` | Computes paths from BuildInfo + PlatformInfo |
-| `DefaultFileSystemLayer` | `src/services/` | Wraps `node:fs/promises` with error mapping  |
-
-**Instantiation Order (in `src/main/index.ts`):**
-
-1. Module level (before `app.whenReady()`):
-   - Create `ElectronBuildInfo`, `NodePlatformInfo`, `DefaultPathProvider`, `DefaultFileSystemLayer`
-   - Call `redirectElectronDataPaths(pathProvider)` - requires paths early
-2. In `bootstrap()`:
-   - Pass `pathProvider` and `fileSystemLayer` to services via constructor DI
-
-### FileSystemLayer
-
-`FileSystemLayer` provides a testable abstraction over `node:fs/promises`. Services that need filesystem access receive `FileSystemLayer` via constructor injection, enabling unit testing with mocks instead of real filesystem operations.
-
-```typescript
-// Interface methods
-interface FileSystemLayer {
-  readFile(path: string): Promise<string>;
-  writeFile(path: string, content: string): Promise<void>;
-  mkdir(path: string, options?: MkdirOptions): Promise<void>;
-  readdir(path: string): Promise<readonly DirEntry[]>;
-  unlink(path: string): Promise<void>;
-  rm(path: string, options?: RmOptions): Promise<void>;
-  copyTree(src: string, dest: string): Promise<CopyTreeResult>;
-}
-
-interface CopyTreeResult {
-  copiedCount: number; // Number of files copied
-  skippedSymlinks: readonly string[]; // Paths of symlinks skipped (security)
-}
-```
-
-**copyTree Behavior:**
-
-- Copies files and directories recursively from `src` to `dest`
-- Uses `fs.copyFile()` internally for correct binary file handling
-- Skips symlinks (security measure - prevents symlink attacks)
-- Overwrites existing destination files
-- Creates parent directories as needed
-- Throws `FileSystemError` with `ENOENT` if source doesn't exist
-
-**Error Handling:**
-
-All methods throw `FileSystemError` (extends `ServiceError`) with mapped error codes (ENOENT, EACCES, EEXIST, etc.). Unknown error codes are mapped to `UNKNOWN` with the original code preserved in `originalCode`.
-
-**Usage Pattern:**
-
-- Integration tests: Use `createFileSystemMock()` from `filesystem.state-mock.ts`
-- Integration tests: Use `DefaultFileSystemLayer()` for real filesystem operations
-- Boundary tests: `filesystem.boundary.test.ts` tests `DefaultFileSystemLayer` against real filesystem
+| External System    | Interface              | Implementation                |
+| ------------------ | ---------------------- | ----------------------------- |
+| Filesystem         | `FileSystemLayer`      | `DefaultFileSystemLayer`      |
+| HTTP requests      | `HttpClient`           | `DefaultNetworkLayer`         |
+| Port operations    | `PortManager`          | `DefaultNetworkLayer`         |
+| Process spawning   | `ProcessRunner`        | `ExecaProcessRunner`          |
+| Build info         | `BuildInfo`            | `ElectronBuildInfo`           |
+| Platform info      | `PlatformInfo`         | `NodePlatformInfo`            |
+| Path resolution    | `PathProvider`         | `DefaultPathProvider`         |
+| Path normalization | `Path` (class)         | Self-normalizing object       |
+| Blocking processes | `WorkspaceLockHandler` | `WindowsWorkspaceLockHandler` |
 
 ### Frontend Components (Svelte 5)
 
@@ -1268,176 +1046,21 @@ Renderer components use `createLogger` from `$lib/logging`:
 
 ## Agent Integration
 
-The agent integration layer provides real-time agent status monitoring for AI agents running in each workspace. Currently supports OpenCode with extensible architecture for future agent types.
+The agent integration layer provides real-time agent status monitoring for AI agents running in each workspace. Currently supports OpenCode and Claude Code with extensible architecture for future agent types.
 
 ### Agent Abstraction Layer
 
 The agent abstraction layer (`src/agents/`) defines interfaces for pluggable agent implementations:
 
-| Interface            | Purpose                                              | Location              |
-| -------------------- | ---------------------------------------------------- | --------------------- |
-| `AgentSetupInfo`     | Static setup information (version, URLs, config gen) | `src/agents/types.ts` |
-| `AgentServerManager` | Server lifecycle (start/stop/restart per workspace)  | `src/agents/types.ts` |
-| `AgentProvider`      | Per-workspace connection and status tracking         | `src/agents/types.ts` |
+| Interface            | Purpose                                     | Scope                    |
+| -------------------- | ------------------------------------------- | ------------------------ |
+| `AgentSetupInfo`     | Binary distribution, config file generation | Singleton per type       |
+| `AgentServerManager` | Server lifecycle (start, stop, restart)     | Shared across workspaces |
+| `AgentProvider`      | Connection and status tracking              | One per workspace        |
 
-Factory functions in `src/agents/index.ts` create implementations:
+**Agent status types:** `"none"` | `"idle"` | `"busy"`
 
-```typescript
-import { getAgentSetupInfo, createAgentServerManager, createAgentProvider } from "../agents";
-
-// Create setup info for OpenCode
-const setupInfo = getAgentSetupInfo("opencode", setupDeps);
-
-// Create server manager
-const serverManager = createAgentServerManager("opencode", serverDeps);
-
-// Create provider for a workspace
-const provider = createAgentProvider("opencode", providerDeps);
-```
-
-OpenCode-specific implementation resides in `src/agents/opencode/`:
-
-```
-src/agents/
-  types.ts              # Shared interfaces
-  index.ts              # Factory functions and exports
-  status-manager.ts     # Re-exports AgentStatusManager
-  opencode/
-    setup-info.ts       # OpenCodeSetupInfo (version, URLs)
-    server-manager.ts   # OpenCodeServerManager
-    provider.ts         # OpenCodeProvider
-    client.ts           # OpenCodeClient (SSE/HTTP)
-    types.ts            # OpenCode-specific types
-```
-
-### Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        MAIN PROCESS                              │
-│                                                                  │
-│  OpenCodeServerManager ──► spawns opencode serve per workspace  │
-│         │                      port stored in memory              │
-│         │ onServerStarted(path, port)                            │
-│         ▼                                                        │
-│  AgentStatusManager ◄── OpenCodeClient (SSE events)             │
-│         │                                                        │
-│         │ callback on status change                              │
-│         ▼                                                        │
-│  IPC Handlers ──► agent:status-changed event                    │
-│                                                                  │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-═══════════════════════════╪══════════════════════════════════════
-                           │
-┌──────────────────────────┼──────────────────────────────────────┐
-│                    RENDERER PROCESS                              │
-│                          │                                       │
-│  api.onAgentStatusChanged() ──► agentStatusStore                │
-│                                       │                          │
-│                                       │ reactive binding         │
-│                                       ▼                          │
-│  Sidebar.svelte ◄── AgentStatusIndicator (visual indicator)     │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### OpenCode Services (src/agents/opencode/)
-
-| Service                 | Responsibility                                                 |
-| ----------------------- | -------------------------------------------------------------- |
-| `OpenCodeServerManager` | Spawns/manages one `opencode serve` per workspace, stores port |
-| `OpenCodeClient`        | Connects to OpenCode HTTP/SSE API, handles reconnection        |
-| `AgentStatusManager`    | Aggregates status across workspaces, emits status changes      |
-
-### Managed Server Flow
-
-1. **Workspace Add**: `AppState.addWorkspace()` calls `serverManager.startServer(path)`
-2. **Port Allocation**: `PortManager.findFreePort()` allocates a port
-3. **Server Spawn**: `opencode serve --port N --dir path` spawns in background
-4. **Health Check**: HTTP probe to `/app` confirms server is ready
-5. **Port Storage**: Port stored in memory (accessed via `getPort()` or Plugin API)
-6. **Callback**: `onServerStarted(path, port)` wired to `agentStatusManager.initWorkspace()`
-
-### Port Discovery for CLI
-
-The sidekick extension calls `api.workspace.getOpenCodeSession()` on connect and sets the `CODEHYDRA_OPENCODE_PORT` and `CODEHYDRA_OPENCODE_SESSION_ID` environment variables for all new terminals. The wrapper script (`<app-data>/bin/opencode`) reads these env vars to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID`.
-
-### MCP Integration
-
-OpenCode servers are configured to connect to CodeHydra's MCP server for workspace API access. When spawning `opencode serve`, the following environment variables are set:
-
-| Variable                   | Purpose                                                                      |
-| -------------------------- | ---------------------------------------------------------------------------- |
-| `OPENCODE_CONFIG`          | Path to OpenCode config file (`<app-data>/opencode/opencode.codehydra.json`) |
-| `CODEHYDRA_WORKSPACE_PATH` | Absolute path to the workspace (for X-Workspace-Path header)                 |
-| `CODEHYDRA_MCP_PORT`       | Port of CodeHydra's MCP server                                               |
-
-The OpenCode config file (`opencode.codehydra.json`) is copied from a static template during setup and uses environment variable substitution:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "codehydra": {
-      "type": "remote",
-      "url": "http://127.0.0.1:{env:CODEHYDRA_MCP_PORT}",
-      "headers": {
-        "X-Workspace-Path": "{env:CODEHYDRA_WORKSPACE_PATH}"
-      },
-      "enabled": true
-    }
-  }
-}
-```
-
-This enables AI agents running in OpenCode to call workspace API methods (getStatus, getMetadata, setMetadata, delete) through MCP tools.
-
-### Status Update Flow
-
-1. **SSE Connection**: `OpenCodeClient` connects to `/event` endpoint
-2. **Event Parsing**: OpenCode sends **unnamed SSE events** (no `event:` prefix in the stream) with the event type embedded in the JSON payload:
-   ```
-   data: {"type":"session.status","properties":{"sessionID":"...","status":{"type":"busy"}}}
-   ```
-   The `onmessage` handler receives all events and dispatches by type:
-   - `session.status` → status changes (idle/busy/retry, where retry maps to busy)
-   - `session.created` → new root session tracking
-   - `session.idle` → explicit idle notification
-   - `session.deleted` → session cleanup and removal from tracking
-   - `permission.updated` / `permission.replied` → permission state tracking
-3. **Permission Tracking**: `OpenCodeProvider` tracks pending permissions per session
-4. **Aggregation**: `AgentStatusManager` counts idle/busy sessions per workspace
-5. **Callback**: Status change triggers callback (NOT direct IPC)
-6. **IPC Emit**: Handler subscribes to callback, emits `agent:status-changed`
-7. **Store Update**: Renderer receives event, updates `agentStatusStore`
-8. **UI Update**: `AgentStatusIndicator` component reflects new state
-
-### Permission State Override
-
-Sessions waiting for user permission are displayed as "idle" (green indicator) rather than "busy":
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      OpenCodeProvider                            │
-│                                                                  │
-│  sessionStatuses: Map<sessionId, SessionStatus>                  │
-│  pendingPermissions: Map<sessionId, Set<permissionId>>          │
-│                                                                  │
-│  getAdjustedCounts():                                           │
-│    for each session:                                            │
-│      if pendingPermissions.has(sessionId) → count as idle       │
-│      else if status.type === "idle" → count as idle             │
-│      else if status.type === "busy" → count as busy             │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Event handling:**
-
-- `permission.updated`: Adds permission to `pendingPermissions` Set
-- `permission.replied`: Removes permission from `pendingPermissions` Set
-- `session.deleted`: Clears pending permissions for that session
-- SSE disconnect: Clears all pending permissions (reconnection safety)
+For detailed agent system documentation including provider interface, status tracking, MCP integration, and implementation guide, see [AGENTS.md](AGENTS.md).
 
 ### IPC Channels
 
@@ -1447,13 +1070,6 @@ Sessions waiting for user permission are displayed as "idle" (green indicator) r
 | `agent:get-status`       | Command | `{ workspacePath: string }`         | Get status for specific workspace |
 | `agent:get-all-statuses` | Command | `void`                              | Get all workspace statuses        |
 | `agent:refresh`          | Command | `void`                              | Trigger immediate scan            |
-
-### Error Handling
-
-- **Connection Failures**: Exponential backoff reconnection (1s, 2s, 4s... max 30s)
-- **Port Reuse**: PID comparison detects when different process reuses a port
-- **Concurrent Scans**: Mutex flag prevents overlapping scan operations
-- **Resource Cleanup**: `IDisposable` pattern ensures proper cleanup on shutdown
 
 ## Plugin Interface
 

@@ -108,8 +108,10 @@ path1.equals(path2); // equals() for comparison
 
 | Document         | Location             | Purpose                                             |
 | ---------------- | -------------------- | --------------------------------------------------- |
-| Patterns         | docs/PATTERNS.md     | Implementation patterns with code examples          |
-| Architecture     | docs/ARCHITECTURE.md | System design, component relationships              |
+| Patterns         | docs/PATTERNS.md     | IPC, UI, CSS implementation patterns                |
+| Architecture     | docs/ARCHITECTURE.md | High-level system design, component relationships   |
+| Services         | docs/SERVICES.md     | Service layer patterns, platform abstractions       |
+| Agents           | docs/AGENTS.md       | Agent provider interface, status tracking, MCP      |
 | API Reference    | docs/API.md          | Private/Public API documentation                    |
 | Testing Strategy | docs/TESTING.md      | Test types, conventions, commands                   |
 | Release          | docs/RELEASE.md      | Version format, release workflow, Windows builds    |

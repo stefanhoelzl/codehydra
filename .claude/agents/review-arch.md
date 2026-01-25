@@ -31,8 +31,10 @@ The feature agent provides output format requirements when invoking you.
 
 Before reviewing, examine:
 
-- `docs/ARCHITECTURE.md` - System design and component relationships
-- `docs/PATTERNS.md` - Implementation patterns to check for consistency
+- `docs/ARCHITECTURE.md` - High-level system design and component relationships
+- `docs/SERVICES.md` - Service layer patterns, platform abstractions, external system access
+- `docs/AGENTS.md` - Agent provider interface, status tracking, MCP integration
+- `docs/PATTERNS.md` - IPC, UI, CSS implementation patterns
 - `docs/USER_INTERFACE.md` - UI layout, user flows, dialogs, shortcuts
 - `docs/API.md` - Private/Public API reference
 - `CLAUDE.md` - Project overview, goals, and AI agent instructions
@@ -126,6 +128,8 @@ Before reviewing, examine:
 **Review checklist:**
 
 - Does the plan change any behavior documented in `docs/ARCHITECTURE.md`?
+- Does the plan change service layer patterns documented in `docs/SERVICES.md`?
+- Does the plan change agent system behavior documented in `docs/AGENTS.md`?
 - Does the plan change any behavior documented in `docs/USER_INTERFACE.md`?
 - Does the plan introduce patterns/conventions that should be in `CLAUDE.md`?
 - Does the plan change any API methods, events, types, or access patterns documented in `docs/API.md`?
@@ -145,6 +149,8 @@ Before reviewing, examine:
 - New code patterns -> `CLAUDE.md` relevant section
 - New public API method -> `docs/API.md` Public API section
 - New IPC channel/event -> `docs/API.md` Private API Events table
+- New service layer patterns -> `docs/SERVICES.md` relevant section
+- Agent system changes -> `docs/AGENTS.md` relevant section
 
 ### 12. CLAUDE.md Sync Verification
 
