@@ -37,6 +37,7 @@ Before reviewing, examine:
 - `docs/API.md` - Private/Public API reference
 - `CLAUDE.md` - Project overview, goals, and AI agent instructions
 - `package.json` - Existing dependencies
+- `site/src/components/docs/GettingStarted.svelte` - Public user-facing documentation
 
 ## Review Focus
 
@@ -159,6 +160,25 @@ Before reviewing, examine:
 - Changes to development workflow
 
 **If the plan introduces any of the above, it MUST include a step to update `CLAUDE.md`.**
+
+### 13. Public Site Documentation Sync
+
+**CRITICAL**: Verify that plans include site documentation updates when needed.
+
+The public site (`site/src/components/docs/GettingStarted.svelte`) documents user-facing features. It is manually maintained separately from internal docs.
+
+**Review checklist:**
+
+- Does the plan change user-facing features documented in `site/src/components/docs/GettingStarted.svelte`?
+- Does the plan add new keyboard shortcuts? (Update Keyboard Shortcuts table)
+- Does the plan change workspace management? (Update Managing Workspaces section)
+- Does the plan change MCP capabilities? (Update MCP Integration section)
+- Does the plan add new agent status indicators? (Update Agent Status section)
+
+**If ANY is YES:**
+
+- The plan MUST include explicit step(s) to update `site/src/components/docs/GettingStarted.svelte`
+- If missing: Flag as **Important Issue** (not Critical, since internal docs take priority)
 
 ## Review Process
 
