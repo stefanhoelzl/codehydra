@@ -711,3 +711,285 @@ describe("core.workspaces.remove.last-workspace", () => {
     expect(viewManager.setActiveWorkspace).not.toHaveBeenCalled();
   });
 });
+
+describe("core.workspaces.remove.next-idle-workspace", () => {
+  let registry: MockApiRegistry;
+  let deps: CoreModuleDeps;
+
+  beforeEach(() => {
+    registry = createMockRegistry();
+  });
+
+  it("switches to next idle workspace, skipping busy ones", async () => {
+    const workspaceAlpha = `${TEST_PROJECT_PATH}/workspaces/alpha`;
+    const workspaceBeta = `${TEST_PROJECT_PATH}/workspaces/beta`;
+    const workspaceGamma = `${TEST_PROJECT_PATH}/workspaces/gamma`;
+    const workspaceName = "alpha" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+
+    // Mock agent status manager to return busy for beta, idle for gamma
+    const mockStatusManager = {
+      getStatus: vi.fn((path: string) => {
+        if (path === workspaceBeta) {
+          return { status: "busy", counts: { idle: 0, busy: 1 } };
+        }
+        if (path === workspaceGamma) {
+          return { status: "idle", counts: { idle: 1, busy: 0 } };
+        }
+        return { status: "idle", counts: { idle: 1, busy: 0 } };
+      }),
+      getSession: vi.fn().mockReturnValue(null),
+    };
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [
+            { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+            { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+            { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+          ],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [
+          { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+          { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+          { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+        ],
+      }),
+      getAgentStatusManager: vi.fn().mockReturnValue(mockStatusManager),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = {
+      ...createMockViewManager(),
+      getActiveWorkspacePath: vi.fn().mockReturnValue(workspaceAlpha),
+      setActiveWorkspace: vi.fn(),
+    } as unknown as IViewManager;
+
+    deps = createMockDeps({ appState, viewManager, emitDeletionProgress });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+    });
+
+    // Should skip busy "beta" and switch to idle "gamma"
+    expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(workspaceGamma, true);
+  });
+
+  it("switches to previous idle workspace when no idle workspace ahead", async () => {
+    const workspaceAlpha = `${TEST_PROJECT_PATH}/workspaces/alpha`;
+    const workspaceBeta = `${TEST_PROJECT_PATH}/workspaces/beta`;
+    const workspaceGamma = `${TEST_PROJECT_PATH}/workspaces/gamma`;
+    const workspaceName = "beta" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+
+    // Mock agent status manager: alpha is idle, gamma is busy
+    const mockStatusManager = {
+      getStatus: vi.fn((path: string) => {
+        if (path === workspaceAlpha) {
+          return { status: "idle", counts: { idle: 1, busy: 0 } };
+        }
+        if (path === workspaceGamma) {
+          return { status: "busy", counts: { idle: 0, busy: 1 } };
+        }
+        return { status: "idle", counts: { idle: 1, busy: 0 } };
+      }),
+      getSession: vi.fn().mockReturnValue(null),
+    };
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [
+            { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+            { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+            { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+          ],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [
+          { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+          { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+          { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+        ],
+      }),
+      getAgentStatusManager: vi.fn().mockReturnValue(mockStatusManager),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = {
+      ...createMockViewManager(),
+      getActiveWorkspacePath: vi.fn().mockReturnValue(workspaceBeta),
+      setActiveWorkspace: vi.fn(),
+    } as unknown as IViewManager;
+
+    deps = createMockDeps({ appState, viewManager, emitDeletionProgress });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+    });
+
+    // Next workspace (gamma) is busy, so should wrap around to idle "alpha"
+    // Since alpha has the lowest key (idle + wrapped position), it should be selected
+    expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(workspaceAlpha, true);
+  });
+
+  it("falls back to busy workspace when all workspaces are busy", async () => {
+    const workspaceAlpha = `${TEST_PROJECT_PATH}/workspaces/alpha`;
+    const workspaceBeta = `${TEST_PROJECT_PATH}/workspaces/beta`;
+    const workspaceGamma = `${TEST_PROJECT_PATH}/workspaces/gamma`;
+    const workspaceName = "alpha" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+
+    // Mock agent status manager: all workspaces are busy
+    const mockStatusManager = {
+      getStatus: vi.fn(() => ({ status: "busy", counts: { idle: 0, busy: 1 } })),
+      getSession: vi.fn().mockReturnValue(null),
+    };
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [
+            { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+            { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+            { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+          ],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [
+          { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+          { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+          { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+        ],
+      }),
+      getAgentStatusManager: vi.fn().mockReturnValue(mockStatusManager),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = {
+      ...createMockViewManager(),
+      getActiveWorkspacePath: vi.fn().mockReturnValue(workspaceAlpha),
+      setActiveWorkspace: vi.fn(),
+    } as unknown as IViewManager;
+
+    deps = createMockDeps({ appState, viewManager, emitDeletionProgress });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+    });
+
+    // All busy, should fall back to next in order (beta)
+    expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(workspaceBeta, true);
+  });
+
+  it("respects alphabetical order when selecting next idle workspace", async () => {
+    const workspaceAlpha = `${TEST_PROJECT_PATH}/workspaces/alpha`;
+    const workspaceBeta = `${TEST_PROJECT_PATH}/workspaces/beta`;
+    const workspaceGamma = `${TEST_PROJECT_PATH}/workspaces/gamma`;
+    const workspaceName = "alpha" as import("../../../shared/api/types").WorkspaceName;
+    const emitDeletionProgress = vi.fn();
+
+    // Mock agent status manager: both beta and gamma are idle
+    const mockStatusManager = {
+      getStatus: vi.fn(() => ({ status: "idle", counts: { idle: 1, busy: 0 } })),
+      getSession: vi.fn().mockReturnValue(null),
+    };
+
+    const appState = createMockAppState({
+      getAllProjects: vi.fn().mockResolvedValue([
+        {
+          path: TEST_PROJECT_PATH,
+          name: "test-project",
+          workspaces: [
+            { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+            { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+            { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+          ],
+        },
+      ]),
+      getProject: vi.fn().mockReturnValue({
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [
+          { path: workspaceAlpha, name: "alpha", branch: "alpha", metadata: {} },
+          { path: workspaceBeta, name: "beta", branch: "beta", metadata: {} },
+          { path: workspaceGamma, name: "gamma", branch: "gamma", metadata: {} },
+        ],
+      }),
+      getAgentStatusManager: vi.fn().mockReturnValue(mockStatusManager),
+      getServerManager: vi.fn().mockReturnValue({
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        getPort: vi.fn().mockReturnValue(null),
+      }),
+      getWorkspaceProvider: vi.fn().mockReturnValue({
+        removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const viewManager = {
+      ...createMockViewManager(),
+      getActiveWorkspacePath: vi.fn().mockReturnValue(workspaceAlpha),
+      setActiveWorkspace: vi.fn(),
+    } as unknown as IViewManager;
+
+    deps = createMockDeps({ appState, viewManager, emitDeletionProgress });
+    new CoreModule(registry, deps);
+
+    const handler = registry.getHandler("workspaces.remove");
+    await handler!({
+      projectId: TEST_PROJECT_ID,
+      workspaceName,
+      keepBranch: true,
+    });
+
+    // Both beta and gamma are idle, should switch to beta (next in order)
+    expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(workspaceBeta, true);
+  });
+});
