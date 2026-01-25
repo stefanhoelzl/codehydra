@@ -19,6 +19,46 @@ The `-dirty` suffix only appears in local dev builds when there are uncommitted 
 
 Summary and artifacts appear on the workflow run page.
 
+## Auto-Update Requirements
+
+CodeHydra uses `electron-updater` to automatically check for and apply updates from GitHub Releases.
+
+### Supported Platforms
+
+| Platform         | Auto-Update | Notes                                  |
+| ---------------- | ----------- | -------------------------------------- |
+| Windows (NSIS)   | Yes         | Installer downloaded and runs on quit  |
+| macOS (DMG)      | Yes         | App bundle replaced on quit            |
+| Linux (AppImage) | Yes         | AppImage replaced on quit              |
+| Windows (dir)    | No          | Portable build, manual update required |
+| Linux (.deb/rpm) | No          | Package manager handles updates        |
+
+### Release Configuration
+
+electron-builder automatically generates required metadata files:
+
+- `latest.yml` (Windows)
+- `latest-mac.yml` (macOS)
+- `latest-linux.yml` (Linux)
+
+**Important**: Releases must be **published** (not draft) for auto-update to detect them.
+
+### Code Signing
+
+| Platform | Requirement           | Impact                                    |
+| -------- | --------------------- | ----------------------------------------- |
+| macOS    | Required (Gatekeeper) | Unsigned apps show security warnings      |
+| Windows  | Recommended           | SmartScreen may warn on unsigned installs |
+| Linux    | Not required          | AppImages run without signatures          |
+
+### Behavior
+
+- Checks once per day (24-hour interval)
+- Downloads in background if update available
+- Title bar shows "(X.Y.Z update available)" when ready
+- Update applies automatically on next app quit
+- First check delayed 10 seconds to avoid startup I/O contention
+
 ### Prerequisites
 
 Releases can only be triggered from commits on the `main` branch. Branch protection ensures all commits have passed CI before merge, so no additional CI check is performed during release.

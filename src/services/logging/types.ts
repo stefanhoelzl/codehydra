@@ -51,7 +51,8 @@ export type LoggerName =
   | "menu" // MenuLayer - application menu
   | "workspace-file" // WorkspaceFileService - .code-workspace file management
   | "config" // ConfigService - application config
-  | "telemetry"; // TelemetryService - PostHog analytics
+  | "telemetry" // TelemetryService - PostHog analytics
+  | "updater"; // AutoUpdater - auto-update service
 
 /**
  * Context data for log entries.

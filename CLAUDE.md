@@ -82,6 +82,16 @@ path1.equals(path2); // equals() for comparison
 
 ---
 
+## Documented Exceptions
+
+Some components use external libraries directly without abstraction layers. These are approved exceptions where abstraction provides no benefit.
+
+| Component     | Direct Dependency  | Reason                                                                                            |
+| ------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `AutoUpdater` | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit |
+
+---
+
 ## Quick Reference
 
 ### Tech Stack

@@ -33,6 +33,7 @@ import {
 import { VscodeSetupService } from "../services/vscode-setup";
 import { ConfigService } from "../services/config/config-service";
 import { PostHogTelemetryService, type TelemetryService } from "../services/telemetry";
+import { AutoUpdater } from "../services/auto-updater";
 import { ExecaProcessRunner } from "../services/platform/process";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
@@ -290,6 +291,12 @@ let configService: import("../services/config/config-service").ConfigService | n
 let telemetryService: TelemetryService | null = null;
 
 /**
+ * AutoUpdater for checking and applying updates.
+ * Created in startServices() after configService is available.
+ */
+let autoUpdater: AutoUpdater | null = null;
+
+/**
  * Starts all application services after setup completes.
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
@@ -311,6 +318,13 @@ async function startServices(): Promise<void> {
   }
   const appConfig = await configService.load();
   const selectedAgentType: AgentType = appConfig.agent ?? "opencode"; // Default to opencode if not set
+
+  // Initialize auto-updater (checks once per session after startup, applies on quit)
+  autoUpdater = new AutoUpdater({
+    logger: loggingService.createLogger("updater"),
+    isDevelopment: buildInfo.isDevelopment,
+  });
+  autoUpdater.start();
 
   // Start code-server
   const config = createCodeServerConfig();
@@ -493,7 +507,27 @@ async function startServices(): Promise<void> {
       const project = appStateRef?.findProjectForWorkspace(workspacePath);
       return project?.name;
     },
+    hasUpdateAvailable: () => windowManagerRef?.hasUpdateAvailable() ?? false,
   });
+
+  // Wire auto-updater to update window title when update is available
+  if (autoUpdater) {
+    autoUpdater.onUpdateAvailable(() => {
+      windowManagerRef?.setUpdateAvailable();
+      // Update the current title immediately to show update availability
+      // Get current active workspace to rebuild the title
+      const activeWorkspace = viewManagerRef?.getActiveWorkspacePath();
+      if (activeWorkspace) {
+        const project = appStateRef?.findProjectForWorkspace(activeWorkspace);
+        const workspaceName = nodePath.basename(activeWorkspace);
+        const title = formatWindowTitle(project?.name, workspaceName, titleSuffix, true);
+        windowManagerRef?.setTitle(title);
+      } else {
+        const title = formatWindowTitle(undefined, undefined, titleSuffix, true);
+        windowManagerRef?.setTitle(title);
+      }
+    });
+  }
 
   // Wire agent status changes to API events
   // This bridges the AgentStatusManager callback to the registry event system
@@ -1016,6 +1050,12 @@ async function cleanup(): Promise<void> {
   if (badgeManager) {
     badgeManager.disconnect();
     badgeManager = null;
+  }
+
+  // Dispose auto-updater
+  if (autoUpdater) {
+    autoUpdater.dispose();
+    autoUpdater = null;
   }
 
   // Dispose agent status manager

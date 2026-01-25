@@ -115,6 +115,24 @@ describe("formatWindowTitle", () => {
 
     expect(title).toBe("CodeHydra - (main)");
   });
+
+  it("formats title with update available", () => {
+    const title = formatWindowTitle("my-app", "feature-login", "main", true);
+
+    expect(title).toBe("CodeHydra - my-app / feature-login - (main) - (update available)");
+  });
+
+  it("formats title with update available but no workspace", () => {
+    const title = formatWindowTitle(undefined, undefined, "main", true);
+
+    expect(title).toBe("CodeHydra - (main) - (update available)");
+  });
+
+  it("formats title with update available but no version suffix", () => {
+    const title = formatWindowTitle("my-app", "feature-login", undefined, true);
+
+    expect(title).toBe("CodeHydra - my-app / feature-login - (update available)");
+  });
 });
 
 // =============================================================================
@@ -296,6 +314,61 @@ describe("wireApiEvents", () => {
       });
 
       expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - my-project / feature-x");
+    });
+
+    it("includes update suffix in title when available", () => {
+      wireApiEvents(mockApi, () => mockWebContents as never, {
+        setTitle: mockSetTitle,
+        defaultTitle: "CodeHydra - (main)",
+        version: "main",
+        getProjectName: () => "my-project",
+        hasUpdateAvailable: () => true,
+      });
+
+      const handler = eventHandlers.get("workspace:switched");
+      handler?.({
+        projectId: TEST_PROJECT_ID,
+        workspaceName: "feature-x" as WorkspaceName,
+        path: "/home/user/.worktrees/feature-x",
+      });
+
+      expect(mockSetTitle).toHaveBeenCalledWith(
+        "CodeHydra - my-project / feature-x - (main) - (update available)"
+      );
+    });
+
+    it("includes update suffix in default title when no workspace", () => {
+      wireApiEvents(mockApi, () => mockWebContents as never, {
+        setTitle: mockSetTitle,
+        defaultTitle: "CodeHydra - (main)",
+        version: "main",
+        getProjectName: () => "my-project",
+        hasUpdateAvailable: () => true,
+      });
+
+      const handler = eventHandlers.get("workspace:switched");
+      handler?.(null);
+
+      expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - (main) - (update available)");
+    });
+
+    it("does not include update suffix when hasUpdateAvailable returns false", () => {
+      wireApiEvents(mockApi, () => mockWebContents as never, {
+        setTitle: mockSetTitle,
+        defaultTitle: "CodeHydra - (main)",
+        version: "main",
+        getProjectName: () => "my-project",
+        hasUpdateAvailable: () => false,
+      });
+
+      const handler = eventHandlers.get("workspace:switched");
+      handler?.({
+        projectId: TEST_PROJECT_ID,
+        workspaceName: "feature-x" as WorkspaceName,
+        path: "/home/user/.worktrees/feature-x",
+      });
+
+      expect(mockSetTitle).toHaveBeenCalledWith("CodeHydra - my-project / feature-x - (main)");
     });
   });
 });
