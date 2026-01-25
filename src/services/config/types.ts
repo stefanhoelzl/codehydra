@@ -26,6 +26,16 @@ export interface VersionConfig {
 }
 
 /**
+ * Telemetry configuration.
+ */
+export interface TelemetryConfig {
+  /** Whether telemetry is enabled. Default: true */
+  readonly enabled: boolean;
+  /** Anonymous user ID for PostHog. Generated on first launch. */
+  readonly distinctId?: string;
+}
+
+/**
  * Application configuration stored in config.json.
  */
 export interface AppConfig {
@@ -33,6 +43,8 @@ export interface AppConfig {
   readonly agent: ConfigAgentType;
   /** Binary version configuration */
   readonly versions: VersionConfig;
+  /** Telemetry configuration. Optional for backwards compatibility. */
+  readonly telemetry?: TelemetryConfig;
 }
 
 /**
@@ -45,5 +57,8 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     claude: null,
     opencode: null,
     codeServer: "4.107.0",
+  },
+  telemetry: {
+    enabled: true,
   },
 };

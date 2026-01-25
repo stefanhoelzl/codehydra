@@ -50,7 +50,8 @@ export type LoggerName =
   | "dialog" // DialogLayer - system dialogs
   | "menu" // MenuLayer - application menu
   | "workspace-file" // WorkspaceFileService - .code-workspace file management
-  | "config"; // ConfigService - application config
+  | "config" // ConfigService - application config
+  | "telemetry"; // TelemetryService - PostHog analytics
 
 /**
  * Context data for log entries.

@@ -6,6 +6,11 @@ import { codehydraDefaults } from "./vite.defaults";
 
 const appVersion = process.env.CODEHYDRA_VERSION ?? "0.0.0-dev";
 
+// PostHog configuration - injected at build time from environment variables
+// API key is stored in GitHub secrets and passed via CI, or in .env.local for local dev
+const posthogApiKey = process.env.POSTHOG_API_KEY;
+const posthogHost = process.env.POSTHOG_HOST ?? "https://eu.posthog.com";
+
 export default defineConfig({
   main: {
     build: {
@@ -18,6 +23,9 @@ export default defineConfig({
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      // PostHog constants - undefined if not configured (telemetry disabled)
+      __POSTHOG_API_KEY__: posthogApiKey ? JSON.stringify(posthogApiKey) : "undefined",
+      __POSTHOG_HOST__: JSON.stringify(posthogHost),
     },
     plugins: [
       // bufferutil and utf-8-validate are optional native deps for ws (used by socket.io)

@@ -57,6 +57,8 @@ All external access MUST use abstraction interfaces:
 | Electron App     | `AppLayer`                            | `app`                   |
 | Electron Menu    | `MenuLayer`                           | `Menu`                  |
 
+**Acceptable exceptions**: Third-party libraries that encapsulate their own I/O (like `ignore`, `posthog-node`) do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
+
 ### Path Handling
 
 **ALWAYS use the `Path` class** for internal path handling:

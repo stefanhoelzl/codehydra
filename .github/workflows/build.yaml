@@ -82,6 +82,8 @@ jobs:
       - name: Build
         env:
           CODEHYDRA_VERSION: ${{ steps.version.outputs.version }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: pnpm build
 
       - name: Upload build output

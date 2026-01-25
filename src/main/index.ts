@@ -32,6 +32,7 @@ import {
 } from "../services";
 import { VscodeSetupService } from "../services/vscode-setup";
 import { ConfigService } from "../services/config/config-service";
+import { PostHogTelemetryService, type TelemetryService } from "../services/telemetry";
 import { ExecaProcessRunner } from "../services/platform/process";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
@@ -281,6 +282,12 @@ let imageLayer: ImageLayer | null = null;
  * Created in bootstrap(), used in startServices() to determine which agent to use.
  */
 let configService: import("../services/config/config-service").ConfigService | null = null;
+
+/**
+ * TelemetryService for PostHog analytics.
+ * Created in bootstrap() after configService.
+ */
+let telemetryService: TelemetryService | null = null;
 
 /**
  * Starts all application services after setup completes.
@@ -696,6 +703,39 @@ async function bootstrap(): Promise<void> {
     logger: loggingService.createLogger("config"),
   });
 
+  // 2b. Create TelemetryService for PostHog analytics
+  // Uses build-time injected API key and host (see vite.config)
+  // Operates in no-op mode if API key is missing or telemetry is disabled
+  telemetryService = new PostHogTelemetryService({
+    buildInfo,
+    platformInfo,
+    configService,
+    logger: loggingService.createLogger("telemetry"),
+    apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
+    host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
+  });
+
+  // Capture app launch event
+  telemetryService.capture("app_launched", {
+    platform: platformInfo.platform,
+    arch: platformInfo.arch,
+    isDevelopment: buildInfo.isDevelopment,
+  });
+
+  // Register global error handlers for uncaught exceptions
+  // Use prependListener to capture errors before other handlers
+  process.prependListener("uncaughtException", (error: Error) => {
+    telemetryService?.captureError(error);
+    // Re-throw to let default handler take over
+    throw error;
+  });
+  process.prependListener("unhandledRejection", (reason: unknown) => {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    telemetryService?.captureError(error);
+    // Re-throw to let default handler take over
+    throw error;
+  });
+
   // 3. Create VscodeSetupService early (needed for LifecycleModule)
   // Note: Process tree provider is created lazily in startServices() using the factory
 
@@ -953,6 +993,12 @@ async function bootstrap(): Promise<void> {
 async function cleanup(): Promise<void> {
   const appLogger = loggingService.createLogger("app");
   appLogger.info("Shutdown initiated");
+
+  // Flush telemetry events before shutdown
+  if (telemetryService) {
+    await telemetryService.shutdown();
+    telemetryService = null;
+  }
 
   // Dispose OpenCode server manager (stops all servers)
   if (serverManager) {
