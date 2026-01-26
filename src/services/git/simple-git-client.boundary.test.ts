@@ -605,4 +605,46 @@ describe("SimpleGitClient", () => {
       expect(() => new Path(rootPath)).not.toThrow();
     });
   });
+
+  /**
+   * Long Path Handling (Windows MAX_PATH workaround)
+   *
+   * On Windows, paths exceeding 260 characters (MAX_PATH) can cause failures.
+   * The client configures git with core.longpaths=true to handle this.
+   * These tests verify git operations work with paths exceeding 260 characters.
+   */
+  describe("long path handling", () => {
+    // Generate path segments that will exceed 260 characters when combined
+    // Each segment is 25 characters, we use 12 segments = 300+ chars just for segments
+    const longPathSegments = Array.from(
+      { length: 12 },
+      (_, i) => `deeply_nested_directory_${i.toString().padStart(2, "0")}`
+    );
+
+    it("handles paths exceeding 260 characters (Windows MAX_PATH)", async () => {
+      // Create a deeply nested directory structure that exceeds MAX_PATH
+      let currentPath = repoPath;
+
+      for (const segment of longPathSegments) {
+        currentPath = new Path(currentPath, segment);
+      }
+
+      // Verify the path exceeds 260 characters
+      const fullPath = currentPath.toNative();
+      expect(fullPath.length).toBeGreaterThan(260);
+
+      // Create the directory structure
+      await fs.mkdir(currentPath.toNative(), { recursive: true });
+
+      // Create a file in the deeply nested directory
+      const testFile = nodePath.join(currentPath.toNative(), "test-file.txt");
+      await fs.writeFile(testFile, "test content for long path testing");
+
+      // Git operations should work without errors despite long paths
+      const status = await client.getStatus(repoPath);
+
+      expect(status.isDirty).toBe(true);
+      expect(status.untrackedCount).toBeGreaterThan(0);
+    });
+  });
 });
