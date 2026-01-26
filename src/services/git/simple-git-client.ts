@@ -29,6 +29,7 @@ export class SimpleGitClient implements IGitClient {
       binary: "git",
       maxConcurrentProcesses: 6,
       trimmed: true,
+      config: process.platform === "win32" ? ["core.longpaths=true"] : [],
     };
     return simpleGit(options);
   }
