@@ -82,6 +82,9 @@ jobs:
       - name: Build
         env:
           CODEHYDRA_VERSION: ${{ steps.version.outputs.version }}
+          CODEHYDRA_UPDATE_PROVIDER: github
+          CODEHYDRA_UPDATE_OWNER: ${{ github.repository_owner }}
+          CODEHYDRA_UPDATE_REPO: ${{ github.event.repository.name }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
           POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: pnpm build
