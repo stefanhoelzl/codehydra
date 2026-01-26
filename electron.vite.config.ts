@@ -11,6 +11,11 @@ const appVersion = process.env.CODEHYDRA_VERSION ?? "0.0.0-dev";
 const posthogApiKey = process.env.POSTHOG_API_KEY;
 const posthogHost = process.env.POSTHOG_HOST ?? "https://eu.posthog.com";
 
+// Auto-update configuration - injected at build time
+const updateProvider = process.env.CODEHYDRA_UPDATE_PROVIDER;
+const updateOwner = process.env.CODEHYDRA_UPDATE_OWNER;
+const updateRepo = process.env.CODEHYDRA_UPDATE_REPO;
+
 export default defineConfig({
   main: {
     build: {
@@ -26,6 +31,10 @@ export default defineConfig({
       // PostHog constants - undefined if not configured (telemetry disabled)
       __POSTHOG_API_KEY__: posthogApiKey ? JSON.stringify(posthogApiKey) : "undefined",
       __POSTHOG_HOST__: JSON.stringify(posthogHost),
+      // Auto-update constants - undefined if not configured (updates disabled)
+      __UPDATE_PROVIDER__: updateProvider ? JSON.stringify(updateProvider) : "undefined",
+      __UPDATE_OWNER__: updateOwner ? JSON.stringify(updateOwner) : "undefined",
+      __UPDATE_REPO__: updateRepo ? JSON.stringify(updateRepo) : "undefined",
     },
     plugins: [
       // bufferutil and utf-8-validate are optional native deps for ws (used by socket.io)
