@@ -56,7 +56,11 @@ export function setupDomainEventBindings(
     "workspace:loading-changed",
     (payload) => {
       setWorkspaceLoading(payload.path, payload.loading);
-      logger.debug("Store updated", { store: "workspace-loading", loading: payload.loading });
+      logger.debug("Store updated", {
+        store: "workspace-loading",
+        path: payload.path,
+        loading: payload.loading,
+      });
     }
   );
 

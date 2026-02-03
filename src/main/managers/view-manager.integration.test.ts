@@ -1075,6 +1075,34 @@ describe("ViewManager", () => {
 
       expect(callback).not.toHaveBeenCalled();
     });
+
+    it("emits loading=false for already-loaded workspaces when callback is wired", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+
+      // Create workspace that finishes loading BEFORE callback is wired
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew - starts in loading state
+      );
+
+      // Simulate workspace finished loading (timeout fires)
+      await vi.advanceTimersByTimeAsync(10001);
+      expect(manager.isWorkspaceLoading("/path/to/workspace")).toBe(false);
+
+      // Wire callback AFTER workspace is already loaded
+      const callback = vi.fn();
+      manager.onLoadingChange(callback);
+
+      // Verify callback receives loading=false for already-loaded workspace
+      expect(callback).toHaveBeenCalledWith("/path/to/workspace", false);
+
+      vi.useRealTimers();
+    });
   });
 
   describe("updateCodeServerPort", () => {
