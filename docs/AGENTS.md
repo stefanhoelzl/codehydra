@@ -477,6 +477,24 @@ Since Claude Code doesn't provide explicit status events, status is derived from
 - **Response completed**: `busy` → `idle`
 - **Inactivity timeout**: `busy` → `idle` (safety fallback)
 
+### Session Resumption
+
+The Claude wrapper automatically attempts to resume previous sessions using the `--continue` flag:
+
+1. On launch, checks if user passed `--continue`, `-c`, or `--resume` flags
+2. If not, prepends `--continue` to attempt resuming the most recent session for this directory
+3. If continuation fails (no session exists), automatically retries without `--continue`
+4. This enables seamless session continuity across CodeHydra restarts
+
+**How `--continue` works**: The Claude CLI `--continue` flag loads the most recent conversation from the current project directory. Sessions are stored in `~/.claude/projects/` and are per-directory.
+
+**Flag precedence**: If user passes `--resume <session-id>`, it takes precedence over `--continue`. The wrapper detects this and skips adding `--continue` to avoid conflicts.
+
+Users can still use their own flags:
+
+- `--resume <session>` - Resume a specific named session
+- `--continue` or `-c` - Explicitly continue most recent session
+
 ---
 
 ## Implementing a New Agent
