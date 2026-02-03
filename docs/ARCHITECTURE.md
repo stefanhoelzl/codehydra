@@ -89,6 +89,32 @@ New worktrees are created only in the managed location:
 
 Discovery finds worktrees in ANY location; creation only in managed location.
 
+### Remote Projects (Cloned from URL)
+
+Projects can be created by cloning from a git URL. These "remote projects" have a special storage layout:
+
+```
+~/.local/share/codehydra/projects/<repo-name>-<url-hash>/
+├── config.json        # Contains remoteUrl field
+├── git/               # Bare clone of the repository
+└── workspaces/        # Git worktrees created from the bare clone
+```
+
+**Key differences from local projects:**
+
+- **remoteUrl field**: Projects cloned from URL have a `remoteUrl` field in their config
+- **Bare clone**: The repository is cloned in bare mode to `git/` subdirectory
+- **Duplicate detection**: Cloning the same URL returns the existing project (URL normalized for comparison)
+- **Deletion option**: When closing a remote project, users can optionally delete the entire project directory
+
+**URL normalization** for duplicate detection:
+
+- Hostname and path converted to lowercase
+- `.git` suffix removed
+- Credentials stripped
+- Trailing slashes removed
+- Port numbers preserved
+
 ## WebContentsView Architecture
 
 ### View Management
@@ -1676,21 +1702,22 @@ All IPC channels are defined in `src/shared/ipc.ts` with TypeScript types for co
 
 ### Commands (renderer → main)
 
-| Channel                           | Payload                             | Response            | Description                       |
-| --------------------------------- | ----------------------------------- | ------------------- | --------------------------------- |
-| `project:open`                    | `{ path: string }`                  | `Project`           | Open project, discover workspaces |
-| `project:close`                   | `{ path: string }`                  | `void`              | Close project, destroy views      |
-| `project:list`                    | `void`                              | `Project[]`         | List all open projects            |
-| `project:select-folder`           | `void`                              | `string \| null`    | Show folder picker dialog         |
-| `workspace:create`                | `{ projectPath, name, baseBranch }` | `Workspace`         | Create workspace, create view     |
-| `workspace:remove`                | `{ workspacePath, deleteBranch }`   | `RemovalResult`     | Remove workspace, destroy view    |
-| `workspace:switch`                | `{ workspacePath }`                 | `void`              | Switch active workspace           |
-| `workspace:list-bases`            | `{ projectPath }`                   | `BaseInfo[]`        | List available branches           |
-| `workspace:update-bases`          | `{ projectPath }`                   | `UpdateBasesResult` | Fetch from remotes                |
-| `workspace:is-dirty`              | `{ workspacePath }`                 | `boolean`           | Check for uncommitted changes     |
-| `api:workspace:get-opencode-port` | `{ projectId, workspaceName }`      | `number \| null`    | Get OpenCode server port          |
-| `ui:set-dialog-mode`              | `{ isOpen: boolean }`               | `void`              | Swap UI layer z-order             |
-| `ui:focus-active-workspace`       | `void`                              | `void`              | Return focus to VS Code           |
+| Channel                           | Payload                             | Response            | Description                                    |
+| --------------------------------- | ----------------------------------- | ------------------- | ---------------------------------------------- |
+| `api:project:open`                | `{ path: string }`                  | `Project`           | Open project, discover workspaces              |
+| `api:project:close`               | `{ projectId, removeLocalRepo? }`   | `void`              | Close project, optionally delete cloned repo   |
+| `api:project:clone`               | `{ url: string }`                   | `Project`           | Clone git repo from URL, create/return project |
+| `project:list`                    | `void`                              | `Project[]`         | List all open projects                         |
+| `project:select-folder`           | `void`                              | `string \| null`    | Show folder picker dialog                      |
+| `workspace:create`                | `{ projectPath, name, baseBranch }` | `Workspace`         | Create workspace, create view                  |
+| `workspace:remove`                | `{ workspacePath, deleteBranch }`   | `RemovalResult`     | Remove workspace, destroy view                 |
+| `workspace:switch`                | `{ workspacePath }`                 | `void`              | Switch active workspace                        |
+| `workspace:list-bases`            | `{ projectPath }`                   | `BaseInfo[]`        | List available branches                        |
+| `workspace:update-bases`          | `{ projectPath }`                   | `UpdateBasesResult` | Fetch from remotes                             |
+| `workspace:is-dirty`              | `{ workspacePath }`                 | `boolean`           | Check for uncommitted changes                  |
+| `api:workspace:get-opencode-port` | `{ projectId, workspaceName }`      | `number \| null`    | Get OpenCode server port                       |
+| `ui:set-dialog-mode`              | `{ isOpen: boolean }`               | `void`              | Swap UI layer z-order                          |
+| `ui:focus-active-workspace`       | `void`                              | `void`              | Return focus to VS Code                        |
 
 ### Events (main → renderer)
 

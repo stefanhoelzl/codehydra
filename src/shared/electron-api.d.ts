@@ -36,7 +36,8 @@ export interface Api {
 
   projects: {
     open(path: string): Promise<Project>;
-    close(projectId: string): Promise<void>;
+    close(projectId: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
+    clone(url: string): Promise<Project>;
     list(): Promise<readonly Project[]>;
     get(projectId: string): Promise<Project | undefined>;
     fetchBases(projectId: string): Promise<{ readonly bases: readonly ApiBaseInfo[] }>;

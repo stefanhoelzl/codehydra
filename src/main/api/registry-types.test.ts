@@ -48,7 +48,7 @@ describe("registry-types.paths", () => {
   it("ALL_METHOD_PATHS contains all MethodRegistry keys", () => {
     // This test is compile-time verified by the `satisfies` constraint in registry-types.ts
     // At runtime, we verify the count matches
-    const registryKeyCount = 24; // Count of all methods in MethodRegistry
+    const registryKeyCount = 25; // Count of all methods in MethodRegistry
     expect(ALL_METHOD_PATHS.length).toBe(registryKeyCount);
   });
 
@@ -116,10 +116,15 @@ describe("registry-types.payload", () => {
   });
 
   it("extracts ProjectIdPayload for project ID methods", () => {
-    expectTypeOf<MethodPayload<"projects.close">>().toEqualTypeOf<ProjectIdPayload>();
     expectTypeOf<MethodPayload<"projects.get">>().toEqualTypeOf<ProjectIdPayload>();
     expectTypeOf<MethodPayload<"projects.fetchBases">>().toEqualTypeOf<ProjectIdPayload>();
     // Verify shape
+    expectTypeOf<MethodPayload<"projects.get">>().toHaveProperty("projectId");
+    expectTypeOf<MethodPayload<"projects.get">["projectId"]>().toEqualTypeOf<ProjectId>();
+  });
+
+  it("extracts ProjectClosePayload for projects.close", () => {
+    // projects.close has optional removeLocalRepo parameter
     expectTypeOf<MethodPayload<"projects.close">>().toHaveProperty("projectId");
     expectTypeOf<MethodPayload<"projects.close">["projectId"]>().toEqualTypeOf<ProjectId>();
   });

@@ -1,5 +1,5 @@
 /**
- * Initialize the application: load projects, agent statuses, set focus, auto-open picker.
+ * Initialize the application: load projects, agent statuses, set focus.
  *
  * This is an async setup function that returns a cleanup callback for consistent
  * composition, even though the cleanup is a no-op (initialization is one-time).
@@ -26,8 +26,6 @@ export interface InitializeAppOptions {
   containerRef: HTMLElement | undefined;
   /** Notification service to seed with initial agent counts */
   notificationService: AgentNotificationService;
-  /** Callback when no projects exist (first launch experience) */
-  onAutoOpenProject?: () => Promise<void>;
 }
 
 export interface InitializeAppApi {
@@ -95,7 +93,6 @@ const defaultApi: InitializeAppApi = {
  * 3. Focus first focusable element (including VSCode Elements)
  * 4. Fetch agent statuses for all workspaces
  * 5. Seed notification service with initial counts
- * 6. Auto-open project picker if no projects exist
  *
  * @param options - Initialization options
  * @param apiImpl - API implementation (defaults to window.api)
@@ -105,7 +102,7 @@ export async function initializeApp(
   options: InitializeAppOptions,
   apiImpl: InitializeAppApi = defaultApi
 ): Promise<() => void> {
-  const { containerRef, notificationService, onAutoOpenProject } = options;
+  const { containerRef, notificationService } = options;
 
   try {
     // Load projects
@@ -151,11 +148,6 @@ export async function initializeApp(
       notificationService.seedInitialCounts(initialCounts);
     } catch {
       // Agent status is optional, don't fail initialization
-    }
-
-    // Auto-open project picker on first launch (no projects)
-    if (projectList.length === 0 && onAutoOpenProject) {
-      await onAutoOpenProject();
     }
   } catch (err: unknown) {
     setError(err instanceof Error ? err.message : "Failed to load projects");

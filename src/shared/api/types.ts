@@ -125,6 +125,8 @@ export interface Project {
   readonly path: string;
   readonly workspaces: readonly Workspace[];
   readonly defaultBaseBranch?: string;
+  /** Original git remote URL if project was cloned from URL */
+  readonly remoteUrl?: string;
 }
 
 /**

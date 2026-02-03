@@ -135,8 +135,9 @@ Some components use external libraries directly without abstraction layers. Thes
 
 | Concept         | Description                                                                                                                |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Project         | Git repository path (container, not viewable)                                                                              |
+| Project         | Git repository path (container, not viewable). Can be local path or cloned from URL.                                       |
 | Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                                            |
+| Remote Project  | Project cloned from git URL. Has `remoteUrl` field in config. Stored as bare clone in app-data.                            |
 | WebContentsView | Electron view for embedding (not iframe)                                                                                   |
 | Shortcut Mode   | Alt+X activates keyboard navigation. Keys: ↑↓ navigate, ←→ navigate idle, 1-0 jump, Enter new, Delete remove, Escape exits |
 | .keepfiles      | Config listing files to copy to new workspaces. Gitignore syntax with **inverted semantics**                               |

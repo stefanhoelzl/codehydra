@@ -238,7 +238,7 @@ describe("MainView close project integration", () => {
 
       // Should only call close, not remove
       expect(mockApi.workspaces.remove).not.toHaveBeenCalled();
-      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.id);
+      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.id, undefined);
 
       // Dialog should be closed
       expect(dialogsStore.dialogState.value.type).toBe("closed");
@@ -290,7 +290,7 @@ describe("MainView close project integration", () => {
       );
 
       // Then close the project
-      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.id);
+      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.id, undefined);
 
       // Dialog should be closed
       expect(dialogsStore.dialogState.value.type).toBe("closed");
@@ -331,7 +331,7 @@ describe("MainView close project integration", () => {
       expect(mockApi.workspaces.remove).toHaveBeenCalledTimes(2);
 
       // Project should still be closed despite partial failure
-      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.id);
+      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.id, undefined);
 
       // Dialog should be closed
       expect(dialogsStore.dialogState.value.type).toBe("closed");

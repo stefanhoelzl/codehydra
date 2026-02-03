@@ -574,26 +574,21 @@ describe("MainView component", () => {
     });
 
     it("calls setMode('workspace') when dialog closes with no active workspace", async () => {
-      // No active workspace
-      mockApi.projects.list.mockResolvedValue([]);
-      mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
-
-      render(MainView);
-
-      // Wait for mount and auto-open-project to complete
-      // (handleOpenProject is called when no projects exist, and it calls selectFolder)
-      await waitFor(() => {
-        expect(mockApi.projects.list).toHaveBeenCalled();
-        expect(mockApi.ui.selectFolder).toHaveBeenCalled();
-      });
-
-      // Open a dialog (need a project for create dialog)
+      // Start with a project that has no workspaces
       const project = createMockProject({
         id: asProjectId("test-project-12345678"),
         workspaces: [],
       });
-      projectsStore.setProjects([project]);
-      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+      mockApi.projects.list.mockResolvedValue([project]);
+      mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
+
+      render(MainView);
+
+      // Wait for mount and auto-open create dialog to complete
+      await waitFor(() => {
+        expect(mockApi.projects.list).toHaveBeenCalled();
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
 
       await waitFor(() => {
         expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
@@ -657,19 +652,23 @@ describe("MainView component", () => {
   // depends on the specific UI state (projects loaded, dialogs open, etc.). Focus
   // is managed by individual components like Sidebar and dialogs.
 
-  describe("auto-open project picker", () => {
-    it("auto-opens project picker on mount when projects array is empty", async () => {
+  describe("auto-open create workspace dialog", () => {
+    it("auto-opens create dialog on mount when projects array is empty", async () => {
       mockApi.projects.list.mockResolvedValue([]);
-      mockApi.ui.selectFolder.mockResolvedValue(null);
 
       render(MainView);
 
+      // Wait for create dialog to auto-open
       await waitFor(() => {
-        expect(mockApi.ui.selectFolder).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
+
+      // Verify folder picker was NOT automatically called
+      expect(mockApi.ui.selectFolder).not.toHaveBeenCalled();
     });
 
-    it("does NOT auto-open picker when projects exist", async () => {
+    it("auto-opens create dialog when projects exist but no workspaces", async () => {
       const existingProject = {
         id: asProjectId("test-project-12345678"),
         path: "/test/project",
@@ -680,30 +679,14 @@ describe("MainView component", () => {
 
       render(MainView);
 
+      // Wait for create dialog to auto-open
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
 
-      // Give time for any potential auto-open to trigger
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
+      // Verify folder picker was NOT automatically called
       expect(mockApi.ui.selectFolder).not.toHaveBeenCalled();
-    });
-
-    it("returns to EmptyState when picker is cancelled", async () => {
-      mockApi.projects.list.mockResolvedValue([]);
-      mockApi.ui.selectFolder.mockResolvedValue(null);
-
-      render(MainView);
-
-      await waitFor(() => {
-        expect(mockApi.ui.selectFolder).toHaveBeenCalled();
-      });
-
-      // Should show EmptyState after cancel (no projects)
-      await waitFor(() => {
-        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
-      });
     });
   });
 

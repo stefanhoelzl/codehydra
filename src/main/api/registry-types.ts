@@ -32,7 +32,19 @@ export interface ProjectOpenPayload {
   readonly path: string;
 }
 
-/** projects.close, projects.get, projects.fetchBases */
+/** projects.close */
+export interface ProjectClosePayload {
+  readonly projectId: ProjectId;
+  /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
+  readonly removeLocalRepo?: boolean;
+}
+
+/** projects.clone */
+export interface ProjectClonePayload {
+  readonly url: string;
+}
+
+/** projects.get, projects.fetchBases */
 export interface ProjectIdPayload {
   readonly projectId: ProjectId;
 }
@@ -121,7 +133,8 @@ export interface MethodRegistry {
 
   // Projects
   "projects.open": (payload: ProjectOpenPayload) => Promise<Project>;
-  "projects.close": (payload: ProjectIdPayload) => Promise<void>;
+  "projects.close": (payload: ProjectClosePayload) => Promise<void>;
+  "projects.clone": (payload: ProjectClonePayload) => Promise<Project>;
   "projects.list": (payload: EmptyPayload) => Promise<readonly Project[]>;
   "projects.get": (payload: ProjectIdPayload) => Promise<Project | undefined>;
   "projects.fetchBases": (
@@ -173,6 +186,7 @@ export type LifecyclePath =
 export type ProjectPath =
   | "projects.open"
   | "projects.close"
+  | "projects.clone"
   | "projects.list"
   | "projects.get"
   | "projects.fetchBases";
@@ -222,6 +236,7 @@ export const ALL_METHOD_PATHS = [
   "lifecycle.quit",
   "projects.open",
   "projects.close",
+  "projects.clone",
   "projects.list",
   "projects.get",
   "projects.fetchBases",

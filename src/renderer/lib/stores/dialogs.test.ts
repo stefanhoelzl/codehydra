@@ -139,14 +139,14 @@ describe("dialog state store", () => {
       });
     });
 
-    it("stays closed when no projects available", () => {
+    it("opens without projectId when no projects available", () => {
       mockActiveWorkspace.mockReturnValue(null);
       mockProjects.mockReturnValue([]);
 
-      // Open with no projects - dialog should stay closed
+      // Open with no projects - dialog opens with no projectId
       openCreateDialog();
 
-      expect(dialogState.value).toEqual({ type: "closed" });
+      expect(dialogState.value).toEqual({ type: "create" });
     });
   });
 

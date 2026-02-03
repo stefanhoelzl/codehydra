@@ -270,13 +270,12 @@ async function handleJump(key: JumpKey): Promise<void> {
  */
 function handleDialog(key: DialogKey): void {
   if (key === "Enter") {
-    // Use active project, or fallback to first project if none active
-    const project = activeProject.value ?? projects.value[0];
-    if (!project) return;
     // Deactivate shortcut mode locally for immediate UI feedback
     // The ui-mode store will compute desiredMode="dialog" when dialog opens
     setModeFromMain("workspace");
-    openCreateDialog(project.id);
+    // Use active project, or fallback to first project if none active
+    const project = activeProject.value ?? projects.value[0];
+    openCreateDialog(project?.id);
   } else {
     // Delete or Backspace
     const workspaceRef = activeWorkspace.value;

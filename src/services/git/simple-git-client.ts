@@ -71,7 +71,36 @@ export class SimpleGitClient implements IGitClient {
     try {
       const git = this.getGit(repoPath);
 
-      // First check if we're inside a git repo at all
+      // Check if this is a bare repository first
+      // Note: We can't use checkIsRepo() first because it uses --is-inside-work-tree
+      // which returns false for bare repos (they have no working tree)
+      let isBare = false;
+      try {
+        const isBareResult = await git.revparse(["--is-bare-repository"]);
+        isBare = isBareResult.trim() === "true";
+      } catch {
+        // revparse fails for non-git directories - this is expected, return false
+        this.logger.debug("IsRepositoryRoot", {
+          path: repoPath.toString(),
+          result: false,
+          reason: "not a repo (revparse failed)",
+        });
+        return false;
+      }
+
+      if (isBare) {
+        // For bare repos, check if --git-dir returns "." (meaning we're at the root)
+        const gitDir = await git.revparse(["--git-dir"]);
+        const isRoot = gitDir.trim() === ".";
+        this.logger.debug("IsRepositoryRoot (bare)", {
+          path: repoPath.toString(),
+          gitDir: gitDir.trim(),
+          result: isRoot,
+        });
+        return isRoot;
+      }
+
+      // For non-bare repos, first verify we're inside a git repo
       const isRepo = await git.checkIsRepo();
       if (!isRepo) {
         this.logger.debug("IsRepositoryRoot", {
@@ -480,5 +509,47 @@ export class SimpleGitClient implements IGitClient {
       });
       throw new GitError(`Failed to unset branch config: ${errMsg}`);
     }
+  }
+
+  async clone(url: string, targetPath: Path): Promise<void> {
+    return this.wrapGitOperation(
+      async () => {
+        // Use simple-git's clone with bare option
+        // Create git instance at the parent directory to run clone command
+        const git = simpleGit();
+        await git.clone(url, targetPath.toNative(), ["--bare"]);
+
+        // Set up remote tracking for the bare clone
+        // By default, bare clones don't have remote-tracking branches (refs/remotes/origin/*)
+        // We configure fetch to create them so branches show up under "Remote Branches" in UI
+        const bareGit = this.getGit(targetPath);
+        await bareGit.addConfig("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+        await bareGit.fetch(["origin"]);
+
+        // Delete local branches - only keep remote-tracking branches
+        // This prevents confusion: branches show under "Remote Branches" header in UI
+        // Without this, git clone --bare creates local branches (refs/heads/*) not remote-tracking ones
+        const branches = await bareGit.branch(["-l"]);
+        for (const branchName of Object.keys(branches.branches)) {
+          await bareGit.branch(["-D", branchName]);
+        }
+      },
+      "clone",
+      targetPath,
+      `Failed to clone repository from ${url}`
+    );
+  }
+
+  async isBare(repoPath: Path): Promise<boolean> {
+    return this.wrapGitOperation(
+      async () => {
+        const git = this.getGit(repoPath);
+        const result = await git.revparse(["--is-bare-repository"]);
+        return result.trim() === "true";
+      },
+      "isBare",
+      repoPath,
+      "Failed to check if repository is bare"
+    );
   }
 }

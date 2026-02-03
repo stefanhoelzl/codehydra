@@ -525,6 +525,7 @@ function registerAllMethodsWithStubs(
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},
+    "projects.clone": async () => createMockProject(),
     "projects.list": async () => [],
     "projects.get": async () => undefined,
     "projects.fetchBases": async () => ({ bases: [] }),

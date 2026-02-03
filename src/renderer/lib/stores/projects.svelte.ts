@@ -247,9 +247,10 @@ export type ProjectWithId = Project;
 
 /**
  * Get a project by its ID.
- * @param id - The project ID to look up
+ * @param id - The project ID to look up (can be undefined)
  * @returns The project if found, undefined otherwise
  */
-export function getProjectById(id: ProjectId): ProjectWithId | undefined {
+export function getProjectById(id: ProjectId | undefined): ProjectWithId | undefined {
+  if (id === undefined) return undefined;
   return _projectsWithIds.find((p) => p.id === id);
 }

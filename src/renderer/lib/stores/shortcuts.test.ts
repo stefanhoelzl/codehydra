@@ -793,14 +793,16 @@ describe("shortcuts store", () => {
         expect(shortcutModeActive.value).toBe(false);
       });
 
-      it("should-not-open-create-dialog-when-no-projects-exist", () => {
+      it("should-open-create-dialog-with-undefined-when-no-projects-exist", () => {
         mockProjectsStore.activeProject.value = null;
         mockProjectsStore.projects.value = [];
 
         enableShortcutMode();
         handleShortcutKey("enter");
 
-        expect(mockDialogState.openCreateDialog).not.toHaveBeenCalled();
+        // Opens dialog with undefined projectId when no projects exist
+        expect(mockDialogState.openCreateDialog).toHaveBeenCalledWith(undefined);
+        expect(shortcutModeActive.value).toBe(false);
       });
 
       it("should-open-remove-dialog-on-delete", () => {

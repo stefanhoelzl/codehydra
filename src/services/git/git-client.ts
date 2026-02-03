@@ -174,4 +174,20 @@ export interface IGitClient {
    * @throws GitError if not a git repository
    */
   unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void>;
+
+  /**
+   * Clone a repository in bare mode.
+   * @param url Git remote URL (HTTPS or SSH format)
+   * @param targetPath Destination path for the bare clone
+   * @throws GitError on network failure, auth failure, invalid URL, or target exists
+   */
+  clone(url: string, targetPath: Path): Promise<void>;
+
+  /**
+   * Check if a repository is a bare repository.
+   * @param repoPath Absolute path to the git repository
+   * @returns Promise resolving to true if repository is bare
+   * @throws GitError if not a git repository
+   */
+  isBare(repoPath: Path): Promise<boolean>;
 }
