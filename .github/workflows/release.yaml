@@ -67,7 +67,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: CodeHydra-*
+          pattern: "{CodeHydra-*,update-metadata-*}"
           merge-multiple: false
 
       - name: Prepare release assets
@@ -85,6 +85,13 @@ jobs:
           zip -r ../release-assets/CodeHydra-win-portable-x64.zip CodeHydra-win-portable-x64
           zip -r ../release-assets/CodeHydra-darwin-x64.zip CodeHydra-darwin-x64
           zip -r ../release-assets/CodeHydra-darwin-arm64.zip CodeHydra-darwin-arm64
+          cd ..
+
+          # Copy update metadata files for auto-updater
+          cp artifacts/update-metadata-win-installer-x64/latest.yml \
+             release-assets/latest.yml
+          cp artifacts/update-metadata-linux-x64/latest-linux.yml \
+             release-assets/latest-linux.yml
 
       - name: Generate checksums
         working-directory: release-assets

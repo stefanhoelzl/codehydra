@@ -232,6 +232,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "code-server $VERSION for Windows" \
             --notes-file release-notes.md \
+            --latest=false \
             "$ARCHIVE_NAME"
 
       - name: Summary

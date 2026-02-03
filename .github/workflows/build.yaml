@@ -159,3 +159,12 @@ jobs:
           path: dist/${{ matrix.rename || matrix.output }}
           retention-days: 1
           if-no-files-found: error
+
+      - name: Upload update metadata
+        if: matrix.artifact == 'win-installer-x64' || matrix.artifact == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-metadata-${{ matrix.artifact }}
+          path: dist/latest*.yml
+          retention-days: 1
+          if-no-files-found: warn
