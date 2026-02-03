@@ -146,7 +146,9 @@ jobs:
           sudo apt-get install -y wine64 wine32:i386
 
       - name: Package
-        run: pnpm dist:${{ matrix.target }}
+        env:
+          CODEHYDRA_VERSION: ${{ needs.prepare.outputs.version }}
+        run: pnpm dist:${{ matrix.target }} -- --config.extraMetadata.version=$CODEHYDRA_VERSION
 
       - name: Rename artifact
         if: matrix.rename
