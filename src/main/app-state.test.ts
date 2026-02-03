@@ -986,7 +986,10 @@ describe("AppState", () => {
       expect(result).toBeUndefined();
     });
 
-    it("returns undefined when provider.defaultBase() throws", async () => {
+    it("returns undefined when provider.defaultBase() throws during openProject", async () => {
+      // Make defaultBase throw before opening project
+      mockWorkspaceProvider.defaultBase.mockRejectedValueOnce(new Error("Git error"));
+
       const appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager as unknown as IViewManager,
@@ -1001,17 +1004,41 @@ describe("AppState", () => {
 
       await appState.openProject("/project");
 
-      // Now make defaultBase throw for the next call
+      // defaultBase threw during openProject, so nothing was cached
+      // subsequent call should try provider again (which now returns default "main")
+      const result = await appState.getDefaultBaseBranch("/project");
+      expect(result).toBe("main");
+    });
+
+    it("returns cached value even after provider error would occur", async () => {
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      await appState.openProject("/project");
+      // openProject caches the default branch ("main")
+
+      // Now make defaultBase throw - but it won't be called because cache hit
       mockWorkspaceProvider.defaultBase.mockRejectedValueOnce(new Error("Git error"));
 
       const result = await appState.getDefaultBaseBranch("/project");
-      expect(result).toBeUndefined();
-      // Logging is an implementation detail - we just verify undefined is returned
+      // Returns cached value, provider is not called
+      expect(result).toBe("main");
     });
   });
 
   describe("openProject with defaultBaseBranch", () => {
     it("includes defaultBaseBranch in returned Project", async () => {
+      // Reset mock to ensure clean state (clear any leftover mockResolvedValueOnce/mockRejectedValueOnce)
+      mockWorkspaceProvider.defaultBase.mockReset();
       mockWorkspaceProvider.defaultBase.mockResolvedValueOnce("main");
 
       const appState = new AppState(
@@ -1146,6 +1173,151 @@ describe("AppState", () => {
       );
 
       expect(appState.getAgentType()).toBe("opencode");
+    });
+  });
+
+  describe("defaultBaseBranch consistency", () => {
+    it("openProject() returns project with consistent defaultBaseBranch", async () => {
+      mockWorkspaceProvider.defaultBase.mockResolvedValue("main");
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      const project = await appState.openProject("/project");
+
+      // The returned project's defaultBaseBranch should match subsequent getDefaultBaseBranch calls
+      const subsequentDefault = await appState.getDefaultBaseBranch("/project");
+      expect(project.defaultBaseBranch).toBe(subsequentDefault);
+    });
+
+    it("getAllProjects() returns projects with consistent defaultBaseBranch", async () => {
+      mockWorkspaceProvider.defaultBase.mockResolvedValue("main");
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      await appState.openProject("/project");
+      const projects = await appState.getAllProjects();
+
+      // Each project's defaultBaseBranch should match its individual getDefaultBaseBranch call
+      for (const project of projects) {
+        const individualDefault = await appState.getDefaultBaseBranch(project.path);
+        expect(project.defaultBaseBranch).toBe(individualDefault);
+      }
+    });
+
+    it("setLastBaseBranch() overwrites computed default", async () => {
+      mockWorkspaceProvider.defaultBase.mockResolvedValue("main");
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      await appState.openProject("/project");
+
+      // Initial default is "main" from provider
+      expect(await appState.getDefaultBaseBranch("/project")).toBe("main");
+
+      // Explicit setLastBaseBranch overwrites it
+      appState.setLastBaseBranch("/project", "develop");
+      expect(await appState.getDefaultBaseBranch("/project")).toBe("develop");
+    });
+
+    it("cache is isolated per-project", async () => {
+      // Set up different paths to have different defaults
+      mockWorkspaceProvider.defaultBase
+        .mockResolvedValueOnce("main") // First project
+        .mockResolvedValueOnce("master"); // Second project
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      // Open first project
+      mockWorkspaceProvider.discover.mockResolvedValueOnce([
+        { name: "ws-1", path: new Path("/project-a/.worktrees/ws-1"), branch: "ws-1" },
+      ]);
+      await appState.openProject("/project-a");
+
+      // Open second project
+      mockWorkspaceProvider.discover.mockResolvedValueOnce([
+        { name: "ws-2", path: new Path("/project-b/.worktrees/ws-2"), branch: "ws-2" },
+      ]);
+      await appState.openProject("/project-b");
+
+      // Each project should have its own cached default
+      expect(await appState.getDefaultBaseBranch("/project-a")).toBe("main");
+      expect(await appState.getDefaultBaseBranch("/project-b")).toBe("master");
+
+      // Setting cache for project-a should not affect project-b
+      appState.setLastBaseBranch("/project-a", "feature-branch");
+      expect(await appState.getDefaultBaseBranch("/project-a")).toBe("feature-branch");
+      expect(await appState.getDefaultBaseBranch("/project-b")).toBe("master");
+    });
+
+    it("undefined defaultBaseBranch is not cached", async () => {
+      // First call returns undefined, second returns "main"
+      mockWorkspaceProvider.defaultBase
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce("main");
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      await appState.openProject("/project");
+
+      // Clear mock call count to check next call
+      mockWorkspaceProvider.defaultBase.mockClear();
+
+      // Since undefined was not cached, next call should hit provider again
+      const result = await appState.getDefaultBaseBranch("/project");
+
+      // Provider should be called since undefined was not cached
+      expect(mockWorkspaceProvider.defaultBase).toHaveBeenCalled();
+      expect(result).toBe("main");
     });
   });
 });
