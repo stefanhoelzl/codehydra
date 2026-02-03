@@ -115,6 +115,122 @@ const EXIT_SPAWN_FAILED = 2;
 const EXIT_NOT_FOUND = 3;
 
 /**
+ * Result of spawning Claude CLI.
+ */
+export interface SpawnResult {
+  exitCode: number | null;
+  error: Error | undefined;
+}
+
+/**
+ * Options for running Claude.
+ */
+export interface RunClaudeOptions {
+  shell: boolean;
+}
+
+/**
+ * Result type returned by spawnSync for testing purposes.
+ */
+interface SpawnSyncResult {
+  status: number | null;
+  error: Error | undefined;
+}
+
+/**
+ * Dependencies for runClaude that can be injected for testing.
+ */
+export interface RunClaudeDeps {
+  spawnSync: (
+    command: string,
+    args: string[],
+    options: { stdio: "inherit"; shell: boolean }
+  ) => SpawnSyncResult;
+}
+
+/**
+ * Default dependencies using real implementations.
+ */
+const defaultDeps: RunClaudeDeps = {
+  spawnSync: (command, args, options) => {
+    const result = spawnSync(command, args, options);
+    return { status: result.status, error: result.error };
+  },
+};
+
+/**
+ * Check if user args contain session resume flags.
+ * Returns true if user explicitly passed --continue, -c, or --resume.
+ */
+function hasUserResumeFlag(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--continue" || arg === "-c" || arg === "--resume") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Run Claude CLI with automatic session resume.
+ *
+ * If user hasn't passed explicit resume flags (--continue, -c, --resume),
+ * first attempts to resume with --continue. If that fails (exit code non-zero),
+ * retries without --continue.
+ *
+ * @param claudeBinary - The claude binary name (resolved via PATH)
+ * @param baseArgs - Arguments to pass to Claude
+ * @param options - Spawn options
+ * @param deps - Injectable dependencies for testing
+ * @returns SpawnResult with exit code and optional error
+ */
+export function runClaude(
+  claudeBinary: string,
+  baseArgs: string[],
+  options: RunClaudeOptions,
+  deps: RunClaudeDeps = defaultDeps
+): SpawnResult {
+  // Check if user already passed resume flags - skip auto-continue if so
+  if (hasUserResumeFlag(baseArgs)) {
+    const result = deps.spawnSync(claudeBinary, baseArgs, {
+      stdio: "inherit",
+      shell: options.shell,
+    });
+    return {
+      exitCode: result.status,
+      error: result.error,
+    };
+  }
+
+  // First attempt: try with --continue to resume session
+  const continueArgs = ["--continue", ...baseArgs];
+  const firstResult = deps.spawnSync(claudeBinary, continueArgs, {
+    stdio: "inherit",
+    shell: options.shell,
+  });
+
+  // If successful, return
+  if (firstResult.status === 0) {
+    return {
+      exitCode: 0,
+      error: firstResult.error,
+    };
+  }
+
+  // Retry without --continue
+  const retryResult = deps.spawnSync(claudeBinary, baseArgs, {
+    stdio: "inherit",
+    shell: options.shell,
+  });
+
+  return {
+    exitCode: retryResult.status,
+    error: retryResult.error,
+  };
+}
+
+/**
  * Get user arguments from process.argv.
  * Auto-detects the start of user flags to handle both terminal and panel modes.
  * In terminal mode: argv = [node, script, ...flags]
@@ -246,12 +362,9 @@ async function main(): Promise<never> {
   // 5. Notify wrapper start (clears loading screen before Claude shows dialogs)
   await notifyHook("WrapperStart");
 
-  // 6. Spawn Claude
+  // 6. Spawn Claude with automatic session resume
   // Use shell on Windows to resolve binary name via PATH (handles .cmd shims)
-  const result = spawnSync(claudeBinary, args, {
-    stdio: "inherit",
-    shell: isWindows,
-  });
+  const result = runClaude(claudeBinary, args, { shell: isWindows });
 
   // 7. Notify wrapper end (Claude has exited)
   await notifyHook("WrapperEnd");
@@ -262,7 +375,7 @@ async function main(): Promise<never> {
     process.exit(EXIT_SPAWN_FAILED);
   }
 
-  process.exit(result.status ?? EXIT_SPAWN_FAILED);
+  process.exit(result.exitCode ?? EXIT_SPAWN_FAILED);
 }
 
 // Run main and handle any uncaught errors
