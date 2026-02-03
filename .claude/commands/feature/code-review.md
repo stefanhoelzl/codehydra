@@ -71,11 +71,6 @@ Read the plan at: planning/<FEATURE_NAME>.md for context.
 
 ## Workflow Context
 
-### Validation Commands
-After ALL fixes complete:
-1. Run: `pnpm validate:fix`
-2. Fix any failures and re-run until all pass
-
 ### Commit Rules
 **DO NOT COMMIT.** Leave the working tree dirty.
 
