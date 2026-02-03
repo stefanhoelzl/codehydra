@@ -34,9 +34,14 @@ Read the plan file and follow all implementation steps.
 - Update `last_updated` to today's date
 
 ### Validation Commands
-After ALL implementation steps complete:
-1. Run: `pnpm validate:fix`
-2. Fix any failures and re-run until all pass
+**During implementation** (after each step):
+- Run: `pnpm test:related -- <module-path>` for fast feedback
+
+**After ALL implementation steps complete**:
+1. Run: `pnpm validate:quick` (format, lint, types)
+2. Run: `pnpm test` (full test suite)
+3. Run: `pnpm build` (build verification)
+4. Fix any failures at each stage before proceeding
 
 ### Commit Rules
 **DO NOT COMMIT.** Leave the working tree dirty.

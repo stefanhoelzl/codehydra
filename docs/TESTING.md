@@ -6,16 +6,18 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 
 ## Quick Reference
 
-| Task                      | Command                 | Section                                             |
-| ------------------------- | ----------------------- | --------------------------------------------------- |
-| Run all tests             | `pnpm test`             | [Test Commands](#test-commands)                     |
-| Run integration tests     | `pnpm test:integration` | [Test Commands](#test-commands)                     |
-| Run boundary tests        | `pnpm test:boundary`    | [Test Commands](#test-commands)                     |
-| Run deprecated unit tests | `pnpm test:legacy`      | [Test Commands](#test-commands)                     |
-| Pre-commit validation     | `pnpm validate`         | [Test Commands](#test-commands)                     |
-| Decide which test type    | See decision guide      | [Decision Guide](#decision-guide)                   |
-| Create test git repo      | `createTestGitRepo()`   | [Test Helpers](#test-helpers)                       |
-| Create behavioral mock    | `createXMock()`         | [Behavioral Mock Pattern](#behavioral-mock-pattern) |
+| Task                      | Command                          | Section                                             |
+| ------------------------- | -------------------------------- | --------------------------------------------------- |
+| Run all tests             | `pnpm test`                      | [Test Commands](#test-commands)                     |
+| Run targeted tests        | `pnpm test:related -- <pattern>` | [Targeted Testing](#targeted-testing)               |
+| Run integration tests     | `pnpm test:integration`          | [Test Commands](#test-commands)                     |
+| Run boundary tests        | `pnpm test:boundary`             | [Test Commands](#test-commands)                     |
+| Run deprecated unit tests | `pnpm test:legacy`               | [Test Commands](#test-commands)                     |
+| Quick validation          | `pnpm validate:quick`            | [Targeted Testing](#targeted-testing)               |
+| Pre-commit validation     | `pnpm validate`                  | [Test Commands](#test-commands)                     |
+| Decide which test type    | See decision guide               | [Decision Guide](#decision-guide)                   |
+| Create test git repo      | `createTestGitRepo()`            | [Test Helpers](#test-helpers)                       |
+| Create behavioral mock    | `createXMock()`                  | [Behavioral Mock Pattern](#behavioral-mock-pattern) |
 
 ---
 
@@ -949,14 +951,59 @@ it("throws when createWorktree fails", ...)
 
 ---
 
+## Targeted Testing
+
+For efficient development feedback, especially when multiple agents are working in parallel, use targeted testing instead of running the full test suite after every change.
+
+### Commands
+
+| Command                          | Purpose                      | Speed   |
+| -------------------------------- | ---------------------------- | ------- |
+| `pnpm test:related -- <pattern>` | Run tests matching pattern   | ~1-5s   |
+| `pnpm validate:quick`            | Format, lint, and type check | ~15s    |
+| `pnpm test`                      | Full test suite              | ~30-60s |
+| `pnpm build`                     | Build verification           | ~30s    |
+
+### Pattern Examples
+
+```bash
+# Single module
+pnpm test:related -- src/services/git/
+
+# Component by name
+pnpm test:related -- CreateWorkspaceDialog
+
+# Multiple modules
+pnpm test:related -- src/services/git/ src/services/platform/
+
+# Specific test file pattern
+pnpm test:related -- workspace.integration
+```
+
+The `--passWithNoTests` flag ensures the command succeeds even when no tests match (useful for non-test files).
+
+### Tiered Validation Strategy
+
+Use this approach to minimize CPU usage while maintaining quality:
+
+1. **During implementation**: Run `pnpm test:related -- <module>` after each change for fast feedback
+2. **After all changes**: Run `pnpm validate:quick` to check format, lint, and types
+3. **Before review**: Run `pnpm test` followed by `pnpm build` for complete verification
+
+This is especially important when multiple agents run concurrently, as running `pnpm validate:fix` (which includes the full test suite and build) in parallel causes CPU spikes.
+
+---
+
 ## Test Commands
 
 | Command                 | What it runs                | Use case                      |
 | ----------------------- | --------------------------- | ----------------------------- |
 | `pnpm test`             | All tests                   | Full verification             |
+| `pnpm test:related`     | Tests matching pattern      | Fast feedback during dev      |
 | `pnpm test:integration` | Integration tests only      | Primary development feedback  |
 | `pnpm test:boundary`    | Boundary tests only         | Test external interfaces      |
 | `pnpm test:legacy`      | Deprecated unit tests       | Until migrated to integration |
+| `pnpm validate:quick`   | Format + lint + types       | Quick validation (~15s)       |
 | `pnpm validate`         | Integration + check + build | Pre-commit validation (fast)  |
 
 **Why validate excludes boundary tests**: Boundary tests may be slower, require specific binaries (code-server, opencode), and are only relevant when working on external interface code.

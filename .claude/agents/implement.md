@@ -58,9 +58,49 @@ This allows resuming after a plan update without re-doing completed work.
 
 **DO NOT** run tests after each step. Tests run in batch at the end.
 
-## After ALL Implementation Steps Complete
+## Validation Strategy
 
-Run the validation commands specified in the invocation (typically `pnpm validate:fix`). Fix any issues and re-run until all pass.
+Use tiered validation to minimize CPU usage while maintaining quality:
+
+### During Implementation (After Each Step)
+
+Run targeted tests for the module you just modified:
+
+```bash
+pnpm test:related -- <module-path>
+```
+
+**Pattern examples:**
+
+- `pnpm test:related -- src/services/git/` - Tests for git module
+- `pnpm test:related -- src/services/platform/filesystem` - Tests for filesystem
+- `pnpm test:related -- CreateWorkspaceDialog` - Tests matching component name
+- `pnpm test:related -- src/services/git/ src/services/platform/` - Multiple modules
+
+This provides fast feedback (~1-5s) and catches issues early.
+
+### After ALL Implementation Steps Complete
+
+Run validation in stages:
+
+1. **Quick validation** (format, lint, types - ~15s):
+
+   ```bash
+   pnpm validate:quick
+   ```
+
+2. **Full test suite**:
+
+   ```bash
+   pnpm test
+   ```
+
+3. **Build verification**:
+   ```bash
+   pnpm build
+   ```
+
+Fix any issues at each stage before proceeding to the next.
 
 ## Fix Mode
 
