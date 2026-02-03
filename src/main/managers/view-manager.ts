@@ -943,11 +943,32 @@ export class ViewManager implements IViewManager {
   /**
    * Subscribe to loading state changes.
    *
+   * When the callback is registered, it immediately receives loading=false events
+   * for all workspaces that have already finished loading. This handles the case
+   * where loading events were lost before the callback was wired (e.g., during startup).
+   *
    * @param callback - Called with (path, loading) when loading state changes
    * @returns Unsubscribe function
    */
   onLoadingChange(callback: LoadingChangeCallback): Unsubscribe {
     this.loadingChangeCallbacks.add(callback);
+
+    // Emit loading=false for workspaces that already finished loading
+    // This catches workspaces whose loading=false events were lost before callback was wired
+    for (const workspacePath of this.workspaceStates.keys()) {
+      if (!this.loadingWorkspaces.has(workspacePath)) {
+        try {
+          callback(workspacePath, false);
+        } catch (error) {
+          this.logger.error(
+            "Error in loading change callback (initial emit)",
+            { path: workspacePath, loading: false },
+            error instanceof Error ? error : undefined
+          );
+        }
+      }
+    }
+
     return () => {
       this.loadingChangeCallbacks.delete(callback);
     };
