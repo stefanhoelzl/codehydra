@@ -39,6 +39,10 @@ describe("IProjectApi Interface", () => {
       async close(projectId: ProjectId): Promise<void> {
         void projectId;
       },
+      async clone(url: string): Promise<Project> {
+        void url;
+        throw new Error("mock");
+      },
       async list(): Promise<readonly Project[]> {
         return [];
       },

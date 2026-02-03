@@ -297,6 +297,18 @@ let telemetryService: TelemetryService | null = null;
 let autoUpdater: AutoUpdater | null = null;
 
 /**
+ * GitClient for clone operations.
+ * Created in startServices() for use in CoreModule.
+ */
+let gitClient: import("../services").IGitClient | null = null;
+
+/**
+ * ProjectStore for project configuration storage.
+ * Created in startServices() for use in AppState and CoreModule.
+ */
+let projectStore: import("../services").ProjectStore | null = null;
+
+/**
  * Starts all application services after setup completes.
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
@@ -402,7 +414,11 @@ async function startServices(): Promise<void> {
   viewManager.updateCodeServerPort(port);
 
   // Create ProjectStore and AppState
-  const projectStore = new ProjectStore(pathProvider.projectsDir.toString(), fileSystemLayer);
+  projectStore = new ProjectStore(pathProvider.projectsDir.toString(), fileSystemLayer);
+
+  // Create GitClient for clone operations
+  const { SimpleGitClient } = await import("../services/git/simple-git-client");
+  gitClient = new SimpleGitClient(loggingService.createLogger("git"));
 
   // Create WorkspaceFileService for .code-workspace file management
   const workspaceFileConfig = createWorkspaceFileConfig();
@@ -897,8 +913,10 @@ async function bootstrap(): Promise<void> {
     // Core module deps - factory that captures module-level appState
     // Called when bootstrapResult.startServices() runs in startServices()
     coreDepsFn: (): CoreModuleDeps => {
-      if (!appState || !viewManager || !processRunner) {
-        throw new Error("Core deps not ready - appState/viewManager/processRunner not initialized");
+      if (!appState || !viewManager || !processRunner || !gitClient || !projectStore) {
+        throw new Error(
+          "Core deps not ready - appState/viewManager/processRunner/gitClient/projectStore not initialized"
+        );
       }
 
       // Create WorkspaceLockHandler for Windows file handle detection
@@ -915,6 +933,9 @@ async function bootstrap(): Promise<void> {
       const baseDeps = {
         appState,
         viewManager,
+        gitClient,
+        pathProvider,
+        projectStore,
         workspaceLockHandler,
         emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => {
           try {

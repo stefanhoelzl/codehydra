@@ -11,7 +11,7 @@
     type Workspace,
     type ProjectId,
   } from "$lib/api";
-  import { closeDialog } from "$lib/stores/dialogs.svelte.js";
+  import { closeDialog, openGitCloneDialog } from "$lib/stores/dialogs.svelte.js";
   import { getProjectById, projects } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
@@ -20,7 +20,7 @@
 
   interface CreateWorkspaceDialogProps {
     open: boolean;
-    projectId: ProjectId;
+    projectId?: ProjectId | undefined;
     /** Called when user cancels the dialog (before closeDialog is called) */
     onCancel?: () => void;
   }
@@ -30,8 +30,11 @@
   // Form state
   // Track user's project selection, null means use the prop value
   let userSelectedProject = $state<ProjectId | null>(null);
-  // Effective selected project: user selection or fall back to prop
-  const selectedProjectId = $derived(userSelectedProject ?? projectId);
+  // Effective selected project: user selection, prop, or first available project
+  const selectedProjectId = $derived(userSelectedProject ?? projectId ?? projects.value[0]?.id);
+
+  // Whether we have a valid project to create workspace in
+  const hasProject = $derived(selectedProjectId !== undefined);
 
   // Get the selected project and its default base branch reactively
   const selectedProject = $derived(getProjectById(selectedProjectId));
@@ -79,7 +82,7 @@
 
   // Check if form is valid
   const isFormValid = $derived(
-    name.trim() !== "" && selectedBranch !== "" && validateName(name) === null
+    hasProject && name.trim() !== "" && selectedBranch !== "" && validateName(name) === null
   );
 
   // Handle project selection - clears branch and re-validates name
@@ -134,7 +137,8 @@
 
   // Handle form submission
   async function handleSubmit(): Promise<void> {
-    if (!isFormValid || isSubmitting) return;
+    // isFormValid includes hasProject check, so selectedProjectId is defined
+    if (!isFormValid || isSubmitting || !selectedProjectId) return;
 
     submitError = null;
     isSubmitting = true;
@@ -151,6 +155,13 @@
       submitError = message;
       isSubmitting = false;
     }
+  }
+
+  // Handle opening git clone dialog
+  function handleCloneProject(): void {
+    if (isSubmitting || isOpeningProject) return;
+    logger.debug("Opening git clone dialog");
+    openGitCloneDialog();
   }
 
   // Handle opening a project via folder picker
@@ -208,7 +219,7 @@
     <div class="ch-form-field">
       <label for="project-select" class="ch-form-label">Project</label>
       <div class="project-row">
-        <!-- Folder icon first in tab order, but visually on the right via CSS order -->
+        <!-- Icon buttons first in tab order, but visually on the right via CSS order -->
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <vscode-button
           class="folder-button"
@@ -220,27 +231,50 @@
         >
           <Icon name="folder-opened" />
         </vscode-button>
-        <ProjectDropdown
-          value={selectedProjectId}
-          onSelect={handleProjectSelect}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <vscode-button
+          class="clone-button"
+          appearance="icon"
+          aria-label="Clone from Git"
+          title="Clone from Git"
+          onclick={handleCloneProject}
           disabled={isSubmitting || isOpeningProject}
-        />
+        >
+          <Icon name="source-control" />
+        </vscode-button>
+        {#if selectedProjectId}
+          <ProjectDropdown
+            value={selectedProjectId}
+            onSelect={handleProjectSelect}
+            disabled={isSubmitting || isOpeningProject}
+          />
+        {:else}
+          <vscode-textfield
+            placeholder="Open folder or clone from Git"
+            disabled
+            class="no-project-placeholder"
+          ></vscode-textfield>
+        {/if}
       </div>
     </div>
 
     <div class="ch-form-field">
       <label for="workspace-name" class="ch-form-label">Name</label>
-      <NameBranchDropdown
-        id="workspace-name"
-        projectId={selectedProjectId}
-        value={name}
-        onSelect={handleNameSelect}
-        onInput={handleNameInput}
-        disabled={isSubmitting || isOpeningProject}
-        onEnter={handleEnterInName}
-        autofocus={true}
-        bind:this={nameInputRef}
-      />
+      {#if selectedProjectId}
+        <NameBranchDropdown
+          id="workspace-name"
+          projectId={selectedProjectId}
+          value={name}
+          onSelect={handleNameSelect}
+          onInput={handleNameInput}
+          disabled={isSubmitting || isOpeningProject}
+          onEnter={handleEnterInName}
+          autofocus={true}
+          bind:this={nameInputRef}
+        />
+      {:else}
+        <vscode-textfield id="workspace-name" disabled></vscode-textfield>
+      {/if}
       {#if nameError}
         <vscode-form-helper id={nameErrorId}>
           <span class="error-text">{nameError}</span>
@@ -250,12 +284,16 @@
 
     <div class="ch-form-field">
       <label for="branch-select" class="ch-form-label">Base Branch</label>
-      <BranchDropdown
-        projectId={selectedProjectId}
-        value={selectedBranch}
-        onSelect={handleBranchSelect}
-        disabled={isSubmitting || isOpeningProject}
-      />
+      {#if selectedProjectId}
+        <BranchDropdown
+          projectId={selectedProjectId}
+          value={selectedBranch}
+          onSelect={handleBranchSelect}
+          disabled={isSubmitting || isOpeningProject}
+        />
+      {:else}
+        <vscode-textfield id="branch-select" disabled></vscode-textfield>
+      {/if}
     </div>
 
     {#if isSubmitting}
@@ -297,13 +335,22 @@
     align-items: stretch;
   }
 
-  /* Folder button is first in DOM (for tab order) but visually last */
+  /* Icon buttons are first in DOM (for tab order) but visually last */
   .project-row :global(.folder-button) {
     order: 1;
   }
 
+  .project-row :global(.clone-button) {
+    order: 2;
+  }
+
   /* ProjectDropdown stretches to fill available space */
   .project-row :global(.project-dropdown) {
+    flex: 1;
+  }
+
+  /* Placeholder textfield when no project selected */
+  .project-row :global(.no-project-placeholder) {
     flex: 1;
   }
 </style>

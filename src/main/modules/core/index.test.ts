@@ -87,6 +87,18 @@ function createMockDeps(overrides: Partial<CoreModuleDeps> = {}): CoreModuleDeps
   const defaults: CoreModuleDeps = {
     appState: createMockAppState(),
     viewManager: createMockViewManager(),
+    gitClient: {
+      clone: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../../../services").IGitClient,
+    pathProvider: {
+      projectsDir: "/test/projects",
+    } as unknown as import("../../../services").PathProvider,
+    projectStore: {
+      findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      getProjectConfig: vi.fn().mockResolvedValue(undefined),
+      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../../../services").ProjectStore,
     emitDeletionProgress: vi.fn(),
     logger: createMockLogger(),
   };

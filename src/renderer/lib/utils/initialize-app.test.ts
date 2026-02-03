@@ -250,46 +250,6 @@ describe("initializeApp", () => {
     });
   });
 
-  describe("auto-open project picker", () => {
-    it("calls onAutoOpenProject when no projects exist", async () => {
-      const api = createMockApi({ projects: [] });
-      const onAutoOpenProject = vi.fn();
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-        onAutoOpenProject,
-      };
-
-      await initializeApp(options, api);
-
-      expect(onAutoOpenProject).toHaveBeenCalled();
-    });
-
-    it("does not call onAutoOpenProject when projects exist", async () => {
-      const api = createMockApi({ projects: [TEST_PROJECT] });
-      const onAutoOpenProject = vi.fn();
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-        onAutoOpenProject,
-      };
-
-      await initializeApp(options, api);
-
-      expect(onAutoOpenProject).not.toHaveBeenCalled();
-    });
-
-    it("does not fail when onAutoOpenProject is not provided", async () => {
-      const api = createMockApi({ projects: [] });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
-
-      await expect(initializeApp(options, api)).resolves.not.toThrow();
-    });
-  });
-
   describe("focus management", () => {
     it("focuses vscode-button element", async () => {
       const container = createMockContainer("vscode-button");

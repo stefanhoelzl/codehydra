@@ -309,7 +309,7 @@ describe("Integration tests", () => {
 
       // Verify closeProject was called (v2 API uses projectId)
       await waitFor(() => {
-        expect(mockApi.projects.close).toHaveBeenCalledWith(actualProjectId);
+        expect(mockApi.projects.close).toHaveBeenCalledWith(actualProjectId, undefined);
       });
 
       // Simulate project:closed event (v2 format uses projectId not path)
@@ -1138,7 +1138,7 @@ describe("Integration tests", () => {
   });
 
   describe("onboarding flow", () => {
-    it("complete-onboarding-flow: empty state → auto-open picker → select folder → project with 0 workspaces → auto-open create dialog", async () => {
+    it("complete-onboarding-flow: empty state → dialog auto-opens → click folder → select folder → project opens", async () => {
       // Start with no projects (empty state)
       mockApi.projects.list.mockResolvedValue([]);
 
@@ -1152,12 +1152,20 @@ describe("Integration tests", () => {
 
       render(App);
 
-      // Wait for MainView to load (should see EmptyState briefly, then folder picker auto-opens)
+      // Wait for Create Workspace dialog to auto-open (new behavior)
       await waitFor(() => {
-        expect(mockApi.projects.list).toHaveBeenCalled();
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
 
-      // Verify folder picker was automatically triggered (auto-open on empty state)
+      // Verify folder picker was NOT automatically triggered
+      expect(mockApi.ui.selectFolder).not.toHaveBeenCalled();
+
+      // Click the folder button to open folder picker
+      const folderButton = screen.getByRole("button", { name: "Open project folder" });
+      await fireEvent.click(folderButton);
+
+      // Verify folder picker was triggered
       await waitFor(() => {
         expect(mockApi.ui.selectFolder).toHaveBeenCalledTimes(1);
       });
@@ -1175,38 +1183,29 @@ describe("Integration tests", () => {
       const emptyProject = createProject("new-project", []);
       fireApiEvent("project:opened", { project: emptyProject });
 
-      // Verify create workspace dialog auto-opens because project has 0 workspaces
+      // Verify dialog is still open with the project
       await waitFor(() => {
         expect(screen.getByRole("dialog")).toBeInTheDocument();
         expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
 
-      // Verify dialog is for the correct project (uses project ID, not path)
+      // Verify dialog type is still create
       expect(dialogsStore.dialogState.value.type).toBe("create");
-      if (dialogsStore.dialogState.value.type === "create") {
-        // The project ID is generated from the path, so we just verify it's set
-        expect(dialogsStore.dialogState.value.projectId).toBeDefined();
-      }
     });
 
-    it("auto-open-picker-cancelled: empty state → picker cancelled → EmptyState shown", async () => {
+    it("auto-open-create-dialog-when-no-projects: empty state → Create Workspace dialog opens", async () => {
       mockApi.projects.list.mockResolvedValue([]);
-      mockApi.ui.selectFolder.mockResolvedValue(null); // User cancels
 
       render(App);
 
-      // Wait for auto-open
+      // Wait for Create Workspace dialog to auto-open
       await waitFor(() => {
-        expect(mockApi.ui.selectFolder).toHaveBeenCalled();
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
 
-      // Verify EmptyState is shown after cancel
-      await waitFor(() => {
-        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
-      });
-
-      // Verify openProject was NOT called
-      expect(mockApi.projects.open).not.toHaveBeenCalled();
+      // Verify folder picker was NOT called (user needs to click the button)
+      expect(mockApi.ui.selectFolder).not.toHaveBeenCalled();
     });
 
     it("project-with-workspaces-no-auto-dialog: opening project with workspaces does not auto-open dialog", async () => {

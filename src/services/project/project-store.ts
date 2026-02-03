@@ -5,13 +5,14 @@
  * both on save and on load. This auto-migrates old configs with native paths.
  */
 
-import path from "path";
+import nodePath from "path";
 import type { ProjectConfig } from "./types";
 import { CURRENT_PROJECT_VERSION } from "./types";
 import { ProjectStoreError, getErrorMessage } from "../errors";
 import { projectDirName } from "../platform/paths";
 import type { FileSystemLayer } from "../platform/filesystem";
 import { Path } from "../platform/path";
+import { normalizeGitUrl } from "./url-utils";
 
 /**
  * Store for persisting project configurations.
@@ -36,18 +37,24 @@ export class ProjectStore {
    * Creates or overwrites the config.json for the project.
    *
    * @param projectPath Absolute path to the project
+   * @param options Optional save options (remoteUrl for cloned projects, configDir for custom config location)
    * @throws ProjectStoreError if save fails
    */
-  async saveProject(projectPath: string): Promise<void> {
+  async saveProject(projectPath: string, options?: SaveProjectOptions): Promise<void> {
     // Normalize the path to canonical format for consistent storage
     const normalizedPath = new Path(projectPath).toString();
-    const dirName = projectDirName(normalizedPath);
-    const projectDir = path.join(this.projectsDir, dirName);
-    const configPath = path.join(projectDir, "config.json");
+
+    // Use custom configDir if provided (for cloned projects),
+    // otherwise use path-based hash directory
+    const projectDir = options?.configDir
+      ? nodePath.join(this.projectsDir, options.configDir)
+      : nodePath.join(this.projectsDir, projectDirName(normalizedPath));
+    const configPath = nodePath.join(projectDir, "config.json");
 
     const config: ProjectConfig = {
       version: CURRENT_PROJECT_VERSION,
       path: normalizedPath,
+      ...(options?.remoteUrl !== undefined && { remoteUrl: options.remoteUrl }),
     };
 
     try {
@@ -68,7 +75,18 @@ export class ProjectStore {
    * @returns Array of project paths
    */
   async loadAllProjects(): Promise<readonly string[]> {
-    const projects: string[] = [];
+    const configs = await this.loadAllProjectConfigs();
+    return configs.map((c) => c.path);
+  }
+
+  /**
+   * Load all saved project configurations.
+   * Skips invalid entries (missing config.json, malformed JSON, etc.).
+   *
+   * @returns Array of project configurations
+   */
+  async loadAllProjectConfigs(): Promise<readonly ProjectConfig[]> {
+    const configs: ProjectConfig[] = [];
 
     try {
       // readdir throws ENOENT if directory doesn't exist
@@ -79,7 +97,7 @@ export class ProjectStore {
           continue;
         }
 
-        const configPath = path.join(this.projectsDir, entry.name, "config.json");
+        const configPath = nodePath.join(this.projectsDir, entry.name, "config.json");
 
         try {
           const content = await this.fs.readFile(configPath);
@@ -95,7 +113,14 @@ export class ProjectStore {
             const rawPath = (parsed as { path: string }).path;
             try {
               const normalizedPath = new Path(rawPath).toString();
-              projects.push(normalizedPath);
+              const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
+
+              const config: ProjectConfig = {
+                version: (parsed as { version?: number }).version ?? 1,
+                path: normalizedPath,
+                ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
+              };
+              configs.push(config);
             } catch {
               // Invalid path format - skip this entry
               continue;
@@ -111,7 +136,30 @@ export class ProjectStore {
       return [];
     }
 
-    return projects;
+    return configs;
+  }
+
+  /**
+   * Find a project by its remote URL.
+   * Uses URL normalization to match equivalent URLs.
+   *
+   * @param url Remote URL to search for
+   * @returns Project path if found, undefined otherwise
+   */
+  async findByRemoteUrl(url: string): Promise<string | undefined> {
+    const normalizedUrl = normalizeGitUrl(url);
+    const configs = await this.loadAllProjectConfigs();
+
+    for (const config of configs) {
+      if (config.remoteUrl) {
+        const configNormalizedUrl = normalizeGitUrl(config.remoteUrl);
+        if (configNormalizedUrl === normalizedUrl) {
+          return config.path;
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -123,8 +171,8 @@ export class ProjectStore {
    */
   async removeProject(projectPath: string): Promise<void> {
     const dirName = projectDirName(projectPath);
-    const projectDir = path.join(this.projectsDir, dirName);
-    const configPath = path.join(projectDir, "config.json");
+    const projectDir = nodePath.join(this.projectsDir, dirName);
+    const configPath = nodePath.join(projectDir, "config.json");
 
     try {
       // Remove config.json
@@ -135,7 +183,7 @@ export class ProjectStore {
     }
 
     // Try to remove the workspaces subdirectory (only succeeds if empty)
-    const workspacesDir = path.join(projectDir, "workspaces");
+    const workspacesDir = nodePath.join(projectDir, "workspaces");
     try {
       await this.fs.rm(workspacesDir);
     } catch {
@@ -149,4 +197,116 @@ export class ProjectStore {
       // ENOTEMPTY or ENOENT - that's fine
     }
   }
+
+  /**
+   * Completely remove a project directory including all contents.
+   * Used for cloned projects when user wants to delete the local repository.
+   *
+   * For cloned projects (with remoteUrl), deletes the parent directory that
+   * contains both the config.json and the git subdirectory.
+   *
+   * @param projectPath Absolute path to the project (gitPath for cloned projects)
+   * @param options Optional deletion options
+   * @param options.isClonedProject If true, treat as cloned project and delete parent directory
+   * @throws ProjectStoreError if deletion fails
+   */
+  async deleteProjectDirectory(
+    projectPath: string,
+    options?: { isClonedProject?: boolean }
+  ): Promise<void> {
+    // Check if this is a cloned project either from options or by looking for config
+    let isCloned = options?.isClonedProject;
+    if (isCloned === undefined) {
+      const config = await this.getProjectConfig(projectPath);
+      isCloned = config?.remoteUrl !== undefined;
+    }
+
+    let dirToDelete: string;
+    if (isCloned) {
+      // Cloned project: config is in parent directory (URL-hashed directory)
+      // projectPath is the gitPath like /projects/repo-abc123/repo/
+      // We need to delete /projects/repo-abc123/
+      const normalizedPath = new Path(projectPath).toString();
+      dirToDelete = nodePath.dirname(normalizedPath);
+    } else {
+      // Local project: use path-hashed directory
+      const dirName = projectDirName(projectPath);
+      dirToDelete = nodePath.join(this.projectsDir, dirName);
+    }
+
+    try {
+      await this.fs.rm(dirToDelete, { recursive: true, force: true });
+    } catch (error: unknown) {
+      throw new ProjectStoreError(`Failed to delete project directory: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get the project configuration for a project path.
+   * Returns undefined if no config exists.
+   *
+   * First tries the path-hashed directory (for local projects),
+   * then scans all configs to find a matching path (for cloned projects
+   * where config is stored in URL-hashed directory).
+   *
+   * @param projectPath Absolute path to the project
+   * @returns Project configuration or undefined
+   */
+  async getProjectConfig(projectPath: string): Promise<ProjectConfig | undefined> {
+    const normalizedPath = new Path(projectPath).toString();
+
+    // First, try the standard path-hashed location (most common case)
+    const dirName = projectDirName(normalizedPath);
+    const projectDir = nodePath.join(this.projectsDir, dirName);
+    const configPath = nodePath.join(projectDir, "config.json");
+
+    try {
+      const content = await this.fs.readFile(configPath);
+      const parsed: unknown = JSON.parse(content);
+
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "path" in parsed &&
+        typeof (parsed as Record<string, unknown>).path === "string"
+      ) {
+        const rawPath = (parsed as { path: string }).path;
+        const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
+
+        const config: ProjectConfig = {
+          version: (parsed as { version?: number }).version ?? 1,
+          path: new Path(rawPath).toString(),
+          ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
+        };
+        return config;
+      }
+    } catch {
+      // Config not found in standard location - try scanning all configs
+    }
+
+    // Fallback: scan all configs to find one with matching path
+    // This handles cloned projects where config is in URL-hashed directory
+    const allConfigs = await this.loadAllProjectConfigs();
+    for (const config of allConfigs) {
+      if (config.path === normalizedPath) {
+        return config;
+      }
+    }
+
+    return undefined;
+  }
+}
+
+/**
+ * Options for saving a project.
+ */
+export interface SaveProjectOptions {
+  /** Remote URL if project was cloned from URL */
+  remoteUrl?: string;
+  /**
+   * Custom config directory name (relative to projectsDir).
+   * Used for cloned projects to store config inside the URL-hashed directory
+   * instead of the default path-hashed directory.
+   */
+  configDir?: string;
 }

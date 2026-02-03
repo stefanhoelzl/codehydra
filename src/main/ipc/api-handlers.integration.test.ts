@@ -71,6 +71,7 @@ function createMockApiWithEvents(): {
     projects: {
       open: vi.fn().mockResolvedValue(TEST_PROJECT),
       close: vi.fn().mockResolvedValue(undefined),
+      clone: vi.fn().mockResolvedValue(TEST_PROJECT),
       list: vi.fn().mockResolvedValue([TEST_PROJECT]),
       get: vi.fn().mockResolvedValue(TEST_PROJECT),
       fetchBases: vi.fn().mockResolvedValue({ bases: [] }),

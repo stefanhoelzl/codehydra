@@ -69,6 +69,10 @@ interface RepositoryState {
   mainIsDirty: boolean;
   /** Main worktree's current branch */
   currentBranch: string | null;
+  /** Whether this is a bare repository (cloned with --bare) */
+  isBare: boolean;
+  /** Remote URL if cloned from remote */
+  remoteUrl?: string;
 }
 
 // =============================================================================
@@ -107,6 +111,10 @@ export interface RepositoryInit {
   readonly mainIsDirty?: boolean;
   /** Main worktree's current branch (defaults to first branch or "main") */
   readonly currentBranch?: string | null;
+  /** Whether this is a bare repository */
+  readonly isBare?: boolean;
+  /** Remote URL if cloned from remote */
+  readonly remoteUrl?: string;
 }
 
 /**
@@ -180,6 +188,10 @@ class GitClientMockStateImpl implements GitClientMockState {
 
   getRepo(path: string): RepositoryState | undefined {
     return this._repositories.get(path);
+  }
+
+  addRepository(path: string, repo: RepositoryState): void {
+    this._repositories.set(path, repo);
   }
 
   snapshot(): Snapshot {
@@ -275,7 +287,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         }
       }
 
-      repos.set(normalizedPath, {
+      const repoState: RepositoryState = {
         branches: new Set(init.branches ?? []),
         remoteBranches: new Set(init.remoteBranches ?? []),
         remotes: new Set(init.remotes ?? []),
@@ -283,7 +295,12 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         branchConfigs,
         mainIsDirty: init.mainIsDirty ?? false,
         currentBranch: init.currentBranch ?? init.branches?.[0] ?? null,
-      });
+        isBare: init.isBare ?? false,
+      };
+      if (init.remoteUrl !== undefined) {
+        repoState.remoteUrl = init.remoteUrl;
+      }
+      repos.set(normalizedPath, repoState);
     }
   }
 
@@ -592,6 +609,35 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       }
       // No-op if key doesn't exist (per interface contract)
     },
+
+    async clone(url: string, targetPath: Path): Promise<void> {
+      const normalizedTarget = normalizePath(targetPath);
+
+      // Check if target already exists
+      if (state.repositories.has(normalizedTarget)) {
+        throw new GitError(`Target path already exists: ${normalizedTarget}`);
+      }
+
+      // Create a new bare repository at target
+      // Mirrors real behavior: after clone --bare + fetch + delete local branches,
+      // we only have remote-tracking branches, no local branches
+      (state as GitClientMockStateImpl).addRepository(normalizedTarget, {
+        branches: new Set(), // No local branches after clone (all deleted)
+        remoteBranches: new Set(["origin/main"]), // Only remote-tracking branches
+        remotes: new Set(["origin"]),
+        worktrees: new Map(),
+        branchConfigs: new Map(),
+        mainIsDirty: false,
+        currentBranch: null, // No current branch in bare repo with no local branches
+        isBare: true,
+        remoteUrl: url,
+      });
+    },
+
+    async isBare(repoPath: Path): Promise<boolean> {
+      const repo = getRepoOrThrow(repoPath);
+      return repo.isBare;
+    },
   };
 
   return Object.assign(client, { $: state });
@@ -630,6 +676,14 @@ interface GitClientMatchers {
    * @param value - Optional expected value (if omitted, just checks key exists)
    */
   toHaveBranchConfig(repoPath: string | Path, branch: string, key: string, value?: string): void;
+
+  /**
+   * Assert that a cloned repository exists at the given path.
+   * Verifies the repository is bare and was cloned from a URL.
+   *
+   * @param repoPath - Absolute path to the cloned repository
+   */
+  toHaveClonedRepository(repoPath: string | Path): void;
 }
 
 declare module "vitest" {
@@ -735,6 +789,31 @@ export const gitClientMatchers: MatcherImplementationsFor<MockGitClient, GitClie
         value !== undefined
           ? `Expected branch '${branch}' config '${key}' not to be '${value}'`
           : `Expected branch '${branch}' not to have config '${key}'`,
+    };
+  },
+
+  toHaveClonedRepository(received, repoPath) {
+    const normalizedRepoPath = normalizePath(repoPath);
+    const repo = received.$.repositories.get(normalizedRepoPath);
+
+    if (!repo) {
+      return {
+        pass: false,
+        message: () => `Expected cloned repository at ${normalizedRepoPath} but it does not exist`,
+      };
+    }
+
+    if (!repo.isBare) {
+      return {
+        pass: false,
+        message: () =>
+          `Expected repository at ${normalizedRepoPath} to be bare (cloned) but it is not`,
+      };
+    }
+
+    return {
+      pass: true,
+      message: () => `Expected no cloned repository at ${normalizedRepoPath}`,
     };
   },
 };

@@ -549,3 +549,78 @@ describe("GitWorktreeProvider with KeepFilesService (integration)", () => {
     });
   });
 });
+
+describe("GitWorktreeProvider bare repository support", () => {
+  const PROJECT_ROOT = new Path("/bare-project");
+  const WORKSPACES_DIR = new Path("/workspaces");
+  const worktreeLogger = SILENT_LOGGER;
+
+  describe("listBases", () => {
+    it("returns branches from bare repos as local (git treats them as refs/heads/*)", async () => {
+      // In bare repos, branches are stored in refs/heads/* (not refs/remotes/*)
+      // so they appear as local branches to git. This is correct git behavior.
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "develop", "feature-x"],
+            isBare: true,
+            currentBranch: "main",
+          },
+        },
+      });
+      const mockFs = createFileSystemMock({
+        entries: {
+          [WORKSPACES_DIR.toString()]: directory(),
+        },
+      });
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const bases = await provider.listBases();
+
+      // Branches in bare repos are local refs, so isRemote should be false
+      expect(bases.every((b) => !b.isRemote)).toBe(true);
+      expect(bases.map((b) => b.name).sort()).toEqual(["develop", "feature-x", "main"]);
+    });
+
+    it("returns local and remote branches correctly for regular repos", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "develop"],
+            remoteBranches: ["origin/main"],
+            isBare: false,
+            currentBranch: "main",
+          },
+        },
+      });
+      const mockFs = createFileSystemMock({
+        entries: {
+          [WORKSPACES_DIR.toString()]: directory(),
+        },
+      });
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const bases = await provider.listBases();
+
+      const localBranches = bases.filter((b) => !b.isRemote);
+      const remoteBranches = bases.filter((b) => b.isRemote);
+
+      expect(localBranches.map((b) => b.name).sort()).toEqual(["develop", "main"]);
+      expect(remoteBranches.map((b) => b.name)).toEqual(["origin/main"]);
+    });
+  });
+});

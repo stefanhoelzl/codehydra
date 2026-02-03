@@ -197,7 +197,8 @@ function createMockCodeHydraApi(
   return {
     projects: {
       open: (path) => get("projects.open")({ path }),
-      close: (projectId) => get("projects.close")({ projectId }),
+      close: (projectId, options) => get("projects.close")({ projectId, ...options }),
+      clone: (url) => get("projects.clone")({ url }),
       list: () => get("projects.list")({}),
       get: (projectId) => get("projects.get")({ projectId }),
       fetchBases: (projectId) => get("projects.fetchBases")({ projectId }),
@@ -271,6 +272,7 @@ export function registerAllMethodsWithStubs(
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},
+    "projects.clone": async () => createMockProject(),
     "projects.list": async () => [],
     "projects.get": async () => undefined,
     "projects.fetchBases": async () => ({ bases: [] }),

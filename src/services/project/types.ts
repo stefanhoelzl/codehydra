@@ -12,9 +12,12 @@ export interface ProjectConfig {
   readonly version: number;
   /** Absolute path to the project directory */
   readonly path: string;
+  /** Original git remote URL if project was cloned from URL */
+  readonly remoteUrl?: string;
 }
 
 /**
  * Current schema version for ProjectConfig.
+ * Version 2: Added optional remoteUrl field for cloned projects.
  */
-export const CURRENT_PROJECT_VERSION = 1;
+export const CURRENT_PROJECT_VERSION = 2;

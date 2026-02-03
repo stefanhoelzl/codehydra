@@ -28,9 +28,26 @@ export type { IDisposable, Unsubscribe } from "../types";
 // Domain API Interfaces - Stubs
 // =============================================================================
 
+/**
+ * Options for closing a project.
+ */
+export interface ProjectCloseOptions {
+  /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
+  readonly removeLocalRepo?: boolean;
+}
+
 export interface IProjectApi {
   open(path: string): Promise<Project>;
-  close(projectId: ProjectId): Promise<void>;
+  close(projectId: ProjectId, options?: ProjectCloseOptions): Promise<void>;
+  /**
+   * Clone a git repository and create a new project.
+   * If the URL has already been cloned, returns the existing project.
+   *
+   * @param url Git remote URL (HTTPS or SSH format)
+   * @returns The created or existing project
+   * @throws Error if clone fails (network, auth, invalid URL)
+   */
+  clone(url: string): Promise<Project>;
   list(): Promise<readonly Project[]>;
   get(projectId: ProjectId): Promise<Project | undefined>;
   fetchBases(projectId: ProjectId): Promise<{ readonly bases: readonly BaseInfo[] }>;

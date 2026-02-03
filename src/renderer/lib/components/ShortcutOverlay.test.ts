@@ -11,7 +11,6 @@ describe("ShortcutOverlay component", () => {
   const defaultProps = {
     active: true,
     workspaceCount: 3,
-    hasActiveProject: true,
     hasActiveWorkspace: true,
   };
 
@@ -169,15 +168,6 @@ describe("ShortcutOverlay component", () => {
 
       const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
       expect(jumpHint).toHaveClass("shortcut-hint--hidden");
-    });
-
-    it("should-hide-new-hint-when-no-active-project", () => {
-      render(ShortcutOverlay, {
-        props: { ...defaultProps, hasActiveProject: false },
-      });
-
-      const newHint = screen.getByLabelText("Enter key to create new workspace");
-      expect(newHint).toHaveClass("shortcut-hint--hidden");
     });
 
     it("should-hide-delete-hint-when-no-active-workspace", () => {

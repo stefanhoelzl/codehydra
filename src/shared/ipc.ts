@@ -80,6 +80,7 @@ export const ApiIpcChannels = {
   // Project commands
   PROJECT_OPEN: "api:project:open",
   PROJECT_CLOSE: "api:project:close",
+  PROJECT_CLONE: "api:project:clone",
   PROJECT_LIST: "api:project:list",
   PROJECT_GET: "api:project:get",
   PROJECT_FETCH_BASES: "api:project:fetch-bases",

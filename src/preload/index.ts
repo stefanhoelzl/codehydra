@@ -32,7 +32,9 @@ contextBridge.exposeInMainWorld("api", {
 
   projects: {
     open: (path: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_OPEN, { path }),
-    close: (projectId: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectId }),
+    close: (projectId: string, options?: { removeLocalRepo?: boolean }) =>
+      ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectId, ...options }),
+    clone: (url: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLONE, { url }),
     list: () => ipcRenderer.invoke(ApiIpcChannels.PROJECT_LIST),
     get: (projectId: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_GET, { projectId }),
     fetchBases: (projectId: string) =>

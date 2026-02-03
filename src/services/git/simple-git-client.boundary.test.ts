@@ -552,6 +552,99 @@ describe("SimpleGitClient", () => {
     });
   });
 
+  describe("clone", () => {
+    it("clones a bare repository from local path", async () => {
+      // Create a temp dir with a source repo
+      const sourceRepo = await createTestGitRepo();
+      const targetDir = await createTempDir();
+      const targetPath = new Path(targetDir.path, "cloned.git");
+
+      try {
+        await client.clone(sourceRepo.path, targetPath);
+
+        // Verify it's a bare repo by checking for typical bare repo structure
+        const { readdir, stat } = await import("fs/promises");
+        const entries = await readdir(targetPath.toNative());
+        // Bare repos have HEAD, config, objects, refs at root (not in .git subdir)
+        expect(entries).toContain("HEAD");
+        expect(entries).toContain("config");
+        expect(entries).toContain("objects");
+        expect(entries).toContain("refs");
+        // Should NOT have .git directory (that's for non-bare repos)
+        expect(entries).not.toContain(".git");
+
+        // Verify HEAD exists (bare repos have it at root)
+        const headStat = await stat(nodePath.join(targetPath.toNative(), "HEAD"));
+        expect(headStat.isFile()).toBe(true);
+      } finally {
+        await sourceRepo.cleanup();
+        await targetDir.cleanup();
+      }
+    });
+
+    it("sets up remote-tracking branches and removes local branches", async () => {
+      // Create a source repo with multiple branches
+      const sourceRepo = await createTestGitRepo();
+      const sourceGit = simpleGit(sourceRepo.path);
+      await sourceGit.checkoutLocalBranch("feature-a");
+      await sourceGit.checkout("main");
+      await sourceGit.checkoutLocalBranch("feature-b");
+      await sourceGit.checkout("main");
+
+      const targetDir = await createTempDir();
+      const targetPath = new Path(targetDir.path, "cloned.git");
+
+      try {
+        await client.clone(sourceRepo.path, targetPath);
+
+        // After clone, should have ONLY remote-tracking branches, no local branches
+        const branches = await client.listBranches(targetPath);
+
+        // Should have remote branches (origin/main, origin/feature-a, origin/feature-b)
+        const remoteBranches = branches.filter((b) => b.isRemote);
+        expect(remoteBranches.length).toBeGreaterThanOrEqual(3);
+        expect(remoteBranches.some((b) => b.name === "origin/main")).toBe(true);
+        expect(remoteBranches.some((b) => b.name === "origin/feature-a")).toBe(true);
+        expect(remoteBranches.some((b) => b.name === "origin/feature-b")).toBe(true);
+
+        // Should have NO local branches (all were deleted after clone)
+        const localBranches = branches.filter((b) => !b.isRemote);
+        expect(localBranches).toHaveLength(0);
+      } finally {
+        await sourceRepo.cleanup();
+        await targetDir.cleanup();
+      }
+    });
+
+    it("throws GitError for invalid URL", async () => {
+      const targetDir = await createTempDir();
+      const targetPath = new Path(targetDir.path, "cloned.git");
+
+      try {
+        await expect(client.clone("not-a-valid-url-at-all", targetPath)).rejects.toThrow(GitError);
+      } finally {
+        await targetDir.cleanup();
+      }
+    });
+
+    it("throws GitError when target already exists", async () => {
+      const sourceRepo = await createTestGitRepo();
+      const targetDir = await createTempDir();
+      const targetPath = new Path(targetDir.path, "cloned.git");
+
+      try {
+        // Clone once - should succeed
+        await client.clone(sourceRepo.path, targetPath);
+
+        // Clone again to same target - should fail
+        await expect(client.clone(sourceRepo.path, targetPath)).rejects.toThrow(GitError);
+      } finally {
+        await sourceRepo.cleanup();
+        await targetDir.cleanup();
+      }
+    });
+  });
+
   /**
    * Git POSIX Path Output Verification
    *

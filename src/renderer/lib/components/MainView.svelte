@@ -49,6 +49,7 @@
   import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
+  import GitCloneDialog from "./GitCloneDialog.svelte";
   import OpenProjectErrorDialog from "./OpenProjectErrorDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import DeletionProgressView from "./DeletionProgressView.svelte";
@@ -119,10 +120,10 @@
     }
 
     // Check all conditions
+    // Show Create Workspace dialog when no workspaces exist (even if no projects)
     const firstProject = projectList[0];
     if (
       workspaceCount === 0 &&
-      firstProject !== undefined &&
       loading === "loaded" &&
       dialog.type === "closed" &&
       !deletionInProgress &&
@@ -130,7 +131,7 @@
     ) {
       // Debounce to avoid showing during rapid state changes
       autoShowTimeout = setTimeout(() => {
-        openCreateDialog(firstProject.id);
+        openCreateDialog(firstProject?.id);
       }, 100);
     }
 
@@ -171,7 +172,6 @@
     void initializeApp({
       containerRef,
       notificationService,
-      onAutoOpenProject: handleOpenProject,
     }).then((cleanup) => {
       cleanupInit = cleanup;
     });
@@ -183,26 +183,6 @@
       cleanupInit();
     };
   });
-
-  // Handle opening a project
-  async function handleOpenProject(): Promise<void> {
-    // Prevent sidebar collapse while native dialog is open (Windows focus issue)
-    setDialogOpen(true);
-    try {
-      const path = await api.ui.selectFolder();
-      if (!path) return;
-
-      try {
-        await api.projects.open(path);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.warn("Failed to open project", { path, error: message });
-        openProjectError = message;
-      }
-    } finally {
-      setDialogOpen(false);
-    }
-  }
 
   // Handle retry from open project error dialog
   async function handleOpenProjectRetry(): Promise<void> {
@@ -364,6 +344,8 @@
     <RemoveWorkspaceDialog open={true} workspaceRef={dialogState.value.workspaceRef} />
   {:else if dialogState.value.type === "close-project"}
     <CloseProjectDialog open={true} projectId={dialogState.value.projectId} />
+  {:else if dialogState.value.type === "git-clone"}
+    <GitCloneDialog open={true} />
   {/if}
 
   <OpenProjectErrorDialog
@@ -376,7 +358,6 @@
   <ShortcutOverlay
     active={shortcutModeActive.value}
     workspaceCount={getAllWorkspaces().length}
-    hasActiveProject={projects.value.length > 0}
     hasActiveWorkspace={activeWorkspacePath.value !== null}
     activeWorkspaceDeletionInProgress={activeWorkspacePath.value !== null &&
       getDeletionStatus(activeWorkspacePath.value) === "in-progress"}

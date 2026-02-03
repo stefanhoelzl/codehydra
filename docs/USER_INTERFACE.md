@@ -6,17 +6,17 @@
 
 The UI uses `@vscode-elements/elements` for consistent VS Code styling:
 
-| Component              | vscode-element Used      | Location                                                                         |
-| ---------------------- | ------------------------ | -------------------------------------------------------------------------------- |
-| Dialog buttons         | `<vscode-button>`        | CreateWorkspaceDialog, RemoveWorkspaceDialog, OpenProjectErrorDialog, SetupError |
-| Text input             | `<vscode-textfield>`     | CreateWorkspaceDialog (Name field)                                               |
-| Checkbox               | `<vscode-checkbox>`      | RemoveWorkspaceDialog (Delete branch)                                            |
-| Progress bar           | `<vscode-progress-bar>`  | SetupScreen                                                                      |
-| Loading spinner        | `<vscode-progress-ring>` | Sidebar (while loading)                                                          |
-| Shortcut badges        | `<vscode-badge>`         | Sidebar, ShortcutOverlay                                                         |
-| Project dividers       | `<vscode-divider>`       | Sidebar (between projects)                                                       |
-| Form validation helper | `<vscode-form-helper>`   | CreateWorkspaceDialog                                                            |
-| Open project button    | `<vscode-button>`        | CreateWorkspaceDialog (folder icon)                                              |
+| Component              | vscode-element Used      | Location                                                                                         |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
+| Dialog buttons         | `<vscode-button>`        | CreateWorkspaceDialog, RemoveWorkspaceDialog, OpenProjectErrorDialog, SetupError, GitCloneDialog |
+| Text input             | `<vscode-textfield>`     | CreateWorkspaceDialog (Name field), GitCloneDialog (URL field)                                   |
+| Checkbox               | `<vscode-checkbox>`      | RemoveWorkspaceDialog (Delete branch), CloseProjectDialog (Remove workspaces, Delete repo)       |
+| Progress bar           | `<vscode-progress-bar>`  | SetupScreen                                                                                      |
+| Loading spinner        | `<vscode-progress-ring>` | Sidebar (while loading), GitCloneDialog (cloning status)                                         |
+| Shortcut badges        | `<vscode-badge>`         | Sidebar, ShortcutOverlay                                                                         |
+| Project dividers       | `<vscode-divider>`       | Sidebar (between projects)                                                                       |
+| Form validation helper | `<vscode-form-helper>`   | CreateWorkspaceDialog                                                                            |
+| Open project button    | `<vscode-button>`        | CreateWorkspaceDialog (folder icon, git clone icon)                                              |
 
 **Exception**: BranchDropdown uses a custom implementation with native `<input>` for filtering and grouped options (Local/Remote branches), as `<vscode-single-select>` doesn't support these features.
 
@@ -241,6 +241,13 @@ They can open a project by clicking the folder icon in the Create Workspace dial
 
 ### Opening a Project
 
+There are two ways to open a project:
+
+1. **Open local repository** - via folder picker
+2. **Clone from URL** - via git clone dialog
+
+#### Opening a Local Repository
+
 **Flow:**
 
 1. Click the folder icon in the Create Workspace dialog (or from first-launch auto-open)
@@ -253,6 +260,49 @@ They can open a project by clicking the folder icon in the Create Workspace dial
 8. Worktree discovery runs (finds worktrees, NOT main directory)
 9. **If 0 worktrees found**: User can create a workspace
 10. **If 1+ worktrees found**: First workspace activated (if dialog was auto-opened)
+
+#### Cloning from Git URL
+
+**Flow:**
+
+1. Click the git icon in the Create Workspace dialog
+2. Git Clone dialog opens
+3. Enter repository URL (HTTPS or SSH format)
+4. Click Clone (or press Enter)
+5. **If URL already cloned**: Existing project is returned (no duplicate clones)
+6. Repository cloned as bare repo to managed location
+7. Create Workspace dialog opens with new project selected
+8. User creates a workspace from the cloned repo
+
+**Git Clone Dialog:**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Clone from Git Repository                            [×]  │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│  Repository URL                                            │
+│  [https://github.com/org/repo.git_____________]            │
+│                                                            │
+│  Cloning repository...                                     │ ← Status message
+│                                                            │
+├────────────────────────────────────────────────────────────┤
+│                           [Cancel]  [Clone]                │
+│                                        ↑                   │
+│                               Disabled until valid URL     │
+└────────────────────────────────────────────────────────────┘
+```
+
+**URL validation:**
+
+- HTTPS: `https://hostname/path/repo.git` (or without `.git`)
+- SSH: `git@hostname:org/repo.git`
+- Invalid URLs show error message, Clone button disabled
+
+**Duplicate detection:**
+
+- URLs are normalized for comparison (lowercase, `.git` stripped, etc.)
+- Cloning same URL returns existing project instead of error
 
 **Note**: The main git directory is the PROJECT, not a workspace. Only worktrees are workspaces.
 
@@ -319,7 +369,7 @@ They can open a project by clicking the folder icon in the Create Workspace dial
    - **Close Project** (default): Workspaces remain on disk
    - **Remove & Close** (checkbox): All workspaces AND their branches are deleted, then project closes
 
-**Close Project Dialog:**
+**Close Project Dialog (local project):**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -338,6 +388,41 @@ They can open a project by clicking the folder icon in the Create Workspace dial
 │                    when checkbox is checked                  │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+**Close Project Dialog (cloned from URL - has remoteUrl):**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Close Project                                          [×]  │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  This project has 3 workspaces that will remain on disk      │
+│  after closing.                                              │
+│                                                              │
+│  ☐ Remove all workspaces and their branches                  │
+│                                                              │
+│  ☐ Delete cloned repository and all local files              │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │ ⚠ This will permanently delete the cloned repository   │  │ ← Only shown when
+│  │   and all workspaces. You can clone it again from:     │  │   delete checkbox
+│  │   https://github.com/org/repo.git                      │  │   is checked
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│                    [Cancel]  [Delete & Close]                │
+│                              ↑                               │
+│                    Button changes to "Delete & Close"        │
+│                    when delete checkbox is checked           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Delete checkbox behavior (cloned projects only):**
+
+- Only visible for projects that have a `remoteUrl` (were cloned from URL)
+- Checking this checkbox also auto-checks "Remove all workspaces"
+- The "Remove all workspaces" checkbox becomes disabled when delete is checked
+- Shows a warning with the original clone URL so users can re-clone if needed
 
 **Post-close behavior:**
 

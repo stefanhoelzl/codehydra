@@ -17,6 +17,7 @@ function createMockApi(): ICodeHydraApi {
     projects: {
       open: vi.fn(),
       close: vi.fn(),
+      clone: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
       fetchBases: vi.fn().mockResolvedValue({ bases: [] }),

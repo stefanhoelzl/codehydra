@@ -43,6 +43,12 @@ function createMockCoreApi(overrides?: {
       workspaces: [],
     }),
     close: vi.fn().mockResolvedValue(undefined),
+    clone: vi.fn().mockResolvedValue({
+      id: "test-12345678" as ProjectId,
+      name: "test",
+      path: "/path",
+      workspaces: [],
+    }),
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(undefined),
     fetchBases: vi.fn().mockResolvedValue({ bases: [] }),

@@ -54,24 +54,53 @@ function createWorkspace(name: string, projectId: ProjectId): Workspace {
   };
 }
 
-function createProject(id: ProjectId, name: string, workspaces: Workspace[] = []): Project {
+function createProject(
+  id: ProjectId,
+  name: string,
+  workspaces: Workspace[] = [],
+  remoteUrl?: string
+): Project {
   return {
     id,
     name,
     path: `/test/projects/${name}`,
     workspaces,
+    ...(remoteUrl !== undefined && { remoteUrl }),
   };
 }
 
 /**
- * Helper to get the removeAll checkbox (vscode-checkbox).
+ * Helper to get checkboxes (vscode-checkbox).
  * Since vscode-checkbox is a web component, getByRole("checkbox") doesn't work.
  * We query by tag name instead.
  */
+function getAllCheckboxes(): NodeListOf<HTMLElement & { checked?: boolean; label?: string }> {
+  return document.querySelectorAll("vscode-checkbox") as NodeListOf<
+    HTMLElement & { checked?: boolean; label?: string }
+  >;
+}
+
+function getCheckboxLabel(cb: HTMLElement): string | null {
+  // Try attribute first, then property
+  return cb.getAttribute("label") ?? (cb as unknown as { label?: string }).label ?? null;
+}
+
 function getRemoveAllCheckbox(): HTMLElement & { checked?: boolean } {
-  const checkbox = document.querySelector("vscode-checkbox");
-  if (!checkbox) throw new Error("Checkbox not found");
-  return checkbox as HTMLElement & { checked?: boolean };
+  const checkboxes = getAllCheckboxes();
+  const checkbox = Array.from(checkboxes).find(
+    (cb) => getCheckboxLabel(cb)?.includes("workspaces") ?? false
+  );
+  if (!checkbox) throw new Error("Remove all checkbox not found");
+  return checkbox;
+}
+
+function getDeleteRepoCheckbox(): HTMLElement & { checked?: boolean } {
+  const checkboxes = getAllCheckboxes();
+  const checkbox = Array.from(checkboxes).find(
+    (cb) => getCheckboxLabel(cb)?.includes("Delete cloned") ?? false
+  );
+  if (!checkbox) throw new Error("Delete repo checkbox not found");
+  return checkbox;
 }
 
 describe("CloseProjectDialog component", () => {
@@ -169,7 +198,7 @@ describe("CloseProjectDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Should only call close, not remove
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId);
+      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
       expect(mockCloseDialog).toHaveBeenCalled();
     });
@@ -279,7 +308,7 @@ describe("CloseProjectDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId);
+      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
     });
 
@@ -343,7 +372,7 @@ describe("CloseProjectDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId);
+      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
     });
   });
 
@@ -388,7 +417,7 @@ describe("CloseProjectDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Should still close the project
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId);
+      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
     });
 
     it("error display uses role='alert'", async () => {
@@ -495,6 +524,128 @@ describe("CloseProjectDialog component", () => {
 
       // Should close dialog without errors
       expect(mockCloseDialog).toHaveBeenCalled();
+    });
+  });
+
+  describe("remote project (cloned from URL)", () => {
+    const remoteProject: Project = {
+      id: testProjectId,
+      name: "test-project",
+      path: "/test/projects/test-project",
+      workspaces: [createWorkspace("ws1", testProjectId)],
+      remoteUrl: "https://github.com/org/test-repo.git",
+    };
+
+    beforeEach(() => {
+      // Override the global beforeEach mock setup (global beforeEach runs first, then this)
+      mockProjects.mockReturnValue([remoteProject]);
+    });
+
+    it("shows delete repo checkbox for remote projects", async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const deleteCheckbox = getDeleteRepoCheckbox();
+      expect(deleteCheckbox).toBeInTheDocument();
+    });
+
+    it("hides delete repo checkbox for local projects", async () => {
+      const localProject = createProject(testProjectId, "test-project", [
+        createWorkspace("ws1", testProjectId),
+      ]);
+      mockProjects.mockReturnValue([localProject]);
+
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const checkboxes = getAllCheckboxes();
+      const deleteCheckbox = Array.from(checkboxes).find(
+        (cb) => cb.getAttribute("label")?.includes("Delete cloned") ?? false
+      );
+      expect(deleteCheckbox).toBeUndefined();
+    });
+
+    it("shows warning message when delete checkbox is checked", async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const deleteCheckbox = getDeleteRepoCheckbox();
+      deleteCheckbox.checked = true;
+      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
+
+      expect(screen.getByText(/permanently delete/i)).toBeInTheDocument();
+      expect(screen.getByText(/https:\/\/github.com\/org\/test-repo.git/)).toBeInTheDocument();
+    });
+
+    it("auto-checks removeAll when delete checkbox is checked", async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const removeAllCheckbox = getRemoveAllCheckbox();
+      const deleteCheckbox = getDeleteRepoCheckbox();
+
+      // Initially unchecked
+      expect(removeAllCheckbox.checked).toBe(false);
+
+      // Check delete checkbox
+      deleteCheckbox.checked = true;
+      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
+
+      // removeAll should now be checked
+      await waitFor(() => {
+        expect(removeAllCheckbox.checked).toBe(true);
+      });
+    });
+
+    it("disables removeAll checkbox when delete is checked", async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const deleteCheckbox = getDeleteRepoCheckbox();
+      deleteCheckbox.checked = true;
+      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
+
+      const removeAllCheckbox = getRemoveAllCheckbox();
+      expect(removeAllCheckbox).toBeDisabled();
+    });
+
+    it('shows "Delete & Close" button when delete checkbox is checked', async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const deleteCheckbox = getDeleteRepoCheckbox();
+      deleteCheckbox.checked = true;
+      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
+
+      expect(screen.getByRole("button", { name: /delete & close/i })).toBeInTheDocument();
+    });
+
+    it("calls close with removeLocalRepo option when delete is checked", async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const deleteCheckbox = getDeleteRepoCheckbox();
+      deleteCheckbox.checked = true;
+      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
+
+      const submitButton = screen.getByRole("button", { name: /delete & close/i });
+      await fireEvent.click(submitButton);
+
+      await vi.runAllTimersAsync();
+
+      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, { removeLocalRepo: true });
+    });
+
+    it("does not pass removeLocalRepo when delete is unchecked", async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const submitButton = screen.getByRole("button", { name: /close project/i });
+      await fireEvent.click(submitButton);
+
+      await vi.runAllTimersAsync();
+
+      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
     });
   });
 });

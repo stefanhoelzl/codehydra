@@ -2,7 +2,6 @@
   interface Props {
     active: boolean;
     workspaceCount?: number;
-    hasActiveProject?: boolean;
     hasActiveWorkspace?: boolean;
     activeWorkspaceDeletionInProgress?: boolean;
     idleWorkspaceCount?: number;
@@ -11,7 +10,6 @@
   let {
     active,
     workspaceCount = 0,
-    hasActiveProject = false,
     hasActiveWorkspace = false,
     activeWorkspaceDeletionInProgress = false,
     idleWorkspaceCount = 0,
@@ -19,7 +17,8 @@
 
   const showNavigation = $derived(workspaceCount > 1);
   const showJump = $derived(workspaceCount > 1);
-  const showNew = $derived(hasActiveProject);
+  // Always show "New" hint - Enter opens Create Workspace dialog even without projects
+  const showNew = true;
   const showDelete = $derived(hasActiveWorkspace && !activeWorkspaceDeletionInProgress);
   const showIdleNavigation = $derived(idleWorkspaceCount >= 2);
 </script>
