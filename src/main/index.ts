@@ -331,6 +331,15 @@ async function startServices(): Promise<void> {
   const appConfig = await configService.load();
   const selectedAgentType: AgentType = appConfig.agent ?? "opencode"; // Default to opencode if not set
 
+  // Capture app launch event with agent type
+  // Note: telemetryService may be null if initialization failed in bootstrap
+  telemetryService?.capture("app_launched", {
+    platform: platformInfo.platform,
+    arch: platformInfo.arch,
+    isDevelopment: buildInfo.isDevelopment,
+    agent: selectedAgentType,
+  });
+
   // Initialize auto-updater (checks once per session after startup, applies on quit)
   autoUpdater = new AutoUpdater({
     logger: loggingService.createLogger("updater"),
@@ -763,13 +772,6 @@ async function bootstrap(): Promise<void> {
     logger: loggingService.createLogger("telemetry"),
     apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
     host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
-  });
-
-  // Capture app launch event
-  telemetryService.capture("app_launched", {
-    platform: platformInfo.platform,
-    arch: platformInfo.arch,
-    isDevelopment: buildInfo.isDevelopment,
   });
 
   // Register global error handlers for uncaught exceptions
