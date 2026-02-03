@@ -83,10 +83,12 @@ function openAgentTerminal(agentType: AgentType, env: Record<string, string>): v
   const command = agentType === "claude" ? "ch-claude" : "ch-opencode";
 
   // Create terminal in editor area using viewColumn
+  // isTransient prevents the terminal from being restored on VS Code restart
   agentTerminal = vscode.window.createTerminal({
     name: terminalName,
     location: { viewColumn: vscode.ViewColumn.Active },
     env: env,
+    isTransient: true,
   });
 
   agentTerminal.show();
