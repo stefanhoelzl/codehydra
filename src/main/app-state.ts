@@ -74,7 +74,10 @@ export class AppState {
    */
   private readonly openProjects: Map<string, OpenProject> = new Map();
   /**
-   * Map of normalized project path strings to last used base branch.
+   * Map of normalized project path strings to default base branch.
+   * Populated by:
+   * - Explicit user selection during workspace creation (via setLastBaseBranch)
+   * - openProject() caching provider.defaultBase() result for performance
    */
   private readonly lastBaseBranches: Map<string, string> = new Map();
   private agentStatusManager: AgentStatusManager | null = null;
@@ -400,6 +403,11 @@ export class AppState {
 
     // Get default base branch (uses lastBaseBranches cache or provider fallback)
     const defaultBaseBranch = await this.getDefaultBaseBranch(projectPathStr);
+
+    // Cache computed default for performance (redundant writes are harmless - just overwrites Map entry)
+    if (defaultBaseBranch) {
+      this.setLastBaseBranch(projectPathStr, defaultBaseBranch);
+    }
 
     // Build IPC Project object with string-based paths
     const project: Project = {
