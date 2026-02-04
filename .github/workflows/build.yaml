@@ -145,7 +145,7 @@ jobs:
       - name: Package
         env:
           CODEHYDRA_VERSION: ${{ needs.prepare.outputs.version }}
-        run: pnpm dist:${{ matrix.target }} -- --config.extraMetadata.version=$CODEHYDRA_VERSION --publish=never
+        run: CI= pnpm dist:${{ matrix.target }} -- --config.extraMetadata.version=$CODEHYDRA_VERSION --publish=never
 
       - name: Rename artifact
         if: matrix.rename
