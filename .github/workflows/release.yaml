@@ -28,8 +28,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Get latest release tag
-          LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --limit 1 --json tagName --jq '.[0].tagName // empty')
+          # Get latest release tag (filter for isLatest to exclude code-server Windows builds)
+          LATEST_TAG=$(gh release list --repo "${{ github.repository }}" --json tagName,isLatest --jq '.[] | select(.isLatest) | .tagName // empty')
 
           if [[ -z "$LATEST_TAG" ]]; then
             echo "No previous release found, will create first release"
