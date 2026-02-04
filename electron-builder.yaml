@@ -2,9 +2,12 @@ appId: com.codehydra.app
 productName: CodeHydra
 copyright: Copyright © 2025 CodeHydra
 
-# Disable auto-publishing (release workflow handles GitHub Releases)
-# Update URL is configured via environment variables at build time
-publish: null
+# GitHub Releases for auto-update metadata generation
+# Note: --publish=never flag in CI prevents actual upload
+publish:
+  provider: github
+  owner: stefanhoelzl
+  repo: codehydra
 
 # Build directories
 directories:

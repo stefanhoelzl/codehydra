@@ -50,15 +50,6 @@ export class AutoUpdater {
     this.logger = deps.logger;
     this.isDevelopment = deps.isDevelopment;
 
-    // Configure update feed URL if build-time values are provided
-    if (__UPDATE_PROVIDER__ && __UPDATE_OWNER__ && __UPDATE_REPO__) {
-      autoUpdater.setFeedURL({
-        provider: __UPDATE_PROVIDER__ as "github",
-        owner: __UPDATE_OWNER__,
-        repo: __UPDATE_REPO__,
-      });
-    }
-
     // Configure electron-updater
     // autoInstallOnAppQuit is true by default
     autoUpdater.autoDownload = true;
