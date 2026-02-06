@@ -52,6 +52,8 @@ interface OpenProject {
   readonly workspaces: readonly InternalWorkspace[];
   /** Workspace provider for git operations */
   readonly provider: IWorkspaceProvider;
+  /** Original git remote URL if project was cloned from URL */
+  readonly remoteUrl?: string;
 }
 
 /**
@@ -392,6 +394,10 @@ export class AppState {
     // Generate project ID from normalized path
     const projectId = generateProjectId(projectPathStr);
 
+    // Load remoteUrl from project config (if this is a cloned project)
+    const projectConfig = await this.projectStore.getProjectConfig(projectPathStr);
+    const remoteUrl = projectConfig?.remoteUrl;
+
     // Store in internal state first (needed for getDefaultBaseBranch to work)
     this.openProjects.set(projectPathStr, {
       id: projectId,
@@ -399,6 +405,7 @@ export class AppState {
       path: projectPath,
       workspaces,
       provider,
+      ...(remoteUrl !== undefined && { remoteUrl }),
     });
 
     // Get default base branch (uses lastBaseBranches cache or provider fallback)
@@ -416,6 +423,7 @@ export class AppState {
       name: projectPath.basename,
       workspaces: toIpcWorkspaces(workspaces, projectId),
       ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+      ...(remoteUrl !== undefined && { remoteUrl }),
     };
 
     // Set first workspace as active now that project is registered
@@ -434,8 +442,10 @@ export class AppState {
       this.viewManager.preloadWorkspaceUrl(workspace.path.toString());
     }
 
-    // Persist to store
-    await this.projectStore.saveProject(projectPathStr);
+    // Persist to store only if not already saved (e.g., cloned projects already have config)
+    if (!projectConfig) {
+      await this.projectStore.saveProject(projectPathStr);
+    }
 
     return project;
   }
@@ -493,6 +503,7 @@ export class AppState {
       path: openProject.path.toString(),
       name: openProject.name,
       workspaces: toIpcWorkspaces(openProject.workspaces, openProject.id),
+      ...(openProject.remoteUrl !== undefined && { remoteUrl: openProject.remoteUrl }),
     };
   }
 
@@ -512,6 +523,7 @@ export class AppState {
         name: openProject.name,
         workspaces: toIpcWorkspaces(openProject.workspaces, openProject.id),
         ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+        ...(openProject.remoteUrl !== undefined && { remoteUrl: openProject.remoteUrl }),
       });
     }
     return result;
@@ -606,6 +618,7 @@ export class AppState {
           path: openProject.path.toString(),
           name: openProject.name,
           workspaces: toIpcWorkspaces(openProject.workspaces, openProject.id),
+          ...(openProject.remoteUrl !== undefined && { remoteUrl: openProject.remoteUrl }),
         };
       }
     }

@@ -143,9 +143,13 @@
           {#if projectIndex > 0}
             <vscode-divider></vscode-divider>
           {/if}
+          {@const projectTitle = project.remoteUrl ?? project.path}
           <li class="project-item">
             <div class="project-header">
-              <span class="project-name" title={project.path}>{project.name}</span>
+              <span class="project-icon" title={projectTitle}>
+                <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
+              </span>
+              <span class="project-name" title={projectTitle}>{project.name}</span>
               <div class="project-actions">
                 <button
                   type="button"
@@ -383,7 +387,15 @@
     min-width: var(--ch-sidebar-width, 250px);
   }
 
+  .project-icon {
+    opacity: 0.7;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
   .project-name {
+    flex: 1;
     font-weight: 600;
     font-size: 13px;
     overflow: hidden;

@@ -306,17 +306,11 @@ export class CoreModule implements IApiModule {
     // Open the newly cloned project (at git/ subdirectory where the repo is)
     const project = await this.deps.appState.openProject(gitPath.toString());
 
-    // Convert to API type and add remoteUrl
     const apiProject = this.toApiProject(project, project.defaultBaseBranch);
-    // Add remoteUrl to the response
-    const projectWithRemoteUrl: Project = {
-      ...apiProject,
-      remoteUrl: url,
-    };
 
-    this.api.emit("project:opened", { project: projectWithRemoteUrl });
+    this.api.emit("project:opened", { project: apiProject });
 
-    return projectWithRemoteUrl;
+    return apiProject;
   }
 
   private async projectList(payload: EmptyPayload): Promise<readonly Project[]> {
@@ -599,6 +593,7 @@ export class CoreModule implements IApiModule {
     internalProject: {
       path: string;
       name: string;
+      remoteUrl?: string;
       workspaces: ReadonlyArray<{
         path: string;
         branch?: string | null;
@@ -614,6 +609,7 @@ export class CoreModule implements IApiModule {
       path: internalProject.path,
       workspaces: internalProject.workspaces.map((w) => this.toApiWorkspace(projectId, w)),
       ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+      ...(internalProject.remoteUrl !== undefined && { remoteUrl: internalProject.remoteUrl }),
     };
   }
 

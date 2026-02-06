@@ -68,6 +68,7 @@ const { mockProjectStore, mockWorkspaceProvider, mockCreateGitWorktreeProvider }
       saveProject: vi.fn(() => Promise.resolve()),
       removeProject: vi.fn(() => Promise.resolve()),
       loadAllProjects: vi.fn(() => Promise.resolve([] as string[])),
+      getProjectConfig: vi.fn(() => Promise.resolve(undefined)),
     };
 
     return {
