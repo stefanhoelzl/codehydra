@@ -146,7 +146,9 @@ jobs:
         env:
           CODEHYDRA_VERSION: ${{ needs.prepare.outputs.version }}
           GH_TOKEN: ${{ github.token }}
-        run: pnpm dist:${{ matrix.target }} -- --config.extraMetadata.version=$CODEHYDRA_VERSION --publish=never
+        run: |
+          pnpm pkg set "version=$CODEHYDRA_VERSION"
+          pnpm dist:${{ matrix.target }} -- --publish=never
 
       - name: Rename artifact
         if: matrix.rename
