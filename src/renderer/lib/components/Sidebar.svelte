@@ -163,7 +163,7 @@
                   aria-label="Close project"
                   onclick={() => onCloseProject(project.id)}
                 >
-                  <Icon name="close" size={14} />
+                  <Icon name="trash" size={14} />
                 </button>
               </div>
             </div>
@@ -217,7 +217,7 @@
                         aria-label="Remove workspace"
                         onclick={() => handleRemoveWorkspace(workspaceRef)}
                       >
-                        <Icon name="close" size={14} />
+                        <Icon name="trash" size={14} />
                       </button>
                     {/if}
                     {#if deletionStatus === "in-progress"}
