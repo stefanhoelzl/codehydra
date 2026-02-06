@@ -66,6 +66,7 @@ const {
     saveProject: vi.fn(() => Promise.resolve()),
     removeProject: vi.fn(() => Promise.resolve()),
     loadAllProjects: vi.fn(() => Promise.resolve([] as string[])),
+    getProjectConfig: vi.fn(() => Promise.resolve(undefined as { remoteUrl?: string } | undefined)),
   };
 
   const mockView: {
@@ -273,6 +274,32 @@ describe("AppState", () => {
       await appState.openProject("/project");
 
       expect(mockProjectStore.saveProject).toHaveBeenCalledWith("/project");
+    });
+
+    it("skips saving when project config already exists", async () => {
+      // Simulate a cloned project that already has config saved
+      mockProjectStore.getProjectConfig.mockResolvedValueOnce({
+        remoteUrl: "https://github.com/org/repo.git",
+      });
+
+      const appState = new AppState(
+        mockProjectStore as unknown as ProjectStore,
+        mockViewManager as unknown as IViewManager,
+        mockPathProvider,
+        8080,
+        mockFileSystemLayer,
+        mockLoggingService,
+        "claude",
+        mockWorkspaceFileService,
+        MOCK_WRAPPER_PATH
+      );
+
+      const project = await appState.openProject("/project");
+
+      // Project should include remoteUrl from existing config
+      expect(project.remoteUrl).toBe("https://github.com/org/repo.git");
+      // saveProject should NOT be called since config already exists
+      expect(mockProjectStore.saveProject).not.toHaveBeenCalled();
     });
 
     it("returns Project object", async () => {

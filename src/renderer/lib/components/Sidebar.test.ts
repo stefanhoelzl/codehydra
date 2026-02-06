@@ -697,8 +697,10 @@ describe("Sidebar component", () => {
         },
       });
 
-      // Get all project names in rendered order
-      const projectNames = screen.getAllByTitle(/^\//);
+      // Get all project names in rendered order (filter to .project-name elements only)
+      const projectNames = screen
+        .getAllByTitle(/^\//)
+        .filter((el) => el.classList.contains("project-name"));
       const names = projectNames.map((el) => el.textContent);
 
       expect(names).toEqual(["Alpha", "alpha", "beta", "charlie"]);
