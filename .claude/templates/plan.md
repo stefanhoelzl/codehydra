@@ -15,6 +15,7 @@ reviewers: []
 
 - **Problem**: What problem does this solve?
 - **Solution**: High-level approach
+- **Interfaces**: New or changed interfaces (IPC channels, types, abstraction layers)
 - **Risks**: Identified risks and mitigations
 - **Alternatives Considered**: Other approaches and why they were rejected
 

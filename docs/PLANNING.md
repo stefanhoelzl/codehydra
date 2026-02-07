@@ -26,15 +26,15 @@ Use `.claude/templates/plan.md` for the exact structure. Every plan must include
 
 ### Required Sections
 
-| Section                  | What It Answers                                                      |
-| ------------------------ | -------------------------------------------------------------------- |
-| **Overview**             | What problem? What solution? What risks? What alternatives?          |
-| **Architecture**         | How does this fit into the system? (diagram for significant changes) |
-| **Testing Strategy**     | Which test types needed? (per docs/TESTING.md)                       |
-| **Implementation Steps** | What to build, in what order, with test criteria for each step       |
-| **Dependencies**         | Any new packages needed? (require user approval)                     |
-| **Documentation**        | What docs need updating?                                             |
-| **Definition of Done**   | Acceptance criteria                                                  |
+| Section                  | What It Answers                                                              |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| **Overview**             | What problem? What solution? What interfaces? What risks? What alternatives? |
+| **Architecture**         | How does this fit into the system? (diagram for significant changes)         |
+| **Testing Strategy**     | Which test types needed? (per docs/TESTING.md)                               |
+| **Implementation Steps** | What to build, in what order, with test criteria for each step               |
+| **Dependencies**         | Any new packages needed? (require user approval)                             |
+| **Documentation**        | What docs need updating?                                                     |
+| **Definition of Done**   | Acceptance criteria                                                          |
 
 ### Optional Sections
 
