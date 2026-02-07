@@ -92,8 +92,8 @@ export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChan
   PostToolUse: "busy",
   // Informational only (no change)
   Notification: null,
-  // Informational only (no change)
-  PreCompact: null,
+  // Compacting context, agent working
+  PreCompact: "busy",
 };
 
 /**
