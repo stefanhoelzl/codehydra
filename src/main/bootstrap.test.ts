@@ -11,6 +11,8 @@ import type { LifecycleModuleDeps } from "./modules/lifecycle";
 import type { CoreModuleDeps } from "./modules/core";
 import { createMockLogger } from "../services/logging";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
+import { HookRegistry } from "./intents/infrastructure/hook-registry";
+import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import type { AppState } from "./app-state";
 import type { IViewManager } from "./managers/view-manager.interface";
 
@@ -133,6 +135,12 @@ function createMockGlobalWorktreeProvider(): import("../services/git/git-worktre
   } as unknown as import("../services/git/git-worktree-provider").GitWorktreeProvider;
 }
 
+function createMockDispatcher(): ReturnType<BootstrapDeps["dispatcherFn"]> {
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
+  return { hookRegistry, dispatcher };
+}
+
 function createMockDeps(): BootstrapDeps {
   return {
     logger: createMockLogger(),
@@ -140,6 +148,7 @@ function createMockDeps(): BootstrapDeps {
     lifecycleDeps: createMockLifecycleDeps(),
     coreDepsFn: () => createMockCoreDeps(),
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
+    dispatcherFn: createMockDispatcher,
   };
 }
 

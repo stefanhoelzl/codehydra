@@ -99,6 +99,8 @@ export interface BootstrapDeps {
   readonly coreDepsFn: () => CoreModuleDeps;
   /** Global worktree provider for metadata operations (provided after setup completes) */
   readonly globalWorktreeProviderFn: () => GitWorktreeProvider;
+  /** Factory that returns the early-created dispatcher and hook registry */
+  readonly dispatcherFn: () => { hookRegistry: HookRegistry; dispatcher: Dispatcher };
 }
 
 /**
@@ -162,8 +164,11 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     modules.push(coreModule);
 
     // Wire shared intent dispatcher for all operations
+    const { hookRegistry, dispatcher } = deps.dispatcherFn();
     wireDispatcher(
       registry,
+      hookRegistry,
+      dispatcher,
       deps.globalWorktreeProviderFn(),
       coreDeps.appState,
       coreDeps.viewManager
@@ -222,13 +227,12 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
  */
 function wireDispatcher(
   registry: IApiRegistry,
+  hookRegistry: HookRegistry,
+  dispatcher: Dispatcher,
   globalProvider: GitWorktreeProvider,
   appState: CoreModuleDeps["appState"],
   viewManager: CoreModuleDeps["viewManager"]
 ): void {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
-
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
