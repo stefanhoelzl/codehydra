@@ -13,6 +13,8 @@ import type { DomainEvent } from "../intents/infrastructure/types";
 import type { IApiRegistry } from "../api/registry-types";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations/set-metadata";
 import { EVENT_METADATA_CHANGED } from "../operations/set-metadata";
+import type { ModeChangedPayload, ModeChangedEvent } from "../operations/set-mode";
+import { EVENT_MODE_CHANGED } from "../operations/set-mode";
 
 /**
  * Create an IpcEventBridge module that forwards domain events to the API registry.
@@ -29,6 +31,13 @@ export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
         workspaceName: payload.workspaceName,
         key: payload.key,
         value: payload.value,
+      });
+    },
+    [EVENT_MODE_CHANGED]: (event: DomainEvent) => {
+      const payload = (event as ModeChangedEvent).payload as ModeChangedPayload;
+      apiRegistry.emit("ui:mode-changed", {
+        mode: payload.mode,
+        previousMode: payload.previousMode,
       });
     },
   };

@@ -9,7 +9,6 @@ import { initializeBootstrap } from "./bootstrap";
 import type { BootstrapDeps } from "./bootstrap";
 import type { LifecycleModuleDeps } from "./modules/lifecycle";
 import type { CoreModuleDeps } from "./modules/core";
-import type { UiModuleDeps } from "./modules/ui";
 import { createMockLogger } from "../services/logging";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import type { AppState } from "./app-state";
@@ -116,18 +115,11 @@ function createMockCoreDeps(): CoreModuleDeps {
       getProjectConfig: vi.fn().mockResolvedValue(undefined),
       deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
     } as unknown as import("../services").ProjectStore,
-    emitDeletionProgress: vi.fn(),
-    logger: createMockLogger(),
-  };
-}
-
-function createMockUiDeps(): UiModuleDeps {
-  return {
-    appState: createMockAppState(),
-    viewManager: createMockViewManager(),
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
+    emitDeletionProgress: vi.fn(),
+    logger: createMockLogger(),
   };
 }
 
@@ -147,7 +139,6 @@ function createMockDeps(): BootstrapDeps {
     ipcLayer: createBehavioralIpcLayer(),
     lifecycleDeps: createMockLifecycleDeps(),
     coreDepsFn: () => createMockCoreDeps(),
-    uiDepsFn: () => createMockUiDeps(),
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
   };
 }

@@ -1,9 +1,10 @@
 /**
- * CoreModule - Handles project and workspace operations.
+ * CoreModule - Handles project, workspace, and UI operations.
  *
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
  * - Workspace operations: create, remove, forceRemove, get
+ * - UI operations: selectFolder, switchWorkspace
  *
  * Created in startServices() after setup is complete.
  */
@@ -19,6 +20,7 @@ import type {
   WorkspaceRemovePayload,
   WorkspaceRefPayload,
   WorkspaceExecuteCommandPayload,
+  UiSwitchWorkspacePayload,
   EmptyPayload,
 } from "../../api/registry-types";
 import type { PluginResult } from "../../../shared/plugin-protocol";
@@ -75,6 +77,16 @@ export interface IPluginServer {
 }
 
 /**
+ * Minimal dialog interface required for folder selection.
+ */
+export interface MinimalDialog {
+  showOpenDialog(options: { properties: string[] }): Promise<{
+    canceled: boolean;
+    filePaths: string[];
+  }>;
+}
+
+/**
  * Callback for emitting deletion progress events.
  */
 export type DeletionProgressCallback = (progress: DeletionProgress) => void;
@@ -107,6 +119,8 @@ export interface CoreModuleDeps {
   readonly pluginServer?: IPluginServer;
   /** Handler for detecting and resolving processes blocking workspace deletion (Windows only, undefined on other platforms) */
   readonly workspaceLockHandler?: WorkspaceLockHandler | undefined;
+  /** Electron dialog for folder selection */
+  readonly dialog?: MinimalDialog;
   /** Optional logger */
   readonly logger?: Logger;
 }
@@ -121,6 +135,7 @@ export interface CoreModuleDeps {
  * Registered methods:
  * - projects.*: open, close, list, get, fetchBases
  * - workspaces.*: create, remove, forceRemove, get
+ * - ui.selectFolder, ui.switchWorkspace
  *
  * Events emitted:
  * - project:opened, project:closed, project:bases-updated
@@ -184,15 +199,16 @@ export class CoreModule implements IApiModule {
     this.api.register("workspaces.get", this.workspaceGet.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET,
     });
-    this.api.register(
-      "workspaces.restartAgentServer",
-      this.workspaceRestartAgentServer.bind(this),
-      {
-        ipc: ApiIpcChannels.WORKSPACE_RESTART_AGENT_SERVER,
-      }
-    );
     // executeCommand is not exposed via IPC (only used by MCP/Plugin)
     this.api.register("workspaces.executeCommand", this.workspaceExecuteCommand.bind(this));
+
+    // UI methods (relocated from UiModule)
+    this.api.register("ui.selectFolder", this.selectFolder.bind(this), {
+      ipc: ApiIpcChannels.UI_SELECT_FOLDER,
+    });
+    this.api.register("ui.switchWorkspace", this.switchWorkspace.bind(this), {
+      ipc: ApiIpcChannels.UI_SWITCH_WORKSPACE,
+    });
   }
 
   // ===========================================================================
@@ -459,22 +475,6 @@ export class CoreModule implements IApiModule {
     return this.toApiWorkspace(payload.projectId, resolved.workspace);
   }
 
-  private async workspaceRestartAgentServer(payload: WorkspaceRefPayload): Promise<number> {
-    const { workspace } = await this.resolveWorkspace(payload);
-
-    const serverManager = this.deps.appState.getServerManager();
-    if (!serverManager) {
-      throw new Error("Agent server manager not available");
-    }
-
-    const result = await serverManager.restartServer(workspace.path);
-    if (!result.success) {
-      throw new Error(result.error);
-    }
-
-    return result.port;
-  }
-
   private async workspaceExecuteCommand(payload: WorkspaceExecuteCommandPayload): Promise<unknown> {
     const { workspace } = await this.resolveWorkspace(payload);
 
@@ -493,6 +493,35 @@ export class CoreModule implements IApiModule {
     }
 
     return result.data;
+  }
+
+  // ===========================================================================
+  // UI Methods (relocated from UiModule)
+  // ===========================================================================
+
+  private async selectFolder(payload: EmptyPayload): Promise<string | null> {
+    void payload; // Required by MethodHandler interface but unused for no-arg methods
+    if (!this.deps.dialog) {
+      throw new Error("Dialog not available");
+    }
+    const result = await this.deps.dialog.showOpenDialog({
+      properties: ["openDirectory"],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0] ?? null;
+  }
+
+  private async switchWorkspace(payload: UiSwitchWorkspacePayload): Promise<void> {
+    const { workspace } = await this.resolveWorkspace(payload);
+
+    const focus = payload.focus ?? true;
+    // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
+    // wired in index.ts, not directly here
+    this.deps.viewManager.setActiveWorkspace(workspace.path, focus);
   }
 
   // ===========================================================================

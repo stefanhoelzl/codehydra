@@ -65,7 +65,6 @@ import { AppState } from "./app-state";
 import { wireApiEvents, formatWindowTitle, registerLogHandlers } from "./ipc";
 import { initializeBootstrap, type BootstrapResult } from "./bootstrap";
 import type { CoreModuleDeps } from "./modules/core";
-import type { UiModuleDeps } from "./modules/ui";
 import { generateProjectId, extractWorkspaceName } from "./api/id-utils";
 import type { ICodeHydraApi, Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
@@ -515,7 +514,7 @@ async function startServices(): Promise<void> {
     throw new Error("Bootstrap not initialized - startServices called before bootstrap");
   }
 
-  // Create remaining modules (CoreModule, UiModule)
+  // Create remaining modules (CoreModule) and wire intent dispatcher
   // The deps factory functions reference module-level appState/viewManager which are now set
   bootstrapResult.startServices();
 
@@ -909,7 +908,7 @@ async function bootstrap(): Promise<void> {
 
   // 7. Initialize bootstrap with API registry and modules
   // LifecycleModule is created immediately (handles lifecycle.* IPC)
-  // CoreModule and UiModule are created when startServices() calls bootstrapResult.startServices()
+  // CoreModule and intent dispatcher are created when startServices() calls bootstrapResult.startServices()
   const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
   bootstrapResult = initializeBootstrap({
     logger: loggingService.createLogger("api"),
@@ -947,6 +946,24 @@ async function bootstrap(): Promise<void> {
         nodePath.join(pathProvider.scriptsRuntimeDir.toNative(), "blocking-processes.ps1")
       );
 
+      // Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
+      // dialogLayer is guaranteed set by bootstrap() before startServices()
+      const dialogLayerRef = dialogLayer;
+      const dialog = dialogLayerRef
+        ? {
+            showOpenDialog: async (options: { properties: string[] }) => {
+              const result = await dialogLayerRef.showOpenDialog({
+                properties:
+                  options.properties as import("../services/platform/dialog").OpenDialogProperty[],
+              });
+              return {
+                canceled: result.canceled,
+                filePaths: result.filePaths.map((p) => p.toString()),
+              };
+            },
+          }
+        : undefined;
+
       const baseDeps = {
         appState,
         viewManager,
@@ -954,6 +971,7 @@ async function bootstrap(): Promise<void> {
         pathProvider,
         projectStore,
         workspaceLockHandler,
+        ...(dialog ? { dialog } : {}),
         emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => {
           try {
             viewManagerRef
@@ -981,31 +999,6 @@ async function bootstrap(): Promise<void> {
         };
       }
       return baseDeps;
-    },
-    // UI module deps - factory that captures module-level appState
-    uiDepsFn: (): UiModuleDeps => {
-      if (!appState || !viewManager || !dialogLayer) {
-        throw new Error("UI deps not ready - appState/viewManager/dialogLayer not initialized");
-      }
-      // Capture dialogLayer for closure
-      const dialogLayerRef = dialogLayer;
-      return {
-        appState,
-        viewManager,
-        // Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
-        dialog: {
-          showOpenDialog: async (options: { properties: string[] }) => {
-            const result = await dialogLayerRef.showOpenDialog({
-              properties:
-                options.properties as import("../services/platform/dialog").OpenDialogProperty[],
-            });
-            return {
-              canceled: result.canceled,
-              filePaths: result.filePaths.map((p) => p.toString()),
-            };
-          },
-        },
-      };
     },
     // Global worktree provider for metadata operations
     globalWorktreeProviderFn: () => {
