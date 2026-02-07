@@ -4,7 +4,7 @@
 
 CodeHydra's main process currently uses three monolith modules (CoreModule 1059 LOC, UiModule 170 LOC, LifecycleModule 500 LOC) plus AppState (738 LOC) to handle all operations. Adding new behavior requires modifying these monoliths. Cross-cutting concerns (telemetry, IPC notifications, state updates) are interleaved with business logic.
 
-This plan introduces an **Intent-Operation architecture** that separates *what* the system wants to achieve (intents) from *how* it's achieved (operations), with modules providing behavior through declarative hook registrations.
+This plan introduces an **Intent-Operation architecture** that separates _what_ the system wants to achieve (intents) from _how_ it's achieved (operations), with modules providing behavior through declarative hook registrations.
 
 **Core principle: Operations do not call each other. They emit intents.**
 
@@ -14,7 +14,7 @@ This plan introduces an **Intent-Operation architecture** that separates *what* 
 
 ### Intent
 
-An **Intent** represents *what the system wants to achieve*, independent of how it is done.
+An **Intent** represents _what the system wants to achieve_, independent of how it is done.
 
 - Typed discriminated union (e.g., `'workspace:create'`, `'project:open'`)
 - Contains a payload with all required parameters
@@ -27,7 +27,7 @@ An **Intent** represents *what the system wants to achieve*, independent of how 
 
 ### Operation
 
-An **Operation** represents *how an intent is fulfilled*. It is the orchestrator of business logic and provides hook points for modules to extend or modify behavior.
+An **Operation** represents _how an intent is fulfilled_. It is the orchestrator of business logic and provides hook points for modules to extend or modify behavior.
 
 - Declares typed hook points (e.g., `gatherConfig`, `create`, `finalize`)
 - Receives an `OperationContext` with intent, hooks, dispatcher, and event emitter
@@ -40,14 +40,14 @@ An **Operation** represents *how an intent is fulfilled*. It is the orchestrator
 
 ### Intent vs Operation
 
-| Aspect | Intent | Operation |
-|---|---|---|
-| Represents | What the system wants | How the system achieves it |
-| Typed | Yes (discriminated union) | Yes (generic over Intent) |
-| Knows about modules/hooks? | No | Declares hooks; does not wire them |
-| Triggers | Dispatched by triggers or other operations | Can dispatch new intents or emit events |
-| Extensible? | Yes (new intent types) | Yes (hook points allow module extension) |
-| Behavior | Passive description | Active orchestrator |
+| Aspect                     | Intent                                     | Operation                                |
+| -------------------------- | ------------------------------------------ | ---------------------------------------- |
+| Represents                 | What the system wants                      | How the system achieves it               |
+| Typed                      | Yes (discriminated union)                  | Yes (generic over Intent)                |
+| Knows about modules/hooks? | No                                         | Declares hooks; does not wire them       |
+| Triggers                   | Dispatched by triggers or other operations | Can dispatch new intents or emit events  |
+| Extensible?                | Yes (new intent types)                     | Yes (hook points allow module extension) |
+| Behavior                   | Passive description                        | Active orchestrator                      |
 
 ### Hook
 
@@ -171,52 +171,52 @@ handlers declaratively │ Subscribers  │
 
 **App Lifecycle:**
 
-| Intent | Payload |
-|---|---|
-| `app:get-state` | `{}` |
+| Intent             | Payload                             |
+| ------------------ | ----------------------------------- |
+| `app:get-state`    | `{}`                                |
 | `app:select-agent` | `{ agent: 'opencode' \| 'claude' }` |
-| `app:setup` | `{}` |
-| `app:start` | `{}` |
-| `app:shutdown` | `{}` |
+| `app:setup`        | `{}`                                |
+| `app:start`        | `{}`                                |
+| `app:shutdown`     | `{}`                                |
 
 **Workspace:**
 
-| Intent | Payload |
-|---|---|
-| `workspace:create` | `{ projectPath, name, baseBranch, initialPrompt?, keepInBackground? }` |
-| `workspace:delete` | `{ projectPath, workspaceName, keepBranch? }` |
-| `workspace:switch` | `{ projectPath, workspacePath }` |
-| `workspace:set-metadata` | `{ workspacePath, key, value }` |
+| Intent                   | Payload                                                                |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `workspace:create`       | `{ projectPath, name, baseBranch, initialPrompt?, keepInBackground? }` |
+| `workspace:delete`       | `{ projectPath, workspaceName, keepBranch? }`                          |
+| `workspace:switch`       | `{ projectPath, workspacePath }`                                       |
+| `workspace:set-metadata` | `{ workspacePath, key, value }`                                        |
 
 **Project:**
 
-| Intent | Payload |
-|---|---|
-| `project:open` | `{ path }` (clone from URL or first-time open) |
-| `project:load` | `{ path }` (load existing from disk) |
-| `project:close` | `{ projectId }` |
+| Intent          | Payload                                        |
+| --------------- | ---------------------------------------------- |
+| `project:open`  | `{ path }` (clone from URL or first-time open) |
+| `project:load`  | `{ path }` (load existing from disk)           |
+| `project:close` | `{ projectId }`                                |
 
 **Agent:**
 
-| Intent | Payload |
-|---|---|
-| `agent:restart` | `{ workspacePath }` |
+| Intent                | Payload                               |
+| --------------------- | ------------------------------------- |
+| `agent:restart`       | `{ workspacePath }`                   |
 | `agent:change-status` | `{ workspacePath, status, session? }` |
 
 **UI:**
 
-| Intent | Payload |
-|---|---|
-| `ui:enter-shortcut-mode` | `{}` |
-| `ui:change-view-mode` | `{ mode }` |
+| Intent                   | Payload    |
+| ------------------------ | ---------- |
+| `ui:enter-shortcut-mode` | `{}`       |
+| `ui:change-view-mode`    | `{ mode }` |
 
 ### Queries (approach decided during implementation)
 
-| Query | Returns |
-|---|---|
-| `workspace:get-status` | `WorkspaceStatus` |
+| Query                    | Returns                  |
+| ------------------------ | ------------------------ |
+| `workspace:get-status`   | `WorkspaceStatus`        |
 | `workspace:get-metadata` | `Record<string, string>` |
-| `agent:get-session` | `AgentSession \| null` |
+| `agent:get-session`      | `AgentSession \| null`   |
 
 ---
 
@@ -226,31 +226,31 @@ handlers declaratively │ Subscribers  │
 
 ```ts
 type Intent =
-  | { type: 'workspace:create'; payload: CreateWorkspacePayload }
-  | { type: 'workspace:delete'; payload: DeleteWorkspacePayload }
-  | { type: 'workspace:switch'; payload: SwitchWorkspacePayload }
-  | { type: 'workspace:set-metadata'; payload: SetMetadataPayload }
-  | { type: 'project:open'; payload: OpenProjectPayload }
-  | { type: 'project:load'; payload: LoadProjectPayload }
-  | { type: 'project:close'; payload: CloseProjectPayload }
-  | { type: 'agent:restart'; payload: RestartAgentPayload }
-  | { type: 'agent:change-status'; payload: ChangeAgentStatusPayload }
-  | { type: 'ui:enter-shortcut-mode'; payload: {} }
-  | { type: 'ui:change-view-mode'; payload: ChangeViewModePayload }
-  | { type: 'app:get-state'; payload: {} }
-  | { type: 'app:select-agent'; payload: SelectAgentPayload }
-  | { type: 'app:setup'; payload: {} }
-  | { type: 'app:start'; payload: {} }
-  | { type: 'app:shutdown'; payload: {} }
+  | { type: "workspace:create"; payload: CreateWorkspacePayload }
+  | { type: "workspace:delete"; payload: DeleteWorkspacePayload }
+  | { type: "workspace:switch"; payload: SwitchWorkspacePayload }
+  | { type: "workspace:set-metadata"; payload: SetMetadataPayload }
+  | { type: "project:open"; payload: OpenProjectPayload }
+  | { type: "project:load"; payload: LoadProjectPayload }
+  | { type: "project:close"; payload: CloseProjectPayload }
+  | { type: "agent:restart"; payload: RestartAgentPayload }
+  | { type: "agent:change-status"; payload: ChangeAgentStatusPayload }
+  | { type: "ui:enter-shortcut-mode"; payload: {} }
+  | { type: "ui:change-view-mode"; payload: ChangeViewModePayload }
+  | { type: "app:get-state"; payload: {} }
+  | { type: "app:select-agent"; payload: SelectAgentPayload }
+  | { type: "app:setup"; payload: {} }
+  | { type: "app:start"; payload: {} }
+  | { type: "app:shutdown"; payload: {} };
 ```
 
 ### Operation (Generic Over Intent)
 
 ```ts
 interface Operation<I extends Intent, R = void> {
-  readonly id: string
-  supports(intent: Intent): intent is I
-  execute(ctx: OperationContext<I>): Promise<R>
+  readonly id: string;
+  supports(intent: Intent): intent is I;
+  execute(ctx: OperationContext<I>): Promise<R>;
 }
 ```
 
@@ -258,14 +258,14 @@ interface Operation<I extends Intent, R = void> {
 
 ```ts
 interface OperationContext<I extends Intent> {
-  readonly intent: I
-  readonly dispatch: DispatchFn
-  readonly emit: <E extends DomainEvent>(event: E) => void
-  readonly hooks: ResolvedHooks   // resolved by registry, injected by dispatcher
+  readonly intent: I;
+  readonly dispatch: DispatchFn;
+  readonly emit: <E extends DomainEvent>(event: E) => void;
+  readonly hooks: ResolvedHooks; // resolved by registry, injected by dispatcher
   readonly causation: {
-    intentId: string
-    parentIntentId?: string       // causal chain for tracing
-  }
+    intentId: string;
+    parentIntentId?: string; // causal chain for tracing
+  };
 }
 ```
 
@@ -273,18 +273,19 @@ interface OperationContext<I extends Intent> {
 
 ```ts
 interface HookContext {
-  readonly intent: Intent
-  readonly data: Record<string, unknown>   // mutable, shared across handlers
-  error?: Error                            // set when a handler fails
+  readonly intent: Intent;
+  readonly data: Record<string, unknown>; // mutable, shared across handlers
+  error?: Error; // set when a handler fails
 }
 
 interface HookHandler {
-  handler: (ctx: HookContext) => Promise<void>
-  onError?: boolean   // if true, called even after a previous handler errors
+  handler: (ctx: HookContext) => Promise<void>;
+  onError?: boolean; // if true, called even after a previous handler errors
 }
 ```
 
 Single hook type. Execution model:
+
 1. Handlers run in registration order, sharing the same `HookContext`
 2. Handlers mutate `ctx.data` to contribute data (replaces gather)
 3. On error: `ctx.error` is set, handlers without `onError: true` are skipped
@@ -294,8 +295,8 @@ Single hook type. Execution model:
 
 ```ts
 interface HookPoint {
-  readonly id: string
-  run(ctx: HookContext): Promise<void>
+  readonly id: string;
+  run(ctx: HookContext): Promise<void>;
 }
 ```
 
@@ -303,8 +304,8 @@ interface HookPoint {
 
 ```ts
 interface HookRegistry {
-  register(operationId: string, hookPointId: string, handler: HookHandler): void
-  resolve(operationId: string): ResolvedHooks
+  register(operationId: string, hookPointId: string, handler: HookHandler): void;
+  resolve(operationId: string): ResolvedHooks;
 }
 ```
 
@@ -312,22 +313,22 @@ interface HookRegistry {
 
 ```ts
 type DomainEvent =
-  | { type: 'workspace:created'; payload: WorkspaceCreatedPayload }
-  | { type: 'workspace:deleted'; payload: WorkspaceDeletedPayload }
-  | { type: 'workspace:switched'; payload: WorkspaceSwitchedPayload }
-  | { type: 'project:opened'; payload: ProjectOpenedPayload }
-  | { type: 'project:closed'; payload: ProjectClosedPayload }
-  | { type: 'agent:status-changed'; payload: AgentStatusChangedPayload }
-  // ...etc
+  | { type: "workspace:created"; payload: WorkspaceCreatedPayload }
+  | { type: "workspace:deleted"; payload: WorkspaceDeletedPayload }
+  | { type: "workspace:switched"; payload: WorkspaceSwitchedPayload }
+  | { type: "project:opened"; payload: ProjectOpenedPayload }
+  | { type: "project:closed"; payload: ProjectClosedPayload }
+  | { type: "agent:status-changed"; payload: AgentStatusChangedPayload };
+// ...etc
 ```
 
 ### IntentInterceptor
 
 ```ts
 interface IntentInterceptor {
-  id: string
-  order?: number
-  before(intent: Intent): Promise<Intent | null>  // null = cancel
+  id: string;
+  order?: number;
+  before(intent: Intent): Promise<Intent | null>; // null = cancel
 }
 ```
 
@@ -335,9 +336,9 @@ interface IntentInterceptor {
 
 ```ts
 interface Dispatcher {
-  dispatch<T extends Intent>(intent: T): Promise<ResultOf<T>>
-  subscribe(eventType: string, handler: EventHandler): void
-  addInterceptor(interceptor: IntentInterceptor): void
+  dispatch<T extends Intent>(intent: T): Promise<ResultOf<T>>;
+  subscribe(eventType: string, handler: EventHandler): void;
+  addInterceptor(interceptor: IntentInterceptor): void;
 }
 ```
 
@@ -469,6 +470,7 @@ Simple operations, no hooks needed.
 Operations can dispatch new **intents** during execution. This creates **intent chains** — but only for genuine transitions to other user/system-meaningful actions.
 
 **Key distinction:**
+
 - **Intents** = real goals a user or system would trigger independently (`workspace:create`, `workspace:switch`, `project:open`)
 - **Hook points** = internal extension points within an operation (`gatherConfig`, `create`, `activate`, `finalize`) — these are NOT intents
 - **Only intents are dispatched.** Operations are never dispatched directly.
@@ -567,19 +569,15 @@ When `WorkspaceManager.create` is called with `ctx.error` set, it knows to roll 
 ### App Shell Wiring (Generic)
 
 ```ts
-function wireModules(
-  modules: Module[],
-  hookRegistry: HookRegistry,
-  dispatcher: Dispatcher
-) {
+function wireModules(modules: Module[], hookRegistry: HookRegistry, dispatcher: Dispatcher) {
   for (const module of modules) {
     for (const [opId, hooks] of Object.entries(module.hooks ?? {})) {
       for (const [hookId, handler] of Object.entries(hooks)) {
-        hookRegistry.register(opId, hookId, handler)
+        hookRegistry.register(opId, hookId, handler);
       }
     }
     for (const [eventType, handler] of Object.entries(module.events ?? {})) {
-      dispatcher.subscribe(eventType, handler)
+      dispatcher.subscribe(eventType, handler);
     }
   }
 }
@@ -593,52 +591,52 @@ Module registration order = hook execution order within each hook point.
 
 ### Core Modules
 
-| Module | Hooks | Events | Providers |
-|---|---|---|---|
-| WorkspaceManager | `workspace:create` (create, onError), `workspace:delete` (delete) | — | GitProvider, FileSystemProvider |
-| WorkspaceSwitcher | `workspace:switch` (switch) | — | — |
-| ProjectManager | `project:open` (open), `project:load` (load), `project:close` (close) | — | GitProvider, FileSystemProvider, PathProvider |
-| ProjectRegistry | `app:start` (start), `workspace:create` (finalize), `agent:change-status` (gatherState) | `workspace:created`, `workspace:deleted`, `project:opened`, `project:closed` (state update + IPC) | IpcProvider |
-| ProjectPersistence | `app:start` (start), `app:shutdown` (shutdown) | — | ConfigProvider |
-| AgentLifecycle | `app:start` (start), `app:shutdown` (shutdown), `workspace:create` (gatherConfig, activate), `workspace:delete` (prepare), `agent:restart` (restart) | `agent:restarted` (IPC) | ProcessProvider, HttpProvider, ConfigProvider, IpcProvider |
-| AgentStatusTracker | `agent:change-status` (gatherState, onChanged), `app:start` (start) | `agent:status-changed` (IPC) | HttpProvider, IpcProvider |
+| Module             | Hooks                                                                                                                                                | Events                                                                                            | Providers                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| WorkspaceManager   | `workspace:create` (create, onError), `workspace:delete` (delete)                                                                                    | —                                                                                                 | GitProvider, FileSystemProvider                            |
+| WorkspaceSwitcher  | `workspace:switch` (switch)                                                                                                                          | —                                                                                                 | —                                                          |
+| ProjectManager     | `project:open` (open), `project:load` (load), `project:close` (close)                                                                                | —                                                                                                 | GitProvider, FileSystemProvider, PathProvider              |
+| ProjectRegistry    | `app:start` (start), `workspace:create` (finalize), `agent:change-status` (gatherState)                                                              | `workspace:created`, `workspace:deleted`, `project:opened`, `project:closed` (state update + IPC) | IpcProvider                                                |
+| ProjectPersistence | `app:start` (start), `app:shutdown` (shutdown)                                                                                                       | —                                                                                                 | ConfigProvider                                             |
+| AgentLifecycle     | `app:start` (start), `app:shutdown` (shutdown), `workspace:create` (gatherConfig, activate), `workspace:delete` (prepare), `agent:restart` (restart) | `agent:restarted` (IPC)                                                                           | ProcessProvider, HttpProvider, ConfigProvider, IpcProvider |
+| AgentStatusTracker | `agent:change-status` (gatherState, onChanged), `app:start` (start)                                                                                  | `agent:status-changed` (IPC)                                                                      | HttpProvider, IpcProvider                                  |
 
 ### View/UI Modules
 
-| Module | Hooks | Events | Providers |
-|---|---|---|---|
-| WindowSetup | `app:start` (start), `app:shutdown` (shutdown) | — | WindowProvider, ImageProvider |
-| WindowTitleUpdater | `workspace:switch` (switch) | — | WindowProvider |
-| ViewLifecycle | `workspace:create` (activate), `workspace:delete` (prepare) | — | ViewProvider, SessionProvider |
-| ViewActivation | `workspace:switch` (switch) | `workspace:switched` (IPC) | ViewProvider, IpcProvider |
-| WorkspaceLoadingTracker | `workspace:create` (activate, finalize) | — | ViewProvider |
-| SessionConfigurator | `workspace:create` (activate) | — | SessionProvider |
-| ShortcutHandler | `app:start` (start), `ui:enter-shortcut-mode` (enter) | — | ViewProvider, IpcProvider |
-| UiModeManager | `ui:enter-shortcut-mode` (enter), `ui:change-view-mode` (change) | `shortcut:entered`, `view-mode:changed` (IPC) | ViewProvider |
-| CreateWsDialog | — (renderer-side currently) | — | — |
-| OpenProjectDialog | — (renderer-side currently) | — | — |
+| Module                  | Hooks                                                            | Events                                        | Providers                     |
+| ----------------------- | ---------------------------------------------------------------- | --------------------------------------------- | ----------------------------- |
+| WindowSetup             | `app:start` (start), `app:shutdown` (shutdown)                   | —                                             | WindowProvider, ImageProvider |
+| WindowTitleUpdater      | `workspace:switch` (switch)                                      | —                                             | WindowProvider                |
+| ViewLifecycle           | `workspace:create` (activate), `workspace:delete` (prepare)      | —                                             | ViewProvider, SessionProvider |
+| ViewActivation          | `workspace:switch` (switch)                                      | `workspace:switched` (IPC)                    | ViewProvider, IpcProvider     |
+| WorkspaceLoadingTracker | `workspace:create` (activate, finalize)                          | —                                             | ViewProvider                  |
+| SessionConfigurator     | `workspace:create` (activate)                                    | —                                             | SessionProvider               |
+| ShortcutHandler         | `app:start` (start), `ui:enter-shortcut-mode` (enter)            | —                                             | ViewProvider, IpcProvider     |
+| UiModeManager           | `ui:enter-shortcut-mode` (enter), `ui:change-view-mode` (change) | `shortcut:entered`, `view-mode:changed` (IPC) | ViewProvider                  |
+| CreateWsDialog          | — (renderer-side currently)                                      | —                                             | —                             |
+| OpenProjectDialog       | — (renderer-side currently)                                      | —                                             | —                             |
 
 ### Infrastructure Modules
 
-| Module | Hooks | Events | Providers |
-|---|---|---|---|
-| CodeServerRunner | `app:start` (start), `app:shutdown` (shutdown), `app:setup` (preflight, execute), `workspace:create` (gatherConfig) | — | ProcessProvider, PortProvider, PathProvider, DownloadProvider, FileSystemProvider |
-| PluginBridge | `app:start` (start), `app:shutdown` (shutdown), `workspace:create` (gatherConfig) | — | HttpProvider |
-| McpServer | `app:start` (start), `app:shutdown` (shutdown), `workspace:create` (gatherConfig) | — | HttpProvider, PortProvider |
+| Module           | Hooks                                                                                                               | Events | Providers                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------- |
+| CodeServerRunner | `app:start` (start), `app:shutdown` (shutdown), `app:setup` (preflight, execute), `workspace:create` (gatherConfig) | —      | ProcessProvider, PortProvider, PathProvider, DownloadProvider, FileSystemProvider |
+| PluginBridge     | `app:start` (start), `app:shutdown` (shutdown), `workspace:create` (gatherConfig)                                   | —      | HttpProvider                                                                      |
+| McpServer        | `app:start` (start), `app:shutdown` (shutdown), `workspace:create` (gatherConfig)                                   | —      | HttpProvider, PortProvider                                                        |
 
 ### Utility Modules
 
-| Module | Hooks | Events | Providers |
-|---|---|---|---|
-| WorkspaceFileGen | `workspace:create` (finalize) | — | FileSystemProvider |
-| KeepfilesManager | `workspace:create` (gatherConfig, finalize) | — | FileSystemProvider |
-| ProcessKiller | `workspace:delete` (prepare) | — | ProcessProvider |
-| BadgeUpdater | `agent:change-status` (onChanged) | — | AppProvider, ImageProvider, WindowProvider |
-| TelemetryTracker | — | `workspace:created`, `workspace:deleted`, `project:opened`, `project:closed` (track) | ConfigProvider, HttpProvider |
-| WorkspaceMetadataManager | `workspace:create` (finalize), `workspace:set-metadata` (set, onSet) | `metadata:changed` (IPC) | GitProvider, IpcProvider |
-| BranchPreferenceCache | — | `workspace:created`, `project:opened` (cache branch) | ConfigProvider |
-| OrphanedWorkspaceCleaner | — | `project:loaded` (cleanup) | GitProvider, FileSystemProvider |
-| AutoUpdater | `app:start` (start) | — | LoggingProvider |
+| Module                   | Hooks                                                                | Events                                                                               | Providers                                  |
+| ------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------ |
+| WorkspaceFileGen         | `workspace:create` (finalize)                                        | —                                                                                    | FileSystemProvider                         |
+| KeepfilesManager         | `workspace:create` (gatherConfig, finalize)                          | —                                                                                    | FileSystemProvider                         |
+| ProcessKiller            | `workspace:delete` (prepare)                                         | —                                                                                    | ProcessProvider                            |
+| BadgeUpdater             | `agent:change-status` (onChanged)                                    | —                                                                                    | AppProvider, ImageProvider, WindowProvider |
+| TelemetryTracker         | —                                                                    | `workspace:created`, `workspace:deleted`, `project:opened`, `project:closed` (track) | ConfigProvider, HttpProvider               |
+| WorkspaceMetadataManager | `workspace:create` (finalize), `workspace:set-metadata` (set, onSet) | `metadata:changed` (IPC)                                                             | GitProvider, IpcProvider                   |
+| BranchPreferenceCache    | —                                                                    | `workspace:created`, `project:opened` (cache branch)                                 | ConfigProvider                             |
+| OrphanedWorkspaceCleaner | —                                                                    | `project:loaded` (cleanup)                                                           | GitProvider, FileSystemProvider            |
+| AutoUpdater              | `app:start` (start)                                                  | —                                                                                    | LoggingProvider                            |
 
 ---
 
@@ -660,9 +658,9 @@ dispatch(intent)
 
 ```ts
 // 1:1 mapping — extend to priority-based resolution later
-const operationMap = new Map<Intent['type'], Operation<any, any>>()
-operationMap.set('workspace:create', createWorkspaceOp)
-operationMap.set('workspace:delete', deleteWorkspaceOp)
+const operationMap = new Map<Intent["type"], Operation<any, any>>();
+operationMap.set("workspace:create", createWorkspaceOp);
+operationMap.set("workspace:delete", deleteWorkspaceOp);
 // ...etc
 ```
 
@@ -686,6 +684,7 @@ IPC channels never change. Renderer sees no difference. Per-method migration.
 **Goal:** Create core infrastructure. No existing code changes.
 
 **Create:**
+
 - `src/main/intents/types.ts` — Intent discriminated union, DomainEvent union
 - `src/main/intents/operation.ts` — Operation interface, OperationContext, HookPoint types
 - `src/main/intents/dispatcher.ts` — Dispatcher implementation, interceptor pipeline, event bus
@@ -737,13 +736,13 @@ IPC channels never change. Renderer sees no difference. Per-method migration.
 
 ### Monolith Decomposition
 
-| Monolith | Shrinks During | Deleted After |
-|---|---|---|
-| CoreModule (1059 LOC) | Phase 1-3 | Phase 3 |
-| UiModule (170 LOC) | Phase 2 | Phase 2 |
-| LifecycleModule (500 LOC) | Phase 4 | Phase 4 |
-| AppState (738 LOC) | Phase 2-4 | Phase 4 |
-| index.ts (1226 LOC) | Phase 4 | Stays as ~100 LOC |
+| Monolith                  | Shrinks During | Deleted After     |
+| ------------------------- | -------------- | ----------------- |
+| CoreModule (1059 LOC)     | Phase 1-3      | Phase 3           |
+| UiModule (170 LOC)        | Phase 2        | Phase 2           |
+| LifecycleModule (500 LOC) | Phase 4        | Phase 4           |
+| AppState (738 LOC)        | Phase 2-4      | Phase 4           |
+| index.ts (1226 LOC)       | Phase 4        | Stays as ~100 LOC |
 
 ---
 
