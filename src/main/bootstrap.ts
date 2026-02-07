@@ -46,6 +46,15 @@ import type {
   GetWorkspaceStatusIntent,
   GetWorkspaceStatusHookContext,
 } from "./operations/get-workspace-status";
+import {
+  GetAgentSessionOperation,
+  GET_AGENT_SESSION_OPERATION_ID,
+  INTENT_GET_AGENT_SESSION,
+} from "./operations/get-agent-session";
+import type {
+  GetAgentSessionIntent,
+  GetAgentSessionHookContext,
+} from "./operations/get-agent-session";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { wireModules } from "./intents/infrastructure/wire";
 import { resolveWorkspace } from "./api/id-utils";
@@ -205,6 +214,7 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+  dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
 
   // Metadata hook handler module
   const metadataModule: IntentModule = {
@@ -262,6 +272,16 @@ function wireDispatcher(
             if (agentStatusManager) {
               ctx.agentStatus = agentStatusManager.getStatus(workspace.path as WorkspacePath);
             }
+          },
+        },
+      },
+      [GET_AGENT_SESSION_OPERATION_ID]: {
+        get: {
+          handler: async (ctx: GetAgentSessionHookContext) => {
+            const intent = ctx.intent as GetAgentSessionIntent;
+            const { workspace } = await resolveWorkspace(intent.payload, appState);
+            const agentStatusManager = appState.getAgentStatusManager();
+            ctx.session = agentStatusManager?.getSession(workspace.path as WorkspacePath) ?? null;
           },
         },
       },
@@ -330,5 +350,20 @@ function wireDispatcher(
       return result;
     },
     { ipc: ApiIpcChannels.WORKSPACE_GET_STATUS }
+  );
+
+  registry.register(
+    "workspaces.getAgentSession",
+    async (payload: WorkspaceRefPayload) => {
+      const intent: GetAgentSessionIntent = {
+        type: INTENT_GET_AGENT_SESSION,
+        payload: {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+        },
+      };
+      return dispatcher.dispatch(intent);
+    },
+    { ipc: ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION }
   );
 }

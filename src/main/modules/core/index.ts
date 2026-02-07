@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
- * - Workspace operations: create, remove, forceRemove, get, getAgentSession
+ * - Workspace operations: create, remove, forceRemove, get
  *
  * Created in startServices() after setup is complete.
  */
@@ -32,7 +32,6 @@ import type {
   DeletionOperation,
   DeletionOperationId,
   BlockingProcess,
-  AgentSession,
 } from "../../../shared/api/types";
 import { normalizeInitialPrompt } from "../../../shared/api/types";
 import type { WorkspacePath } from "../../../shared/ipc";
@@ -184,9 +183,6 @@ export class CoreModule implements IApiModule {
     });
     this.api.register("workspaces.get", this.workspaceGet.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET,
-    });
-    this.api.register("workspaces.getAgentSession", this.workspaceGetAgentSession.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION,
     });
     this.api.register(
       "workspaces.restartAgentServer",
@@ -461,15 +457,6 @@ export class CoreModule implements IApiModule {
     if (!resolved) return undefined;
 
     return this.toApiWorkspace(payload.projectId, resolved.workspace);
-  }
-
-  private async workspaceGetAgentSession(
-    payload: WorkspaceRefPayload
-  ): Promise<AgentSession | null> {
-    const { workspace } = await this.resolveWorkspace(payload);
-
-    const agentStatusManager = this.deps.appState.getAgentStatusManager();
-    return agentStatusManager?.getSession(workspace.path as WorkspacePath) ?? null;
   }
 
   private async workspaceRestartAgentServer(payload: WorkspaceRefPayload): Promise<number> {
