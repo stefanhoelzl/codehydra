@@ -55,6 +55,14 @@ export class AutoUpdater {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
 
+    // Route electron-updater logs through app logger
+    autoUpdater.logger = {
+      info: (message) => this.logger.info(String(message ?? "")),
+      warn: (message) => this.logger.warn(String(message ?? "")),
+      error: (message) => this.logger.error(String(message ?? "")),
+      debug: (message) => this.logger.debug(String(message ?? "")),
+    };
+
     // Wire up event handlers
     this.handleError = this.handleError.bind(this);
     this.handleUpdateDownloaded = this.handleUpdateDownloaded.bind(this);
