@@ -20,7 +20,7 @@ function createActionIntent(): Intent {
   return { type: "test:action", payload: { id: "123" } };
 }
 
-function createQueryIntent(): Intent<{ answer: number }> {
+function createQueryIntent(): Intent {
   return { type: "test:query", payload: { question: "meaning" } };
 }
 

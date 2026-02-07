@@ -1,9 +1,16 @@
 /**
- * GitWorktreeProvider - Implementation of IWorkspaceProvider using git worktrees.
+ * GitWorktreeProvider - Global singleton managing git worktree operations across all projects.
+ *
+ * Unlike the per-project pattern, this provider manages multiple projects through internal
+ * registries. Methods that previously used a bound projectRoot now accept it as a parameter.
+ * Metadata methods resolve projectRoot from the workspace registry automatically.
+ *
+ * Use ProjectScopedWorkspaceProvider as an adapter to get back the IWorkspaceProvider interface
+ * for backwards compatibility with existing call sites.
  */
 
 import type { IGitClient } from "./git-client";
-import type { IWorkspaceProvider } from "./workspace-provider";
+import type { ProjectScopedWorkspaceProvider } from "./project-scoped-provider";
 import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspace } from "./types";
 import { WorkspaceError, getErrorMessage } from "../errors";
 import { sanitizeWorkspaceName } from "../platform/paths";
@@ -25,22 +32,39 @@ export interface GitWorktreeProviderOptions {
 }
 
 /**
- * Implementation of IWorkspaceProvider using git worktrees.
- * Each workspace is a git worktree, allowing parallel work on different branches.
+ * Internal state for a registered project.
+ */
+interface ProjectRegistration {
+  readonly workspacesDir: Path;
+  readonly keepFilesService: IKeepFilesService | undefined;
+  cleanupInProgress: boolean;
+}
+
+/**
+ * Global provider managing git worktree operations across all projects.
+ *
+ * Maintains two internal registries:
+ * - Project registry: Maps projectRoot -> { workspacesDir, keepFilesService }
+ * - Workspace registry: Maps workspacePath -> projectRoot (for metadata resolution)
+ *
+ * Does NOT implement IWorkspaceProvider directly. Use ProjectScopedWorkspaceProvider
+ * as an adapter for backwards compatibility.
  *
  * All paths are handled using the Path class for normalized, cross-platform handling.
  */
-export class GitWorktreeProvider implements IWorkspaceProvider {
+export class GitWorktreeProvider {
   /** Git config prefix for workspace metadata */
   private static readonly METADATA_CONFIG_PREFIX = "codehydra";
 
-  readonly projectRoot: Path;
   private readonly gitClient: IGitClient;
-  private readonly workspacesDir: Path;
   private readonly fileSystemLayer: FileSystemLayer;
-  private readonly keepFilesService: IKeepFilesService | undefined;
   private readonly logger: Logger;
-  private cleanupInProgress = false;
+
+  /** Map of normalized project root strings to project registration data */
+  private readonly projectRegistry: Map<string, ProjectRegistration> = new Map();
+
+  /** Map of normalized workspace path strings to project root Path (for metadata resolution) */
+  private readonly workspaceRegistry: Map<string, Path> = new Map();
 
   /**
    * Check if error is a Windows long-path related error from git.
@@ -70,49 +94,27 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     return metadata;
   }
 
-  private constructor(
-    projectRoot: Path,
-    gitClient: IGitClient,
-    workspacesDir: Path,
-    fileSystemLayer: FileSystemLayer,
-    logger: Logger,
-    options?: GitWorktreeProviderOptions
-  ) {
-    this.projectRoot = projectRoot;
+  constructor(gitClient: IGitClient, fileSystemLayer: FileSystemLayer, logger: Logger) {
     this.gitClient = gitClient;
-    this.workspacesDir = workspacesDir;
     this.fileSystemLayer = fileSystemLayer;
     this.logger = logger;
-    this.keepFilesService = options?.keepFilesService;
   }
 
   /**
-   * Check if a branch is currently checked out in any worktree.
-   * @param branchName Name of the branch to check
-   * @returns Object with checkedOut status and worktree path if found
-   */
-  private async isBranchCheckedOut(
-    branchName: string
-  ): Promise<{ checkedOut: boolean; worktreePath: Path | null }> {
-    const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
-    const worktree = worktrees.find((wt) => wt.branch === branchName);
-    return {
-      checkedOut: !!worktree,
-      worktreePath: worktree?.path ?? null,
-    };
-  }
-
-  /**
-   * Factory method to create a GitWorktreeProvider.
-   * Validates that the path is an absolute path to a git repository.
+   * Factory method for backwards compatibility with existing tests and call sites.
+   * Creates a standalone global provider, validates the repository, registers the project,
+   * and returns a ProjectScopedWorkspaceProvider adapter implementing IWorkspaceProvider.
+   *
+   * For production use where a shared global provider is needed, construct
+   * GitWorktreeProvider + ProjectScopedWorkspaceProvider directly.
    *
    * @param projectRoot Absolute path to the git repository
    * @param gitClient Git client to use for operations
-   * @param workspacesDir Directory where worktrees will be created (from PathProvider.getProjectWorkspacesDir)
+   * @param workspacesDir Directory where worktrees will be created
    * @param fileSystemLayer FileSystemLayer for cleanup operations
    * @param logger Logger for worktree operations
    * @param options Optional configuration including keepFilesService
-   * @returns Promise resolving to a new GitWorktreeProvider
+   * @returns Promise resolving to a ProjectScopedWorkspaceProvider (implements IWorkspaceProvider)
    * @throws WorkspaceError if path is invalid or not a git repository
    */
   static async create(
@@ -122,10 +124,105 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     fileSystemLayer: FileSystemLayer,
     logger: Logger,
     options?: GitWorktreeProviderOptions
-  ): Promise<GitWorktreeProvider> {
-    // Validate it's a git repository root (not a subdirectory)
+  ): Promise<ProjectScopedWorkspaceProvider> {
+    // Lazy import to avoid circular dependency
+    const { ProjectScopedWorkspaceProvider } = await import("./project-scoped-provider");
+
+    const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
+    await globalProvider.validateRepository(projectRoot);
+
+    return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir, options);
+  }
+
+  /**
+   * Register a project with this global provider.
+   * Must be called before any operations on the project.
+   *
+   * @param projectRoot Absolute path to the git repository
+   * @param workspacesDir Directory where worktrees are created
+   * @param options Optional configuration including keepFilesService
+   */
+  registerProject(
+    projectRoot: Path,
+    workspacesDir: Path,
+    options?: GitWorktreeProviderOptions
+  ): void {
+    this.projectRegistry.set(projectRoot.toString(), {
+      workspacesDir,
+      keepFilesService: options?.keepFilesService,
+      cleanupInProgress: false,
+    });
+  }
+
+  /**
+   * Unregister a project from this global provider.
+   * Removes all workspace registry entries for this project.
+   *
+   * @param projectRoot Absolute path to the git repository
+   */
+  unregisterProject(projectRoot: Path): void {
+    const projectRootStr = projectRoot.toString();
+    this.projectRegistry.delete(projectRootStr);
+
+    // Remove all workspace entries for this project
+    for (const [workspaceKey, registeredRoot] of this.workspaceRegistry) {
+      if (registeredRoot.toString() === projectRootStr) {
+        this.workspaceRegistry.delete(workspaceKey);
+      }
+    }
+  }
+
+  /**
+   * Get the project registration for a project root.
+   * @throws WorkspaceError if project is not registered
+   */
+  private getProjectRegistration(projectRoot: Path): ProjectRegistration {
+    const registration = this.projectRegistry.get(projectRoot.toString());
+    if (!registration) {
+      throw new WorkspaceError(
+        `Project not registered: ${projectRoot.toString()}. Call registerProject() first.`
+      );
+    }
+    return registration;
+  }
+
+  /**
+   * Resolve project root from workspace path using the workspace registry.
+   * @throws WorkspaceError if workspace is not registered
+   */
+  private resolveProjectRoot(workspacePath: Path): Path {
+    const projectRoot = this.workspaceRegistry.get(workspacePath.toString());
+    if (!projectRoot) {
+      throw new WorkspaceError(
+        `Workspace not registered: ${workspacePath.toString()}. ` +
+          `The project may not be open or the workspace was not discovered.`
+      );
+    }
+    return projectRoot;
+  }
+
+  /**
+   * Register a workspace in the workspace registry.
+   * Called internally when workspaces are discovered or created, and by
+   * ProjectScopedWorkspaceProvider to ensure workspace paths are registered
+   * before metadata operations.
+   *
+   * @param workspacePath Absolute path to the workspace
+   * @param projectRoot Project root that owns this workspace
+   */
+  ensureWorkspaceRegistered(workspacePath: Path, projectRoot: Path): void {
+    this.workspaceRegistry.set(workspacePath.toString(), projectRoot);
+  }
+
+  /**
+   * Validate that a path is a git repository root.
+   *
+   * @param projectRoot Absolute path to validate
+   * @throws WorkspaceError if path is invalid or not a git repository
+   */
+  async validateRepository(projectRoot: Path): Promise<void> {
     try {
-      const isRoot = await gitClient.isRepositoryRoot(projectRoot);
+      const isRoot = await this.gitClient.isRepositoryRoot(projectRoot);
       if (!isRoot) {
         throw new WorkspaceError(
           `Path is not a git repository root: ${projectRoot.toString()}. ` +
@@ -139,31 +236,43 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       const message = error instanceof Error ? error.message : "Unknown error checking repository";
       throw new WorkspaceError(`Failed to validate repository: ${message}`);
     }
-
-    return new GitWorktreeProvider(
-      projectRoot,
-      gitClient,
-      workspacesDir,
-      fileSystemLayer,
-      logger,
-      options
-    );
   }
 
-  async discover(): Promise<readonly Workspace[]> {
-    const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
+  /**
+   * Check if a branch is currently checked out in any worktree.
+   * @param projectRoot Root of the git repository
+   * @param branchName Name of the branch to check
+   * @returns Object with checkedOut status and worktree path if found
+   */
+  private async isBranchCheckedOut(
+    projectRoot: Path,
+    branchName: string
+  ): Promise<{ checkedOut: boolean; worktreePath: Path | null }> {
+    const worktrees = await this.gitClient.listWorktrees(projectRoot);
+    const worktree = worktrees.find((wt) => wt.branch === branchName);
+    return {
+      checkedOut: !!worktree,
+      worktreePath: worktree?.path ?? null,
+    };
+  }
+
+  async discover(projectRoot: Path): Promise<readonly Workspace[]> {
+    const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
     // Filter out the main worktree and map to Workspace objects with metadata
     const workspaces: Workspace[] = [];
     for (const wt of worktrees) {
       if (wt.isMain) continue;
 
+      // Register workspace in the workspace registry for metadata resolution
+      this.ensureWorkspaceRegistered(wt.path, projectRoot);
+
       // Try to get metadata from git config, with fallback for base key
       let metadata: Record<string, string>;
       try {
         const configs = wt.branch
           ? await this.gitClient.getBranchConfigsByPrefix(
-              this.projectRoot,
+              projectRoot,
               wt.branch,
               GitWorktreeProvider.METADATA_CONFIG_PREFIX
             )
@@ -187,9 +296,9 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     return workspaces;
   }
 
-  async listBases(): Promise<readonly BaseInfo[]> {
-    const branches = await this.gitClient.listBranches(this.projectRoot);
-    const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
+  async listBases(projectRoot: Path): Promise<readonly BaseInfo[]> {
+    const branches = await this.gitClient.listBranches(projectRoot);
+    const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
     // Build set of branches that have worktrees
     const branchesWithWorktrees = new Set<string>();
@@ -237,7 +346,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
         let base: string | undefined;
         try {
           const configBase = await this.gitClient.getBranchConfig(
-            this.projectRoot,
+            projectRoot,
             branch.name,
             `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.base`
           );
@@ -329,15 +438,15 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     return result;
   }
 
-  async updateBases(): Promise<UpdateBasesResult> {
-    const remotes = await this.gitClient.listRemotes(this.projectRoot);
+  async updateBases(projectRoot: Path): Promise<UpdateBasesResult> {
+    const remotes = await this.gitClient.listRemotes(projectRoot);
 
     const fetchedRemotes: string[] = [];
     const failedRemotes: { remote: string; error: string }[] = [];
 
     for (const remote of remotes) {
       try {
-        await this.gitClient.fetch(this.projectRoot, remote);
+        await this.gitClient.fetch(projectRoot, remote);
         fetchedRemotes.push(remote);
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : "Unknown fetch error";
@@ -348,22 +457,27 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     return { fetchedRemotes, failedRemotes };
   }
 
-  async createWorkspace(name: string, baseBranch: string): Promise<Workspace> {
+  async createWorkspace(projectRoot: Path, name: string, baseBranch: string): Promise<Workspace> {
+    const registration = this.getProjectRegistration(projectRoot);
+
     // Sanitize the name for filesystem (/ -> %)
     const sanitizedName = sanitizeWorkspaceName(name);
 
     // Compute the worktree path using the configured workspaces directory
-    const worktreePath = new Path(this.workspacesDir, sanitizedName);
+    const worktreePath = new Path(registration.workspacesDir, sanitizedName);
 
     // Check if branch already exists (local branches only)
-    const branches = await this.gitClient.listBranches(this.projectRoot);
+    const branches = await this.gitClient.listBranches(projectRoot);
     const branchExists = branches.some((b) => b.name === name && !b.isRemote);
 
     let createdBranch = false;
 
     if (branchExists) {
       // Branch exists - check if already checked out in a worktree
-      const { checkedOut, worktreePath: existingPath } = await this.isBranchCheckedOut(name);
+      const { checkedOut, worktreePath: existingPath } = await this.isBranchCheckedOut(
+        projectRoot,
+        name
+      );
       if (checkedOut) {
         throw new WorkspaceError(
           `Branch '${name}' is already checked out in worktree at '${existingPath?.toString()}'`
@@ -374,7 +488,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     } else {
       // Branch doesn't exist - create it
       try {
-        await this.gitClient.createBranch(this.projectRoot, name, baseBranch);
+        await this.gitClient.createBranch(projectRoot, name, baseBranch);
         createdBranch = true;
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error creating branch";
@@ -384,12 +498,12 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
 
     // Create the worktree
     try {
-      await this.gitClient.addWorktree(this.projectRoot, worktreePath, name);
+      await this.gitClient.addWorktree(projectRoot, worktreePath, name);
     } catch (error: unknown) {
       // Rollback: only delete branch if we created it
       if (createdBranch) {
         try {
-          await this.gitClient.deleteBranch(this.projectRoot, name);
+          await this.gitClient.deleteBranch(projectRoot, name);
         } catch {
           // Ignore rollback errors
         }
@@ -399,10 +513,13 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       throw new WorkspaceError(`Failed to create worktree: ${message}`);
     }
 
+    // Register workspace in the workspace registry
+    this.ensureWorkspaceRegistered(worktreePath, projectRoot);
+
     // Save base branch in git config (non-critical - log warning on failure)
     try {
       await this.gitClient.setBranchConfig(
-        this.projectRoot,
+        projectRoot,
         name,
         `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.base`,
         baseBranch
@@ -415,10 +532,10 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     // Copy keep files from project root to new workspace (if service configured)
     // Note: Logging is handled by KeepFilesService via [keepfiles] logger
     // TODO: Update IKeepFilesService to accept Path once that service is migrated
-    if (this.keepFilesService) {
+    if (registration.keepFilesService) {
       try {
-        await this.keepFilesService.copyToWorkspace(
-          this.projectRoot.toString(),
+        await registration.keepFilesService.copyToWorkspace(
+          projectRoot.toString(),
           worktreePath.toString()
         );
       } catch {
@@ -434,14 +551,18 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     };
   }
 
-  async removeWorkspace(workspacePath: Path, deleteBase: boolean): Promise<RemovalResult> {
+  async removeWorkspace(
+    projectRoot: Path,
+    workspacePath: Path,
+    deleteBase: boolean
+  ): Promise<RemovalResult> {
     // Cannot remove main worktree - use Path.equals() for proper comparison
-    if (workspacePath.equals(this.projectRoot)) {
+    if (workspacePath.equals(projectRoot)) {
       throw new WorkspaceError("Cannot remove the main worktree");
     }
 
     // Get the branch name before removal (also checks if worktree exists)
-    const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
+    const worktrees = await this.gitClient.listWorktrees(projectRoot);
     const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
     // If worktree not found (retry after partial failure), extract branch from path
     // For git worktrees, the last path segment is the branch name
@@ -453,7 +574,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     let worktreeError: Error | null = null;
     if (worktree) {
       try {
-        await this.gitClient.removeWorktree(this.projectRoot, workspacePath);
+        await this.gitClient.removeWorktree(projectRoot, workspacePath);
       } catch (error) {
         const err = error as Error;
         // On Windows, git may fail to delete directories with long paths (>260 chars)
@@ -462,7 +583,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
         if (this.isWindowsLongPathError(err)) {
           try {
             await this.fileSystemLayer.rm(workspacePath, { recursive: true, force: true });
-            await this.gitClient.pruneWorktrees(this.projectRoot);
+            await this.gitClient.pruneWorktrees(projectRoot);
             this.logger.info("Removed workspace via fallback", { path: workspacePath.toString() });
           } catch {
             // Fallback also failed - save original error
@@ -480,12 +601,12 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     let baseDeleted = false;
     if (deleteBase && branchName) {
       // Check if branch exists before attempting deletion
-      const branches = await this.gitClient.listBranches(this.projectRoot);
+      const branches = await this.gitClient.listBranches(projectRoot);
       const branchExists = branches.some((b) => b.name === branchName && !b.isRemote);
 
       if (branchExists) {
         try {
-          await this.gitClient.deleteBranch(this.projectRoot, branchName);
+          await this.gitClient.deleteBranch(projectRoot, branchName);
           baseDeleted = true;
         } catch (error) {
           // Only throw branch error if there was no worktree error
@@ -508,7 +629,10 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     }
 
     // Prune stale worktree entries
-    await this.gitClient.pruneWorktrees(this.projectRoot);
+    await this.gitClient.pruneWorktrees(projectRoot);
+
+    // Remove workspace from registry
+    this.workspaceRegistry.delete(workspacePath.toString());
 
     return {
       workspaceRemoved: true,
@@ -521,9 +645,9 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     return status.isDirty;
   }
 
-  isMainWorkspace(workspacePath: Path): boolean {
+  isMainWorkspace(projectRoot: Path, workspacePath: Path): boolean {
     // Use Path.equals() for proper normalized comparison
-    return workspacePath.equals(this.projectRoot);
+    return workspacePath.equals(projectRoot);
   }
 
   /**
@@ -531,11 +655,12 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
    * Prefers remote branches over local to ensure proper tracking.
    * Check order: origin/main -> main -> origin/master -> master
    *
+   * @param projectRoot Root of the git repository
    * @returns Promise resolving to the default base branch, or undefined if none found
    */
-  async defaultBase(): Promise<string | undefined> {
+  async defaultBase(projectRoot: Path): Promise<string | undefined> {
     try {
-      const bases = await this.listBases();
+      const bases = await this.listBases(projectRoot);
       const branchNames = new Set(bases.map((b) => b.name));
 
       // Prefer remote branches for proper tracking
@@ -569,31 +694,39 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
    *
    * Security: Skips symlinks and validates paths stay within workspacesDir.
    *
+   * @param projectRoot Root of the git repository
    * @returns Result indicating how many directories were removed and any failures
    */
-  async cleanupOrphanedWorkspaces(): Promise<CleanupResult> {
+  async cleanupOrphanedWorkspaces(projectRoot: Path): Promise<CleanupResult> {
     const emptyResult: CleanupResult = { removedCount: 0, failedPaths: [] };
-
-    // Concurrency guard - only one cleanup at a time
-    if (this.cleanupInProgress) {
+    const registration = this.projectRegistry.get(projectRoot.toString());
+    if (!registration) {
       return emptyResult;
     }
-    this.cleanupInProgress = true;
+
+    // Concurrency guard - only one cleanup at a time per project
+    if (registration.cleanupInProgress) {
+      return emptyResult;
+    }
+    registration.cleanupInProgress = true;
 
     try {
-      return await this.doCleanupOrphanedWorkspaces();
+      return await this.doCleanupOrphanedWorkspaces(projectRoot, registration.workspacesDir);
     } finally {
-      this.cleanupInProgress = false;
+      registration.cleanupInProgress = false;
     }
   }
 
-  private async doCleanupOrphanedWorkspaces(): Promise<CleanupResult> {
+  private async doCleanupOrphanedWorkspaces(
+    projectRoot: Path,
+    workspacesDir: Path
+  ): Promise<CleanupResult> {
     const emptyResult: CleanupResult = { removedCount: 0, failedPaths: [] };
 
     // Get registered worktrees
     let worktrees;
     try {
-      worktrees = await this.gitClient.listWorktrees(this.projectRoot);
+      worktrees = await this.gitClient.listWorktrees(projectRoot);
     } catch (error) {
       // Cannot determine registered worktrees - abort cleanup silently
       this.logger.warn("Failed to list worktrees for cleanup", { error: getErrorMessage(error) });
@@ -606,7 +739,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     // Read workspacesDir
     let entries;
     try {
-      entries = await this.fileSystemLayer.readdir(this.workspacesDir);
+      entries = await this.fileSystemLayer.readdir(workspacesDir);
     } catch {
       // workspacesDir doesn't exist yet or can't be read - nothing to clean
       return emptyResult;
@@ -627,11 +760,11 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       }
 
       // Build full path using Path
-      const fullPath = new Path(this.workspacesDir, entry.name);
+      const fullPath = new Path(workspacesDir, entry.name);
 
       // Validate path stays within workspacesDir (security - path traversal)
       // Use isChildOf for proper containment check
-      if (!fullPath.isChildOf(this.workspacesDir) && !fullPath.equals(this.workspacesDir)) {
+      if (!fullPath.isChildOf(workspacesDir) && !fullPath.equals(workspacesDir)) {
         continue;
       }
 
@@ -642,7 +775,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
 
       // Re-check registration before delete (TOCTOU protection)
       try {
-        const currentWorktrees = await this.gitClient.listWorktrees(this.projectRoot);
+        const currentWorktrees = await this.gitClient.listWorktrees(projectRoot);
         const nowRegistered = currentWorktrees.some((wt) => wt.path.equals(fullPath));
         if (nowRegistered) {
           // Workspace was created concurrently - skip
@@ -673,10 +806,11 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
 
   /**
    * Get the branch name for a workspace path.
+   * Resolves projectRoot from the workspace registry.
    * @throws WorkspaceError if workspace not found
    */
-  private async getBranchForWorkspace(workspacePath: Path): Promise<string> {
-    const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
+  private async getBranchForWorkspace(projectRoot: Path, workspacePath: Path): Promise<string> {
+    const worktrees = await this.gitClient.listWorktrees(projectRoot);
     const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
 
     if (!worktree) {
@@ -698,6 +832,8 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
 
   /**
    * Set a metadata value for a workspace.
+   * Resolves projectRoot from workspace registry automatically.
+   *
    * @param workspacePath Absolute path to the workspace
    * @param key Metadata key (must match /^[A-Za-z][A-Za-z0-9-]*$/)
    * @param value Value to set, or null to delete the key
@@ -712,24 +848,28 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
       );
     }
 
-    const branch = await this.getBranchForWorkspace(workspacePath);
+    const projectRoot = this.resolveProjectRoot(workspacePath);
+    const branch = await this.getBranchForWorkspace(projectRoot, workspacePath);
     const configKey = `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`;
 
     if (value === null) {
-      await this.gitClient.unsetBranchConfig(this.projectRoot, branch, configKey);
+      await this.gitClient.unsetBranchConfig(projectRoot, branch, configKey);
     } else {
-      await this.gitClient.setBranchConfig(this.projectRoot, branch, configKey, value);
+      await this.gitClient.setBranchConfig(projectRoot, branch, configKey, value);
     }
   }
 
   /**
    * Get all metadata for a workspace.
+   * Resolves projectRoot from workspace registry automatically.
    * Always includes `base` key (with fallback if not in config).
+   *
    * @param workspacePath Absolute path to the workspace
    * @returns Metadata record with at least `base` key
    */
   async getMetadata(workspacePath: Path): Promise<Readonly<Record<string, string>>> {
-    const worktrees = await this.gitClient.listWorktrees(this.projectRoot);
+    const projectRoot = this.resolveProjectRoot(workspacePath);
+    const worktrees = await this.gitClient.listWorktrees(projectRoot);
     const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
 
     if (!worktree) {
@@ -742,7 +882,7 @@ export class GitWorktreeProvider implements IWorkspaceProvider {
     let metadata: Record<string, string>;
     if (worktree.branch) {
       const configs = await this.gitClient.getBranchConfigsByPrefix(
-        this.projectRoot,
+        projectRoot,
         worktree.branch,
         GitWorktreeProvider.METADATA_CONFIG_PREFIX
       );

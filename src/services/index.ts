@@ -27,6 +27,7 @@ export { SimpleGitClient } from "./git/simple-git-client";
 // Workspace provider
 export type { IWorkspaceProvider } from "./git/workspace-provider";
 export { GitWorktreeProvider } from "./git/git-worktree-provider";
+export { ProjectScopedWorkspaceProvider } from "./git/project-scoped-provider";
 
 // Code server
 export type { InstanceState, CodeServerConfig } from "./code-server/types";
@@ -171,7 +172,11 @@ export type {
 export type { GitWorktreeProviderOptions } from "./git/git-worktree-provider";
 
 /**
- * Factory function to create a GitWorktreeProvider with a SimpleGitClient.
+ * Factory function to create a ProjectScopedWorkspaceProvider with a SimpleGitClient.
+ * Creates a standalone global GitWorktreeProvider internally.
+ *
+ * For production use where a shared global provider is needed, use
+ * `new GitWorktreeProvider(gitClient, fs, logger)` + `new ProjectScopedWorkspaceProvider(...)` directly.
  *
  * @param projectRoot Absolute path to the git repository (Path)
  * @param workspacesDir Directory where worktrees will be created. Callers must obtain this
@@ -190,17 +195,16 @@ export async function createGitWorktreeProvider(
   gitLogger: import("./logging").Logger,
   worktreeLogger: import("./logging").Logger,
   options?: import("./git/git-worktree-provider").GitWorktreeProviderOptions
-): Promise<import("./git/workspace-provider").IWorkspaceProvider> {
+): Promise<import("./git/project-scoped-provider").ProjectScopedWorkspaceProvider> {
   const { GitWorktreeProvider } = await import("./git/git-worktree-provider");
+  const { ProjectScopedWorkspaceProvider } = await import("./git/project-scoped-provider");
   const { SimpleGitClient } = await import("./git/simple-git-client");
 
   const gitClient = new SimpleGitClient(gitLogger);
-  return GitWorktreeProvider.create(
-    projectRoot,
-    gitClient,
-    workspacesDir,
-    fileSystemLayer,
-    worktreeLogger,
-    options
-  );
+  const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, worktreeLogger);
+
+  // Validate it's a git repository root
+  await globalProvider.validateRepository(projectRoot);
+
+  return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir, options);
 }

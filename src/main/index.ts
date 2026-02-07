@@ -25,6 +25,7 @@ import {
   WorkspaceFileService,
   createWorkspaceFileConfig,
   getCodeServerPort,
+  GitWorktreeProvider,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -429,6 +430,13 @@ async function startServices(): Promise<void> {
   const { SimpleGitClient } = await import("../services/git/simple-git-client");
   gitClient = new SimpleGitClient(loggingService.createLogger("git"));
 
+  // Create global GitWorktreeProvider (shared across all projects)
+  const globalWorktreeProvider = new GitWorktreeProvider(
+    gitClient,
+    fileSystemLayer,
+    loggingService.createLogger("worktree")
+  );
+
   // Create WorkspaceFileService for .code-workspace file management
   const workspaceFileConfig = createWorkspaceFileConfig();
   const workspaceFileService = new WorkspaceFileService(
@@ -446,7 +454,8 @@ async function startServices(): Promise<void> {
     loggingService,
     selectedAgentType,
     workspaceFileService,
-    pathProvider.claudeCodeWrapperPath.toString()
+    pathProvider.claudeCodeWrapperPath.toString(),
+    globalWorktreeProvider
   );
 
   // Initialize agent-specific services based on selected agent type
