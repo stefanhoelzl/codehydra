@@ -40,11 +40,7 @@ export function wireModules(
     // Subscribe events
     if (mod.events) {
       for (const [eventType, handler] of Object.entries(mod.events)) {
-        dispatcher.subscribe(eventType, (event) => {
-          if (event.type === eventType) {
-            handler(event);
-          }
-        });
+        dispatcher.subscribe(eventType, handler);
       }
     }
   }

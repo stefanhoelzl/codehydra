@@ -26,6 +26,7 @@ import {
   createWorkspaceFileConfig,
   getCodeServerPort,
   GitWorktreeProvider,
+  SimpleGitClient,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -310,6 +311,12 @@ let gitClient: import("../services").IGitClient | null = null;
 let projectStore: import("../services").ProjectStore | null = null;
 
 /**
+ * Global worktree provider. Created in startServices(), shared across all projects.
+ * Used by intent dispatcher for metadata operations.
+ */
+let globalWorktreeProvider: GitWorktreeProvider | null = null;
+
+/**
  * Starts all application services after setup completes.
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
@@ -427,11 +434,10 @@ async function startServices(): Promise<void> {
   projectStore = new ProjectStore(pathProvider.projectsDir.toString(), fileSystemLayer);
 
   // Create GitClient for clone operations
-  const { SimpleGitClient } = await import("../services/git/simple-git-client");
   gitClient = new SimpleGitClient(loggingService.createLogger("git"));
 
   // Create global GitWorktreeProvider (shared across all projects)
-  const globalWorktreeProvider = new GitWorktreeProvider(
+  globalWorktreeProvider = new GitWorktreeProvider(
     gitClient,
     fileSystemLayer,
     loggingService.createLogger("worktree")
@@ -1000,6 +1006,13 @@ async function bootstrap(): Promise<void> {
           },
         },
       };
+    },
+    // Global worktree provider for metadata operations
+    globalWorktreeProviderFn: () => {
+      if (!globalWorktreeProvider) {
+        throw new Error("Global worktree provider not initialized");
+      }
+      return globalWorktreeProvider;
     },
   }) as BootstrapResult & { startServices: () => void };
 

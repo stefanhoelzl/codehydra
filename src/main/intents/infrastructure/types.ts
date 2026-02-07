@@ -18,7 +18,7 @@
  *   readonly payload: SetMetadataPayload;
  * }
  */
-export interface Intent<R = void> {
+export interface Intent<R = unknown> {
   readonly type: string;
   readonly payload: unknown;
   /** Phantom type carrier for {@link IntentResult} — never set at runtime. */

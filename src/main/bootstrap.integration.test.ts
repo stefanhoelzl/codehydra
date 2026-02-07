@@ -170,6 +170,16 @@ function createMockUiDeps(): UiModuleDeps {
   };
 }
 
+function createMockGlobalWorktreeProvider(): import("../services/git/git-worktree-provider").GitWorktreeProvider {
+  return {
+    setMetadata: vi.fn().mockResolvedValue(undefined),
+    getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+    registerProject: vi.fn(),
+    unregisterProject: vi.fn(),
+    ensureWorkspaceRegistered: vi.fn(),
+  } as unknown as import("../services/git/git-worktree-provider").GitWorktreeProvider;
+}
+
 function createMockDeps(): BootstrapDeps {
   return {
     logger: createMockLogger(),
@@ -177,6 +187,7 @@ function createMockDeps(): BootstrapDeps {
     lifecycleDeps: createMockLifecycleDeps(),
     coreDepsFn: () => createMockCoreDeps(),
     uiDepsFn: () => createMockUiDeps(),
+    globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
   };
 }
 
@@ -260,6 +271,7 @@ describe("bootstrap.module.order", () => {
       }),
       coreDepsFn: () => createMockCoreDeps(),
       uiDepsFn: () => createMockUiDeps(),
+      globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     };
 
     const result = initializeBootstrap(deps);

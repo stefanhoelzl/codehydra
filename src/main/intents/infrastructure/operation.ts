@@ -26,8 +26,8 @@ export type DispatchFn = <I extends Intent>(
 
 /**
  * Base context passed to hook handlers.
- * Operations may define extended contexts with additional fields for
- * passing data between hooks (e.g., query results).
+ * Operations extend this interface when they need data to flow
+ * between hooks (e.g., query results).
  *
  * @example
  * interface GetMetadataHookContext extends HookContext {

@@ -10,7 +10,7 @@
  */
 
 import type { IGitClient } from "./git-client";
-import type { ProjectScopedWorkspaceProvider } from "./project-scoped-provider";
+import { ProjectScopedWorkspaceProvider } from "./project-scoped-provider";
 import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspace } from "./types";
 import { WorkspaceError, getErrorMessage } from "../errors";
 import { sanitizeWorkspaceName } from "../platform/paths";
@@ -125,9 +125,6 @@ export class GitWorktreeProvider {
     logger: Logger,
     options?: GitWorktreeProviderOptions
   ): Promise<ProjectScopedWorkspaceProvider> {
-    // Lazy import to avoid circular dependency
-    const { ProjectScopedWorkspaceProvider } = await import("./project-scoped-provider");
-
     const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
     await globalProvider.validateRepository(projectRoot);
 

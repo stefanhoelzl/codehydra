@@ -22,12 +22,15 @@ export type { Workspace, BaseInfo } from "./git/types";
 
 // Git client
 export type { IGitClient } from "./git/git-client";
-export { SimpleGitClient } from "./git/simple-git-client";
+import { SimpleGitClient } from "./git/simple-git-client";
+export { SimpleGitClient };
 
 // Workspace provider
 export type { IWorkspaceProvider } from "./git/workspace-provider";
-export { GitWorktreeProvider } from "./git/git-worktree-provider";
-export { ProjectScopedWorkspaceProvider } from "./git/project-scoped-provider";
+import { GitWorktreeProvider } from "./git/git-worktree-provider";
+export { GitWorktreeProvider };
+import { ProjectScopedWorkspaceProvider } from "./git/project-scoped-provider";
+export { ProjectScopedWorkspaceProvider };
 
 // Code server
 export type { InstanceState, CodeServerConfig } from "./code-server/types";
@@ -195,11 +198,7 @@ export async function createGitWorktreeProvider(
   gitLogger: import("./logging").Logger,
   worktreeLogger: import("./logging").Logger,
   options?: import("./git/git-worktree-provider").GitWorktreeProviderOptions
-): Promise<import("./git/project-scoped-provider").ProjectScopedWorkspaceProvider> {
-  const { GitWorktreeProvider } = await import("./git/git-worktree-provider");
-  const { ProjectScopedWorkspaceProvider } = await import("./git/project-scoped-provider");
-  const { SimpleGitClient } = await import("./git/simple-git-client");
-
+): Promise<ProjectScopedWorkspaceProvider> {
   const gitClient = new SimpleGitClient(gitLogger);
   const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, worktreeLogger);
 

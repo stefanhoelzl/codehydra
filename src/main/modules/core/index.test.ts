@@ -292,8 +292,6 @@ describe("core.registration", () => {
     expect(registeredPaths).toContain("workspaces.get");
     expect(registeredPaths).toContain("workspaces.getStatus");
     expect(registeredPaths).toContain("workspaces.getAgentSession");
-    expect(registeredPaths).toContain("workspaces.setMetadata");
-    expect(registeredPaths).toContain("workspaces.getMetadata");
   });
 
   it("registers methods with correct IPC channels", () => {
