@@ -13,10 +13,36 @@ import { ApiRegistry } from "./api/registry";
 import { LifecycleModule, type LifecycleModuleDeps } from "./modules/lifecycle";
 import { CoreModule, type CoreModuleDeps } from "./modules/core";
 import { UiModule, type UiModuleDeps } from "./modules/ui";
-import type { IApiRegistry, IApiModule } from "./api/registry-types";
+import type {
+  IApiRegistry,
+  IApiModule,
+  WorkspaceSetMetadataPayload,
+  WorkspaceRefPayload,
+} from "./api/registry-types";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { Logger } from "../services/logging";
 import type { IpcLayer } from "../services/platform/ipc";
+import { ApiIpcChannels } from "../shared/ipc";
+import { HookRegistry } from "./intents/infrastructure/hook-registry";
+import { Dispatcher } from "./intents/infrastructure/dispatcher";
+import {
+  SetMetadataOperation,
+  SET_METADATA_OPERATION_ID,
+  INTENT_SET_METADATA,
+} from "./operations/set-metadata";
+import type { SetMetadataIntent } from "./operations/set-metadata";
+import {
+  GetMetadataOperation,
+  GET_METADATA_OPERATION_ID,
+  INTENT_GET_METADATA,
+} from "./operations/get-metadata";
+import type { GetMetadataIntent, GetMetadataHookContext } from "./operations/get-metadata";
+import { createIpcEventBridge } from "./modules/ipc-event-bridge";
+import { wireModules } from "./intents/infrastructure/wire";
+import { resolveWorkspace } from "./api/id-utils";
+import type { HookContext } from "./intents/infrastructure/operation";
+import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
+import { Path } from "../services/platform/path";
 
 // =============================================================================
 // Types
@@ -36,6 +62,8 @@ export interface BootstrapDeps {
   readonly coreDepsFn: () => CoreModuleDeps;
   /** UI module dependencies (provided after setup completes) */
   readonly uiDepsFn: () => UiModuleDeps;
+  /** Global worktree provider for metadata operations (provided after setup completes) */
+  readonly globalWorktreeProviderFn: () => GitWorktreeProvider;
 }
 
 /**
@@ -86,18 +114,23 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   /**
    * Start remaining services after setup completes.
-   * This creates CoreModule and UiModule.
+   * This creates CoreModule, UiModule, and intent dispatcher.
    */
   function startServices(): void {
     if (servicesStarted) return;
     servicesStarted = true;
 
+    const coreDeps = deps.coreDepsFn();
+
     // Create remaining modules
-    const coreModule = new CoreModule(registry, deps.coreDepsFn());
+    const coreModule = new CoreModule(registry, coreDeps);
     modules.push(coreModule);
 
     const uiModule = new UiModule(registry, deps.uiDepsFn());
     modules.push(uiModule);
+
+    // Wire intent dispatcher for metadata operations
+    wireMetadataDispatcher(registry, deps.globalWorktreeProviderFn(), coreDeps.appState);
   }
 
   /**
@@ -137,4 +170,90 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   };
 
   return result;
+}
+
+// =============================================================================
+// Intent Dispatcher Wiring
+// =============================================================================
+
+/**
+ * Wire metadata operations into the intent dispatcher and register
+ * bridge handlers in the API registry.
+ *
+ * This replaces the metadata methods that were previously in CoreModule.
+ */
+function wireMetadataDispatcher(
+  registry: IApiRegistry,
+  globalProvider: GitWorktreeProvider,
+  appState: CoreModuleDeps["appState"]
+): void {
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
+
+  // Register operations
+  dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
+  dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+
+  // Register provider hook handlers
+  hookRegistry.register(SET_METADATA_OPERATION_ID, "set", {
+    handler: async (ctx: HookContext) => {
+      const intent = ctx.intent as SetMetadataIntent;
+      const { workspace } = await resolveWorkspace(intent.payload, appState);
+      await globalProvider.setMetadata(
+        new Path(workspace.path),
+        intent.payload.key,
+        intent.payload.value
+      );
+    },
+  });
+
+  hookRegistry.register(GET_METADATA_OPERATION_ID, "get", {
+    handler: async (ctx: GetMetadataHookContext) => {
+      const intent = ctx.intent as GetMetadataIntent;
+      const { workspace } = await resolveWorkspace(intent.payload, appState);
+      const metadata = await globalProvider.getMetadata(new Path(workspace.path));
+      ctx.metadata = metadata;
+    },
+  });
+
+  // Wire IpcEventBridge (forwards domain events to ApiRegistry.emit)
+  const ipcEventBridge = createIpcEventBridge(registry);
+  wireModules([ipcEventBridge], hookRegistry, dispatcher);
+
+  // Register dispatcher bridge handlers in the API registry
+  registry.register(
+    "workspaces.setMetadata",
+    async (payload: WorkspaceSetMetadataPayload) => {
+      const intent: SetMetadataIntent = {
+        type: INTENT_SET_METADATA,
+        payload: {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          key: payload.key,
+          value: payload.value,
+        },
+      };
+      await dispatcher.dispatch(intent);
+    },
+    { ipc: ApiIpcChannels.WORKSPACE_SET_METADATA }
+  );
+
+  registry.register(
+    "workspaces.getMetadata",
+    async (payload: WorkspaceRefPayload) => {
+      const intent: GetMetadataIntent = {
+        type: INTENT_GET_METADATA,
+        payload: {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+        },
+      };
+      const result = await dispatcher.dispatch(intent);
+      if (!result) {
+        throw new Error("Get metadata dispatch returned no result");
+      }
+      return result;
+    },
+    { ipc: ApiIpcChannels.WORKSPACE_GET_METADATA }
+  );
 }

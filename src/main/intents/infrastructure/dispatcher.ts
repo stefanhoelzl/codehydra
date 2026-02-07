@@ -2,7 +2,7 @@
  * Dispatcher — single entry point for the intent-operation pipeline.
  *
  * Orchestrates: interceptor pipeline → operation resolution → hook injection → execute → emit events.
- * Events are collected during execution and emitted after completion.
+ * Events are emitted inline when `ctx.emit()` is called during operation execution.
  */
 
 import type { Intent, IntentResult, DomainEvent } from "./types";
@@ -59,12 +59,15 @@ export class Dispatcher implements IDispatcher {
   /**
    * Register an operation for a specific intent type.
    * Only one operation per intent type is allowed.
+   *
+   * Generic to accept operations with specific intent types. Type safety
+   * is maintained by dispatch() matching intent.type to the correct operation.
    */
-  registerOperation(intentType: string, operation: Operation<Intent, unknown>): void {
+  registerOperation<I extends Intent, R>(intentType: string, operation: Operation<I, R>): void {
     if (this.operations.has(intentType)) {
       throw new Error(`Operation already registered for intent type: ${intentType}`);
     }
-    this.operations.set(intentType, operation);
+    this.operations.set(intentType, operation as unknown as Operation<Intent, unknown>);
   }
 
   addInterceptor(interceptor: IntentInterceptor): void {

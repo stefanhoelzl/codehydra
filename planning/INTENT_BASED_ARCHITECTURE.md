@@ -287,7 +287,7 @@ interface HookHandler {
 Single hook type. Execution model:
 
 1. Handlers run in registration order, sharing the same `HookContext`
-2. Handlers mutate `ctx.data` to contribute data (replaces gather)
+2. Handlers mutate extended `HookContext` fields to contribute data (operations sub-class `HookContext`)
 3. On error: `ctx.error` is set, handlers without `onError: true` are skipped
 4. Handlers with `onError: true` still run (for cleanup / rollback)
 

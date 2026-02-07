@@ -1,5 +1,5 @@
 ---
-status: APPROVED
+status: COMPLETED
 last_updated: 2026-02-07
 reviewers: [review-arch, review-quality, review-testing]
 ---
@@ -49,7 +49,7 @@ Provider layer:
 
 ### Key Design Decisions
 
-1. **Queries go through Dispatcher**: `get-metadata` is an Intent dispatched through the full pipeline (interceptors, causation tracking). The Operation runs a "get" hook (contributed by the provider wiring) which puts data into `ctx.data`, then the operation returns it via `execute()` return value.
+1. **Queries go through Dispatcher**: `get-metadata` is an Intent dispatched through the full pipeline (interceptors, causation tracking). The Operation runs a "get" hook (contributed by the provider wiring) which populates an extended hook context (`GetMetadataHookContext`), then the operation returns the result via `execute()` return value.
 
 2. **Global GitWorktreeProvider**: Single instance manages all projects. Maintains internal `Map<workspacePath, projectRoot>` registry using `Path.toString()` for Map keys. Does NOT implement `IWorkspaceProvider` directly (no `projectRoot` property). All methods that previously used `this.projectRoot` now accept it as a parameter. Only the `ProjectScopedWorkspaceProvider` adapter implements `IWorkspaceProvider`.
 
@@ -59,7 +59,7 @@ Provider layer:
 
 5. **Operations orchestrate hooks, never call providers directly**: `SetMetadataOperation` runs the "set" hook point, then emits a `workspace:metadata-changed` domain event. The hook handler (registered at bootstrap, closing over the global provider) does the actual write. Same pattern for `GetMetadataOperation` — runs "get" hook, returns data from `execute()`. No separate module class needed — hook handlers are registered inline at bootstrap.
 
-6. **Operations return results directly**: `execute()` returns the typed result (`void` for set, `Record<string, string>` for get). The dispatcher propagates this return value to the caller. Data flows through `ctx.data` between hooks, but the operation extracts and returns it.
+6. **Operations return results directly**: `execute()` returns the typed result (`void` for set, `Record<string, string>` for get). The dispatcher propagates this return value to the caller. Operations that need data from hooks define extended `HookContext` interfaces (e.g., `GetMetadataHookContext`) — hook handlers cast and populate the extended fields, then the operation reads them directly.
 
 7. **Hook error semantics**: `hooks.run()` does NOT throw. It sets `ctx.error` on failure and skips subsequent non-onError handlers. Operations MUST check `ctx.error` after `hooks.run()` and throw if set. This gives operations control over error handling.
 
@@ -118,17 +118,18 @@ interface OperationContext<I extends Intent> {
   readonly causation: readonly string[]; // intent ID chain, [root, ..., current]
 }
 
-// Hook system — unified model with shared mutable context
-// `data` reference is readonly but the object is intentionally mutable (shared between handlers).
-// Operations read results from `data` using typed accessor: hookData<T>(ctx, key)
+// Hook system — base context extended by operations that need data flow
+// Operations define extended interfaces (e.g., GetMetadataHookContext) for
+// typed data passing between hooks. Hook handlers cast to the extended type.
 interface HookContext {
   readonly intent: Intent;
-  readonly data: Record<string, unknown>;
   error?: Error;
 }
 
-// Typed accessor for hook data — single location for the cast
-function hookData<T>(ctx: HookContext, key: string): T | undefined;
+// Example: operation-specific extended context
+interface GetMetadataHookContext extends HookContext {
+  metadata?: Readonly<Record<string, string>>;
+}
 
 interface HookHandler {
   readonly handler: (ctx: HookContext) => Promise<void>;
@@ -232,8 +233,7 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
 - [x] **Step 0.2: Operation types** (`src/main/intents/operation.ts`)
   - Operation<I, R> interface with id, execute() (no `supports()` — dispatcher matches by intent type)
   - OperationContext<I> with intent, dispatch, emit, hooks, causation
-  - HookContext (shared mutable data object, error field)
-  - `hookData<T>(ctx, key)` typed accessor — single cast location
+  - HookContext (base context, error field — operations extend when they need data flow)
   - HookHandler (handler fn + onError flag)
   - ResolvedHooks interface (run method — does NOT throw, sets ctx.error)
   - DispatchFn type
@@ -312,20 +312,21 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
 
 ### Phase 1: Metadata Operations
 
-- [ ] **Step 1.1: SetMetadataOperation** (`src/main/operations/set-metadata.ts`)
+- [x] **Step 1.1: SetMetadataOperation** (`src/main/operations/set-metadata.ts`)
   - Operation<SetMetadataIntent, void>
   - execute(): runs "set" hook point → checks ctx.error (throws if set) → emits `workspace:metadata-changed` domain event
   - No provider deps — hook handler does the actual write
   - Files: `src/main/operations/set-metadata.ts` (new)
 
-- [ ] **Step 1.2: GetMetadataOperation** (`src/main/operations/get-metadata.ts`)
+- [x] **Step 1.2: GetMetadataOperation** (`src/main/operations/get-metadata.ts`)
   - Operation<GetMetadataIntent, Record<string, string>>
-  - execute(): runs "get" hook point → checks ctx.error (throws if set) → returns `hookData<Record<string, string>>(ctx, "metadata")`
+  - Defines `GetMetadataHookContext extends HookContext` with `metadata?` field
+  - execute(): runs "get" hook point → checks ctx.error (throws if set) → returns `hookCtx.metadata`
   - No provider deps — hook handler does the actual read
   - No events needed (query)
   - Files: `src/main/operations/get-metadata.ts` (new)
 
-- [ ] **Step 1.3: IpcEventBridge module** (`src/main/modules/ipc-event-bridge.ts`)
+- [x] **Step 1.3: IpcEventBridge module** (`src/main/modules/ipc-event-bridge.ts`)
   - IntentModule implementation
   - events: `workspace:metadata-changed` → calls `apiRegistry.emit("workspace:metadata-changed", ...)`
   - Receives IApiRegistry as dep
@@ -333,14 +334,14 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
   - dispose(): no-op (subscriptions managed by wire utility)
   - Files: `src/main/modules/ipc-event-bridge.ts` (new)
 
-- [ ] **Step 1.4: Wire into bootstrap + migrate CoreModule** (atomic change)
+- [x] **Step 1.4: Wire into bootstrap + migrate CoreModule** (atomic change)
   - **Order**: Add new registrations first, then remove old ones.
   - In `bootstrap.ts` `startServices()`:
     - Create HookRegistry, Dispatcher
     - Create SetMetadataOperation, GetMetadataOperation
     - Register provider hook handlers inline (closing over global GitWorktreeProvider + `resolveWorkspace()` from `src/main/api/id-utils.ts`):
       - `workspace:set-metadata` → "set" hook: resolves workspace, validates key, calls `provider.setMetadata()`
-      - `workspace:get-metadata` → "get" hook: resolves workspace, calls `provider.getMetadata()`, puts result in `ctx.data`
+      - `workspace:get-metadata` → "get" hook: resolves workspace, calls `provider.getMetadata()`, casts to `GetMetadataHookContext` and sets `metadata`
     - Create IpcEventBridge module, wire via `wireModules()`
     - Register `workspaces.setMetadata` and `workspaces.getMetadata` as dispatcher bridge handlers
   - In `CoreModule`:
@@ -352,7 +353,7 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
   - Files: `src/main/bootstrap.ts` (modify), `src/main/modules/core/index.ts` (modify), `src/main/index.ts` (modify)
   - **Critical**: Steps must be atomic - metadata registration moves from CoreModule to dispatcher bridge
 
-- [ ] **Step 1.5: Integration tests for metadata operations**
+- [x] **Step 1.5: Integration tests for metadata operations**
   - Test through Dispatcher entry point with behavioral mocks
   - Set metadata: dispatch intent → hook writes to git config → event emitted to subscribers
   - Get metadata: dispatch intent → hook reads from git config → returns record via execute()
@@ -367,25 +368,25 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
 
 ### Integration Tests
 
-| #   | Test Case                           | Entry Point                  | Boundary Mocks                 | Behavior Verified                                            |
-| --- | ----------------------------------- | ---------------------------- | ------------------------------ | ------------------------------------------------------------ |
-| 1   | Empty hook point is no-op           | HookRegistry.resolve().run() | None                           | No error, no side effects                                    |
-| 2   | Handlers run in registration order  | HookRegistry.resolve().run() | None                           | ctx.data shows ordered writes                                |
-| 3   | Error skips non-onError handlers    | HookRegistry.resolve().run() | None                           | ctx.error set, later handlers skipped                        |
-| 4   | onError handler runs after error    | HookRegistry.resolve().run() | None                           | onError handler called with ctx.error                        |
-| 5   | Dispatch executes operation         | Dispatcher.dispatch()        | None (inline test op)          | Dispatch returns value produced by operation's execute()     |
-| 6   | Interceptor cancels intent          | Dispatcher.dispatch()        | None                           | Returns undefined, operation not called                      |
-| 7   | Events emitted after execution      | Dispatcher.dispatch()        | None                           | Subscriber called with event payload                         |
-| 8   | Causation tracks chain              | Dispatcher.dispatch()        | None                           | Nested dispatch appends to causation[]                       |
-| 9   | Set metadata writes to git config   | Dispatcher.dispatch()        | MockGitClient                  | Hook handler writes via provider, branch config updated      |
-| 10  | Set metadata emits domain event     | Dispatcher.dispatch()        | MockGitClient, MockApiRegistry | workspace:metadata-changed event received by MockApiRegistry |
-| 11  | Get metadata returns record         | Dispatcher.dispatch()        | MockGitClient                  | Correct metadata returned via execute() return value         |
-| 12  | Invalid metadata key throws         | Dispatcher.dispatch()        | MockGitClient                  | Error propagates through dispatcher pipeline                 |
-| 13  | Unknown workspace throws            | Dispatcher.dispatch()        | MockGitClient                  | Provider-level "workspace not registered" error propagates   |
-| 14  | ProjectScopedAdapter behavioral     | IWorkspaceProvider methods   | MockGitClient                  | Metadata set via adapter is retrievable via global provider  |
-| 15  | Interceptor cancels metadata intent | Dispatcher.dispatch()        | MockGitClient                  | No state change in git config, no event emitted              |
-| 16  | Hook data flows to operation        | Dispatcher.dispatch()        | MockGitClient                  | "get" hook sets ctx.data.metadata, operation returns it      |
-| 17  | unregisterProject cleans up         | GitWorktreeProvider          | MockGitClient                  | After unregister, metadata operations on its workspaces fail |
+| #   | Test Case                           | Entry Point                  | Boundary Mocks                 | Behavior Verified                                               |
+| --- | ----------------------------------- | ---------------------------- | ------------------------------ | --------------------------------------------------------------- |
+| 1   | Empty hook point is no-op           | HookRegistry.resolve().run() | None                           | No error, no side effects                                       |
+| 2   | Handlers run in registration order  | HookRegistry.resolve().run() | None                           | ctx.data shows ordered writes                                   |
+| 3   | Error skips non-onError handlers    | HookRegistry.resolve().run() | None                           | ctx.error set, later handlers skipped                           |
+| 4   | onError handler runs after error    | HookRegistry.resolve().run() | None                           | onError handler called with ctx.error                           |
+| 5   | Dispatch executes operation         | Dispatcher.dispatch()        | None (inline test op)          | Dispatch returns value produced by operation's execute()        |
+| 6   | Interceptor cancels intent          | Dispatcher.dispatch()        | None                           | Returns undefined, operation not called                         |
+| 7   | Events emitted after execution      | Dispatcher.dispatch()        | None                           | Subscriber called with event payload                            |
+| 8   | Causation tracks chain              | Dispatcher.dispatch()        | None                           | Nested dispatch appends to causation[]                          |
+| 9   | Set metadata writes to git config   | Dispatcher.dispatch()        | MockGitClient                  | Hook handler writes via provider, branch config updated         |
+| 10  | Set metadata emits domain event     | Dispatcher.dispatch()        | MockGitClient, MockApiRegistry | workspace:metadata-changed event received by MockApiRegistry    |
+| 11  | Get metadata returns record         | Dispatcher.dispatch()        | MockGitClient                  | Correct metadata returned via execute() return value            |
+| 12  | Invalid metadata key throws         | Dispatcher.dispatch()        | MockGitClient                  | Error propagates through dispatcher pipeline                    |
+| 13  | Unknown workspace throws            | Dispatcher.dispatch()        | MockGitClient                  | Provider-level "workspace not registered" error propagates      |
+| 14  | ProjectScopedAdapter behavioral     | IWorkspaceProvider methods   | MockGitClient                  | Metadata set via adapter is retrievable via global provider     |
+| 15  | Interceptor cancels metadata intent | Dispatcher.dispatch()        | MockGitClient                  | No state change in git config, no event emitted                 |
+| 16  | Hook data flows to operation        | Dispatcher.dispatch()        | MockGitClient                  | "get" hook sets extended context metadata, operation returns it |
+| 17  | unregisterProject cleans up         | GitWorktreeProvider          | MockGitClient                  | After unregister, metadata operations on its workspaces fail    |
 
 ### Test Files
 

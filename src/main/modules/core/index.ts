@@ -4,7 +4,7 @@
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
  * - Workspace operations: create, remove, forceRemove, get, getStatus,
- *   getAgentSession, setMetadata, getMetadata
+ *   getAgentSession
  *
  * Created in startServices() after setup is complete.
  */
@@ -19,7 +19,6 @@ import type {
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceRefPayload,
-  WorkspaceSetMetadataPayload,
   WorkspaceExecuteCommandPayload,
   EmptyPayload,
 } from "../../api/registry-types";
@@ -124,13 +123,12 @@ export interface CoreModuleDeps {
  *
  * Registered methods:
  * - projects.*: open, close, list, get, fetchBases
- * - workspaces.*: create, remove, forceRemove, get, getStatus,
- *   getOpencodePort, setMetadata, getMetadata
+ * - workspaces.*: create, remove, forceRemove, get, getStatus
  *
  * Events emitted:
  * - project:opened, project:closed, project:bases-updated
  * - workspace:created, workspace:removed, workspace:switched,
- *   workspace:status-changed, workspace:metadata-changed
+ *   workspace:status-changed
  */
 export class CoreModule implements IApiModule {
   private readonly logger: Logger;
@@ -202,13 +200,6 @@ export class CoreModule implements IApiModule {
         ipc: ApiIpcChannels.WORKSPACE_RESTART_AGENT_SERVER,
       }
     );
-    this.api.register("workspaces.setMetadata", this.workspaceSetMetadata.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_SET_METADATA,
-    });
-    this.api.register("workspaces.getMetadata", this.workspaceGetMetadata.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_GET_METADATA,
-    });
-
     // executeCommand is not exposed via IPC (only used by MCP/Plugin)
     this.api.register("workspaces.executeCommand", this.workspaceExecuteCommand.bind(this));
   }
@@ -530,39 +521,6 @@ export class CoreModule implements IApiModule {
     }
 
     return result.port;
-  }
-
-  private async workspaceSetMetadata(payload: WorkspaceSetMetadataPayload): Promise<void> {
-    const { projectPath, workspace } = await this.resolveWorkspace(payload);
-
-    const provider = this.deps.appState.getWorkspaceProvider(projectPath);
-    if (!provider) {
-      throw new Error(`No workspace provider for project: ${payload.projectId}`);
-    }
-
-    // Convert string path to Path for provider method
-    await provider.setMetadata(new Path(workspace.path), payload.key, payload.value);
-
-    this.api.emit("workspace:metadata-changed", {
-      projectId: payload.projectId,
-      workspaceName: payload.workspaceName,
-      key: payload.key,
-      value: payload.value,
-    });
-  }
-
-  private async workspaceGetMetadata(
-    payload: WorkspaceRefPayload
-  ): Promise<Readonly<Record<string, string>>> {
-    const { projectPath, workspace } = await this.resolveWorkspace(payload);
-
-    const provider = this.deps.appState.getWorkspaceProvider(projectPath);
-    if (!provider) {
-      throw new Error(`No workspace provider for project: ${payload.projectId}`);
-    }
-
-    // Convert string path to Path for provider method
-    return provider.getMetadata(new Path(workspace.path));
   }
 
   private async workspaceExecuteCommand(payload: WorkspaceExecuteCommandPayload): Promise<unknown> {
