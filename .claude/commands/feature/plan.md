@@ -11,21 +11,17 @@ You guide the user through structured discussion phases, then write a formal pla
 
 ## On Invocation
 
-1. **Read Context**: Read these files IN PARALLEL to understand project patterns:
-   - `docs/PLANNING.md` - What documents to read and what a plan needs
-   - `.claude/templates/plan.md` - The plan structure (so you know what to discuss)
-   - `CLAUDE.md` - Critical rules (if not already in context)
+1. **Read `docs/PLANNING.md`** - Understand the change-type matrix, required plan sections, and discussion questions
 
-2. **Identify Change Type**: Based on the user's feature description, read the required documents per the matrix in `docs/PLANNING.md`
+2. **Identify Change Type**: Based on the user's feature description, determine the change type (new feature, UI change, API/IPC change, etc.) from the matrix in `docs/PLANNING.md`. Note which documents will be needed for Phase 2 — do NOT read them yet.
 
 3. **Introduce the Process**:
 
 ```
-Ready to plan your feature. I've loaded:
-- [list relevant documents read]
+Ready to plan your feature.
 
-Key patterns/constraints for this type of change:
-- [list 3-5 key patterns from the docs]
+Change type: [identified type]
+Required reading (loaded during exploration): [list documents from matrix]
 
 We'll work through 4 discussion phases before writing the plan:
 1. Problem Exploration - understand what we're solving
@@ -73,10 +69,11 @@ AskUserQuestion example:
 
 Explore implementation approaches:
 
-1. **Research the codebase** - Use Task(Explore) to find existing patterns and code
-2. **Present 2-3 options** - Each with pros/cons and complexity assessment
-3. **Discuss tradeoffs** - Performance, maintainability, complexity, risk
-4. **Get explicit agreement** - User must agree on the chosen approach
+1. **Read change-type documents** - Read the documents required for this change type per the matrix in `docs/PLANNING.md` (e.g., ARCHITECTURE.md, PATTERNS.md, TESTING.md). This is where you need them for codebase research.
+2. **Research the codebase** - Use Task(Explore) to find existing patterns and code
+3. **Present 2-3 options** - Each with pros/cons and complexity assessment
+4. **Discuss tradeoffs** - Performance, maintainability, complexity, risk
+5. **Get explicit agreement** - User must agree on the chosen approach
 
 **Presenting options:**
 
@@ -193,15 +190,16 @@ Now I'll write the formal plan.
 
 After all discussion phases are complete:
 
-1. **Write the plan** directly to `planning/<FEATURE_NAME>.md` (ALL_CAPS with underscores)
-2. **Open the plan** in VS Code using the MCP tool:
+1. **Read `.claude/templates/plan.md`** - Load the plan template now that you need it
+2. **Write the plan** directly to `planning/<FEATURE_NAME>.md` (ALL_CAPS with underscores)
+3. **Open the plan** in VS Code using the MCP tool:
    ```
    mcp__codehydra__workspace_execute_command({
      command: "vscode.open",
      args: [{ "$vscode": "Uri", "value": "file://<absolute-path-to-plan>" }]
    })
    ```
-3. Use the EXACT structure from `.claude/templates/plan.md`:
+4. Use the EXACT structure from `.claude/templates/plan.md`:
 
 ```markdown
 ---

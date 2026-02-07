@@ -18,8 +18,6 @@ Before planning, read the documents relevant to your change type:
 | Refactoring        | ARCHITECTURE.md, PATTERNS.md                      |
 | Documentation      | Existing docs in docs/                            |
 
-**Always read:** CLAUDE.md for critical rules that must not be violated.
-
 ---
 
 ## Plan Template
