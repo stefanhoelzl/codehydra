@@ -3,8 +3,7 @@
  *
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
- * - Workspace operations: create, remove, forceRemove, get, getStatus,
- *   getAgentSession
+ * - Workspace operations: create, remove, forceRemove, get, getAgentSession
  *
  * Created in startServices() after setup is complete.
  */
@@ -28,7 +27,6 @@ import type {
   WorkspaceName,
   Project,
   Workspace,
-  WorkspaceStatus,
   BaseInfo,
   DeletionProgress,
   DeletionOperation,
@@ -123,7 +121,7 @@ export interface CoreModuleDeps {
  *
  * Registered methods:
  * - projects.*: open, close, list, get, fetchBases
- * - workspaces.*: create, remove, forceRemove, get, getStatus
+ * - workspaces.*: create, remove, forceRemove, get
  *
  * Events emitted:
  * - project:opened, project:closed, project:bases-updated
@@ -186,9 +184,6 @@ export class CoreModule implements IApiModule {
     });
     this.api.register("workspaces.get", this.workspaceGet.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET,
-    });
-    this.api.register("workspaces.getStatus", this.workspaceGetStatus.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_GET_STATUS,
     });
     this.api.register("workspaces.getAgentSession", this.workspaceGetAgentSession.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION,
@@ -466,36 +461,6 @@ export class CoreModule implements IApiModule {
     if (!resolved) return undefined;
 
     return this.toApiWorkspace(payload.projectId, resolved.workspace);
-  }
-
-  private async workspaceGetStatus(payload: WorkspaceRefPayload): Promise<WorkspaceStatus> {
-    const { projectPath, workspace } = await this.resolveWorkspace(payload);
-
-    const provider = this.deps.appState.getWorkspaceProvider(projectPath);
-    // Convert string path to Path for provider method
-    const isDirty = provider ? await provider.isDirty(new Path(workspace.path)) : false;
-
-    const agentStatusManager = this.deps.appState.getAgentStatusManager();
-    if (!agentStatusManager) {
-      return { isDirty, agent: { type: "none" } };
-    }
-
-    const agentStatus = agentStatusManager.getStatus(workspace.path as WorkspacePath);
-    if (!agentStatus || agentStatus.status === "none") {
-      return { isDirty, agent: { type: "none" } };
-    }
-
-    return {
-      isDirty,
-      agent: {
-        type: agentStatus.status,
-        counts: {
-          idle: agentStatus.counts.idle,
-          busy: agentStatus.counts.busy,
-          total: agentStatus.counts.idle + agentStatus.counts.busy,
-        },
-      },
-    };
   }
 
   private async workspaceGetAgentSession(
