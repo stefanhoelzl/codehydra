@@ -12,12 +12,13 @@
 import { ApiRegistry } from "./api/registry";
 import { LifecycleModule, type LifecycleModuleDeps } from "./modules/lifecycle";
 import { CoreModule, type CoreModuleDeps } from "./modules/core";
-import { UiModule, type UiModuleDeps } from "./modules/ui";
 import type {
   IApiRegistry,
   IApiModule,
   WorkspaceSetMetadataPayload,
   WorkspaceRefPayload,
+  UiSetModePayload,
+  EmptyPayload,
 } from "./api/registry-types";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { Logger } from "../services/logging";
@@ -55,9 +56,26 @@ import type {
   GetAgentSessionIntent,
   GetAgentSessionHookContext,
 } from "./operations/get-agent-session";
+import {
+  RestartAgentOperation,
+  RESTART_AGENT_OPERATION_ID,
+  INTENT_RESTART_AGENT,
+} from "./operations/restart-agent";
+import type { RestartAgentIntent, RestartAgentHookContext } from "./operations/restart-agent";
+import { SetModeOperation, SET_MODE_OPERATION_ID, INTENT_SET_MODE } from "./operations/set-mode";
+import type { SetModeIntent, SetModeHookContext } from "./operations/set-mode";
+import {
+  GetActiveWorkspaceOperation,
+  GET_ACTIVE_WORKSPACE_OPERATION_ID,
+  INTENT_GET_ACTIVE_WORKSPACE,
+} from "./operations/get-active-workspace";
+import type {
+  GetActiveWorkspaceIntent,
+  GetActiveWorkspaceHookContext,
+} from "./operations/get-active-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { wireModules } from "./intents/infrastructure/wire";
-import { resolveWorkspace } from "./api/id-utils";
+import { resolveWorkspace, generateProjectId, extractWorkspaceName } from "./api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
@@ -79,8 +97,6 @@ export interface BootstrapDeps {
   readonly lifecycleDeps: LifecycleModuleDeps;
   /** Core module dependencies (provided after setup completes) */
   readonly coreDepsFn: () => CoreModuleDeps;
-  /** UI module dependencies (provided after setup completes) */
-  readonly uiDepsFn: () => UiModuleDeps;
   /** Global worktree provider for metadata operations (provided after setup completes) */
   readonly globalWorktreeProviderFn: () => GitWorktreeProvider;
 }
@@ -133,7 +149,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   /**
    * Start remaining services after setup completes.
-   * This creates CoreModule, UiModule, and intent dispatcher.
+   * This creates CoreModule and wires the intent dispatcher.
    */
   function startServices(): void {
     if (servicesStarted) return;
@@ -145,11 +161,13 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     const coreModule = new CoreModule(registry, coreDeps);
     modules.push(coreModule);
 
-    const uiModule = new UiModule(registry, deps.uiDepsFn());
-    modules.push(uiModule);
-
     // Wire shared intent dispatcher for all operations
-    wireDispatcher(registry, deps.globalWorktreeProviderFn(), coreDeps.appState);
+    wireDispatcher(
+      registry,
+      deps.globalWorktreeProviderFn(),
+      coreDeps.appState,
+      coreDeps.viewManager
+    );
   }
 
   /**
@@ -205,7 +223,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 function wireDispatcher(
   registry: IApiRegistry,
   globalProvider: GitWorktreeProvider,
-  appState: CoreModuleDeps["appState"]
+  appState: CoreModuleDeps["appState"],
+  viewManager: CoreModuleDeps["viewManager"]
 ): void {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -215,6 +234,9 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
   dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
+  dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
+  dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
+  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
   // Metadata hook handler module
   const metadataModule: IntentModule = {
@@ -285,13 +307,74 @@ function wireDispatcher(
           },
         },
       },
+      [RESTART_AGENT_OPERATION_ID]: {
+        restart: {
+          handler: async (ctx: RestartAgentHookContext) => {
+            const intent = ctx.intent as RestartAgentIntent;
+            const { workspace } = await resolveWorkspace(intent.payload, appState);
+            const serverManager = appState.getServerManager();
+            if (!serverManager) {
+              throw new Error("Agent server manager not available");
+            }
+            const result = await serverManager.restartServer(workspace.path);
+            if (result.success) {
+              ctx.port = result.port;
+              ctx.workspacePath = workspace.path;
+            } else {
+              throw new Error(result.error);
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // UI hook handler module (mode changes + active workspace queries)
+  const uiHookModule: IntentModule = {
+    hooks: {
+      [SET_MODE_OPERATION_ID]: {
+        set: {
+          handler: async (ctx: SetModeHookContext) => {
+            const intent = ctx.intent as SetModeIntent;
+            const previousMode = viewManager.getMode();
+            viewManager.setMode(intent.payload.mode);
+            ctx.previousMode = previousMode;
+          },
+        },
+      },
+      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
+        get: {
+          handler: async (ctx: GetActiveWorkspaceHookContext) => {
+            const activeWorkspacePath = viewManager.getActiveWorkspacePath();
+            if (!activeWorkspacePath) {
+              ctx.workspaceRef = null;
+              return;
+            }
+
+            const project = appState.findProjectForWorkspace(activeWorkspacePath);
+            if (!project) {
+              ctx.workspaceRef = null;
+              return;
+            }
+
+            const projectId = generateProjectId(project.path);
+            const workspaceName = extractWorkspaceName(activeWorkspacePath);
+
+            ctx.workspaceRef = {
+              projectId,
+              workspaceName,
+              path: activeWorkspacePath,
+            };
+          },
+        },
+      },
     },
   };
 
   // Wire IpcEventBridge and hook handler modules
   const ipcEventBridge = createIpcEventBridge(registry);
   wireModules(
-    [ipcEventBridge, metadataModule, gitStatusModule, agentStatusModule],
+    [ipcEventBridge, metadataModule, gitStatusModule, agentStatusModule, uiHookModule],
     hookRegistry,
     dispatcher
   );
@@ -365,5 +448,51 @@ function wireDispatcher(
       return dispatcher.dispatch(intent);
     },
     { ipc: ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION }
+  );
+
+  registry.register(
+    "workspaces.restartAgentServer",
+    async (payload: WorkspaceRefPayload) => {
+      const intent: RestartAgentIntent = {
+        type: INTENT_RESTART_AGENT,
+        payload: {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+        },
+      };
+      const result = await dispatcher.dispatch(intent);
+      if (result === undefined) {
+        throw new Error("Restart agent dispatch returned no result");
+      }
+      return result;
+    },
+    { ipc: ApiIpcChannels.WORKSPACE_RESTART_AGENT_SERVER }
+  );
+
+  registry.register(
+    "ui.setMode",
+    async (payload: UiSetModePayload) => {
+      const intent: SetModeIntent = {
+        type: INTENT_SET_MODE,
+        payload: {
+          mode: payload.mode,
+        },
+      };
+      await dispatcher.dispatch(intent);
+    },
+    { ipc: ApiIpcChannels.UI_SET_MODE }
+  );
+
+  registry.register(
+    "ui.getActiveWorkspace",
+    async (payload: EmptyPayload) => {
+      void payload;
+      const intent: GetActiveWorkspaceIntent = {
+        type: INTENT_GET_ACTIVE_WORKSPACE,
+        payload: {} as Record<string, never>,
+      };
+      return dispatcher.dispatch(intent);
+    },
+    { ipc: ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE }
   );
 }

@@ -1,5 +1,5 @@
 ---
-status: APPROVED
+status: IMPLEMENTATION_REVIEW
 last_updated: 2026-02-07
 reviewers: []
 ---
@@ -338,7 +338,7 @@ Tests use lightweight inline mocks (not full state-mock pattern) since these are
 
   > **STOP — Checkpoint 2:** Run tests, then pause and present the query operation pattern and hook handler for user review. Do NOT proceed to Step 3 until the user approves.
 
-- [ ] **Step 3: Create agent:get-session query**
+- [x] **Step 3: Create agent:get-session query**
   - Create `src/main/operations/get-agent-session.ts` with:
     - `GetAgentSessionPayload` (projectId, workspaceName)
     - `GetAgentSessionIntent extends Intent<AgentSession | null>` with type `"agent:get-session"`
@@ -355,7 +355,7 @@ Tests use lightweight inline mocks (not full state-mock pattern) since these are
 
   > **STOP — Checkpoint 3:** Run tests, then pause and present the second query operation for user review. Should mirror get-workspace-status pattern. Do NOT proceed to Step 4 until the user approves.
 
-- [ ] **Step 4: Create agent:restart operation**
+- [x] **Step 4: Create agent:restart operation**
   - Create `src/main/operations/restart-agent.ts` with:
     - `RestartAgentPayload` (projectId, workspaceName)
     - `RestartAgentIntent extends Intent<number>` with type `"agent:restart"`
@@ -374,7 +374,7 @@ Tests use lightweight inline mocks (not full state-mock pattern) since these are
 
   > **STOP — Checkpoint 4:** Run tests, then pause and present the command operation with event emission and error handling for user review. Do NOT proceed to Step 5 until the user approves.
 
-- [ ] **Step 5: Create ui:set-mode operation**
+- [x] **Step 5: Create ui:set-mode operation**
   - Create `src/main/operations/set-mode.ts` with:
     - `SetModePayload` (mode: UIMode — imported from `src/shared/ipc.ts`)
     - `SetModeIntent extends Intent<void>` with type `"ui:set-mode"`
@@ -394,7 +394,7 @@ Tests use lightweight inline mocks (not full state-mock pattern) since these are
 
   > **STOP — Checkpoint 5:** Run tests, then pause and present the mode operation for user review — especially the previousMode capture in the hook handler and the removal of the ViewManager.onModeChange subscription. Do NOT proceed to Step 6 until the user approves.
 
-- [ ] **Step 6: Create ui:get-active-workspace query**
+- [x] **Step 6: Create ui:get-active-workspace query**
   - Create `src/main/operations/get-active-workspace.ts` with:
     - `GetActiveWorkspaceIntent extends Intent<WorkspaceRef | null>` with type `"ui:get-active-workspace"`
     - `GetActiveWorkspaceHookContext extends HookContext` with `workspaceRef?: WorkspaceRef | null`
@@ -410,7 +410,7 @@ Tests use lightweight inline mocks (not full state-mock pattern) since these are
 
   > **STOP — Checkpoint 6:** Run tests, then pause and present the third query operation for user review. At this point UiModule should have only `selectFolder` and `switchWorkspace` remaining, which are relocated in Step 7. Do NOT proceed to Step 7 until the user approves.
 
-- [ ] **Step 7: Relocate selectFolder and switchWorkspace to CoreModule, delete UiModule**
+- [x] **Step 7: Relocate selectFolder and switchWorkspace to CoreModule, delete UiModule**
   - Move `selectFolder` method and its `MinimalDialog` type/dependency from UiModule to CoreModule
   - Move `switchWorkspace` method from UiModule to CoreModule (plain method, not intent — uses existing `resolveWorkspace()` + `viewManager.setActiveWorkspace()`)
   - Register `ui.selectFolder` in CoreModule with same IPC channel (`ApiIpcChannels.UI_SELECT_FOLDER`)
@@ -426,7 +426,7 @@ Tests use lightweight inline mocks (not full state-mock pattern) since these are
 
   > **STOP — Checkpoint 7:** Run tests, then pause and present the final state for user review — UiModule deleted, all operations on shared dispatcher, CoreModule has selectFolder and switchWorkspace. Do NOT proceed to Step 8 until the user approves.
 
-- [ ] **Step 8: Final validation**
+- [x] **Step 8: Final validation**
   - Run `pnpm validate:fix` — all tests pass, lint clean, types check
   - Verify no remaining references to deleted UiModule
   - Verify all IPC channels still operational
