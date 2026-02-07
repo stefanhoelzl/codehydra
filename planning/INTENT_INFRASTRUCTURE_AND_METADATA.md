@@ -279,7 +279,7 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
 
 ### Phase 0.5: Global Provider Refactor
 
-- [ ] **Step 0.8: Refactor GitWorktreeProvider to global**
+- [x] **Step 0.8: Refactor GitWorktreeProvider to global**
   - Add project registry: `Map<normalizedProjectRoot, { workspacesDir: Path }>` (keys via `Path.toString()`)
   - Add workspace registry: `Map<normalizedWorkspacePath, Path>` (workspace→projectRoot, keys via `Path.toString()`)
   - Add `registerProject(projectRoot, workspacesDir)` and `unregisterProject(projectRoot)`
@@ -290,7 +290,7 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
   - Keep the static `create()` factory for the adapter pattern
   - Files: `src/services/git/git-worktree-provider.ts` (modify)
 
-- [ ] **Step 0.9: Create ProjectScopedWorkspaceProvider adapter**
+- [x] **Step 0.9: Create ProjectScopedWorkspaceProvider adapter**
   - Implements `IWorkspaceProvider`
   - Constructor takes global GitWorktreeProvider + projectRoot + workspacesDir
   - Delegates all methods to global provider, passing projectRoot
@@ -300,7 +300,7 @@ class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
   - Files: `src/services/git/project-scoped-provider.ts` (new)
   - Note: existing tests + call sites see `IWorkspaceProvider` - no changes needed
 
-- [ ] **Step 0.10: Wire adapter into AppState**
+- [x] **Step 0.10: Wire adapter into AppState**
   - `AppState.openProject()` creates `ProjectScopedWorkspaceProvider` instead of direct `GitWorktreeProvider`
   - Pass the global GitWorktreeProvider instance to AppState
   - `getWorkspaceProvider()` returns the adapter (implements IWorkspaceProvider, no change for callers)

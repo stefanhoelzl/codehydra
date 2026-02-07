@@ -13,6 +13,8 @@ import {
   createGitWorktreeProvider,
   KeepFilesService,
   Path,
+  ProjectScopedWorkspaceProvider,
+  type GitWorktreeProvider,
   type IWorkspaceProvider,
   type PathProvider,
   type ProjectStore,
@@ -70,6 +72,7 @@ export class AppState {
   private readonly agentType: AgentType;
   private readonly workspaceFileService: IWorkspaceFileService;
   private readonly wrapperPath: string;
+  private readonly globalWorktreeProvider: GitWorktreeProvider | null;
   /**
    * Map of normalized project path strings to open project state.
    * Keys use path.toString() for consistent cross-platform lookup.
@@ -95,7 +98,8 @@ export class AppState {
     loggingService: LoggingService,
     agentType: AgentType,
     workspaceFileService: IWorkspaceFileService,
-    wrapperPath: string
+    wrapperPath: string,
+    globalWorktreeProvider?: GitWorktreeProvider
   ) {
     this.projectStore = projectStore;
     this.viewManager = viewManager;
@@ -107,6 +111,7 @@ export class AppState {
     this.agentType = agentType;
     this.workspaceFileService = workspaceFileService;
     this.wrapperPath = wrapperPath;
+    this.globalWorktreeProvider = globalWorktreeProvider ?? null;
   }
 
   /**
@@ -344,14 +349,27 @@ export class AppState {
       this.fileSystemLayer,
       this.loggingService.createLogger("keepfiles")
     );
-    const provider = await createGitWorktreeProvider(
-      projectPath,
-      workspacesDir,
-      this.fileSystemLayer,
-      this.loggingService.createLogger("git"),
-      this.loggingService.createLogger("worktree"),
-      { keepFilesService }
-    );
+    let provider: IWorkspaceProvider;
+    if (this.globalWorktreeProvider) {
+      // Use global provider with per-project adapter
+      await this.globalWorktreeProvider.validateRepository(projectPath);
+      provider = new ProjectScopedWorkspaceProvider(
+        this.globalWorktreeProvider,
+        projectPath,
+        workspacesDir,
+        { keepFilesService }
+      );
+    } else {
+      // Fallback: standalone provider (used in tests that mock createGitWorktreeProvider)
+      provider = await createGitWorktreeProvider(
+        projectPath,
+        workspacesDir,
+        this.fileSystemLayer,
+        this.loggingService.createLogger("git"),
+        this.loggingService.createLogger("worktree"),
+        { keepFilesService }
+      );
+    }
 
     // Run cleanup non-blocking (fire and forget)
     if (provider.cleanupOrphanedWorkspaces) {
@@ -471,6 +489,11 @@ export class AppState {
     // Destroy all workspace views
     for (const workspace of openProject.workspaces) {
       await this.viewManager.destroyWorkspaceView(workspace.path.toString());
+    }
+
+    // Dispose workspace provider adapter (unregisters project from global provider)
+    if (openProject.provider instanceof ProjectScopedWorkspaceProvider) {
+      openProject.provider.dispose();
     }
 
     // Remove from state

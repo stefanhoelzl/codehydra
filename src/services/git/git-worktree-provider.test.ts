@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
+import { ProjectScopedWorkspaceProvider } from "./project-scoped-provider";
 import { WorkspaceError } from "../errors";
 import {
   createFileSystemMock,
@@ -45,7 +46,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      expect(provider).toBeInstanceOf(GitWorktreeProvider);
+      expect(provider).toBeInstanceOf(ProjectScopedWorkspaceProvider);
       expect(provider.projectRoot.toString()).toBe(PROJECT_ROOT.toString());
     });
 
