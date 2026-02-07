@@ -23,8 +23,12 @@ export type ClaudeCodeHookName =
   | "SubagentStop"
   | "PreToolUse"
   | "PostToolUse"
+  | "PostToolUseFailure"
   | "Notification"
-  | "PreCompact";
+  | "PreCompact"
+  | "SubagentStart"
+  | "TeammateIdle"
+  | "TaskCompleted";
 
 /**
  * Base hook payload that all hooks include.
@@ -90,10 +94,18 @@ export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChan
   PreToolUse: null,
   // Tool done, back to busy (handles return from PermissionRequest idle state)
   PostToolUse: "busy",
+  // Tool failed, logged for analysis (no change)
+  PostToolUseFailure: null,
   // Informational only (no change)
   Notification: null,
   // Compacting context, agent working
   PreCompact: "busy",
+  // Subagent spawned, logged for analysis (no change)
+  SubagentStart: null,
+  // Agent team teammate going idle, logged for analysis (no change)
+  TeammateIdle: null,
+  // Task marked completed, logged for analysis (no change)
+  TaskCompleted: null,
 };
 
 /**
