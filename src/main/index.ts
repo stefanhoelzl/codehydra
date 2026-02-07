@@ -64,6 +64,10 @@ import { BadgeManager } from "./managers/badge-manager";
 import { AppState } from "./app-state";
 import { wireApiEvents, formatWindowTitle, registerLogHandlers } from "./ipc";
 import { initializeBootstrap, type BootstrapResult } from "./bootstrap";
+import { HookRegistry } from "./intents/infrastructure/hook-registry";
+import { Dispatcher } from "./intents/infrastructure/dispatcher";
+import { INTENT_SET_MODE } from "./operations/set-mode";
+import type { SetModeIntent } from "./operations/set-mode";
 import type { CoreModuleDeps } from "./modules/core";
 import { generateProjectId, extractWorkspaceName } from "./api/id-utils";
 import type { ICodeHydraApi, Unsubscribe } from "../shared/api/interfaces";
@@ -885,7 +889,11 @@ async function bootstrap(): Promise<void> {
   sessionLayer = new DefaultSessionLayer(viewLogger);
   viewLayer = new DefaultViewLayer(windowLayer, viewLogger);
 
-  // 6. Create ViewManager with port=0 initially
+  // 6. Create dispatcher early so ShortcutController can dispatch intents
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
+
+  // 6b. Create ViewManager with port=0 initially
   // Port will be updated when startServices() runs
   viewManager = ViewManager.create({
     windowManager,
@@ -897,9 +905,15 @@ async function bootstrap(): Promise<void> {
       codeServerPort: 0,
     },
     logger: viewLogger,
+    setModeFn: (mode) => {
+      void dispatcher.dispatch({
+        type: INTENT_SET_MODE,
+        payload: { mode },
+      } as SetModeIntent);
+    },
   });
 
-  // 6b. Maximize window after ViewManager subscription is active
+  // 6c. Maximize window after ViewManager subscription is active
   // On Linux, maximize() is async - wait for it to complete before loading UI
   await windowManager.maximizeAsync();
 
@@ -1007,6 +1021,8 @@ async function bootstrap(): Promise<void> {
       }
       return globalWorktreeProvider;
     },
+    // Dispatcher created early so ShortcutController can dispatch intents
+    dispatcherFn: () => ({ hookRegistry, dispatcher }),
   }) as BootstrapResult & { startServices: () => void };
 
   // Note: IPC handlers for lifecycle.* are now registered by LifecycleModule

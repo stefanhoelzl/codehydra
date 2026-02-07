@@ -83,10 +83,7 @@ interface TestSetup {
   mockApiRegistry: MockApiRegistry;
 }
 
-function createTestSetup(opts?: {
-  initialMode?: UIMode;
-  withIpcEventBridge?: boolean;
-}): TestSetup {
+function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boolean }): TestSetup {
   const viewManager = createMockViewManager(opts?.initialMode ?? "workspace");
 
   const hookRegistry = new HookRegistry();

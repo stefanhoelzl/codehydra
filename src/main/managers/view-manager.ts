@@ -79,6 +79,12 @@ export interface ViewManagerDeps {
   readonly config: ViewManagerConfig;
   /** Logger */
   readonly logger: Logger;
+  /**
+   * Optional function to dispatch mode changes through the intent pipeline.
+   * When provided, ShortcutController routes mode changes through the dispatcher
+   * instead of calling ViewManager.setMode() directly.
+   */
+  readonly setModeFn?: (mode: UIMode) => void;
 }
 
 /**
@@ -206,10 +212,14 @@ export class ViewManager implements IViewManager {
     const rawWindow = windowLayer._getRawWindow(windowHandle);
 
     // Create ShortcutController with deps that reference the holder
+    // When setModeFn is provided, route mode changes through the intent dispatcher
+    // so domain events (ui:mode-changed) are emitted to the renderer.
     const shortcutController = new ShortcutController(rawWindow, {
       focusUI: () => viewManagerHolder.instance?.focusUI(),
       getUIWebContents: () => viewManagerHolder.instance?.getUIWebContents() ?? null,
-      setMode: (mode) => viewManagerHolder.instance?.setMode(mode),
+      setMode: deps.setModeFn
+        ? (mode) => deps.setModeFn!(mode)
+        : (mode) => viewManagerHolder.instance?.setMode(mode),
       getMode: () => viewManagerHolder.instance?.getMode() ?? "workspace",
       // Shortcut key callback - sends IPC event to renderer
       onShortcut: (key) => {
