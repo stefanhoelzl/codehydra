@@ -290,7 +290,6 @@ describe("core.registration", () => {
     expect(registeredPaths).toContain("workspaces.remove");
     expect(registeredPaths).toContain("workspaces.forceRemove");
     expect(registeredPaths).toContain("workspaces.get");
-    expect(registeredPaths).toContain("workspaces.getStatus");
     expect(registeredPaths).toContain("workspaces.getAgentSession");
   });
 

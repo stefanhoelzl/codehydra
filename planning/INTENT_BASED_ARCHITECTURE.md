@@ -708,15 +708,17 @@ IPC channels never change. Renderer sees no difference. Per-method migration.
 ### Phase 2: Simple Operations
 
 - Queries (`workspace:get-status`, `agent:get-session`)
-- `agent:restart`, `ui:enter-shortcut-mode`, `ui:change-view-mode`, `workspace:switch`
+- `agent:restart`, `ui:set-mode` (combines `ui:enter-shortcut-mode` + `ui:change-view-mode`), `ui:get-active-workspace`
+- Relocate `workspace:switch` and `selectFolder` to CoreModule (plain methods, not intents)
 - After this phase: **delete UiModule**
 
 ### Phase 3: Core Operations
 
 - `workspace:create` (most complex — many modules participate)
 - `workspace:delete` (with interceptor for Windows process blocking)
+- `workspace:switch` (deferred from Phase 2 — depends on all `setActiveWorkspace` callers being migrated first)
 - `project:open`, `project:load`, `project:close`
-- After this phase: **delete CoreModule**
+- After this phase: **delete CoreModule**, remove `ViewManager.onWorkspaceChange` callback from `index.ts`
 
 ### Phase 4: App Lifecycle
 
