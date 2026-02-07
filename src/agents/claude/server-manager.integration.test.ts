@@ -298,6 +298,22 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
+    it("PreCompact -> busy", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Start session (idle)
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      // Compaction starts
+      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
     it("Stop -> idle", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
