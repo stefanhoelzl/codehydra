@@ -206,14 +206,12 @@ function createMockCodeHydraApi(
     workspaces: {
       create: (projectId, name, base, options) =>
         get("workspaces.create")({ projectId, name, base, ...options }),
-      remove: (projectId, workspaceName, keepBranch) =>
+      remove: (projectId, workspaceName, options) =>
         get("workspaces.remove")({
           projectId,
           workspaceName,
-          ...(keepBranch !== undefined && { keepBranch }),
+          ...options,
         }),
-      forceRemove: (projectId, workspaceName) =>
-        get("workspaces.forceRemove")({ projectId, workspaceName }),
       get: (projectId, workspaceName) => get("workspaces.get")({ projectId, workspaceName }),
       getStatus: (projectId, workspaceName) =>
         get("workspaces.getStatus")({ projectId, workspaceName }),
@@ -278,7 +276,6 @@ export function registerAllMethodsWithStubs(
     "projects.fetchBases": async () => ({ bases: [] }),
     "workspaces.create": async () => createMockWorkspace(),
     "workspaces.remove": async () => ({ started: true as const }),
-    "workspaces.forceRemove": async () => {},
     "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" as const } }),
     "workspaces.getAgentSession": async () => null,

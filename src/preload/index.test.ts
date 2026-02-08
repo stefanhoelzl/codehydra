@@ -189,10 +189,10 @@ describe("preload API", () => {
         remove: (
           projectId: string,
           workspaceName: string,
-          keepBranch?: boolean
+          options?: { keepBranch?: boolean }
         ) => Promise<unknown>;
       };
-      const result = await workspaces.remove("my-app-12345678", "feature", true);
+      const result = await workspaces.remove("my-app-12345678", "feature", { keepBranch: true });
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:remove", {
         projectId: "my-app-12345678",

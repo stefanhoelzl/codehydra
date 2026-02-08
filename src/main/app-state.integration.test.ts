@@ -1,14 +1,10 @@
 // @vitest-environment node
 
 /**
- * Integration tests for AppState workspace removal flow.
+ * Integration tests for AppState.
  *
- * These tests verify that workspace cleanup executes all steps in the correct order:
- * 1. Agent status removal (kills OpenCode processes)
- * 2. View destruction (navigates to about:blank, clears partition)
- *
- * Note: These tests mock external systems but verify integration order between
- * agentStatusManager and viewManager during workspace removal.
+ * Tests verify project and workspace state management, including
+ * workspace registration/unregistration and active workspace switching.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AppState } from "./app-state";
@@ -23,9 +19,6 @@ import {
   type MockLoggingService,
   Path,
 } from "../services";
-import type { AgentStatusManager } from "../agents/opencode/status-manager";
-import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
-import type { WorkspacePath } from "../shared/ipc";
 
 // =============================================================================
 // Mock Factories
@@ -107,45 +100,6 @@ function createMockViewManager(): IViewManager {
   } as unknown as IViewManager;
 }
 
-function createMockAgentStatusManager(): AgentStatusManager {
-  return {
-    initWorkspace: vi.fn().mockResolvedValue(undefined),
-    removeWorkspace: vi.fn(),
-    clearTuiTracking: vi.fn(),
-    onStatusChanged: vi.fn().mockReturnValue(() => {}),
-    dispose: vi.fn(),
-    getProvider: vi.fn().mockReturnValue({
-      getEnvironmentVariables: vi.fn().mockReturnValue({}),
-    }),
-  } as unknown as AgentStatusManager;
-}
-
-function createMockServerManager(): OpenCodeServerManager {
-  // Track callbacks to simulate real behavior
-  type StoppedCallback = (path: string) => void;
-  const stoppedCallbacks = new Set<StoppedCallback>();
-
-  return {
-    startServer: vi.fn().mockResolvedValue(14001),
-    stopServer: vi.fn().mockImplementation(async (path: string) => {
-      // Simulate callback firing when server stops
-      for (const cb of stoppedCallbacks) {
-        cb(path);
-      }
-      return { success: true };
-    }),
-    stopAllForProject: vi.fn().mockResolvedValue(undefined),
-    getPort: vi.fn().mockReturnValue(undefined),
-    onServerStarted: vi.fn().mockReturnValue(() => {}),
-    onServerStopped: vi.fn().mockImplementation((cb: StoppedCallback) => {
-      stoppedCallbacks.add(cb);
-      return () => stoppedCallbacks.delete(cb);
-    }),
-    cleanupStaleEntries: vi.fn().mockResolvedValue(undefined),
-    dispose: vi.fn().mockResolvedValue(undefined),
-  } as unknown as OpenCodeServerManager;
-}
-
 // Mock wrapper path for Claude wrapper
 const MOCK_WRAPPER_PATH = "/mock/bin/claude";
 
@@ -162,11 +116,9 @@ function createMockWorkspaceFileService() {
 // Integration Tests: Workspace Removal Cleanup Flow
 // =============================================================================
 
-describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
+describe("AppState Integration", () => {
   let appState: AppState;
   let mockViewManager: IViewManager;
-  let mockAgentStatusManager: AgentStatusManager;
-  let mockServerManager: OpenCodeServerManager;
   let mockPathProvider: PathProvider;
   let mockFileSystemLayer: FileSystemLayer;
   let mockLoggingService: MockLoggingService;
@@ -179,8 +131,6 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
       dataRootDir: WORKSPACES_DIR,
     });
     mockViewManager = createMockViewManager();
-    mockAgentStatusManager = createMockAgentStatusManager();
-    mockServerManager = createMockServerManager();
     mockFileSystemLayer = createFileSystemMock();
     mockLoggingService = createMockLoggingService();
     mockWorkspaceFileService = createMockWorkspaceFileService();
@@ -207,8 +157,8 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
     vi.restoreAllMocks();
   });
 
-  describe("removeWorkspace cleanup order", () => {
-    it("executes cleanup in order: serverManager.stopServer → viewManager.destroyWorkspaceView", async () => {
+  describe("unregisterWorkspace", () => {
+    it("removes workspace from project state without stopping servers or destroying views", async () => {
       appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager,
@@ -220,251 +170,28 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
-      appState.setAgentStatusManager(mockAgentStatusManager);
-      appState.setServerManager(mockServerManager);
-
-      // Open project to populate state
-      await appState.openProject("/project");
-
-      // Track execution order
-      const executionOrder: string[] = [];
-
-      // Note: With the new design, serverManager.stopServer triggers onServerStopped callback
-      // which calls agentStatusManager.removeWorkspace. The order is now:
-      // 1. serverManager.stopServer (which fires callback that calls agentStatusManager.removeWorkspace)
-      // 2. viewManager.destroyWorkspaceView
-
-      vi.mocked(mockServerManager.stopServer).mockImplementation(async (path: string) => {
-        executionOrder.push("serverManager.stopServer");
-        // Simulate callback firing (which would call agentStatusManager.removeWorkspace)
-        vi.mocked(mockAgentStatusManager.removeWorkspace)(path as WorkspacePath);
-        executionOrder.push("agentStatusManager.removeWorkspace");
-        return { success: true };
-      });
-
-      vi.mocked(mockViewManager.destroyWorkspaceView).mockImplementation(async () => {
-        executionOrder.push("viewManager.destroyWorkspaceView");
-      });
-
-      // Remove workspace
-      await appState.removeWorkspace("/project", "/project/.worktrees/feature-1");
-
-      // Verify order: server stop (with agent cleanup) happens before view destruction
-      expect(executionOrder).toEqual([
-        "serverManager.stopServer",
-        "agentStatusManager.removeWorkspace",
-        "viewManager.destroyWorkspaceView",
-      ]);
-    });
-
-    it("calls viewManager.destroyWorkspaceView with workspace path", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-      appState.setAgentStatusManager(mockAgentStatusManager);
 
       await appState.openProject("/project");
 
-      await appState.removeWorkspace("/project", "/project/.worktrees/feature-1");
-
-      expect(mockViewManager.destroyWorkspaceView).toHaveBeenCalledWith(
-        "/project/.worktrees/feature-1"
-      );
-    });
-
-    it("calls serverManager.stopServer with workspace path", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-      appState.setAgentStatusManager(mockAgentStatusManager);
-      appState.setServerManager(mockServerManager);
-
-      await appState.openProject("/project");
-
-      await appState.removeWorkspace("/project", "/project/.worktrees/feature-1");
-
-      expect(mockServerManager.stopServer).toHaveBeenCalledWith("/project/.worktrees/feature-1");
-    });
-
-    it("continues cleanup even if agentStatusManager is not set", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-      // Don't set agentStatusManager
-
-      await appState.openProject("/project");
-
-      // Should not throw
-      await expect(
-        appState.removeWorkspace("/project", "/project/.worktrees/feature-1")
-      ).resolves.not.toThrow();
-
-      // View should still be destroyed
-      expect(mockViewManager.destroyWorkspaceView).toHaveBeenCalledWith(
-        "/project/.worktrees/feature-1"
-      );
-    });
-
-    it("calls serverManager.stopServer before view destruction", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-      appState.setAgentStatusManager(mockAgentStatusManager);
-      appState.setServerManager(mockServerManager);
-
-      await appState.openProject("/project");
-
-      // Track that server stop happens before view destruction
-      let serverStopped = false;
-      let viewDestroyStarted = false;
-
-      vi.mocked(mockServerManager.stopServer).mockImplementation(async () => {
-        serverStopped = true;
-        return { success: true };
-      });
-
-      vi.mocked(mockViewManager.destroyWorkspaceView).mockImplementation(async () => {
-        viewDestroyStarted = true;
-        // Verify server was stopped before view destruction started
-        expect(serverStopped).toBe(true);
-      });
-
-      await appState.removeWorkspace("/project", "/project/.worktrees/feature-1");
-
-      expect(viewDestroyStarted).toBe(true);
-    });
-
-    it("updates project state after cleanup completes", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-      appState.setAgentStatusManager(mockAgentStatusManager);
-
-      await appState.openProject("/project");
-
-      // Verify workspace exists before removal
+      // Verify workspace exists
       const projectBefore = appState.getProject("/project");
       expect(projectBefore?.workspaces).toHaveLength(1);
-      expect(projectBefore?.workspaces[0]?.path).toBe("/project/.worktrees/feature-1");
 
-      await appState.removeWorkspace("/project", "/project/.worktrees/feature-1");
-
-      // Verify workspace removed from project state
-      const projectAfter = appState.getProject("/project");
-      expect(projectAfter?.workspaces).toHaveLength(0);
-    });
-
-    it("is idempotent - does not error on double removal", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-      appState.setAgentStatusManager(mockAgentStatusManager);
-
-      await appState.openProject("/project");
-
-      // First removal
-      await appState.removeWorkspace("/project", "/project/.worktrees/feature-1");
-
-      // Reset mocks to track second call
+      // Clear mocks from openProject
       vi.clearAllMocks();
 
-      // Second removal should not throw (workspace already gone from state)
-      await expect(
-        appState.removeWorkspace("/project", "/project/.worktrees/feature-1")
-      ).resolves.not.toThrow();
-    });
+      // Unregister workspace (state-only removal)
+      appState.unregisterWorkspace("/project", "/project/.worktrees/feature-1");
 
-    it("handles non-existent project gracefully", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-      appState.setAgentStatusManager(mockAgentStatusManager);
+      // Verify workspace removed from state
+      const projectAfter = appState.getProject("/project");
+      expect(projectAfter?.workspaces).toHaveLength(0);
 
-      // Don't open any project, try to remove workspace from non-existent project
-      await expect(
-        appState.removeWorkspace("/nonexistent", "/nonexistent/.worktrees/feature-1")
-      ).resolves.not.toThrow();
-
-      // Neither cleanup step should be called
-      expect(mockAgentStatusManager.removeWorkspace).not.toHaveBeenCalled();
+      // Verify no server/view cleanup happened (that's the hook modules' job)
       expect(mockViewManager.destroyWorkspaceView).not.toHaveBeenCalled();
     });
-  });
 
-  describe("removeWorkspace with multiple workspaces", () => {
-    beforeEach(() => {
-      // Configure mock to return two workspaces (with Path objects for runtime compatibility)
-      mockWorkspaceProvider.discover.mockResolvedValue([
-        {
-          name: "feature-1",
-          path: new Path("/project/.worktrees/feature-1") as unknown as string,
-          branch: "feature-1",
-        },
-        {
-          name: "feature-2",
-          path: new Path("/project/.worktrees/feature-2") as unknown as string,
-          branch: "feature-2",
-        },
-      ]);
-    });
-
-    it("only removes the specified workspace, leaves others intact", async () => {
+    it("handles non-existent project gracefully", () => {
       appState = new AppState(
         mockProjectStore as unknown as ProjectStore,
         mockViewManager,
@@ -476,30 +203,11 @@ describe("AppState Integration: Workspace Removal Cleanup Flow", () => {
         mockWorkspaceFileService,
         MOCK_WRAPPER_PATH
       );
-      appState.setAgentStatusManager(mockAgentStatusManager);
-      appState.setServerManager(mockServerManager);
 
-      await appState.openProject("/project");
-
-      // Verify both workspaces exist
-      const projectBefore = appState.getProject("/project");
-      expect(projectBefore?.workspaces).toHaveLength(2);
-
-      // Remove only feature-1
-      await appState.removeWorkspace("/project", "/project/.worktrees/feature-1");
-
-      // Verify only feature-1 was removed, feature-2 remains
-      const projectAfter = appState.getProject("/project");
-      expect(projectAfter?.workspaces).toHaveLength(1);
-      expect(projectAfter?.workspaces[0]?.name).toBe("feature-2");
-
-      // Verify cleanup was only called for feature-1
-      expect(mockServerManager.stopServer).toHaveBeenCalledTimes(1);
-      expect(mockServerManager.stopServer).toHaveBeenCalledWith("/project/.worktrees/feature-1");
-      expect(mockViewManager.destroyWorkspaceView).toHaveBeenCalledTimes(1);
-      expect(mockViewManager.destroyWorkspaceView).toHaveBeenCalledWith(
-        "/project/.worktrees/feature-1"
-      );
+      // Should not throw
+      expect(() =>
+        appState.unregisterWorkspace("/nonexistent", "/nonexistent/.worktrees/feature-1")
+      ).not.toThrow();
     });
   });
 

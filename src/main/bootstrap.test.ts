@@ -58,7 +58,7 @@ function createMockAppState(): AppState {
         branch: "feature",
         metadata: { base: "main" },
       }),
-      removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      unregisterWorkspace: vi.fn(),
       listBases: vi.fn().mockResolvedValue([]),
       updateBases: vi.fn().mockResolvedValue(undefined),
       isDirty: vi.fn().mockResolvedValue(false),
@@ -67,7 +67,7 @@ function createMockAppState(): AppState {
     }),
     findProjectForWorkspace: vi.fn(),
     registerWorkspace: vi.fn(),
-    removeWorkspace: vi.fn().mockResolvedValue(undefined),
+    unregisterWorkspace: vi.fn(),
     getWorkspaceUrl: vi.fn(),
     getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
     setLastBaseBranch: vi.fn(),
@@ -121,7 +121,6 @@ function createMockCoreDeps(): CoreModuleDeps {
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
-    emitDeletionProgress: vi.fn(),
     logger: createMockLogger(),
   };
 }
@@ -161,6 +160,13 @@ function createMockDeps(): BootstrapDeps {
     coreDepsFn: () => createMockCoreDeps(),
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     keepFilesServiceFn: () => createMockKeepFilesService(),
+    workspaceFileServiceFn: () =>
+      ({
+        deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+      }) as unknown as import("../services").IWorkspaceFileService,
+    emitDeletionProgressFn: () => vi.fn(),
+    killTerminalsCallbackFn: () => undefined,
+    workspaceLockHandlerFn: () => undefined,
     dispatcherFn: createMockDispatcher,
   };
 }

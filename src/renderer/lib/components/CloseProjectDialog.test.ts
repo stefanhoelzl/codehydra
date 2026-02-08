@@ -119,7 +119,7 @@ describe("CloseProjectDialog component", () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     mockCloseProject.mockResolvedValue(undefined);
-    mockRemoveWorkspace.mockResolvedValue({ branchDeleted: true });
+    mockRemoveWorkspace.mockResolvedValue({ started: true });
     mockProjects.mockReturnValue([testProject]);
   });
 
@@ -342,21 +342,15 @@ describe("CloseProjectDialog component", () => {
 
       // Should call remove for each workspace with keepBranch=false
       expect(mockRemoveWorkspace).toHaveBeenCalledTimes(3);
-      expect(mockRemoveWorkspace).toHaveBeenCalledWith(
-        testProjectId,
-        "ws1" as WorkspaceName,
-        false
-      );
-      expect(mockRemoveWorkspace).toHaveBeenCalledWith(
-        testProjectId,
-        "ws2" as WorkspaceName,
-        false
-      );
-      expect(mockRemoveWorkspace).toHaveBeenCalledWith(
-        testProjectId,
-        "ws3" as WorkspaceName,
-        false
-      );
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith(testProjectId, "ws1" as WorkspaceName, {
+        keepBranch: false,
+      });
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith(testProjectId, "ws2" as WorkspaceName, {
+        keepBranch: false,
+      });
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith(testProjectId, "ws3" as WorkspaceName, {
+        keepBranch: false,
+      });
     });
 
     it("calls api.projects.close() after all removals", async () => {
@@ -380,8 +374,8 @@ describe("CloseProjectDialog component", () => {
     it("shows aggregate error message for partial failures", async () => {
       // First two succeed, third fails
       mockRemoveWorkspace
-        .mockResolvedValueOnce({ branchDeleted: true })
-        .mockResolvedValueOnce({ branchDeleted: true })
+        .mockResolvedValueOnce({ started: true })
+        .mockResolvedValueOnce({ started: true })
         .mockRejectedValueOnce(new Error("Branch in use"));
 
       render(CloseProjectDialog, { props: defaultProps });

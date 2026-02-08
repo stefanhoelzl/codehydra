@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { Dispatcher } from "./dispatcher";
+import { Dispatcher, IntentHandle } from "./dispatcher";
 import type { IntentInterceptor } from "./dispatcher";
 import { HookRegistry } from "./hook-registry";
 import type { Intent, DomainEvent } from "./types";
@@ -303,5 +303,82 @@ describe("Dispatcher", () => {
 
     expect(hookRan).toHaveBeenCalledOnce();
     expect(result).toEqual({ answer: 42 });
+  });
+
+  it("dispatch returns IntentHandle", () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+
+    const handle = dispatcher.dispatch(createActionIntent());
+
+    expect(handle).toBeInstanceOf(IntentHandle);
+  });
+
+  it("accepted resolves to true when no interceptors cancel", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+
+    const handle = dispatcher.dispatch(createActionIntent());
+    const accepted = await handle.accepted;
+
+    expect(accepted).toBe(true);
+  });
+
+  it("accepted resolves to false when interceptor cancels", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+
+    dispatcher.addInterceptor({
+      id: "cancel",
+      async before() {
+        return null;
+      },
+    });
+
+    const handle = dispatcher.dispatch(createActionIntent());
+    const accepted = await handle.accepted;
+
+    expect(accepted).toBe(false);
+    expect(await handle).toBeUndefined();
+  });
+
+  it("accepted resolves before operation completes", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    let resolveOperation!: () => void;
+    const operationStarted = new Promise<void>((resolve) => {
+      resolveOperation = resolve;
+    });
+    let operationFinished = false;
+
+    dispatcher.registerOperation("test:action", {
+      id: "slow-op",
+      execute: async () => {
+        resolveOperation();
+        // Wait for an extra microtask tick to simulate slow work
+        await new Promise<void>((r) => setTimeout(r, 10));
+        operationFinished = true;
+      },
+    });
+
+    const handle = dispatcher.dispatch(createActionIntent());
+
+    // Wait for accepted — should resolve once interceptors pass (before operation finishes)
+    const accepted = await handle.accepted;
+    await operationStarted;
+
+    expect(accepted).toBe(true);
+    expect(operationFinished).toBe(false);
+
+    // Now await the full result
+    await handle;
+    expect(operationFinished).toBe(true);
   });
 });

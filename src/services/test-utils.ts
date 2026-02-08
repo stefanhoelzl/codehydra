@@ -314,7 +314,6 @@ export function createMockWorkspaceApi(overrides?: Partial<IWorkspaceApi>): IWor
   return {
     create: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
     remove: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.removeResult),
-    forceRemove: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
     getAgentSession: vi.fn().mockResolvedValue(null),

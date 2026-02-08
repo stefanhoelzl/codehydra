@@ -48,7 +48,7 @@ describe("registry-types.paths", () => {
   it("ALL_METHOD_PATHS contains all MethodRegistry keys", () => {
     // This test is compile-time verified by the `satisfies` constraint in registry-types.ts
     // At runtime, we verify the count matches
-    const registryKeyCount = 25; // Count of all methods in MethodRegistry
+    const registryKeyCount = 24; // Count of all methods in MethodRegistry
     expect(ALL_METHOD_PATHS.length).toBe(registryKeyCount);
   });
 
@@ -83,7 +83,6 @@ describe("registry-types.paths", () => {
     // Workspace paths
     expectTypeOf<"workspaces.create">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.remove">().toExtend<WorkspacePath>();
-    expectTypeOf<"workspaces.forceRemove">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.get">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.getStatus">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.getAgentSession">().toExtend<WorkspacePath>();
@@ -151,7 +150,6 @@ describe("registry-types.payload", () => {
   });
 
   it("extracts WorkspaceRefPayload for workspace ref methods", () => {
-    expectTypeOf<MethodPayload<"workspaces.forceRemove">>().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<MethodPayload<"workspaces.get">>().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<MethodPayload<"workspaces.getStatus">>().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<
@@ -227,8 +225,7 @@ describe("registry-types.result", () => {
 
     // Workspace methods
     expectTypeOf<MethodResult<"workspaces.create">>().toEqualTypeOf<Workspace>();
-    expectTypeOf<MethodResult<"workspaces.remove">>().toEqualTypeOf<{ started: true }>();
-    expectTypeOf<MethodResult<"workspaces.forceRemove">>().toEqualTypeOf<void>();
+    expectTypeOf<MethodResult<"workspaces.remove">>().toEqualTypeOf<{ started: boolean }>();
     expectTypeOf<MethodResult<"workspaces.get">>().toEqualTypeOf<Workspace | undefined>();
     expectTypeOf<MethodResult<"workspaces.getStatus">>().toEqualTypeOf<WorkspaceStatus>();
     expectTypeOf<MethodResult<"workspaces.getAgentSession">>().toEqualTypeOf<AgentSession | null>();

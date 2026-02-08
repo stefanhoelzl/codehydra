@@ -586,16 +586,17 @@ Non-UI consumers (MCP Server, CLI) use `ICoreApi` which excludes `IUiApi` and `I
 
 Some API methods are implemented through an intent-based dispatcher (`Dispatcher` + `HookRegistry`). Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
 
-| Operation              | Intent Type              | Hook Points                   | Domain Event        |
-| ---------------------- | ------------------------ | ----------------------------- | ------------------- |
-| `set-metadata`         | `workspace:setMetadata`  | `set`                         | --                  |
-| `get-metadata`         | `workspace:getMetadata`  | `get`                         | --                  |
-| `get-workspace-status` | `workspace:getStatus`    | `get`                         | --                  |
-| `get-agent-session`    | `workspace:getSession`   | `get`                         | --                  |
-| `restart-agent`        | `workspace:restartAgent` | `restart`                     | --                  |
-| `set-mode`             | `ui:setMode`             | `set`                         | --                  |
-| `get-active-workspace` | `ui:getActiveWorkspace`  | `get`                         | --                  |
-| `create-workspace`     | `workspace:create`       | `create`, `setup`, `finalize` | `workspace:created` |
+| Operation              | Intent Type              | Hook Points                     | Domain Event        |
+| ---------------------- | ------------------------ | ------------------------------- | ------------------- |
+| `set-metadata`         | `workspace:setMetadata`  | `set`                           | --                  |
+| `get-metadata`         | `workspace:getMetadata`  | `get`                           | --                  |
+| `get-workspace-status` | `workspace:getStatus`    | `get`                           | --                  |
+| `get-agent-session`    | `workspace:getSession`   | `get`                           | --                  |
+| `restart-agent`        | `workspace:restartAgent` | `restart`                       | --                  |
+| `set-mode`             | `ui:setMode`             | `set`                           | --                  |
+| `get-active-workspace` | `ui:getActiveWorkspace`  | `get`                           | --                  |
+| `create-workspace`     | `workspace:create`       | `create`, `setup`, `finalize`   | `workspace:created` |
+| `delete-workspace`     | `workspace:delete`       | `shutdown`, `release`, `delete` | `workspace:deleted` |
 
 Bridge handlers in `wireDispatcher()` map IPC payloads to intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event modules (StateModule, ViewModule) and transformed to IPC events by IpcEventBridge.
 
@@ -604,6 +605,14 @@ The `create-workspace` operation uses these hook modules:
 - **create**: WorktreeModule (creates git worktree)
 - **setup**: KeepFilesModule (copies .keepfiles), AgentModule (starts agent server) -- both best-effort with internal try/catch
 - **finalize**: CodeServerModule (creates .code-workspace file)
+
+The `delete-workspace` operation uses these hook modules:
+
+- **shutdown**: ViewModule (switch active workspace + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI tracking)
+- **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode
+- **delete**: WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
+
+The operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), IpcEventBridge (emits `workspace:removed` IPC event), and clears the idempotency flag.
 
 ### Branded ID Types
 

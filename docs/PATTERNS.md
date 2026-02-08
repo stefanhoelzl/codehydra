@@ -88,6 +88,22 @@ export class CoreModule implements IApiModule {
 - `getInterface()` returns `ICodeHydraApi` for external consumers (converts payload → positional)
 - Events are emitted through the registry with type-safe payloads
 
+**Intent Dispatcher Bridge:**
+
+Some methods (e.g., `workspaces.create`, `workspaces.remove`) are handled by the intent dispatcher rather than directly by CoreModule. Bridge handlers in `wireDispatcher()` map IPC payloads to intents and dispatch them:
+
+```typescript
+registry.register(
+  "workspaces.remove",
+  async (payload: WorkspaceRemovePayload) => {
+    const intent: DeleteWorkspaceIntent = { type: INTENT_DELETE_WORKSPACE, payload: { ... } };
+    void dispatcher.dispatch(intent); // Fire-and-forget
+    return { started: true };
+  },
+  { ipc: ApiIpcChannels.WORKSPACE_REMOVE }
+);
+```
+
 ### ID Generation Pattern
 
 Projects and workspaces use branded types (`ProjectId`, `WorkspaceName`) with deterministic ID generation:

@@ -405,7 +405,7 @@ describe("Integration tests", () => {
         expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
           expect.any(String), // projectId (generated)
           workspace.name, // workspaceName
-          false // keepBranch (default is unchecked, so keepBranch=false)
+          { keepBranch: false } // keepBranch (default is unchecked, so keepBranch=false)
         );
       });
 
@@ -582,7 +582,7 @@ describe("Integration tests", () => {
       expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
         project.id,
         workspace.name,
-        false // keepBranch default
+        { keepBranch: false } // keepBranch default
       );
     });
   });

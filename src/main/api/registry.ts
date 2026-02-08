@@ -180,14 +180,12 @@ export class ApiRegistry implements IApiRegistry {
       workspaces: {
         create: (projectId, name, base, options) =>
           get("workspaces.create")({ projectId, name, base, ...options }),
-        remove: (projectId, workspaceName, keepBranch) =>
+        remove: (projectId, workspaceName, options) =>
           get("workspaces.remove")({
             projectId,
             workspaceName,
-            ...(keepBranch !== undefined && { keepBranch }),
+            ...options,
           }),
-        forceRemove: (projectId, workspaceName) =>
-          get("workspaces.forceRemove")({ projectId, workspaceName }),
         get: (projectId, workspaceName) => get("workspaces.get")({ projectId, workspaceName }),
         getStatus: (projectId, workspaceName) =>
           get("workspaces.getStatus")({ projectId, workspaceName }),

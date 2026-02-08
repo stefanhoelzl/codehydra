@@ -22,7 +22,6 @@ function createMockCoreApi(): ICoreApi {
     workspaces: {
       create: vi.fn(),
       remove: vi.fn(),
-      forceRemove: vi.fn(),
       get: vi.fn(),
       getStatus: vi.fn(),
       getOpencodePort: vi.fn(),

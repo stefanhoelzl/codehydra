@@ -8,6 +8,7 @@
 
 import type { DomainEvent } from "./types";
 import type { HookHandler } from "./operation";
+import type { IntentInterceptor } from "./dispatcher";
 
 // =============================================================================
 // Declaration Types
@@ -38,6 +39,8 @@ export interface IntentModule {
   readonly hooks?: HookDeclarations;
   /** Event subscriptions: eventType → handler */
   readonly events?: EventDeclarations;
+  /** Interceptors to add to the dispatcher pipeline */
+  readonly interceptors?: readonly IntentInterceptor[];
   /** Optional cleanup when the module is disposed. */
   dispose?(): void;
 }

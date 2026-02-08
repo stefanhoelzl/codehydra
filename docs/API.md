@@ -797,18 +797,17 @@ interface ProjectCloseOptions {
 
 #### `workspaces` - Workspace Management
 
-| Method                  | Signature                                                                                                                                                                            | Description                                                                                                                                                                                                                                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create`                | `(projectId: ProjectId, name: string, base: string) => Promise<Workspace>`                                                                                                           | Create a new workspace from a base branch                                                                                                                                                                                                                                                              |
-| `remove`                | `(projectId: ProjectId, workspaceName: WorkspaceName, options?: { keepBranch?: boolean; unblock?: "kill" \| "close" \| "ignore"; isRetry?: boolean }) => Promise<{ started: true }>` | Start workspace removal (fire-and-forget). Options: `unblock: "kill"` to kill blocking processes, `"close"` to close file handles (Windows only, requires UAC elevation), `"ignore"` to skip detection entirely. Set `isRetry: true` to skip proactive detection (user claims they fixed it manually). |
-| `forceRemove`           | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<void>`                                                                                                              | Force remove (skip cleanup)                                                                                                                                                                                                                                                                            |
-| `get`                   | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Workspace \| undefined>`                                                                                            | Get a workspace                                                                                                                                                                                                                                                                                        |
-| `getStatus`             | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<WorkspaceStatus>`                                                                                                   | Get workspace status                                                                                                                                                                                                                                                                                   |
-| `getOpenCodeSession`    | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<OpenCodeSession \| null>`                                                                                           | Get OpenCode session info (port + sessionId)                                                                                                                                                                                                                                                           |
-| `restartOpencodeServer` | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<number>`                                                                                                            | Restart OpenCode server, preserving port                                                                                                                                                                                                                                                               |
-| `setMetadata`           | `(projectId: ProjectId, workspaceName: WorkspaceName, key: string, value: string \| null) => Promise<void>`                                                                          | Set/delete metadata                                                                                                                                                                                                                                                                                    |
-| `getMetadata`           | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Record<string, string>>`                                                                                            | Get all metadata                                                                                                                                                                                                                                                                                       |
-| `executeCommand`        | `(projectId: ProjectId, workspaceName: WorkspaceName, command: string, args?: readonly unknown[]) => Promise<unknown>`                                                               | Execute a VS Code command                                                                                                                                                                                                                                                                              |
+| Method                  | Signature                                                                                                                                                                                                                      | Description                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`                | `(projectId: ProjectId, name: string, base: string) => Promise<Workspace>`                                                                                                                                                     | Create a new workspace from a base branch                                                                                                                                                                                                                                                                                                                                 |
+| `remove`                | `(projectId: ProjectId, workspaceName: WorkspaceName, options?: { keepBranch?: boolean; skipSwitch?: boolean; force?: boolean; unblock?: "kill" \| "close" \| "ignore"; isRetry?: boolean }) => Promise<{ started: boolean }>` | Start workspace removal (fire-and-forget). Returns `{ started: false }` if blocked by idempotency. Options: `force: true` to bypass errors and idempotency, `unblock: "kill"` to kill blocking processes, `"close"` to close file handles (Windows only, requires UAC elevation), `"ignore"` to skip detection entirely. Set `isRetry: true` to skip proactive detection. |
+| `get`                   | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Workspace \| undefined>`                                                                                                                                      | Get a workspace                                                                                                                                                                                                                                                                                                                                                           |
+| `getStatus`             | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<WorkspaceStatus>`                                                                                                                                             | Get workspace status                                                                                                                                                                                                                                                                                                                                                      |
+| `getOpenCodeSession`    | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<OpenCodeSession \| null>`                                                                                                                                     | Get OpenCode session info (port + sessionId)                                                                                                                                                                                                                                                                                                                              |
+| `restartOpencodeServer` | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<number>`                                                                                                                                                      | Restart OpenCode server, preserving port                                                                                                                                                                                                                                                                                                                                  |
+| `setMetadata`           | `(projectId: ProjectId, workspaceName: WorkspaceName, key: string, value: string \| null) => Promise<void>`                                                                                                                    | Set/delete metadata                                                                                                                                                                                                                                                                                                                                                       |
+| `getMetadata`           | `(projectId: ProjectId, workspaceName: WorkspaceName) => Promise<Record<string, string>>`                                                                                                                                      | Get all metadata                                                                                                                                                                                                                                                                                                                                                          |
+| `executeCommand`        | `(projectId: ProjectId, workspaceName: WorkspaceName, command: string, args?: readonly unknown[]) => Promise<unknown>`                                                                                                         | Execute a VS Code command                                                                                                                                                                                                                                                                                                                                                 |
 
 #### `ui` - UI State Management
 
@@ -1025,24 +1024,33 @@ type SetupResult =
 
 ```typescript
 interface DeletionProgress {
-  readonly projectId: ProjectId;
+  readonly workspacePath: WorkspacePath;
   readonly workspaceName: WorkspaceName;
-  readonly path: string;
-  readonly step: DeletionStep;
-  readonly stepMessage: string;
+  readonly projectId: ProjectId;
+  readonly keepBranch: boolean;
+  readonly operations: readonly DeletionOperation[];
+  readonly completed: boolean;
   readonly hasErrors: boolean;
   readonly blockingProcesses?: readonly BlockingProcess[]; // Windows only
 }
 
-type DeletionStep =
-  | "killing-blockers"
+type DeletionOperationId =
   | "closing-handles"
+  | "killing-blockers"
   | "kill-terminals"
   | "stop-server"
   | "cleanup-vscode"
   | "detecting-blockers"
-  | "cleanup-workspace"
-  | "complete";
+  | "cleanup-workspace";
+
+type DeletionOperationStatus = "pending" | "in-progress" | "done" | "error";
+
+interface DeletionOperation {
+  readonly id: DeletionOperationId;
+  readonly label: string;
+  readonly status: DeletionOperationStatus;
+  readonly error?: string;
+}
 ```
 
 #### `BlockingProcess`

@@ -43,5 +43,12 @@ export function wireModules(
         dispatcher.subscribe(eventType, handler);
       }
     }
+
+    // Register interceptors
+    if (mod.interceptors) {
+      for (const interceptor of mod.interceptors) {
+        dispatcher.addInterceptor(interceptor);
+      }
+    }
   }
 }

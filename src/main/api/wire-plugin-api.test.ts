@@ -37,8 +37,7 @@ function createMockApi(): ICodeHydraApi {
     },
     workspaces: {
       create: vi.fn(),
-      remove: vi.fn().mockResolvedValue({ branchDeleted: false }),
-      forceRemove: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue({ started: true }),
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
       getAgentSession: vi.fn().mockResolvedValue(null),
@@ -273,7 +272,7 @@ describe("wirePluginApi", () => {
       expect(api.workspaces.remove).toHaveBeenCalledWith(
         expect.any(String), // projectId
         "my-feature" as WorkspaceName,
-        true // keepBranch
+        { keepBranch: true }
       );
     });
 

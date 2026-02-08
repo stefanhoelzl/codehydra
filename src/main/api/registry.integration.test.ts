@@ -531,7 +531,6 @@ function registerAllMethodsWithStubs(
     "projects.fetchBases": async () => ({ bases: [] }),
     "workspaces.create": async () => createMockWorkspace(),
     "workspaces.remove": async () => ({ started: true }),
-    "workspaces.forceRemove": async () => {},
     "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" } }),
     "workspaces.getAgentSession": async () => null,
