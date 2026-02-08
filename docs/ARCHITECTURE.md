@@ -599,6 +599,12 @@ Some API methods are implemented through an intent-based dispatcher (`Dispatcher
 
 Bridge handlers in `wireDispatcher()` map IPC payloads to intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event modules (StateModule, ViewModule) and transformed to IPC events by IpcEventBridge.
 
+The `create-workspace` operation uses these hook modules:
+
+- **create**: WorktreeModule (creates git worktree)
+- **setup**: KeepFilesModule (copies .keepfiles), AgentModule (starts agent server) -- both best-effort with internal try/catch
+- **finalize**: CodeServerModule (creates .code-workspace file)
+
 ### Branded ID Types
 
 The API uses branded types (`ProjectId`, `WorkspaceName`) for type safety:

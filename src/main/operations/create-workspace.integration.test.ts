@@ -11,11 +11,14 @@
  * #2: Emits workspace:created event with full payload
  * #3: Worktree creation failure propagates error
  * #4: Agent server failure produces workspace without envVars
- * #5: KeepFiles failure produces workspace normally
+ * #5: Best-effort setup hook failure still produces workspace
  * #6: Unknown project throws
  * #7: Initial prompt included in event payload
  * #8: keepInBackground flag included in event payload
  * #9: Interceptor cancels creation
+ * #10: Keepfiles copies files after worktree creation
+ * #11: Keepfiles failure does not fail workspace creation
+ * #12: No keepfiles side effects when worktree creation fails
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -109,6 +112,39 @@ function createMockAgentStatusManager(envVars?: Record<string, string>): MockAge
   };
 }
 
+interface MockKeepFilesService {
+  copyToWorkspace: (
+    projectRoot: Path,
+    targetPath: Path
+  ) => Promise<{
+    configExists: boolean;
+    copiedCount: number;
+    skippedCount: number;
+    errors: readonly { path: string; message: string }[];
+  }>;
+  /** State: tracks copy operations for assertions */
+  copies: Array<{ from: Path; to: Path }>;
+}
+
+function createMockKeepFilesService(opts?: { throwOnCopy?: boolean }): MockKeepFilesService {
+  const copies: Array<{ from: Path; to: Path }> = [];
+  return {
+    copies,
+    copyToWorkspace: async (projectRoot: Path, targetPath: Path) => {
+      if (opts?.throwOnCopy) {
+        throw new Error("Keepfiles copy failed");
+      }
+      copies.push({ from: projectRoot, to: targetPath });
+      return {
+        configExists: true,
+        copiedCount: 1,
+        skippedCount: 0,
+        errors: [],
+      };
+    },
+  };
+}
+
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -116,6 +152,7 @@ function createMockAgentStatusManager(envVars?: Record<string, string>): MockAge
 interface TestSetupOptions {
   serverManager?: MockServerManager;
   agentStatusManager?: MockAgentStatusManager;
+  keepFilesService?: MockKeepFilesService;
   throwOnCreate?: boolean;
   setupThrows?: boolean;
   workspaceUrl?: string;
@@ -124,6 +161,7 @@ interface TestSetupOptions {
 interface TestSetup {
   dispatcher: Dispatcher;
   projectId: ProjectId;
+  keepFilesService: MockKeepFilesService;
 }
 
 function createTestSetup(opts?: TestSetupOptions): TestSetup {
@@ -132,6 +170,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const serverManager = opts?.serverManager ?? createMockServerManager();
   const agentStatusManager =
     opts?.agentStatusManager ?? createMockAgentStatusManager({ AGENT_PORT: "9090" });
+  const keepFilesService = opts?.keepFilesService ?? createMockKeepFilesService();
   const workspaceUrl = opts?.workspaceUrl ?? WORKSPACE_URL;
 
   const hookRegistry = new HookRegistry();
@@ -165,6 +204,29 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             hookCtx.branch = workspace.branch;
             hookCtx.metadata = workspace.metadata;
             hookCtx.projectPath = PROJECT_ROOT;
+          },
+        },
+      },
+    },
+  };
+
+  // KeepFilesModule: "setup" hook (best-effort, try/catch internal)
+  const keepFilesModule: IntentModule = {
+    hooks: {
+      [CREATE_WORKSPACE_OPERATION_ID]: {
+        setup: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CreateWorkspaceHookContext;
+            try {
+              const workspacePath = hookCtx.workspacePath!;
+              const projectPath = hookCtx.projectPath!;
+              await keepFilesService.copyToWorkspace(
+                new Path(projectPath),
+                new Path(workspacePath)
+              );
+            } catch {
+              // Best-effort: do not re-throw
+            }
           },
         },
       },
@@ -234,14 +296,14 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     },
   };
 
-  const modules: IntentModule[] = [worktreeModule, agentModule, codeServerModule];
+  const modules: IntentModule[] = [worktreeModule, keepFilesModule, agentModule, codeServerModule];
   if (failingSetupModule) {
-    // Insert before agentModule so the failing handler runs first on the "setup" hook
+    // Insert before keepFilesModule so the failing handler runs first on the "setup" hook
     modules.splice(1, 0, failingSetupModule);
   }
   wireModules(modules, hookRegistry, dispatcher);
 
-  return { dispatcher, projectId };
+  return { dispatcher, projectId, keepFilesService };
 }
 
 // =============================================================================
@@ -493,6 +555,59 @@ describe("CreateWorkspace Operation", () => {
 
       expect(result).toBeUndefined();
       expect(receivedEvents).toHaveLength(0);
+    });
+  });
+
+  describe("keepfiles copies files after worktree creation (#10)", () => {
+    it("copies files with correct project and workspace paths", async () => {
+      const setup = createTestSetup();
+
+      await setup.dispatcher.dispatch(createIntent(setup.projectId));
+
+      expect(setup.keepFilesService.copies).toHaveLength(1);
+      expect(setup.keepFilesService.copies[0]!.from.toString()).toBe(PROJECT_ROOT);
+      expect(setup.keepFilesService.copies[0]!.to.toString()).toBe(WORKSPACE_PATH);
+    });
+  });
+
+  describe("keepfiles failure does not fail workspace creation (#11)", () => {
+    it("returns valid workspace when keepfiles copy throws", async () => {
+      const failingKeepFiles = createMockKeepFilesService({ throwOnCopy: true });
+      const setup = createTestSetup({ keepFilesService: failingKeepFiles });
+
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const result = await setup.dispatcher.dispatch(createIntent(setup.projectId));
+
+      // Operation succeeds despite keepfiles failure
+      expect(result).toBeDefined();
+      const workspace = result as Workspace;
+      expect(workspace.path).toBe(WORKSPACE_PATH);
+      expect(workspace.branch).toBe(WORKSPACE_BRANCH);
+
+      // Event is emitted
+      expect(receivedEvents).toHaveLength(1);
+      const event = receivedEvents[0] as WorkspaceCreatedEvent;
+      expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
+
+      // No successful copies recorded
+      expect(failingKeepFiles.copies).toHaveLength(0);
+    });
+  });
+
+  describe("no keepfiles side effects when worktree creation fails (#12)", () => {
+    it("does not invoke keepfiles when create hook throws", async () => {
+      const setup = createTestSetup({ throwOnCreate: true });
+
+      await expect(setup.dispatcher.dispatch(createIntent(setup.projectId))).rejects.toThrow(
+        "Worktree creation failed"
+      );
+
+      // Keepfiles should not have been called
+      expect(setup.keepFilesService.copies).toHaveLength(0);
     });
   });
 });

@@ -11,6 +11,7 @@ import type { BootstrapDeps } from "./bootstrap";
 import type { LifecycleModuleDeps } from "./modules/lifecycle";
 import type { CoreModuleDeps } from "./modules/core";
 import { createMockLogger } from "../services/logging";
+import type { IKeepFilesService } from "../services/keepfiles";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
@@ -180,6 +181,17 @@ function createMockDispatcher(): ReturnType<BootstrapDeps["dispatcherFn"]> {
   return { hookRegistry, dispatcher };
 }
 
+function createMockKeepFilesService(): IKeepFilesService {
+  return {
+    copyToWorkspace: async () => ({
+      configExists: false,
+      copiedCount: 0,
+      skippedCount: 0,
+      errors: [],
+    }),
+  };
+}
+
 function createMockDeps(): BootstrapDeps {
   return {
     logger: createMockLogger(),
@@ -187,6 +199,7 @@ function createMockDeps(): BootstrapDeps {
     lifecycleDeps: createMockLifecycleDeps(),
     coreDepsFn: () => createMockCoreDeps(),
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
+    keepFilesServiceFn: () => createMockKeepFilesService(),
     dispatcherFn: createMockDispatcher,
   };
 }
@@ -271,6 +284,7 @@ describe("bootstrap.module.order", () => {
       }),
       coreDepsFn: () => createMockCoreDeps(),
       globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
+      keepFilesServiceFn: () => createMockKeepFilesService(),
       dispatcherFn: createMockDispatcher,
     };
 

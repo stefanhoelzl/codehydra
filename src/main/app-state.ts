@@ -11,7 +11,6 @@
 
 import {
   createGitWorktreeProvider,
-  KeepFilesService,
   Path,
   ProjectScopedWorkspaceProvider,
   type GitWorktreeProvider,
@@ -345,10 +344,6 @@ export class AppState {
 
     // Create workspace provider (validates it's a git repo)
     const workspacesDir = this.pathProvider.getProjectWorkspacesDir(projectPath);
-    const keepFilesService = new KeepFilesService(
-      this.fileSystemLayer,
-      this.loggingService.createLogger("keepfiles")
-    );
     let provider: IWorkspaceProvider;
     if (this.globalWorktreeProvider) {
       // Use global provider with per-project adapter
@@ -356,8 +351,7 @@ export class AppState {
       provider = new ProjectScopedWorkspaceProvider(
         this.globalWorktreeProvider,
         projectPath,
-        workspacesDir,
-        { keepFilesService }
+        workspacesDir
       );
     } else {
       // Fallback: standalone provider (used in tests that mock createGitWorktreeProvider)
@@ -366,8 +360,7 @@ export class AppState {
         workspacesDir,
         this.fileSystemLayer,
         this.loggingService.createLogger("git"),
-        this.loggingService.createLogger("worktree"),
-        { keepFilesService }
+        this.loggingService.createLogger("worktree")
       );
     }
 

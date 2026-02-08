@@ -11,6 +11,7 @@ import { KeepFilesService } from "./keepfiles-service";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { SILENT_LOGGER } from "../logging";
 import { createTempDir } from "../test-utils";
+import { Path } from "../platform/path";
 
 describe("KeepFilesService", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
@@ -43,7 +44,7 @@ describe("KeepFilesService", () => {
       await nodeWriteFile(join(projectRoot, ".env.local"), "LOCAL=true", "utf-8");
       await nodeWriteFile(join(projectRoot, "README.md"), "not matched", "utf-8");
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.configExists).toBe(true);
       expect(result.copiedCount).toBe(2);
@@ -68,7 +69,7 @@ describe("KeepFilesService", () => {
       await nodeWriteFile(join(projectRoot, ".env.production"), "prod", "utf-8");
       await nodeWriteFile(join(projectRoot, ".env"), "base", "utf-8"); // Should NOT match
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.copiedCount).toBe(3);
 
@@ -90,7 +91,7 @@ describe("KeepFilesService", () => {
       await nodeWriteFile(join(projectRoot, "config", "nested", "deep.env"), "deep", "utf-8");
       await nodeWriteFile(join(projectRoot, "config", "other.txt"), "other", "utf-8");
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.copiedCount).toBe(2);
 
@@ -113,7 +114,7 @@ describe("KeepFilesService", () => {
       await nodeWriteFile(join(projectRoot, "secrets", "password.txt"), "secret-pass", "utf-8");
       await nodeWriteFile(join(projectRoot, "secrets", "README.md"), "docs", "utf-8");
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.copiedCount).toBe(2); // api-key.txt and password.txt
       expect(result.skippedCount).toBe(1); // README.md
@@ -133,7 +134,7 @@ describe("KeepFilesService", () => {
       await nodeWriteFile(join(projectRoot, "config", "app.json"), '{"key": "value"}', "utf-8");
       await nodeWriteFile(join(projectRoot, "config", "db.json"), '{"db": "postgres"}', "utf-8");
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.copiedCount).toBe(2);
       expect(await fs.readFile(join(targetPath, "config", "app.json"))).toBe('{"key": "value"}');
@@ -145,7 +146,7 @@ describe("KeepFilesService", () => {
       await nodeMkdir(join(projectRoot, "config"));
       await nodeWriteFile(join(projectRoot, "config", "app.json"), '{"key": "value"}', "utf-8");
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       // Pattern without trailing slash matches files and directories
       expect(result.copiedCount).toBe(1);
@@ -156,7 +157,7 @@ describe("KeepFilesService", () => {
     it("handles empty .keepfiles", async () => {
       await nodeWriteFile(join(projectRoot, ".keepfiles"), "", "utf-8");
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.configExists).toBe(true);
       expect(result.copiedCount).toBe(0);
@@ -169,14 +170,14 @@ describe("KeepFilesService", () => {
         "utf-8"
       );
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.configExists).toBe(true);
       expect(result.copiedCount).toBe(0);
     });
 
     it("handles no .keepfiles", async () => {
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.configExists).toBe(false);
       expect(result.copiedCount).toBe(0);
@@ -188,7 +189,7 @@ describe("KeepFilesService", () => {
       await nodeWriteFile(join(projectRoot, ".keepfiles"), content, "utf-8");
       await nodeWriteFile(join(projectRoot, ".env"), "value", "utf-8");
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.copiedCount).toBe(1);
     });
@@ -206,7 +207,7 @@ describe("KeepFilesService", () => {
         "utf-8"
       );
 
-      const result = await service.copyToWorkspace(projectRoot, targetPath);
+      const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.copiedCount).toBe(4);
       expect(
