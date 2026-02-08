@@ -27,6 +27,7 @@ import {
   getCodeServerPort,
   GitWorktreeProvider,
   SimpleGitClient,
+  KeepFilesService,
   type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
@@ -1021,6 +1022,9 @@ async function bootstrap(): Promise<void> {
       }
       return globalWorktreeProvider;
     },
+    // KeepFilesService for copying .keepfiles to new workspaces
+    keepFilesServiceFn: () =>
+      new KeepFilesService(fileSystemLayer, loggingService.createLogger("keepfiles")),
     // Dispatcher created early so ShortcutController can dispatch intents
     dispatcherFn: () => ({ hookRegistry, dispatcher }),
   }) as BootstrapResult & { startServices: () => void };

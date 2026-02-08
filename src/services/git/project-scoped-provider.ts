@@ -9,7 +9,7 @@
  */
 
 import type { IWorkspaceProvider } from "./workspace-provider";
-import type { GitWorktreeProvider, GitWorktreeProviderOptions } from "./git-worktree-provider";
+import type { GitWorktreeProvider } from "./git-worktree-provider";
 import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspace } from "./types";
 import type { Path } from "../platform/path";
 
@@ -26,17 +26,12 @@ export class ProjectScopedWorkspaceProvider implements IWorkspaceProvider {
   private readonly globalProvider: GitWorktreeProvider;
   private disposed = false;
 
-  constructor(
-    globalProvider: GitWorktreeProvider,
-    projectRoot: Path,
-    workspacesDir: Path,
-    options?: GitWorktreeProviderOptions
-  ) {
+  constructor(globalProvider: GitWorktreeProvider, projectRoot: Path, workspacesDir: Path) {
     this.globalProvider = globalProvider;
     this.projectRoot = projectRoot;
 
     // Register project with global provider on creation
-    globalProvider.registerProject(projectRoot, workspacesDir, options);
+    globalProvider.registerProject(projectRoot, workspacesDir);
   }
 
   /**

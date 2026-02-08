@@ -12,6 +12,7 @@ import type { FileSystemLayer } from "../platform/filesystem";
 import type { IKeepFilesService, CopyResult, CopyError } from "./types";
 import type { Logger } from "../logging";
 import { getErrorMessage } from "../errors";
+import type { Path } from "../platform/path";
 
 /**
  * Configuration file name for keep files patterns.
@@ -36,9 +37,13 @@ export class KeepFilesService implements IKeepFilesService {
     private readonly logger: Logger
   ) {}
 
-  async copyToWorkspace(projectRoot: string, targetPath: string): Promise<CopyResult> {
+  async copyToWorkspace(projectRoot: Path, targetPath: Path): Promise<CopyResult> {
+    // Convert Path objects to strings at entry for internal node:path operations
+    const projectRootStr = projectRoot.toString();
+    const targetPathStr = targetPath.toString();
+
     // Try to read .keepfiles config
-    const configPath = path.join(projectRoot, KEEPFILES_CONFIG);
+    const configPath = path.join(projectRootStr, KEEPFILES_CONFIG);
     let configContent: string;
 
     try {
@@ -46,7 +51,7 @@ export class KeepFilesService implements IKeepFilesService {
     } catch (error) {
       // Check if it's ENOENT (file not found)
       if (error instanceof Error && "fsCode" in error && error.fsCode === "ENOENT") {
-        this.logger.debug("No .keepfiles found", { path: projectRoot });
+        this.logger.debug("No .keepfiles found", { path: projectRootStr });
         return {
           configExists: false,
           copiedCount: 0,
@@ -85,10 +90,10 @@ export class KeepFilesService implements IKeepFilesService {
     const positivePatterns = patterns.filter((p) => !p.startsWith("!"));
     const igPositive = ignore().add(positivePatterns);
 
-    this.logger.debug("CopyKeepFiles", { src: projectRoot, dest: targetPath });
+    this.logger.debug("CopyKeepFiles", { src: projectRootStr, dest: targetPathStr });
 
     // Scan and copy matching files
-    const result = await this.scanAndCopy(projectRoot, targetPath, ig, igPositive);
+    const result = await this.scanAndCopy(projectRootStr, targetPathStr, ig, igPositive);
 
     // Log completion or errors
     if (result.errors.length > 0) {

@@ -2,8 +2,8 @@
  * CreateWorkspaceOperation - Orchestrates workspace creation.
  *
  * Runs three hook points:
- * 1. "create" - Creates git worktree via WorktreeModule (includes keepfiles copying)
- * 2. "setup" - Best-effort setup (AgentModule)
+ * 1. "create" - Creates git worktree via WorktreeModule
+ * 2. "setup" - Best-effort setup: KeepFilesModule (keepfiles copying), AgentModule (agent server)
  * 3. "finalize" - Creates .code-workspace file via CodeServerModule
  *
  * On success, builds a Workspace return value and emits a

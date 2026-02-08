@@ -97,6 +97,7 @@ import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
 import type { DomainEvent } from "./intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
+import type { IKeepFilesService } from "../services/keepfiles";
 import { normalizeInitialPrompt } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
@@ -119,6 +120,8 @@ export interface BootstrapDeps {
   readonly coreDepsFn: () => CoreModuleDeps;
   /** Global worktree provider for metadata operations (provided after setup completes) */
   readonly globalWorktreeProviderFn: () => GitWorktreeProvider;
+  /** Factory for KeepFilesService (provided after setup completes) */
+  readonly keepFilesServiceFn: () => IKeepFilesService;
   /** Factory that returns the early-created dispatcher and hook registry */
   readonly dispatcherFn: () => { hookRegistry: HookRegistry; dispatcher: Dispatcher };
 }
@@ -192,7 +195,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.globalWorktreeProviderFn(),
       coreDeps.appState,
       coreDeps.viewManager,
-      deps.logger
+      deps.logger,
+      deps.keepFilesServiceFn()
     );
   }
 
@@ -253,7 +257,8 @@ function wireDispatcher(
   globalProvider: GitWorktreeProvider,
   appState: CoreModuleDeps["appState"],
   viewManager: CoreModuleDeps["viewManager"],
-  logger: Logger
+  logger: Logger,
+  keepFilesService: IKeepFilesService
 ): void {
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
@@ -436,6 +441,37 @@ function wireDispatcher(
     },
   };
 
+  // KeepFilesModule: "setup" hook -- copies .keepfiles to workspace
+  // Wraps body in try/catch to prevent errors from propagating (best-effort)
+  const keepFilesModule: IntentModule = {
+    hooks: {
+      [CREATE_WORKSPACE_OPERATION_ID]: {
+        setup: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CreateWorkspaceHookContext;
+
+            try {
+              const workspacePath = hookCtx.workspacePath!;
+              const projectPath = hookCtx.projectPath!;
+
+              await keepFilesService.copyToWorkspace(
+                new Path(projectPath),
+                new Path(workspacePath)
+              );
+            } catch (error) {
+              logger.error(
+                "Keepfiles copy failed for workspace (non-fatal)",
+                { workspacePath: hookCtx.workspacePath ?? "unknown" },
+                error instanceof Error ? error : undefined
+              );
+              // Do not re-throw -- keepfiles is best-effort
+            }
+          },
+        },
+      },
+    },
+  };
+
   // AgentModule: "setup" hook -- starts agent server, sets initial prompt, gets env vars
   // Wraps body in try/catch to prevent errors from propagating (best-effort)
   const agentModule: IntentModule = {
@@ -544,6 +580,7 @@ function wireDispatcher(
       agentStatusModule,
       uiHookModule,
       worktreeModule,
+      keepFilesModule,
       agentModule,
       codeServerModule,
       stateModule,

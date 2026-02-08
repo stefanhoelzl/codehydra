@@ -17,6 +17,7 @@ import {
 import { FileSystemError } from "../errors";
 import type { FileSystemLayer } from "../platform/filesystem";
 import { SILENT_LOGGER } from "../logging";
+import { Path } from "../platform/path";
 
 /** Normalize path separators for cross-platform mock comparisons */
 const normalizePath = (p: string) => p.replace(/\\/g, "/");
@@ -34,7 +35,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.configExists).toBe(false);
         expect(result.copiedCount).toBe(0);
@@ -54,7 +55,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(0);
@@ -74,7 +75,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(0);
@@ -90,7 +91,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(0);
@@ -109,7 +110,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(1);
@@ -161,7 +162,7 @@ describe("KeepFilesService", () => {
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace(projectRoot, "/workspace");
+        const result = await service.copyToWorkspace(new Path(projectRoot), new Path("/workspace"));
 
         // Each file is copied individually (3 files total)
         expect(result.copiedCount).toBe(3);
@@ -183,7 +184,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.copiedCount).toBe(2); // .env.local and .env.development
         // Verify the right files were copied
@@ -232,7 +233,7 @@ describe("KeepFilesService", () => {
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace(projectRoot, "/workspace");
+        const result = await service.copyToWorkspace(new Path(projectRoot), new Path("/workspace"));
 
         // Should copy secrets/api-key.txt but NOT secrets/README.md
         expect(result.copiedCount).toBe(1);
@@ -272,7 +273,7 @@ describe("KeepFilesService", () => {
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.copiedCount).toBe(1); // .env.local succeeded
         expect(result.errors).toHaveLength(1);
@@ -307,7 +308,7 @@ describe("KeepFilesService", () => {
         };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         // Path traversal should be detected and rejected
         expect(
@@ -329,7 +330,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.copiedCount).toBe(1); // Only file.txt
         expect(result.skippedCount).toBe(1); // link.txt was skipped
@@ -351,7 +352,7 @@ describe("KeepFilesService", () => {
         });
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace("/project", "/workspace");
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.copiedCount).toBe(2);
         expect(mockFs).toHaveFile("/workspace/.env", "ENV=value");

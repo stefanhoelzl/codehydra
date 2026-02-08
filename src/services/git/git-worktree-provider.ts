@@ -16,27 +16,14 @@ import { WorkspaceError, getErrorMessage } from "../errors";
 import { sanitizeWorkspaceName } from "../platform/paths";
 import { isValidMetadataKey } from "../../shared/api/types";
 import type { FileSystemLayer } from "../platform/filesystem";
-import type { IKeepFilesService } from "../keepfiles";
 import type { Logger } from "../logging";
 import { Path } from "../platform/path";
-
-/**
- * Options for GitWorktreeProvider.
- */
-export interface GitWorktreeProviderOptions {
-  /**
-   * Optional service for copying .keepfiles-configured files to new workspaces.
-   * If not provided, no files are copied on workspace creation.
-   */
-  readonly keepFilesService?: IKeepFilesService;
-}
 
 /**
  * Internal state for a registered project.
  */
 interface ProjectRegistration {
   readonly workspacesDir: Path;
-  readonly keepFilesService: IKeepFilesService | undefined;
   cleanupInProgress: boolean;
 }
 
@@ -44,7 +31,7 @@ interface ProjectRegistration {
  * Global provider managing git worktree operations across all projects.
  *
  * Maintains two internal registries:
- * - Project registry: Maps projectRoot -> { workspacesDir, keepFilesService }
+ * - Project registry: Maps projectRoot -> { workspacesDir }
  * - Workspace registry: Maps workspacePath -> projectRoot (for metadata resolution)
  *
  * Does NOT implement IWorkspaceProvider directly. Use ProjectScopedWorkspaceProvider
@@ -113,7 +100,6 @@ export class GitWorktreeProvider {
    * @param workspacesDir Directory where worktrees will be created
    * @param fileSystemLayer FileSystemLayer for cleanup operations
    * @param logger Logger for worktree operations
-   * @param options Optional configuration including keepFilesService
    * @returns Promise resolving to a ProjectScopedWorkspaceProvider (implements IWorkspaceProvider)
    * @throws WorkspaceError if path is invalid or not a git repository
    */
@@ -122,13 +108,12 @@ export class GitWorktreeProvider {
     gitClient: IGitClient,
     workspacesDir: Path,
     fileSystemLayer: FileSystemLayer,
-    logger: Logger,
-    options?: GitWorktreeProviderOptions
+    logger: Logger
   ): Promise<ProjectScopedWorkspaceProvider> {
     const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
     await globalProvider.validateRepository(projectRoot);
 
-    return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir, options);
+    return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir);
   }
 
   /**
@@ -137,16 +122,10 @@ export class GitWorktreeProvider {
    *
    * @param projectRoot Absolute path to the git repository
    * @param workspacesDir Directory where worktrees are created
-   * @param options Optional configuration including keepFilesService
    */
-  registerProject(
-    projectRoot: Path,
-    workspacesDir: Path,
-    options?: GitWorktreeProviderOptions
-  ): void {
+  registerProject(projectRoot: Path, workspacesDir: Path): void {
     this.projectRegistry.set(projectRoot.toString(), {
       workspacesDir,
-      keepFilesService: options?.keepFilesService,
       cleanupInProgress: false,
     });
   }
@@ -524,20 +503,6 @@ export class GitWorktreeProvider {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Unknown error";
       this.logger.warn("Failed to save base branch config", { branch: name, error: message });
-    }
-
-    // Copy keep files from project root to new workspace (if service configured)
-    // Note: Logging is handled by KeepFilesService via [keepfiles] logger
-    // TODO: Update IKeepFilesService to accept Path once that service is migrated
-    if (registration.keepFilesService) {
-      try {
-        await registration.keepFilesService.copyToWorkspace(
-          projectRoot.toString(),
-          worktreePath.toString()
-        );
-      } catch {
-        // Copy errors shouldn't fail workspace creation - already logged by KeepFilesService
-      }
     }
 
     return {

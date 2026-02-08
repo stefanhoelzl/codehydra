@@ -171,9 +171,6 @@ export type {
   MockLoggingService,
 } from "./logging";
 
-// Git worktree provider options
-export type { GitWorktreeProviderOptions } from "./git/git-worktree-provider";
-
 /**
  * Factory function to create a ProjectScopedWorkspaceProvider with a SimpleGitClient.
  * Creates a standalone global GitWorktreeProvider internally.
@@ -187,7 +184,6 @@ export type { GitWorktreeProviderOptions } from "./git/git-worktree-provider";
  * @param fileSystemLayer FileSystemLayer for cleanup operations
  * @param gitLogger Logger for git client operations (typically "git")
  * @param worktreeLogger Logger for worktree provider operations (typically "worktree")
- * @param options Optional configuration including keepFilesService
  * @returns Promise resolving to an IWorkspaceProvider
  * @throws WorkspaceError if path is invalid or not a git repository
  */
@@ -196,8 +192,7 @@ export async function createGitWorktreeProvider(
   workspacesDir: import("./platform/path").Path,
   fileSystemLayer: import("./platform/filesystem").FileSystemLayer,
   gitLogger: import("./logging").Logger,
-  worktreeLogger: import("./logging").Logger,
-  options?: import("./git/git-worktree-provider").GitWorktreeProviderOptions
+  worktreeLogger: import("./logging").Logger
 ): Promise<ProjectScopedWorkspaceProvider> {
   const gitClient = new SimpleGitClient(gitLogger);
   const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, worktreeLogger);
@@ -205,5 +200,5 @@ export async function createGitWorktreeProvider(
   // Validate it's a git repository root
   await globalProvider.validateRepository(projectRoot);
 
-  return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir, options);
+  return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir);
 }

@@ -5,6 +5,8 @@
  * project root to new workspaces.
  */
 
+import type { Path } from "../platform/path";
+
 /**
  * Interface for the KeepFiles service.
  */
@@ -16,7 +18,7 @@ export interface IKeepFilesService {
    * @param targetPath - Destination directory for copied files
    * @returns Result with counts and any errors encountered
    */
-  copyToWorkspace(projectRoot: string, targetPath: string): Promise<CopyResult>;
+  copyToWorkspace(projectRoot: Path, targetPath: Path): Promise<CopyResult>;
 }
 
 /**
