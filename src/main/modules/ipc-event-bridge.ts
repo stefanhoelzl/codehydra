@@ -15,6 +15,8 @@ import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations
 import { EVENT_METADATA_CHANGED } from "../operations/set-metadata";
 import type { ModeChangedPayload, ModeChangedEvent } from "../operations/set-mode";
 import { EVENT_MODE_CHANGED } from "../operations/set-mode";
+import type { WorkspaceCreatedEvent } from "../operations/create-workspace";
+import { EVENT_WORKSPACE_CREATED } from "../operations/create-workspace";
 
 /**
  * Create an IpcEventBridge module that forwards domain events to the API registry.
@@ -38,6 +40,21 @@ export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
       apiRegistry.emit("ui:mode-changed", {
         mode: payload.mode,
         previousMode: payload.previousMode,
+      });
+    },
+    [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+      const p = (event as WorkspaceCreatedEvent).payload;
+      apiRegistry.emit("workspace:created", {
+        projectId: p.projectId,
+        workspace: {
+          projectId: p.projectId,
+          name: p.workspaceName,
+          branch: p.branch,
+          metadata: p.metadata,
+          path: p.workspacePath,
+        },
+        ...(p.initialPrompt && { hasInitialPrompt: true }),
+        ...(p.keepInBackground && { keepInBackground: true }),
       });
     },
   };

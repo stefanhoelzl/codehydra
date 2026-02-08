@@ -65,7 +65,7 @@ function createMockAppState(): AppState {
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
     }),
     findProjectForWorkspace: vi.fn(),
-    addWorkspace: vi.fn(),
+    registerWorkspace: vi.fn(),
     removeWorkspace: vi.fn().mockResolvedValue(undefined),
     getWorkspaceUrl: vi.fn(),
     getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),

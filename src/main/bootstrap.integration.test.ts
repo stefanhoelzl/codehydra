@@ -88,7 +88,7 @@ function createMockAppState(overrides?: Partial<AppState>): AppState {
       name: "test-project",
       workspaces: [],
     }),
-    addWorkspace: vi.fn(),
+    registerWorkspace: vi.fn(),
     removeWorkspace: vi.fn().mockResolvedValue(undefined),
     getWorkspaceUrl: vi.fn(),
     getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),

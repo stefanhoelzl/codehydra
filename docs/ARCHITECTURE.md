@@ -582,6 +582,23 @@ The API is split into focused sub-interfaces following Interface Segregation Pri
 
 Non-UI consumers (MCP Server, CLI) use `ICoreApi` which excludes `IUiApi` and `ILifecycleApi`.
 
+### Intent Dispatcher
+
+Some API methods are implemented through an intent-based dispatcher (`Dispatcher` + `HookRegistry`). Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
+
+| Operation              | Intent Type              | Hook Points                   | Domain Event        |
+| ---------------------- | ------------------------ | ----------------------------- | ------------------- |
+| `set-metadata`         | `workspace:setMetadata`  | `set`                         | --                  |
+| `get-metadata`         | `workspace:getMetadata`  | `get`                         | --                  |
+| `get-workspace-status` | `workspace:getStatus`    | `get`                         | --                  |
+| `get-agent-session`    | `workspace:getSession`   | `get`                         | --                  |
+| `restart-agent`        | `workspace:restartAgent` | `restart`                     | --                  |
+| `set-mode`             | `ui:setMode`             | `set`                         | --                  |
+| `get-active-workspace` | `ui:getActiveWorkspace`  | `get`                         | --                  |
+| `create-workspace`     | `workspace:create`       | `create`, `setup`, `finalize` | `workspace:created` |
+
+Bridge handlers in `wireDispatcher()` map IPC payloads to intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event modules (StateModule, ViewModule) and transformed to IPC events by IpcEventBridge.
+
 ### Branded ID Types
 
 The API uses branded types (`ProjectId`, `WorkspaceName`) for type safety:

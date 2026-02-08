@@ -28,7 +28,7 @@ import {
 } from "../services";
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspacePath } from "../shared/ipc";
-import { normalizeInitialPrompt, type Project, type ProjectId } from "../shared/api/types";
+import type { Project, ProjectId } from "../shared/api/types";
 import { OpenCodeProvider } from "../agents/opencode/provider";
 import type { AgentStatusManager } from "../agents";
 import { createAgentProvider, type AgentType } from "../agents";
@@ -649,49 +649,20 @@ export class AppState {
   }
 
   /**
-   * Adds a workspace to an open project.
-   * Creates a view and updates the project state.
+   * Registers a workspace in the internal project state.
+   * Updates the openProjects map to include the new workspace.
+   * Does NOT handle view creation, agent startup, or URL generation --
+   * those are handled by intent dispatcher hook/event modules.
    *
    * @param projectPathInput - Path to the project
-   * @param workspace - The internal workspace to add (with Path-based path)
-   * @param options - Optional options (e.g., initialPrompt)
+   * @param workspace - The internal workspace to register (with Path-based path)
    */
-  async addWorkspace(
-    projectPathInput: string,
-    workspace: InternalWorkspace,
-    options?: { initialPrompt?: { prompt: string; agent?: string } }
-  ): Promise<void> {
+  registerWorkspace(projectPathInput: string, workspace: InternalWorkspace): void {
     const normalizedKey = new Path(projectPathInput).toString();
     const openProject = this.openProjects.get(normalizedKey);
     if (!openProject) {
       return;
     }
-
-    const workspacePathStr = workspace.path.toString();
-
-    // 1. Start agent server first (await so env vars become available)
-    await this.startAgentServer(workspacePathStr);
-
-    // 2. Set initial prompt if provided (for Claude Code)
-    // This must happen after startServer() but before getEnvironmentVariables()
-    if (options?.initialPrompt && this.serverManager?.setInitialPrompt) {
-      const normalizedPrompt = normalizeInitialPrompt(options.initialPrompt);
-      await this.serverManager.setInitialPrompt(workspacePathStr, normalizedPrompt);
-    }
-
-    // 3. Get environment variables from provider (now available, includes initial prompt file path)
-    const agentProvider = this.agentStatusManager?.getProvider(workspacePathStr as WorkspacePath);
-    const agentEnvVars = agentProvider?.getEnvironmentVariables() ?? {};
-
-    // 4. Create workspace file with env vars and get URL
-    const url = await this.getWorkspaceUrl(workspacePathStr, agentEnvVars);
-
-    // 5. Create view with workspace URL (mark as new to show loading overlay)
-    this.viewManager.createWorkspaceView(workspacePathStr, url, normalizedKey, true);
-
-    // Preload the URL so VS Code starts loading in the background
-    // This ensures the workspace is ready when the user switches to it
-    this.viewManager.preloadWorkspaceUrl(workspacePathStr);
 
     // Update internal project state
     const updatedProject: OpenProject = {
