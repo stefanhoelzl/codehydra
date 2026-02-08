@@ -87,7 +87,6 @@ export const ApiIpcChannels = {
   // Workspace commands
   WORKSPACE_CREATE: "api:workspace:create",
   WORKSPACE_REMOVE: "api:workspace:remove",
-  WORKSPACE_FORCE_REMOVE: "api:workspace:force-remove",
   WORKSPACE_GET: "api:workspace:get",
   WORKSPACE_GET_STATUS: "api:workspace:get-status",
   WORKSPACE_GET_AGENT_SESSION: "api:workspace:get-agent-session",

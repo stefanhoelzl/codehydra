@@ -46,23 +46,18 @@ contextBridge.exposeInMainWorld("api", {
     remove: (
       projectId: string,
       workspaceName: string,
-      keepBranch?: boolean,
-      skipSwitch?: boolean,
-      unblock?: "kill" | "close" | "ignore",
-      isRetry?: boolean
-    ): Promise<{ started: true }> =>
+      options?: {
+        keepBranch?: boolean;
+        skipSwitch?: boolean;
+        force?: boolean;
+        unblock?: "kill" | "close" | "ignore";
+        isRetry?: boolean;
+      }
+    ): Promise<{ started: boolean }> =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_REMOVE, {
         projectId,
         workspaceName,
-        keepBranch,
-        skipSwitch,
-        unblock,
-        isRetry,
-      }),
-    forceRemove: (projectId: string, workspaceName: string): Promise<void> =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_FORCE_REMOVE, {
-        projectId,
-        workspaceName,
+        ...options,
       }),
     get: (projectId: string, workspaceName: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET, { projectId, workspaceName }),

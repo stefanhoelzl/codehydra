@@ -23,7 +23,7 @@ export { HookRegistry } from "./hook-registry";
 
 // Dispatcher
 export type { IDispatcher, IntentInterceptor, EventHandler } from "./dispatcher";
-export { Dispatcher } from "./dispatcher";
+export { Dispatcher, IntentHandle } from "./dispatcher";
 
 // Module
 export type { IntentModule, HookDeclarations, EventDeclarations } from "./module";

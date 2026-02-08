@@ -455,7 +455,9 @@ export class McpServer implements IMcpServer {
           }),
         },
         this.createWorkspaceHandler(async (resolved, args: { keepBranch: boolean }) =>
-          this.api.workspaces.remove(resolved.projectId, resolved.workspaceName, args.keepBranch)
+          this.api.workspaces.remove(resolved.projectId, resolved.workspaceName, {
+            keepBranch: args.keepBranch,
+          })
         )
       )
     );

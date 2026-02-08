@@ -77,7 +77,7 @@ function createMockAppState(overrides?: Partial<AppState>): AppState {
         branch: "feature",
         metadata: { base: "main" },
       }),
-      removeWorkspace: vi.fn().mockResolvedValue(undefined),
+      unregisterWorkspace: vi.fn(),
       listBases: vi.fn().mockResolvedValue([]),
       updateBases: vi.fn().mockResolvedValue(undefined),
       isDirty: vi.fn().mockResolvedValue(false),
@@ -90,7 +90,7 @@ function createMockAppState(overrides?: Partial<AppState>): AppState {
       workspaces: [],
     }),
     registerWorkspace: vi.fn(),
-    removeWorkspace: vi.fn().mockResolvedValue(undefined),
+    unregisterWorkspace: vi.fn(),
     getWorkspaceUrl: vi.fn(),
     getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
     setLastBaseBranch: vi.fn(),
@@ -160,7 +160,6 @@ function createMockCoreDeps(): CoreModuleDeps {
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
-    emitDeletionProgress: vi.fn(),
     logger: createMockLogger(),
   };
 }
@@ -200,6 +199,13 @@ function createMockDeps(): BootstrapDeps {
     coreDepsFn: () => createMockCoreDeps(),
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     keepFilesServiceFn: () => createMockKeepFilesService(),
+    workspaceFileServiceFn: () =>
+      ({
+        deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+      }) as unknown as import("../services").IWorkspaceFileService,
+    emitDeletionProgressFn: () => vi.fn(),
+    killTerminalsCallbackFn: () => undefined,
+    workspaceLockHandlerFn: () => undefined,
     dispatcherFn: createMockDispatcher,
   };
 }
@@ -237,7 +243,6 @@ describe("bootstrap.startup", () => {
     expect(api.workspaces).toBeDefined();
     expect(api.workspaces.create).toBeTypeOf("function");
     expect(api.workspaces.remove).toBeTypeOf("function");
-    expect(api.workspaces.forceRemove).toBeTypeOf("function");
     expect(api.workspaces.get).toBeTypeOf("function");
     expect(api.workspaces.getStatus).toBeTypeOf("function");
     expect(api.workspaces.getAgentSession).toBeTypeOf("function");
@@ -285,6 +290,13 @@ describe("bootstrap.module.order", () => {
       coreDepsFn: () => createMockCoreDeps(),
       globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
       keepFilesServiceFn: () => createMockKeepFilesService(),
+      workspaceFileServiceFn: () =>
+        ({
+          deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+        }) as unknown as import("../services").IWorkspaceFileService,
+      emitDeletionProgressFn: () => vi.fn(),
+      killTerminalsCallbackFn: () => undefined,
+      workspaceLockHandlerFn: () => undefined,
       dispatcherFn: createMockDispatcher,
     };
 

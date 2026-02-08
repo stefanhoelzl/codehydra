@@ -131,6 +131,12 @@ Some components use external libraries directly without abstraction layers. Thes
 
 ---
 
+## Intent Dispatcher
+
+Some API methods use an intent-based dispatcher with operations, hook modules, and domain events. Cross-cutting concerns (e.g., idempotency) are implemented as `IntentInterceptor` instances registered on the dispatcher. The `IdempotencyInterceptor` in `src/main/operations/delete-workspace.ts` is the reference pattern for interceptors.
+
+---
+
 ## Key Concepts
 
 | Concept         | Description                                                                                                                |

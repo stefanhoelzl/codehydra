@@ -67,14 +67,16 @@ export interface WorkspaceRemovePayload {
   readonly keepBranch?: boolean;
   /** If true, don't switch away from this workspace when it's active. Used for retry. */
   readonly skipSwitch?: boolean;
+  /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
+  readonly force?: boolean;
   /** Unblock option: "kill" to kill processes, "close" to close handles (elevated), "ignore" to skip detection. */
   readonly unblock?: "kill" | "close" | "ignore";
   /** If true, skip proactive detection (user claims they fixed it manually). */
   readonly isRetry?: boolean;
 }
 
-/** workspaces.forceRemove, workspaces.get, workspaces.getStatus,
-    workspaces.getOpencodePort, workspaces.getMetadata */
+/** workspaces.get, workspaces.getStatus,
+    workspaces.getAgentSession, workspaces.getMetadata */
 export interface WorkspaceRefPayload {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
@@ -143,8 +145,7 @@ export interface MethodRegistry {
 
   // Workspaces
   "workspaces.create": (payload: WorkspaceCreatePayload) => Promise<Workspace>;
-  "workspaces.remove": (payload: WorkspaceRemovePayload) => Promise<{ started: true }>;
-  "workspaces.forceRemove": (payload: WorkspaceRefPayload) => Promise<void>;
+  "workspaces.remove": (payload: WorkspaceRemovePayload) => Promise<{ started: boolean }>;
   "workspaces.get": (payload: WorkspaceRefPayload) => Promise<Workspace | undefined>;
   "workspaces.getStatus": (payload: WorkspaceRefPayload) => Promise<WorkspaceStatus>;
   "workspaces.getAgentSession": (payload: WorkspaceRefPayload) => Promise<AgentSession | null>;
@@ -194,7 +195,6 @@ export type ProjectPath =
 export type WorkspacePath =
   | "workspaces.create"
   | "workspaces.remove"
-  | "workspaces.forceRemove"
   | "workspaces.get"
   | "workspaces.getStatus"
   | "workspaces.getAgentSession"
@@ -242,7 +242,6 @@ export const ALL_METHOD_PATHS = [
   "projects.fetchBases",
   "workspaces.create",
   "workspaces.remove",
-  "workspaces.forceRemove",
   "workspaces.get",
   "workspaces.getStatus",
   "workspaces.getAgentSession",

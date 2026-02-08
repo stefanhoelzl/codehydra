@@ -3,8 +3,10 @@
  *
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
- * - Workspace operations: remove, forceRemove, get
+ * - Workspace operations: get, executeCommand
  * - UI operations: selectFolder, switchWorkspace
+ *
+ * Note: workspace create and remove are handled by the intent dispatcher.
  *
  * Created in startServices() after setup is complete.
  */
@@ -16,32 +18,18 @@ import type {
   ProjectClosePayload,
   ProjectClonePayload,
   ProjectIdPayload,
-  WorkspaceRemovePayload,
   WorkspaceRefPayload,
   WorkspaceExecuteCommandPayload,
   UiSwitchWorkspacePayload,
   EmptyPayload,
 } from "../../api/registry-types";
 import type { PluginResult } from "../../../shared/plugin-protocol";
-import type {
-  ProjectId,
-  WorkspaceName,
-  Project,
-  Workspace,
-  BaseInfo,
-  DeletionProgress,
-  DeletionOperation,
-  DeletionOperationId,
-  BlockingProcess,
-} from "../../../shared/api/types";
-import type { WorkspacePath } from "../../../shared/ipc";
+import type { ProjectId, Project, Workspace, BaseInfo } from "../../../shared/api/types";
 import type { AppState } from "../../app-state";
 import type { IViewManager } from "../../managers/view-manager.interface";
 import type { Logger } from "../../../services/logging/index";
-import type { WorkspaceLockHandler } from "../../../services/platform/workspace-lock-handler";
 import { ApiIpcChannels } from "../../../shared/ipc";
 import { SILENT_LOGGER } from "../../../services/logging";
-import { getErrorMessage } from "../../../shared/error-utils";
 import {
   generateProjectId,
   extractWorkspaceName,
@@ -85,17 +73,6 @@ export interface MinimalDialog {
 }
 
 /**
- * Callback for emitting deletion progress events.
- */
-export type DeletionProgressCallback = (progress: DeletionProgress) => void;
-
-/**
- * Callback for killing terminals before workspace deletion.
- * Called with workspace path, should be best-effort (never throw).
- */
-export type KillTerminalsCallback = (workspacePath: string) => Promise<void>;
-
-/**
  * Dependencies for CoreModule.
  */
 export interface CoreModuleDeps {
@@ -109,14 +86,8 @@ export interface CoreModuleDeps {
   readonly pathProvider: PathProvider;
   /** Project store for finding existing cloned projects */
   readonly projectStore: ProjectStore;
-  /** Callback for deletion progress events */
-  readonly emitDeletionProgress: DeletionProgressCallback;
-  /** Callback to kill terminals before workspace deletion */
-  readonly killTerminalsCallback?: KillTerminalsCallback;
   /** Plugin server for executing VS Code commands in workspaces */
   readonly pluginServer?: IPluginServer;
-  /** Handler for detecting and resolving processes blocking workspace deletion (Windows only, undefined on other platforms) */
-  readonly workspaceLockHandler?: WorkspaceLockHandler | undefined;
   /** Electron dialog for folder selection */
   readonly dialog?: MinimalDialog;
   /** Optional logger */
@@ -132,18 +103,17 @@ export interface CoreModuleDeps {
  *
  * Registered methods:
  * - projects.*: open, close, list, get, fetchBases
- * - workspaces.*: remove, forceRemove, get (create handled by intent dispatcher)
+ * - workspaces.*: get, executeCommand
  * - ui.selectFolder, ui.switchWorkspace
+ *
+ * Note: workspaces.create and workspaces.remove are handled by the intent dispatcher.
  *
  * Events emitted:
  * - project:opened, project:closed, project:bases-updated
- * - workspace:removed, workspace:switched, workspace:status-changed
+ * - workspace:switched
  */
 export class CoreModule implements IApiModule {
   private readonly logger: Logger;
-
-  // Track in-progress deletions to prevent double-deletion
-  private readonly inProgressDeletions = new Set<string>();
 
   /**
    * Create a new CoreModule.
@@ -183,13 +153,7 @@ export class CoreModule implements IApiModule {
       ipc: ApiIpcChannels.PROJECT_FETCH_BASES,
     });
 
-    // Workspace methods (workspaces.create handled by intent dispatcher in bootstrap.ts)
-    this.api.register("workspaces.remove", this.workspaceRemove.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_REMOVE,
-    });
-    this.api.register("workspaces.forceRemove", this.workspaceForceRemove.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_FORCE_REMOVE,
-    });
+    // Workspace methods (workspaces.create and workspaces.remove handled by intent dispatcher in bootstrap.ts)
     this.api.register("workspaces.get", this.workspaceGet.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_GET,
     });
@@ -348,69 +312,6 @@ export class CoreModule implements IApiModule {
   // Workspace Methods
   // ===========================================================================
 
-  private async workspaceRemove(payload: WorkspaceRemovePayload): Promise<{ started: true }> {
-    const { projectPath, workspace } = await this.resolveWorkspace(payload);
-
-    // Check if deletion already in progress - return early (idempotent)
-    if (this.inProgressDeletions.has(workspace.path)) {
-      return { started: true };
-    }
-
-    // Mark as in-progress
-    this.inProgressDeletions.add(workspace.path);
-
-    // If this workspace is active and skipSwitch is not set, try to switch to next workspace
-    const isActive = this.deps.viewManager.getActiveWorkspacePath() === workspace.path;
-    if (isActive && !payload.skipSwitch) {
-      const switched = await this.switchToNextWorkspaceIfAvailable(workspace.path);
-      if (!switched) {
-        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
-        // wired in index.ts, not directly here
-        this.deps.viewManager.setActiveWorkspace(null, false);
-      }
-    }
-
-    // Fire-and-forget: execute deletion asynchronously
-    const keepBranch = payload.keepBranch ?? true;
-    const unblock = payload.unblock;
-    const isRetry = payload.isRetry ?? false;
-    void this.executeDeletion(
-      payload.projectId,
-      projectPath,
-      workspace.path as WorkspacePath,
-      payload.workspaceName,
-      keepBranch,
-      unblock,
-      isRetry
-    );
-
-    return { started: true };
-  }
-
-  private async workspaceForceRemove(payload: WorkspaceRefPayload): Promise<void> {
-    const { projectPath, workspace } = await this.resolveWorkspace(payload);
-
-    const wasActive = this.deps.viewManager.getActiveWorkspacePath() === workspace.path;
-
-    if (wasActive) {
-      const switched = await this.switchToNextWorkspaceIfAvailable(workspace.path);
-      if (!switched) {
-        // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
-        // wired in index.ts, not directly here
-        this.deps.viewManager.setActiveWorkspace(null, false);
-      }
-    }
-
-    await this.deps.appState.removeWorkspace(projectPath, workspace.path);
-    this.inProgressDeletions.delete(workspace.path);
-
-    this.api.emit("workspace:removed", {
-      projectId: payload.projectId,
-      workspaceName: payload.workspaceName,
-      path: workspace.path,
-    });
-  }
-
   private async workspaceGet(payload: WorkspaceRefPayload): Promise<Workspace | undefined> {
     const resolved = await this.tryResolveWorkspace(payload);
     if (!resolved) return undefined;
@@ -531,87 +432,6 @@ export class CoreModule implements IApiModule {
     return tryResolveWorkspaceShared(payload, this.deps.appState);
   }
 
-  private async switchToNextWorkspaceIfAvailable(currentWorkspacePath: string): Promise<boolean> {
-    const allProjects = await this.deps.appState.getAllProjects();
-    const statusManager = this.deps.appState.getAgentStatusManager();
-
-    // 1. Build list sorted like UI (projects alphabetically, workspaces alphabetically)
-    const sortedProjects = [...allProjects].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
-    );
-
-    const workspaces: Array<{ path: string }> = [];
-    for (const project of sortedProjects) {
-      const sortedWs = [...project.workspaces].sort((a, b) => {
-        const nameA = extractWorkspaceName(a.path);
-        const nameB = extractWorkspaceName(b.path);
-        return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
-      });
-      for (const ws of sortedWs) {
-        workspaces.push({ path: ws.path });
-      }
-    }
-
-    if (workspaces.length === 0) {
-      return false;
-    }
-
-    // 2. Find current workspace index (position 0 in relative indexing)
-    const currentIndex = workspaces.findIndex((w) => w.path === currentWorkspacePath);
-    if (currentIndex === -1) {
-      return false;
-    }
-
-    // 3. Calculate key for each workspace
-    // Key = statusKey * workspaces.length + positionKey
-    // Status: 0 = idle, 1 = busy, 2 = none, 3 = deleting
-    // Position: 0 = current, 1 = next, 2 = next+1, ... (wrapping)
-    const getKey = (ws: { path: string }, index: number): number => {
-      // Status key: idle > busy > none > deleting
-      let statusKey: number;
-      if (this.inProgressDeletions.has(ws.path)) {
-        statusKey = 3; // deleting
-      } else {
-        const status = statusManager?.getStatus(ws.path as WorkspacePath);
-        if (!status || status.status === "none") {
-          statusKey = 2; // none
-        } else if (status.status === "busy") {
-          statusKey = 1; // busy
-        } else {
-          statusKey = 0; // idle
-        }
-      }
-
-      // Position key: relative to current workspace (current = 0, next = 1, ...)
-      const positionKey = (index - currentIndex + workspaces.length) % workspaces.length;
-
-      return statusKey * workspaces.length + positionKey;
-    };
-
-    // 4. Find workspace with lowest key (excluding current)
-    let bestWorkspace: { path: string } | undefined;
-    let bestKey = Infinity;
-
-    for (let i = 0; i < workspaces.length; i++) {
-      if (i === currentIndex) continue; // Skip current workspace
-      const key = getKey(workspaces[i]!, i);
-      if (key < bestKey) {
-        bestKey = key;
-        bestWorkspace = workspaces[i];
-      }
-    }
-
-    if (!bestWorkspace) {
-      return false;
-    }
-
-    // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
-    // wired in index.ts, not directly here
-    // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
-    this.deps.viewManager.setActiveWorkspace(bestWorkspace.path, true);
-    return true;
-  }
-
   private async fetchBasesInBackground(
     projectId: ProjectId,
     provider: { updateBases(): Promise<unknown>; listBases(): Promise<readonly BaseInfo[]> }
@@ -626,304 +446,6 @@ export class CoreModule implements IApiModule {
         { projectId },
         error instanceof Error ? error : undefined
       );
-    }
-  }
-
-  // ===========================================================================
-  // Deletion Execution
-  // ===========================================================================
-
-  private async executeDeletion(
-    projectId: ProjectId,
-    projectPath: string,
-    workspacePath: WorkspacePath,
-    workspaceName: WorkspaceName,
-    keepBranch: boolean,
-    unblock: "kill" | "close" | "ignore" | undefined,
-    isRetry: boolean
-  ): Promise<void> {
-    // Build operations list - start with standard steps
-    // Note: detecting-blockers is added conditionally between cleanup-vscode and cleanup-workspace
-    const operations: DeletionOperation[] = [
-      { id: "kill-terminals", label: "Terminating processes", status: "pending" },
-      { id: "stop-server", label: "Stopping OpenCode server", status: "pending" },
-      { id: "cleanup-vscode", label: "Closing VS Code view", status: "pending" },
-      { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
-    ];
-
-    // Determine if we should run proactive detection
-    // Run detection on first attempt only (not retry, not ignore)
-    const shouldDetect = this.deps.workspaceLockHandler && !isRetry && unblock !== "ignore";
-
-    // Track blocking processes detected during failure (Windows only)
-    let blockingProcesses: readonly BlockingProcess[] | undefined;
-
-    // Helper to prepend an operation at the start of the list
-    const prependOp = (id: DeletionOperationId, label: string): void => {
-      operations.unshift({ id, label, status: "pending" });
-    };
-
-    // Helper to add an operation at a specific index
-    const addOp = (id: DeletionOperationId, label: string, afterId: DeletionOperationId): void => {
-      const idx = operations.findIndex((op) => op.id === afterId);
-      if (idx !== -1) {
-        operations.splice(idx + 1, 0, { id, label, status: "pending" });
-      } else {
-        // Fallback: add at end
-        operations.push({ id, label, status: "pending" });
-      }
-    };
-
-    const emitProgress = (completed: boolean, hasErrors: boolean): void => {
-      this.deps.emitDeletionProgress({
-        workspacePath,
-        workspaceName,
-        projectId,
-        keepBranch,
-        operations: [...operations],
-        completed,
-        hasErrors,
-        ...(blockingProcesses !== undefined && { blockingProcesses }),
-      });
-    };
-
-    const updateOp = (
-      id: DeletionOperationId,
-      status: "pending" | "in-progress" | "done" | "error",
-      error?: string
-    ): void => {
-      const idx = operations.findIndex((op) => op.id === id);
-      const existing = operations[idx];
-      if (idx !== -1 && existing) {
-        operations[idx] = {
-          id: existing.id,
-          label: existing.label,
-          status,
-          ...(error !== undefined && { error }),
-        };
-      }
-    };
-
-    try {
-      // Add detecting-blockers step if proactive detection is enabled
-      if (shouldDetect) {
-        addOp("detecting-blockers", "Detecting blocking processes...", "cleanup-vscode");
-      }
-
-      // Pre-step: Unblock by killing processes or closing handles (Windows only)
-      if ((unblock === "kill" || unblock === "close") && this.deps.workspaceLockHandler) {
-        if (unblock === "kill") {
-          // Add the operation step and show spinner BEFORE the operation
-          prependOp("killing-blockers", "Killing blocking tasks...");
-          updateOp("killing-blockers", "in-progress");
-          emitProgress(false, false);
-
-          // Need to detect first to get the PIDs
-          const detected = await this.deps.workspaceLockHandler.detect(new Path(workspacePath));
-          if (detected.length > 0) {
-            this.logger.info("Killing blocking processes before deletion", {
-              workspacePath,
-              pids: detected.map((p) => p.pid).join(","),
-            });
-            await this.deps.workspaceLockHandler.killProcesses(detected.map((p) => p.pid));
-          }
-
-          updateOp("killing-blockers", "done");
-          emitProgress(false, false);
-        } else if (unblock === "close") {
-          // Add the operation step and show spinner BEFORE the operation
-          prependOp("closing-handles", "Closing blocking handles...");
-          updateOp("closing-handles", "in-progress");
-          emitProgress(false, false);
-
-          this.logger.info("Closing handles before deletion", { workspacePath });
-          await this.deps.workspaceLockHandler.closeHandles(new Path(workspacePath));
-
-          updateOp("closing-handles", "done");
-          emitProgress(false, false);
-        }
-      } else {
-        emitProgress(false, false);
-      }
-
-      // Operation 1: Kill terminals
-      updateOp("kill-terminals", "in-progress");
-      emitProgress(false, false);
-
-      if (this.deps.killTerminalsCallback) {
-        try {
-          await this.deps.killTerminalsCallback(workspacePath);
-          updateOp("kill-terminals", "done");
-        } catch (error) {
-          this.logger.warn("Kill terminals failed", {
-            workspacePath,
-            error: getErrorMessage(error),
-          });
-          updateOp("kill-terminals", "done");
-        }
-      } else {
-        updateOp("kill-terminals", "done");
-      }
-      emitProgress(false, false);
-
-      // Operation 2: Stop OpenCode server
-      updateOp("stop-server", "in-progress");
-      emitProgress(false, false);
-
-      try {
-        const serverManager = this.deps.appState.getServerManager();
-        if (serverManager) {
-          const stopResult = await serverManager.stopServer(workspacePath);
-          if (stopResult.success) {
-            updateOp("stop-server", "done");
-          } else {
-            updateOp("stop-server", "error", stopResult.error ?? "Failed to stop server");
-          }
-        } else {
-          updateOp("stop-server", "done");
-        }
-        emitProgress(
-          false,
-          operations.some((op) => op.status === "error")
-        );
-      } catch (error) {
-        updateOp("stop-server", "error", getErrorMessage(error));
-        emitProgress(false, true);
-      }
-
-      // Operation 3: Cleanup VS Code view
-      updateOp("cleanup-vscode", "in-progress");
-      emitProgress(
-        false,
-        operations.some((op) => op.status === "error")
-      );
-
-      try {
-        await this.deps.viewManager.destroyWorkspaceView(workspacePath);
-        updateOp("cleanup-vscode", "done");
-        emitProgress(
-          false,
-          operations.some((op) => op.status === "error")
-        );
-      } catch (error) {
-        updateOp("cleanup-vscode", "error", getErrorMessage(error));
-        emitProgress(false, true);
-      }
-
-      // Proactive detection: Run detection AFTER our cleanup to detect only EXTERNAL blockers
-      // Skip detection on retry (user claims they fixed it) or ignore (power user escape hatch)
-      if (shouldDetect) {
-        updateOp("detecting-blockers", "in-progress");
-        emitProgress(
-          false,
-          operations.some((op) => op.status === "error")
-        );
-
-        try {
-          const detected = await this.deps.workspaceLockHandler!.detect(new Path(workspacePath));
-          if (detected.length > 0) {
-            blockingProcesses = detected;
-            updateOp("detecting-blockers", "error", `Blocked by ${detected.length} process(es)`);
-            emitProgress(true, true); // hasErrors: true stops here
-            return; // Stop deletion, remaining steps stay pending
-          }
-          updateOp("detecting-blockers", "done");
-          emitProgress(
-            false,
-            operations.some((op) => op.status === "error")
-          );
-        } catch (detectError) {
-          // Detection error: show warning but continue with deletion (best-effort)
-          this.logger.warn("Detection failed, continuing with deletion", {
-            error: getErrorMessage(detectError),
-          });
-          updateOp("detecting-blockers", "done"); // Mark as done (not error)
-          emitProgress(
-            false,
-            operations.some((op) => op.status === "error")
-          );
-        }
-      }
-
-      // Operation 4: Cleanup workspace (git worktree removal)
-      updateOp("cleanup-workspace", "in-progress");
-      emitProgress(
-        false,
-        operations.some((op) => op.status === "error")
-      );
-
-      try {
-        const provider = this.deps.appState.getWorkspaceProvider(projectPath);
-        if (provider) {
-          // Convert branded string path to Path for provider method
-          await provider.removeWorkspace(new Path(workspacePath), !keepBranch);
-        }
-        updateOp("cleanup-workspace", "done");
-      } catch (error) {
-        const errorCode = (error as NodeJS.ErrnoException).code;
-
-        this.logger.debug("Workspace cleanup failed", {
-          workspacePath,
-          errorCode: errorCode ?? "none",
-          errorType: error?.constructor?.name ?? "unknown",
-          error: getErrorMessage(error),
-        });
-
-        // Detect blocking processes on Windows for ANY cleanup error.
-        // We can't rely on error codes because git errors (GitError) don't preserve
-        // the underlying filesystem error codes. The blocking process service
-        // returns an empty array if no processes are found.
-        if (this.deps.workspaceLockHandler) {
-          try {
-            const detected = await this.deps.workspaceLockHandler.detect(new Path(workspacePath));
-            if (detected.length > 0) {
-              blockingProcesses = detected;
-              this.logger.info("Detected blocking processes", {
-                workspacePath,
-                count: detected.length,
-              });
-            }
-          } catch (detectError) {
-            this.logger.warn("Failed to detect blocking processes", {
-              workspacePath,
-              error: getErrorMessage(detectError),
-            });
-          }
-        }
-
-        updateOp("cleanup-workspace", "error", getErrorMessage(error));
-      }
-
-      // Finalize
-      const hasErrors = operations.some((op) => op.status === "error");
-      emitProgress(true, hasErrors);
-
-      if (!hasErrors) {
-        await this.deps.appState.removeWorkspace(projectPath, workspacePath);
-        this.api.emit("workspace:removed", {
-          projectId,
-          workspaceName,
-          path: workspacePath,
-        });
-      }
-    } catch (error) {
-      this.logger.error(
-        "Unexpected error during workspace deletion",
-        { workspacePath, workspaceName },
-        error instanceof Error ? error : undefined
-      );
-      const errorMsg = getErrorMessage(error);
-
-      for (let i = 0; i < operations.length; i++) {
-        const op = operations[i];
-        if (op && op.status === "in-progress") {
-          operations[i] = { id: op.id, label: op.label, status: "error", error: errorMsg };
-        }
-      }
-
-      emitProgress(true, true);
-    } finally {
-      this.inProgressDeletions.delete(workspacePath);
     }
   }
 

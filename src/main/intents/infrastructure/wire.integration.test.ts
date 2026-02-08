@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from "vitest";
 import { wireModules } from "./wire";
 import { HookRegistry } from "./hook-registry";
 import { Dispatcher } from "./dispatcher";
+import type { IntentInterceptor } from "./dispatcher";
 import type { IntentModule } from "./module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext, HookContext } from "./operation";
@@ -164,5 +165,39 @@ describe("wireModules", () => {
     await dispatcher.dispatch(createActionIntent());
 
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("registers interceptors from module", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+    const operationExecuted = vi.fn();
+
+    // Cancelling interceptor: before() returns null
+    const cancelInterceptor: IntentInterceptor = {
+      id: "cancel-all",
+      async before() {
+        return null;
+      },
+    };
+
+    const testModule: IntentModule = {
+      interceptors: [cancelInterceptor],
+    };
+
+    wireModules([testModule], hookRegistry, dispatcher);
+
+    const operation: Operation<Intent, void> = {
+      id: "action-op",
+      execute: async () => {
+        operationExecuted();
+      },
+    };
+    dispatcher.registerOperation("test:action", operation);
+
+    const result = await dispatcher.dispatch(createActionIntent());
+
+    // Interceptor cancelled the intent — operation never ran
+    expect(result).toBeUndefined();
+    expect(operationExecuted).not.toHaveBeenCalled();
   });
 });

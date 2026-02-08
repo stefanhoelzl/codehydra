@@ -16,6 +16,7 @@ import type {
   IApiRegistry,
   IApiModule,
   WorkspaceCreatePayload,
+  WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
   WorkspaceRefPayload,
   UiSetModePayload,
@@ -85,6 +86,18 @@ import type {
   CreateWorkspaceHookContext,
   WorkspaceCreatedEvent,
 } from "./operations/create-workspace";
+import {
+  DeleteWorkspaceOperation,
+  INTENT_DELETE_WORKSPACE,
+  DELETE_WORKSPACE_OPERATION_ID,
+  EVENT_WORKSPACE_DELETED,
+  IdempotencyInterceptor,
+} from "./operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  DeleteWorkspaceHookContext,
+  WorkspaceDeletedEvent,
+} from "./operations/delete-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { wireModules } from "./intents/infrastructure/wire";
 import {
@@ -96,8 +109,14 @@ import {
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
 import type { DomainEvent } from "./intents/infrastructure/types";
+import type { IViewManager } from "./managers/view-manager.interface";
+import type { AppState } from "./app-state";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
+import type { IWorkspaceFileService } from "../services";
+import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-handler";
+import type { DeletionProgressCallback } from "./operations/delete-workspace";
+import { getErrorMessage } from "../shared/error-utils";
 import { normalizeInitialPrompt } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
@@ -105,6 +124,11 @@ import { Path } from "../services/platform/path";
 // =============================================================================
 // Types
 // =============================================================================
+
+/**
+ * Minimal interface for kill terminals callback.
+ */
+export type KillTerminalsCallback = (workspacePath: string) => Promise<void>;
 
 /**
  * Dependencies required to create and start the registry-based API.
@@ -122,6 +146,14 @@ export interface BootstrapDeps {
   readonly globalWorktreeProviderFn: () => GitWorktreeProvider;
   /** Factory for KeepFilesService (provided after setup completes) */
   readonly keepFilesServiceFn: () => IKeepFilesService;
+  /** Factory for IWorkspaceFileService (provided after setup completes) */
+  readonly workspaceFileServiceFn: () => IWorkspaceFileService;
+  /** Deletion progress callback for emitting DeletionProgress to the renderer */
+  readonly emitDeletionProgressFn: () => DeletionProgressCallback;
+  /** Kill terminals callback (optional, only when PluginServer is available) */
+  readonly killTerminalsCallbackFn: () => KillTerminalsCallback | undefined;
+  /** Workspace lock handler for Windows file handle detection (optional) */
+  readonly workspaceLockHandlerFn: () => WorkspaceLockHandler | undefined;
   /** Factory that returns the early-created dispatcher and hook registry */
   readonly dispatcherFn: () => { hookRegistry: HookRegistry; dispatcher: Dispatcher };
 }
@@ -193,10 +225,13 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       hookRegistry,
       dispatcher,
       deps.globalWorktreeProviderFn(),
-      coreDeps.appState,
-      coreDeps.viewManager,
+      coreDeps,
       deps.logger,
-      deps.keepFilesServiceFn()
+      deps.keepFilesServiceFn(),
+      deps.workspaceFileServiceFn(),
+      deps.emitDeletionProgressFn(),
+      deps.killTerminalsCallbackFn(),
+      deps.workspaceLockHandlerFn()
     );
   }
 
@@ -240,6 +275,86 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 }
 
 // =============================================================================
+// Workspace Switching Helper
+// =============================================================================
+
+/**
+ * Prioritized workspace selection algorithm.
+ * Selects the best workspace to switch to when the active workspace is being deleted.
+ */
+async function switchToNextWorkspaceIfAvailable(
+  currentWorkspacePath: string,
+  viewManager: IViewManager,
+  appState: AppState
+): Promise<boolean> {
+  const allProjects = await appState.getAllProjects();
+
+  // Build sorted list (projects alphabetically, workspaces alphabetically)
+  const sortedProjects = [...allProjects].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
+  );
+
+  const workspaces: Array<{ path: string }> = [];
+  for (const project of sortedProjects) {
+    const sortedWs = [...project.workspaces].sort((a, b) => {
+      const nameA = extractWorkspaceName(a.path);
+      const nameB = extractWorkspaceName(b.path);
+      return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
+    });
+    for (const ws of sortedWs) {
+      workspaces.push({ path: ws.path });
+    }
+  }
+
+  if (workspaces.length === 0) {
+    return false;
+  }
+
+  // Find current workspace index
+  const currentIndex = workspaces.findIndex((w) => w.path === currentWorkspacePath);
+  if (currentIndex === -1) {
+    return false;
+  }
+
+  // Score by agent status: idle=0, busy=1, none=2
+  const agentStatusManager = appState.getAgentStatusManager();
+  const getKey = (ws: { path: string }, index: number): number => {
+    let statusKey: number;
+    const status = agentStatusManager?.getStatus(ws.path as WorkspacePath);
+    if (!status || status.status === "none") {
+      statusKey = 2;
+    } else if (status.status === "busy") {
+      statusKey = 1;
+    } else {
+      statusKey = 0; // idle or mixed
+    }
+
+    const positionKey = (index - currentIndex + workspaces.length) % workspaces.length;
+    return statusKey * workspaces.length + positionKey;
+  };
+
+  // Find best candidate (excluding current)
+  let bestWorkspace: { path: string } | undefined;
+  let bestKey = Infinity;
+
+  for (let i = 0; i < workspaces.length; i++) {
+    if (i === currentIndex) continue;
+    const key = getKey(workspaces[i]!, i);
+    if (key < bestKey) {
+      bestKey = key;
+      bestWorkspace = workspaces[i];
+    }
+  }
+
+  if (!bestWorkspace) {
+    return false;
+  }
+
+  viewManager.setActiveWorkspace(bestWorkspace.path, true);
+  return true;
+}
+
+// =============================================================================
 // Intent Dispatcher Wiring
 // =============================================================================
 
@@ -255,11 +370,15 @@ function wireDispatcher(
   hookRegistry: HookRegistry,
   dispatcher: Dispatcher,
   globalProvider: GitWorktreeProvider,
-  appState: CoreModuleDeps["appState"],
-  viewManager: CoreModuleDeps["viewManager"],
+  coreDeps: CoreModuleDeps,
   logger: Logger,
-  keepFilesService: IKeepFilesService
+  keepFilesService: IKeepFilesService,
+  workspaceFileService: IWorkspaceFileService,
+  emitDeletionProgress: DeletionProgressCallback,
+  killTerminalsCallback: KillTerminalsCallback | undefined,
+  workspaceLockHandler: WorkspaceLockHandler | undefined
 ): void {
+  const { appState, viewManager } = coreDeps;
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
@@ -269,6 +388,22 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
+  dispatcher.registerOperation(
+    INTENT_DELETE_WORKSPACE,
+    new DeleteWorkspaceOperation(emitDeletionProgress)
+  );
+
+  // Idempotency module (interceptor + event handler, wired via wireModules below)
+  const interceptor = new IdempotencyInterceptor();
+  const idempotencyModule: IntentModule = {
+    interceptors: [interceptor],
+    events: {
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceDeletedEvent).payload;
+        interceptor.inProgressDeletions.delete(payload.workspacePath);
+      },
+    },
+  };
 
   // Metadata hook handler module
   const metadataModule: IntentModule = {
@@ -570,6 +705,317 @@ function wireDispatcher(
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // Delete-workspace hook modules
+  // ---------------------------------------------------------------------------
+
+  const deleteViewModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        shutdown: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as DeleteWorkspaceHookContext;
+            if (!hookCtx.shutdownResults) {
+              hookCtx.shutdownResults = {};
+            }
+
+            try {
+              const isActive = viewManager.getActiveWorkspacePath() === hookCtx.workspacePath;
+              if (isActive && !hookCtx.skipSwitch) {
+                const switched = await switchToNextWorkspaceIfAvailable(
+                  hookCtx.workspacePath,
+                  viewManager,
+                  appState
+                );
+                hookCtx.shutdownResults.switchedWorkspace = switched;
+                if (!switched) {
+                  viewManager.setActiveWorkspace(null, false);
+                }
+              }
+
+              await viewManager.destroyWorkspaceView(hookCtx.workspacePath);
+              hookCtx.shutdownResults.viewDestroyed = true;
+            } catch (error) {
+              if (hookCtx.force) {
+                logger.warn("ViewModule: error in force mode (ignored)", {
+                  error: getErrorMessage(error),
+                });
+                hookCtx.shutdownResults.viewDestroyed = true;
+                hookCtx.shutdownResults.viewError = getErrorMessage(error);
+              } else {
+                throw error;
+              }
+            }
+          },
+        },
+      },
+    },
+  };
+
+  const deleteAgentModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        shutdown: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as DeleteWorkspaceHookContext;
+            if (!hookCtx.shutdownResults) {
+              hookCtx.shutdownResults = {};
+            }
+
+            try {
+              // Kill terminals (best-effort even in normal mode)
+              if (killTerminalsCallback) {
+                try {
+                  await killTerminalsCallback(hookCtx.workspacePath);
+                  hookCtx.shutdownResults.terminalsClosed = true;
+                } catch (error) {
+                  logger.warn("Kill terminals failed", {
+                    workspacePath: hookCtx.workspacePath,
+                    error: getErrorMessage(error),
+                  });
+                  hookCtx.shutdownResults.terminalsClosed = true; // Best-effort
+                }
+              } else {
+                hookCtx.shutdownResults.terminalsClosed = true;
+              }
+
+              // Stop server
+              const serverManager = appState.getServerManager();
+              if (serverManager) {
+                const stopResult = await serverManager.stopServer(hookCtx.workspacePath);
+                if (stopResult.success) {
+                  hookCtx.shutdownResults.serverStopped = true;
+                } else {
+                  hookCtx.shutdownResults.serverStopped = true;
+                  hookCtx.shutdownResults.serverError = stopResult.error ?? "Failed to stop server";
+                  if (!hookCtx.force) {
+                    throw new Error(hookCtx.shutdownResults.serverError);
+                  }
+                }
+              } else {
+                hookCtx.shutdownResults.serverStopped = true;
+              }
+
+              // Clear MCP tracking
+              const mcpServerManager = appState.getMcpServerManager();
+              if (mcpServerManager) {
+                mcpServerManager.clearWorkspace(hookCtx.workspacePath);
+              }
+
+              // Clear TUI tracking
+              const agentStatusManager = appState.getAgentStatusManager();
+              if (agentStatusManager) {
+                agentStatusManager.clearTuiTracking(hookCtx.workspacePath as WorkspacePath);
+              }
+            } catch (error) {
+              if (hookCtx.force) {
+                logger.warn("AgentModule: error in force mode (ignored)", {
+                  error: getErrorMessage(error),
+                });
+                hookCtx.shutdownResults.serverStopped = true;
+                hookCtx.shutdownResults.serverError = getErrorMessage(error);
+              } else {
+                throw error;
+              }
+            }
+          },
+        },
+      },
+    },
+  };
+
+  const deleteWindowsLockModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        release: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as DeleteWorkspaceHookContext;
+            if (!hookCtx.releaseResults) {
+              hookCtx.releaseResults = {};
+            }
+
+            // Skip entirely in force mode
+            if (hookCtx.force) {
+              return;
+            }
+
+            if (!workspaceLockHandler) {
+              return;
+            }
+
+            // Handle unblock actions (kill/close)
+            if (hookCtx.unblock === "kill" || hookCtx.unblock === "close") {
+              try {
+                if (hookCtx.unblock === "kill") {
+                  const detected = await workspaceLockHandler.detect(
+                    new Path(hookCtx.workspacePath)
+                  );
+                  if (detected.length > 0) {
+                    logger.info("Killing blocking processes before deletion", {
+                      workspacePath: hookCtx.workspacePath,
+                      pids: detected.map((p) => p.pid).join(","),
+                    });
+                    await workspaceLockHandler.killProcesses(detected.map((p) => p.pid));
+                  }
+                  hookCtx.releaseResults.unblockPerformed = true;
+                } else {
+                  logger.info("Closing handles before deletion", {
+                    workspacePath: hookCtx.workspacePath,
+                  });
+                  await workspaceLockHandler.closeHandles(new Path(hookCtx.workspacePath));
+                  hookCtx.releaseResults.unblockPerformed = true;
+                }
+              } catch (error) {
+                hookCtx.releaseResults.unblockPerformed = false;
+                hookCtx.releaseResults.unblockError = getErrorMessage(error);
+                throw error;
+              }
+              return;
+            }
+
+            // Proactive detection (first attempt only, not retry, not ignore)
+            if (!hookCtx.isRetry && hookCtx.unblock !== "ignore") {
+              try {
+                const detected = await workspaceLockHandler.detect(new Path(hookCtx.workspacePath));
+                hookCtx.releaseResults.blockersDetected = true;
+
+                if (detected.length > 0) {
+                  hookCtx.releaseResults.blockingProcesses = detected;
+                  throw new Error(`Blocked by ${detected.length} process(es)`);
+                }
+              } catch (error) {
+                if (
+                  hookCtx.releaseResults.blockingProcesses &&
+                  hookCtx.releaseResults.blockingProcesses.length > 0
+                ) {
+                  throw error;
+                }
+                logger.warn("Detection failed, continuing with deletion", {
+                  error: getErrorMessage(error),
+                });
+                hookCtx.releaseResults.blockersDetected = true;
+              }
+            }
+          },
+        },
+      },
+    },
+  };
+
+  const deleteWorktreeModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        delete: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as DeleteWorkspaceHookContext;
+            if (!hookCtx.deleteResults) {
+              hookCtx.deleteResults = {};
+            }
+
+            try {
+              const provider = appState.getWorkspaceProvider(hookCtx.projectPath);
+              if (provider) {
+                await provider.removeWorkspace(
+                  new Path(hookCtx.workspacePath),
+                  !hookCtx.keepBranch
+                );
+              }
+              hookCtx.deleteResults.worktreeRemoved = true;
+            } catch (error) {
+              if (hookCtx.force) {
+                logger.warn("WorktreeModule: error in force mode (ignored)", {
+                  error: getErrorMessage(error),
+                });
+                hookCtx.deleteResults.worktreeRemoved = true;
+                hookCtx.deleteResults.worktreeError = getErrorMessage(error);
+              } else {
+                // Reactive blocker detection on Windows for ANY cleanup error
+                if (workspaceLockHandler) {
+                  try {
+                    const detected = await workspaceLockHandler.detect(
+                      new Path(hookCtx.workspacePath)
+                    );
+                    if (detected.length > 0) {
+                      if (!hookCtx.releaseResults) {
+                        hookCtx.releaseResults = {};
+                      }
+                      hookCtx.releaseResults.blockingProcesses = detected;
+                      logger.info("Detected blocking processes", {
+                        workspacePath: hookCtx.workspacePath,
+                        count: detected.length,
+                      });
+                    }
+                  } catch (detectError) {
+                    logger.warn("Failed to detect blocking processes", {
+                      workspacePath: hookCtx.workspacePath,
+                      error: getErrorMessage(detectError),
+                    });
+                  }
+                }
+                hookCtx.deleteResults.worktreeError = getErrorMessage(error);
+                throw error;
+              }
+            }
+          },
+        },
+      },
+    },
+  };
+
+  const deleteCodeServerModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        delete: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as DeleteWorkspaceHookContext;
+            if (!hookCtx.deleteResults) {
+              hookCtx.deleteResults = {};
+            }
+
+            try {
+              const workspacePath = new Path(hookCtx.workspacePath);
+              const workspaceName = workspacePath.basename;
+              const projectWorkspacesDir = workspacePath.dirname;
+              await workspaceFileService.deleteWorkspaceFile(workspaceName, projectWorkspacesDir);
+              hookCtx.deleteResults.workspaceFileDeleted = true;
+            } catch (error) {
+              if (hookCtx.force) {
+                logger.warn("CodeServerModule: error in force mode (ignored)", {
+                  error: getErrorMessage(error),
+                });
+                hookCtx.deleteResults.workspaceFileDeleted = true;
+              } else {
+                throw error;
+              }
+            }
+          },
+        },
+      },
+    },
+  };
+
+  const deleteStateModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceDeletedEvent).payload;
+        appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+      },
+    },
+  };
+
+  const deleteIpcBridge: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceDeletedEvent).payload;
+        registry.emit("workspace:removed", {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          path: payload.workspacePath,
+        });
+      },
+    },
+  };
+
   // Wire IpcEventBridge and hook handler modules
   const ipcEventBridge = createIpcEventBridge(registry);
   wireModules(
@@ -585,6 +1031,15 @@ function wireDispatcher(
       codeServerModule,
       stateModule,
       viewModule,
+      // Delete-workspace modules
+      idempotencyModule,
+      deleteViewModule,
+      deleteAgentModule,
+      deleteWindowsLockModule,
+      deleteWorktreeModule,
+      deleteCodeServerModule,
+      deleteStateModule,
+      deleteIpcBridge,
     ],
     hookRegistry,
     dispatcher
@@ -613,6 +1068,39 @@ function wireDispatcher(
       return result;
     },
     { ipc: ApiIpcChannels.WORKSPACE_CREATE }
+  );
+
+  registry.register(
+    "workspaces.remove",
+    async (payload: WorkspaceRemovePayload) => {
+      // Resolve workspace to get paths needed for intent payload
+      const { projectPath, workspace } = await resolveWorkspace(payload, appState);
+
+      const intent: DeleteWorkspaceIntent = {
+        type: INTENT_DELETE_WORKSPACE,
+        payload: {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          workspacePath: workspace.path,
+          projectPath,
+          keepBranch: payload.keepBranch ?? true,
+          force: payload.force ?? false,
+          ...(payload.skipSwitch !== undefined && { skipSwitch: payload.skipSwitch }),
+          ...(payload.unblock !== undefined && { unblock: payload.unblock }),
+          ...(payload.isRetry !== undefined && { isRetry: payload.isRetry }),
+        },
+      };
+
+      // Dispatch and check interceptor result (idempotency check happens inside pipeline)
+      const handle = dispatcher.dispatch(intent);
+      if (!(await handle.accepted)) {
+        return { started: false };
+      }
+      // Fire-and-forget the operation result (deletion runs asynchronously)
+      void handle;
+      return { started: true };
+    },
+    { ipc: ApiIpcChannels.WORKSPACE_REMOVE }
   );
 
   registry.register(

@@ -35,7 +35,6 @@ const mockApi = vi.hoisted(() => ({
   workspaces: {
     create: vi.fn().mockResolvedValue({}),
     remove: vi.fn().mockResolvedValue({ started: true }),
-    forceRemove: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
     get: vi.fn().mockResolvedValue(undefined),
   },
@@ -1126,18 +1125,16 @@ describe("MainView component", () => {
 
       // Should have called workspaces.remove with stored values
       await waitFor(() => {
-        expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
-          "test-project-12345678",
-          "feature",
-          false, // keepBranch from the stored progress
-          true, // skipSwitch - retry keeps user on this workspace
-          undefined, // unblock - no special action
-          true // isRetry - skip proactive detection
-        );
+        expect(mockApi.workspaces.remove).toHaveBeenCalledWith("test-project-12345678", "feature", {
+          keepBranch: false, // from the stored progress
+          skipSwitch: true, // retry keeps user on this workspace
+          unblock: undefined, // no special action
+          isRetry: true, // skip proactive detection
+        });
       });
     });
 
-    it("calls forceRemove and clears state on dismiss", async () => {
+    it("calls remove with force and clears state on dismiss", async () => {
       const projectWithWorkspace = {
         id: asProjectId("test-project-12345678"),
         path: "/test/project",
@@ -1189,12 +1186,11 @@ describe("MainView component", () => {
       expect(dismissButton).not.toBeNull();
       await fireEvent.click(dismissButton!);
 
-      // forceRemove should be called to close the workspace
+      // remove with force should be called to close the workspace
       await waitFor(() => {
-        expect(mockApi.workspaces.forceRemove).toHaveBeenCalledWith(
-          "test-project-12345678",
-          "feature"
-        );
+        expect(mockApi.workspaces.remove).toHaveBeenCalledWith("test-project-12345678", "feature", {
+          force: true,
+        });
       });
 
       // State should be cleared

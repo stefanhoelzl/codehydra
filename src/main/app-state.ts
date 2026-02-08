@@ -283,6 +283,13 @@ export class AppState {
   }
 
   /**
+   * Get the MCP server manager.
+   */
+  getMcpServerManager(): McpServerManager | null {
+    return this.mcpServerManager;
+  }
+
+  /**
    * Sets the last used base branch for a project.
    * This is used to remember the user's branch selection within a session.
    *
@@ -667,6 +674,32 @@ export class AppState {
   }
 
   /**
+   * Removes a workspace from the internal project state.
+   * Used by the delete-workspace state module to update state after deletion.
+   * Does NOT stop servers, destroy views, or delete files -- those are handled
+   * by hook modules in the delete-workspace operation.
+   *
+   * @param projectPathInput - Path to the project
+   * @param workspacePathInput - Path to the workspace to remove
+   */
+  unregisterWorkspace(projectPathInput: string, workspacePathInput: string): void {
+    const normalizedKey = new Path(projectPathInput).toString();
+    const openProject = this.openProjects.get(normalizedKey);
+    if (!openProject) {
+      return;
+    }
+
+    const workspacePath = new Path(workspacePathInput);
+
+    const updatedProject: OpenProject = {
+      ...openProject,
+      workspaces: openProject.workspaces.filter((w) => !w.path.equals(workspacePath)),
+    };
+
+    this.openProjects.set(normalizedKey, updatedProject);
+  }
+
+  /**
    * Start agent server and wait for it to be ready.
    * Failures are logged but don't throw.
    *
@@ -684,55 +717,5 @@ export class AppState {
         );
       }
     }
-  }
-
-  /**
-   * Removes a workspace from an open project.
-   * Destroys the view and updates the project state.
-   *
-   * @param projectPathInput - Path to the project
-   * @param workspacePathInput - Path to the workspace to remove
-   */
-  async removeWorkspace(projectPathInput: string, workspacePathInput: string): Promise<void> {
-    const normalizedKey = new Path(projectPathInput).toString();
-    const openProject = this.openProjects.get(normalizedKey);
-    if (!openProject) {
-      return;
-    }
-
-    // Normalize workspace path for comparison
-    const workspacePath = new Path(workspacePathInput);
-    const workspacePathStr = workspacePath.toString();
-
-    // Stop OpenCode server (this will trigger onServerStopped callback, which removes agent status)
-    if (this.serverManager) {
-      await this.serverManager.stopServer(workspacePathStr);
-    }
-
-    // Clear workspace from MCP seen set (so onFirstRequest fires if workspace is recreated)
-    if (this.mcpServerManager) {
-      this.mcpServerManager.clearWorkspace(workspacePathStr);
-    }
-
-    // Clear TUI tracking for permanent deletion (not restart)
-    if (this.agentStatusManager) {
-      this.agentStatusManager.clearTuiTracking(workspacePathStr as WorkspacePath);
-    }
-
-    // Destroy the workspace view
-    await this.viewManager.destroyWorkspaceView(workspacePathStr);
-
-    // Delete the .code-workspace file
-    const workspaceName = workspacePath.basename;
-    const projectWorkspacesDir = workspacePath.dirname;
-    await this.workspaceFileService.deleteWorkspaceFile(workspaceName, projectWorkspacesDir);
-
-    // Update internal project state using Path.equals() for comparison
-    const updatedProject: OpenProject = {
-      ...openProject,
-      workspaces: openProject.workspaces.filter((w) => !w.path.equals(workspacePath)),
-    };
-
-    this.openProjects.set(normalizedKey, updatedProject);
   }
 }

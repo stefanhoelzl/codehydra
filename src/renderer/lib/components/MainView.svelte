@@ -243,79 +243,30 @@
     openRemoveDialog(workspaceRef);
   }
 
-  // Handle retry deletion (user claims they fixed it manually)
-  function handleRetry(): void {
+  // Handle retry with options (consolidated handler for retry variants)
+  function handleRetryWithOptions(unblock?: "kill" | "close" | "ignore", isRetry?: boolean): void {
     if (!activeDeletionState) return;
-    logger.debug("Retrying deletion", { workspaceName: activeDeletionState.workspaceName });
-    // Fire-and-forget - new progress events will update the state
-    // Pass skipSwitch: true to prevent switching away from this workspace on retry
-    // Pass isRetry: true to skip proactive detection (user claims they fixed it)
-    void api.workspaces.remove(
-      activeDeletionState.projectId,
-      activeDeletionState.workspaceName,
-      activeDeletionState.keepBranch,
-      true, // skipSwitch - user explicitly selected this workspace to retry
-      undefined, // unblock - no special unblock action
-      true // isRetry - skip proactive detection
-    );
-  }
-
-  // Handle kill blocking processes and retry
-  function handleKillAndRetry(): void {
-    if (!activeDeletionState) return;
-    logger.debug("Killing blocking processes and retrying deletion", {
+    logger.debug("Retrying deletion", {
       workspaceName: activeDeletionState.workspaceName,
+      unblock: unblock ?? "none",
+      isRetry: isRetry ?? false,
     });
     // Fire-and-forget - new progress events will update the state
-    void api.workspaces.remove(
-      activeDeletionState.projectId,
-      activeDeletionState.workspaceName,
-      activeDeletionState.keepBranch,
-      true, // skipSwitch - user explicitly selected this workspace to retry
-      "kill" // unblock - kill blocking processes before deletion
-    );
-  }
-
-  // Handle close handles and retry (elevated operation to close file handles on Windows)
-  function handleCloseHandlesAndRetry(): void {
-    if (!activeDeletionState) return;
-    logger.debug("Closing handles and retrying deletion", {
-      workspaceName: activeDeletionState.workspaceName,
+    void api.workspaces.remove(activeDeletionState.projectId, activeDeletionState.workspaceName, {
+      keepBranch: activeDeletionState.keepBranch,
+      skipSwitch: true,
+      ...(unblock !== undefined && { unblock }),
+      ...(isRetry !== undefined && { isRetry }),
     });
-    // Fire-and-forget - new progress events will update the state
-    void api.workspaces.remove(
-      activeDeletionState.projectId,
-      activeDeletionState.workspaceName,
-      activeDeletionState.keepBranch,
-      true, // skipSwitch - user explicitly selected this workspace to retry
-      "close" // unblock - close file handles before deletion
-    );
-  }
-
-  // Handle ignore blockers (skip detection entirely - power user escape hatch)
-  function handleIgnoreBlockers(): void {
-    if (!activeDeletionState) return;
-    logger.debug("Ignoring blockers and retrying deletion", {
-      workspaceName: activeDeletionState.workspaceName,
-    });
-    // Fire-and-forget - new progress events will update the state
-    void api.workspaces.remove(
-      activeDeletionState.projectId,
-      activeDeletionState.workspaceName,
-      activeDeletionState.keepBranch,
-      true, // skipSwitch - user explicitly selected this workspace to retry
-      "ignore" // unblock - skip detection entirely
-    );
   }
 
   // Handle dismiss (force remove workspace from CodeHydra, files may remain on disk)
-  async function handleDismiss(): Promise<void> {
+  function handleDismiss(): void {
     if (!activeDeletionState) return;
     logger.debug("Dismissing deletion", { workspaceName: activeDeletionState.workspaceName });
-    await api.workspaces.forceRemove(
-      activeDeletionState.projectId,
-      activeDeletionState.workspaceName
-    );
+    void api.workspaces.remove(activeDeletionState.projectId, activeDeletionState.workspaceName, {
+      force: true,
+    });
     clearDeletion(activeDeletionState.workspacePath);
   }
 </script>
@@ -369,11 +320,11 @@
   {#if activeDeletionState}
     <DeletionProgressView
       progress={activeDeletionState}
-      onRetry={handleRetry}
+      onRetry={() => handleRetryWithOptions(undefined, true)}
       onDismiss={handleDismiss}
-      onKillAndRetry={handleKillAndRetry}
-      onCloseHandlesAndRetry={handleCloseHandlesAndRetry}
-      onIgnoreBlockers={handleIgnoreBlockers}
+      onKillAndRetry={() => handleRetryWithOptions("kill")}
+      onCloseHandlesAndRetry={() => handleRetryWithOptions("close")}
+      onIgnoreBlockers={() => handleRetryWithOptions("ignore")}
     />
   {:else if activeLoading}
     <WorkspaceLoadingOverlay />

@@ -213,7 +213,9 @@ describe("RemoveWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       // API uses keepBranch (inverted from old deleteBranch)
-      expect(workspaces.remove).toHaveBeenCalledWith(testProjectId, testWorkspaceName, false);
+      expect(workspaces.remove).toHaveBeenCalledWith(testProjectId, testWorkspaceName, {
+        keepBranch: false,
+      });
     });
 
     it("OK calls workspaces.remove with keepBranch=true when checkbox checked", async () => {
@@ -232,7 +234,9 @@ describe("RemoveWorkspaceDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(workspaces.remove).toHaveBeenCalledWith(testProjectId, testWorkspaceName, true);
+      expect(workspaces.remove).toHaveBeenCalledWith(testProjectId, testWorkspaceName, {
+        keepBranch: true,
+      });
     });
 
     it("OK closes dialog immediately (fire-and-forget)", async () => {

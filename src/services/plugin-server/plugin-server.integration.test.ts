@@ -185,7 +185,6 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
       workspaces: {
         create: vi.fn(),
         remove: vi.fn(),
-        forceRemove: vi.fn(),
         get: vi.fn(),
         getStatus: vi.fn(),
         getAgentSession: vi.fn(),

@@ -77,16 +77,18 @@ describe("IWorkspaceApi Interface", () => {
       async remove(
         projectId: ProjectId,
         workspaceName: WorkspaceName,
-        keepBranch?: boolean
-      ): Promise<{ started: true }> {
+        options?: {
+          keepBranch?: boolean;
+          skipSwitch?: boolean;
+          force?: boolean;
+          unblock?: "kill" | "close" | "ignore";
+          isRetry?: boolean;
+        }
+      ): Promise<{ started: boolean }> {
         void projectId;
         void workspaceName;
-        void keepBranch;
+        void options;
         return { started: true };
-      },
-      async forceRemove(projectId: ProjectId, workspaceName: WorkspaceName): Promise<void> {
-        void projectId;
-        void workspaceName;
       },
       async get(
         projectId: ProjectId,
@@ -156,7 +158,6 @@ describe("IWorkspaceApi Interface", () => {
     expect(api).toBeDefined();
     expect(typeof api.create).toBe("function");
     expect(typeof api.remove).toBe("function");
-    expect(typeof api.forceRemove).toBe("function");
     expect(typeof api.get).toBe("function");
     expect(typeof api.getStatus).toBe("function");
     expect(typeof api.setMetadata).toBe("function");

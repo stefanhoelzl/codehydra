@@ -145,7 +145,9 @@ export function wirePluginApi(
         workspacePath,
         "delete",
         (projectId, workspaceName) =>
-          api.workspaces.remove(projectId, workspaceName, request.keepBranch),
+          api.workspaces.remove(projectId, workspaceName, {
+            ...(request.keepBranch !== undefined && { keepBranch: request.keepBranch }),
+          }),
         { keepBranch: !!request.keepBranch }
       );
     },

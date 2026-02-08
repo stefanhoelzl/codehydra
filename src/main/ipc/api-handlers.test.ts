@@ -25,7 +25,6 @@ function createMockApi(): ICodeHydraApi {
     workspaces: {
       create: vi.fn(),
       remove: vi.fn().mockResolvedValue({ started: true }),
-      forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn(),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
       getAgentSession: vi.fn().mockResolvedValue(null),

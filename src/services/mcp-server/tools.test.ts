@@ -154,7 +154,7 @@ function createToolHandlers(api: ICoreApi) {
         const result = await api.workspaces.remove(
           context.resolved.projectId,
           context.resolved.workspaceName,
-          args.keepBranch ?? false
+          { keepBranch: args.keepBranch ?? false }
         );
         return successResult(result);
       } catch (error) {
@@ -527,7 +527,7 @@ describe("MCP Tools", () => {
       expect(removeMock).toHaveBeenCalledWith(
         context.resolved!.projectId,
         context.resolved!.workspaceName,
-        false
+        { keepBranch: false }
       );
     });
 
@@ -552,7 +552,7 @@ describe("MCP Tools", () => {
       expect(removeMock).toHaveBeenCalledWith(
         context.resolved!.projectId,
         context.resolved!.workspaceName,
-        true
+        { keepBranch: true }
       );
     });
 
@@ -577,7 +577,7 @@ describe("MCP Tools", () => {
       expect(removeMock).toHaveBeenCalledWith(
         context.resolved!.projectId,
         context.resolved!.workspaceName,
-        false
+        { keepBranch: false }
       );
     });
   });

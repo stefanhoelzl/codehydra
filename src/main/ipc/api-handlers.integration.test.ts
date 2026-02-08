@@ -79,7 +79,6 @@ function createMockApiWithEvents(): {
     workspaces: {
       create: vi.fn().mockResolvedValue(TEST_WORKSPACE),
       remove: vi.fn().mockResolvedValue({ started: true }),
-      forceRemove: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue(TEST_WORKSPACE),
       getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
       getAgentSession: vi.fn().mockResolvedValue(null),

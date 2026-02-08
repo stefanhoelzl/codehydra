@@ -281,12 +281,12 @@ describe("MainView close project integration", () => {
       expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
         projectWithWorkspaces.id,
         "feature-1",
-        false
+        { keepBranch: false }
       );
       expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
         projectWithWorkspaces.id,
         "feature-2",
-        false
+        { keepBranch: false }
       );
 
       // Then close the project

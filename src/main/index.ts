@@ -321,6 +321,12 @@ let projectStore: import("../services").ProjectStore | null = null;
 let globalWorktreeProvider: GitWorktreeProvider | null = null;
 
 /**
+ * WorkspaceFileService for .code-workspace file management.
+ * Created in startServices(), used by intent dispatcher for delete operations.
+ */
+let workspaceFileService: import("../services").IWorkspaceFileService | null = null;
+
+/**
  * Starts all application services after setup completes.
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
@@ -449,7 +455,7 @@ async function startServices(): Promise<void> {
 
   // Create WorkspaceFileService for .code-workspace file management
   const workspaceFileConfig = createWorkspaceFileConfig();
-  const workspaceFileService = new WorkspaceFileService(
+  workspaceFileService = new WorkspaceFileService(
     fileSystemLayer,
     workspaceFileConfig,
     loggingService.createLogger("workspace-file")
@@ -950,17 +956,6 @@ async function bootstrap(): Promise<void> {
         );
       }
 
-      // Create WorkspaceLockHandler for Windows file handle detection
-      // Uses "process" logger since blocking process detection is process management
-      // Script path is resolved from pathProvider.scriptsRuntimeDir (outside ASAR)
-      // Returns undefined on non-Windows platforms (no file locking issues)
-      const workspaceLockHandler = createWorkspaceLockHandler(
-        processRunner,
-        platformInfo,
-        loggingService.createLogger("process"),
-        nodePath.join(pathProvider.scriptsRuntimeDir.toNative(), "blocking-processes.ps1")
-      );
-
       // Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
       // dialogLayer is guaranteed set by bootstrap() before startServices()
       const dialogLayerRef = dialogLayer;
@@ -979,41 +974,16 @@ async function bootstrap(): Promise<void> {
           }
         : undefined;
 
-      const baseDeps = {
+      return {
         appState,
         viewManager,
         gitClient,
         pathProvider,
         projectStore,
-        workspaceLockHandler,
         ...(dialog ? { dialog } : {}),
-        emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => {
-          try {
-            viewManagerRef
-              ?.getUIWebContents()
-              ?.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
-          } catch {
-            // Log but don't throw - deletion continues even if UI disconnected
-          }
-        },
+        ...(pluginServer ? { pluginServer } : {}),
         logger: loggingService.createLogger("api"),
       };
-      // Add killTerminalsCallback only if PluginServer is available
-      // This callback sends shutdown event to the extension, which:
-      // 1. Kills all terminals and waits for them to close (or timeout)
-      // 2. Removes workspace folders (releases file watchers)
-      // 3. Terminates the extension host process
-      if (pluginServer) {
-        return {
-          ...baseDeps,
-          pluginServer,
-          killTerminalsCallback: async (workspacePath: string) => {
-            // Shutdown extension host (kills terminals, releases file watchers, terminates process)
-            await pluginServer!.sendExtensionHostShutdown(workspacePath);
-          },
-        };
-      }
-      return baseDeps;
     },
     // Global worktree provider for metadata operations
     globalWorktreeProviderFn: () => {
@@ -1025,6 +995,42 @@ async function bootstrap(): Promise<void> {
     // KeepFilesService for copying .keepfiles to new workspaces
     keepFilesServiceFn: () =>
       new KeepFilesService(fileSystemLayer, loggingService.createLogger("keepfiles")),
+    // WorkspaceFileService for .code-workspace file management
+    workspaceFileServiceFn: () => {
+      if (!workspaceFileService) {
+        throw new Error("WorkspaceFileService not initialized");
+      }
+      return workspaceFileService;
+    },
+    // Deletion progress callback for emitting DeletionProgress to the renderer
+    emitDeletionProgressFn: () => (progress: import("../shared/api/types").DeletionProgress) => {
+      try {
+        viewManagerRef
+          ?.getUIWebContents()
+          ?.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
+      } catch {
+        // Log but don't throw - deletion continues even if UI disconnected
+      }
+    },
+    // Kill terminals callback (only when PluginServer is available)
+    killTerminalsCallbackFn: () =>
+      pluginServer
+        ? async (workspacePath: string) => {
+            await pluginServer!.sendExtensionHostShutdown(workspacePath);
+          }
+        : undefined,
+    // Workspace lock handler for Windows file handle detection
+    workspaceLockHandlerFn: () => {
+      if (!processRunner) {
+        return undefined;
+      }
+      return createWorkspaceLockHandler(
+        processRunner,
+        platformInfo,
+        loggingService.createLogger("process"),
+        nodePath.join(pathProvider.scriptsRuntimeDir.toNative(), "blocking-processes.ps1")
+      );
+    },
     // Dispatcher created early so ShortcutController can dispatch intents
     dispatcherFn: () => ({ hookRegistry, dispatcher }),
   }) as BootstrapResult & { startServices: () => void };
