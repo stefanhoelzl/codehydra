@@ -15,6 +15,7 @@ import { CoreModule, type CoreModuleDeps } from "./modules/core";
 import type {
   IApiRegistry,
   IApiModule,
+  WorkspaceCreatePayload,
   WorkspaceSetMetadataPayload,
   WorkspaceRefPayload,
   UiSetModePayload,
@@ -73,12 +74,31 @@ import type {
   GetActiveWorkspaceIntent,
   GetActiveWorkspaceHookContext,
 } from "./operations/get-active-workspace";
+import {
+  CreateWorkspaceOperation,
+  CREATE_WORKSPACE_OPERATION_ID,
+  INTENT_CREATE_WORKSPACE,
+  EVENT_WORKSPACE_CREATED,
+} from "./operations/create-workspace";
+import type {
+  CreateWorkspaceIntent,
+  CreateWorkspaceHookContext,
+  WorkspaceCreatedEvent,
+} from "./operations/create-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { wireModules } from "./intents/infrastructure/wire";
-import { resolveWorkspace, generateProjectId, extractWorkspaceName } from "./api/id-utils";
+import {
+  resolveWorkspace,
+  resolveProjectPath,
+  generateProjectId,
+  extractWorkspaceName,
+} from "./api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
+import type { DomainEvent } from "./intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
+import { normalizeInitialPrompt } from "../shared/api/types";
+import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
 
 // =============================================================================
@@ -171,7 +191,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       dispatcher,
       deps.globalWorktreeProviderFn(),
       coreDeps.appState,
-      coreDeps.viewManager
+      coreDeps.viewManager,
+      deps.logger
     );
   }
 
@@ -231,7 +252,8 @@ function wireDispatcher(
   dispatcher: Dispatcher,
   globalProvider: GitWorktreeProvider,
   appState: CoreModuleDeps["appState"],
-  viewManager: CoreModuleDeps["viewManager"]
+  viewManager: CoreModuleDeps["viewManager"],
+  logger: Logger
 ): void {
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
@@ -241,6 +263,7 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
   dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
 
   // Metadata hook handler module
   const metadataModule: IntentModule = {
@@ -375,15 +398,186 @@ function wireDispatcher(
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // Create-workspace hook modules
+  // ---------------------------------------------------------------------------
+
+  // WorktreeModule: "create" hook -- creates git worktree, sets context fields
+  const worktreeModule: IntentModule = {
+    hooks: {
+      [CREATE_WORKSPACE_OPERATION_ID]: {
+        create: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CreateWorkspaceHookContext;
+            const intent = ctx.intent as CreateWorkspaceIntent;
+
+            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
+            if (!projectPath) {
+              throw new Error(`Project not found: ${intent.payload.projectId}`);
+            }
+
+            const provider = appState.getWorkspaceProvider(projectPath);
+            if (!provider) {
+              throw new Error(`No workspace provider for project: ${intent.payload.projectId}`);
+            }
+
+            const internalWorkspace: InternalWorkspace = await provider.createWorkspace(
+              intent.payload.name,
+              intent.payload.base
+            );
+
+            hookCtx.workspacePath = internalWorkspace.path.toString();
+            hookCtx.branch = internalWorkspace.branch ?? internalWorkspace.name;
+            hookCtx.metadata = internalWorkspace.metadata;
+            hookCtx.projectPath = projectPath;
+          },
+        },
+      },
+    },
+  };
+
+  // AgentModule: "setup" hook -- starts agent server, sets initial prompt, gets env vars
+  // Wraps body in try/catch to prevent errors from propagating (best-effort)
+  const agentModule: IntentModule = {
+    hooks: {
+      [CREATE_WORKSPACE_OPERATION_ID]: {
+        setup: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CreateWorkspaceHookContext;
+            const intent = ctx.intent as CreateWorkspaceIntent;
+
+            try {
+              const workspacePath = hookCtx.workspacePath!;
+
+              // 1. Start agent server
+              const serverManager = appState.getServerManager();
+              if (serverManager) {
+                await serverManager.startServer(workspacePath);
+
+                // 2. Set initial prompt if provided (must happen after startServer)
+                if (intent.payload.initialPrompt && serverManager.setInitialPrompt) {
+                  const normalizedPrompt = normalizeInitialPrompt(intent.payload.initialPrompt);
+                  await serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
+                }
+              }
+
+              // 3. Get environment variables from agent provider
+              const agentStatusManager = appState.getAgentStatusManager();
+              const agentProvider = agentStatusManager?.getProvider(workspacePath as WorkspacePath);
+              hookCtx.envVars = agentProvider?.getEnvironmentVariables() ?? {};
+            } catch (error) {
+              logger.error(
+                "Agent setup failed for workspace (non-fatal)",
+                { workspacePath: hookCtx.workspacePath ?? "unknown" },
+                error instanceof Error ? error : undefined
+              );
+              // Do not re-throw -- agent setup is best-effort
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // CodeServerModule: "finalize" hook -- creates .code-workspace file, sets workspaceUrl
+  const codeServerModule: IntentModule = {
+    hooks: {
+      [CREATE_WORKSPACE_OPERATION_ID]: {
+        finalize: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CreateWorkspaceHookContext;
+            const envVars = hookCtx.envVars ?? {};
+            hookCtx.workspaceUrl = await appState.getWorkspaceUrl(hookCtx.workspacePath!, envVars);
+          },
+        },
+      },
+    },
+  };
+
+  // ---------------------------------------------------------------------------
+  // Create-workspace event subscriber modules
+  // ---------------------------------------------------------------------------
+
+  // StateModule: subscribes to workspace:created, registers workspace in app state
+  const stateModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceCreatedEvent).payload;
+        const internalWorkspace: InternalWorkspace = {
+          name: payload.workspaceName,
+          path: new Path(payload.workspacePath),
+          branch: payload.branch,
+          metadata: payload.metadata,
+        };
+        appState.registerWorkspace(payload.projectPath, internalWorkspace);
+        appState.setLastBaseBranch(payload.projectPath, payload.base);
+      },
+    },
+  };
+
+  // ViewModule: subscribes to workspace:created, creates and activates workspace view
+  const viewModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceCreatedEvent).payload;
+        viewManager.createWorkspaceView(
+          payload.workspacePath,
+          payload.workspaceUrl,
+          payload.projectPath,
+          true
+        );
+        viewManager.preloadWorkspaceUrl(payload.workspacePath);
+        if (!payload.keepInBackground) {
+          viewManager.setActiveWorkspace(payload.workspacePath, true);
+        }
+      },
+    },
+  };
+
   // Wire IpcEventBridge and hook handler modules
   const ipcEventBridge = createIpcEventBridge(registry);
   wireModules(
-    [ipcEventBridge, metadataModule, gitStatusModule, agentStatusModule, uiHookModule],
+    [
+      ipcEventBridge,
+      metadataModule,
+      gitStatusModule,
+      agentStatusModule,
+      uiHookModule,
+      worktreeModule,
+      agentModule,
+      codeServerModule,
+      stateModule,
+      viewModule,
+    ],
     hookRegistry,
     dispatcher
   );
 
   // Register dispatcher bridge handlers in the API registry
+  registry.register(
+    "workspaces.create",
+    async (payload: WorkspaceCreatePayload) => {
+      const intent: CreateWorkspaceIntent = {
+        type: INTENT_CREATE_WORKSPACE,
+        payload: {
+          projectId: payload.projectId,
+          name: payload.name,
+          base: payload.base,
+          ...(payload.initialPrompt !== undefined && { initialPrompt: payload.initialPrompt }),
+          ...(payload.keepInBackground !== undefined && {
+            keepInBackground: payload.keepInBackground,
+          }),
+        },
+      };
+      const result = await dispatcher.dispatch(intent);
+      if (!result) {
+        throw new Error("Create workspace dispatch returned no result");
+      }
+      return result;
+    },
+    { ipc: ApiIpcChannels.WORKSPACE_CREATE }
+  );
+
   registry.register(
     "workspaces.setMetadata",
     async (payload: WorkspaceSetMetadataPayload) => {

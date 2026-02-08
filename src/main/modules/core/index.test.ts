@@ -46,7 +46,7 @@ function createMockAppState(overrides: Partial<AppState> = {}): AppState {
       getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
     }),
     findProjectForWorkspace: vi.fn(),
-    addWorkspace: vi.fn(),
+    registerWorkspace: vi.fn(),
     removeWorkspace: vi.fn().mockResolvedValue(undefined),
     getWorkspaceUrl: vi.fn(),
     getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
@@ -217,51 +217,6 @@ describe("core.projects", () => {
   });
 });
 
-describe("core.workspaces", () => {
-  let registry: MockApiRegistry;
-  let deps: CoreModuleDeps;
-
-  beforeEach(() => {
-    registry = createMockRegistry();
-    deps = createMockDeps();
-  });
-
-  describe("workspaces.create", () => {
-    it("creates workspace and emits workspace:created event", async () => {
-      const appState = createMockAppState({
-        getAllProjects: vi
-          .fn()
-          .mockResolvedValue([{ path: TEST_PROJECT_PATH, name: "test-project", workspaces: [] }]),
-        getWorkspaceProvider: vi.fn().mockReturnValue({
-          createWorkspace: vi.fn().mockResolvedValue({
-            path: `${TEST_PROJECT_PATH}/workspaces/feature`,
-            branch: "feature",
-            metadata: { base: "main" },
-          }),
-        }),
-      });
-      deps = createMockDeps({ appState });
-      new CoreModule(registry, deps);
-
-      const handler = registry.getHandler("workspaces.create");
-      const result = await handler!({
-        projectId: TEST_PROJECT_ID,
-        name: "feature",
-        base: "main",
-      });
-
-      expect(result.name).toBe("feature");
-      expect(result.branch).toBe("feature");
-
-      const emittedEvents = registry.getEmittedEvents();
-      expect(emittedEvents).toContainEqual({
-        event: "workspace:created",
-        payload: { projectId: TEST_PROJECT_ID, workspace: expect.any(Object) },
-      });
-    });
-  });
-});
-
 describe("core.registration", () => {
   let registry: MockApiRegistry;
   let deps: CoreModuleDeps;
@@ -282,11 +237,11 @@ describe("core.registration", () => {
     expect(registeredPaths).toContain("projects.fetchBases");
   });
 
-  it("registers all workspaces.* paths with IPC", () => {
+  it("registers all workspaces.* paths with IPC (except create, handled by intent dispatcher)", () => {
     new CoreModule(registry, deps);
 
     const registeredPaths = registry.getRegisteredPaths();
-    expect(registeredPaths).toContain("workspaces.create");
+    expect(registeredPaths).not.toContain("workspaces.create");
     expect(registeredPaths).toContain("workspaces.remove");
     expect(registeredPaths).toContain("workspaces.forceRemove");
     expect(registeredPaths).toContain("workspaces.get");
@@ -298,8 +253,8 @@ describe("core.registration", () => {
     expect(registry.register).toHaveBeenCalledWith("projects.open", expect.any(Function), {
       ipc: "api:project:open",
     });
-    expect(registry.register).toHaveBeenCalledWith("workspaces.create", expect.any(Function), {
-      ipc: "api:workspace:create",
+    expect(registry.register).toHaveBeenCalledWith("workspaces.remove", expect.any(Function), {
+      ipc: "api:workspace:remove",
     });
   });
 });

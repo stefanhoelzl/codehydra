@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Project operations: open, close, list, get, fetchBases
- * - Workspace operations: create, remove, forceRemove, get
+ * - Workspace operations: remove, forceRemove, get
  * - UI operations: selectFolder, switchWorkspace
  *
  * Created in startServices() after setup is complete.
@@ -16,7 +16,6 @@ import type {
   ProjectClosePayload,
   ProjectClonePayload,
   ProjectIdPayload,
-  WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceRefPayload,
   WorkspaceExecuteCommandPayload,
@@ -35,7 +34,6 @@ import type {
   DeletionOperationId,
   BlockingProcess,
 } from "../../../shared/api/types";
-import { normalizeInitialPrompt } from "../../../shared/api/types";
 import type { WorkspacePath } from "../../../shared/ipc";
 import type { AppState } from "../../app-state";
 import type { IViewManager } from "../../managers/view-manager.interface";
@@ -134,13 +132,12 @@ export interface CoreModuleDeps {
  *
  * Registered methods:
  * - projects.*: open, close, list, get, fetchBases
- * - workspaces.*: create, remove, forceRemove, get
+ * - workspaces.*: remove, forceRemove, get (create handled by intent dispatcher)
  * - ui.selectFolder, ui.switchWorkspace
  *
  * Events emitted:
  * - project:opened, project:closed, project:bases-updated
- * - workspace:created, workspace:removed, workspace:switched,
- *   workspace:status-changed
+ * - workspace:removed, workspace:switched, workspace:status-changed
  */
 export class CoreModule implements IApiModule {
   private readonly logger: Logger;
@@ -186,10 +183,7 @@ export class CoreModule implements IApiModule {
       ipc: ApiIpcChannels.PROJECT_FETCH_BASES,
     });
 
-    // Workspace methods
-    this.api.register("workspaces.create", this.workspaceCreate.bind(this), {
-      ipc: ApiIpcChannels.WORKSPACE_CREATE,
-    });
+    // Workspace methods (workspaces.create handled by intent dispatcher in bootstrap.ts)
     this.api.register("workspaces.remove", this.workspaceRemove.bind(this), {
       ipc: ApiIpcChannels.WORKSPACE_REMOVE,
     });
@@ -353,57 +347,6 @@ export class CoreModule implements IApiModule {
   // ===========================================================================
   // Workspace Methods
   // ===========================================================================
-
-  private async workspaceCreate(payload: WorkspaceCreatePayload): Promise<Workspace> {
-    const projectPath = await resolveProjectPath(payload.projectId, this.deps.appState);
-    if (!projectPath) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    const provider = this.deps.appState.getWorkspaceProvider(projectPath);
-    if (!provider) {
-      throw new Error(`No workspace provider for project: ${payload.projectId}`);
-    }
-
-    const internalWorkspace = await provider.createWorkspace(payload.name, payload.base);
-
-    // Normalize initial prompt if provided
-    const normalizedPrompt = payload.initialPrompt
-      ? normalizeInitialPrompt(payload.initialPrompt)
-      : undefined;
-
-    // Add workspace and start server (with optional initial prompt)
-    // Must await to ensure view is created before setActiveWorkspace is called
-    await this.deps.appState.addWorkspace(
-      projectPath,
-      internalWorkspace,
-      normalizedPrompt ? { initialPrompt: normalizedPrompt } : undefined
-    );
-    this.deps.appState.setLastBaseBranch(projectPath, payload.base);
-
-    // Switch to the new workspace unless keepInBackground is true
-    if (!payload.keepInBackground) {
-      // focus=true ensures the new workspace receives keyboard events (e.g., Alt+X for shortcuts)
-      this.deps.viewManager.setActiveWorkspace(internalWorkspace.path.toString(), true);
-    }
-
-    // Convert internal workspace (with Path) to API workspace (with string path)
-    const workspace = this.toApiWorkspace(payload.projectId, {
-      path: internalWorkspace.path.toString(),
-      branch: internalWorkspace.branch,
-      metadata: internalWorkspace.metadata,
-    });
-
-    // Emit workspace:created event with hasInitialPrompt and keepInBackground flags
-    this.api.emit("workspace:created", {
-      projectId: payload.projectId,
-      workspace,
-      ...(normalizedPrompt && { hasInitialPrompt: true }),
-      ...(payload.keepInBackground && { keepInBackground: true }),
-    });
-
-    return workspace;
-  }
 
   private async workspaceRemove(payload: WorkspaceRemovePayload): Promise<{ started: true }> {
     const { projectPath, workspace } = await this.resolveWorkspace(payload);
