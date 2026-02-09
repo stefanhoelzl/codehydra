@@ -37,6 +37,7 @@ import type {
   CreateWorkspaceHookContext,
   CreateWorkspacePayload,
   WorkspaceCreatedEvent,
+  ExistingWorkspaceData,
 } from "./create-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -186,6 +187,16 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
           handler: async (ctx: HookContext) => {
             const hookCtx = ctx as CreateWorkspaceHookContext;
             const intent = ctx.intent as CreateWorkspaceIntent;
+
+            // Existing workspace path: populate context from existing data
+            if (intent.payload.existingWorkspace) {
+              const existing = intent.payload.existingWorkspace;
+              hookCtx.workspacePath = existing.path;
+              hookCtx.branch = existing.branch ?? existing.name;
+              hookCtx.metadata = existing.metadata;
+              hookCtx.projectPath = intent.payload.projectPath!;
+              return;
+            }
 
             if (intent.payload.projectId !== projectId) {
               throw new Error(`Project not found: ${intent.payload.projectId}`);
@@ -608,6 +619,91 @@ describe("CreateWorkspace Operation", () => {
 
       // Keepfiles should not have been called
       expect(setup.keepFilesService.copies).toHaveLength(0);
+    });
+  });
+
+  describe("existingWorkspace skips worktree creation (#15)", () => {
+    it("registers workspace with existing path/branch, no new worktree", async () => {
+      const setup = createTestSetup();
+
+      const existingWorkspace: ExistingWorkspaceData = {
+        path: "/existing/workspace/feature-y",
+        name: "feature-y",
+        branch: "feature-y",
+        metadata: { base: "main" },
+      };
+
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const intent: CreateWorkspaceIntent = {
+        type: INTENT_CREATE_WORKSPACE,
+        payload: {
+          projectId: setup.projectId,
+          name: "feature-y",
+          base: "main",
+          existingWorkspace,
+          projectPath: PROJECT_ROOT,
+        },
+      };
+
+      const result = await setup.dispatcher.dispatch(intent);
+
+      expect(result).toBeDefined();
+      const workspace = result as Workspace;
+      expect(workspace.path).toBe("/existing/workspace/feature-y");
+      expect(workspace.branch).toBe("feature-y");
+      expect(workspace.metadata).toEqual({ base: "main" });
+
+      // Event emitted with existing workspace data
+      expect(receivedEvents).toHaveLength(1);
+      const event = receivedEvents[0] as WorkspaceCreatedEvent;
+      expect(event.payload.workspacePath).toBe("/existing/workspace/feature-y");
+      expect(event.payload.projectPath).toBe(PROJECT_ROOT);
+    });
+  });
+
+  describe("existingWorkspace uses projectPath directly (#16)", () => {
+    it("populates context without projectId resolution", async () => {
+      const setup = createTestSetup();
+      const customProjectPath = "/custom/project/path";
+
+      const existingWorkspace: ExistingWorkspaceData = {
+        path: "/custom/workspace/my-ws",
+        name: "my-ws",
+        branch: null,
+        metadata: { base: "develop" },
+      };
+
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const intent: CreateWorkspaceIntent = {
+        type: INTENT_CREATE_WORKSPACE,
+        payload: {
+          projectId: setup.projectId,
+          name: "my-ws",
+          base: "develop",
+          existingWorkspace,
+          projectPath: customProjectPath,
+        },
+      };
+
+      const result = await setup.dispatcher.dispatch(intent);
+
+      expect(result).toBeDefined();
+      const workspace = result as Workspace;
+      // branch falls back to name when null
+      expect(workspace.branch).toBe("my-ws");
+
+      // Event uses the provided projectPath directly
+      expect(receivedEvents).toHaveLength(1);
+      const event = receivedEvents[0] as WorkspaceCreatedEvent;
+      expect(event.payload.projectPath).toBe(customProjectPath);
     });
   });
 });

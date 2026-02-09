@@ -16,11 +16,10 @@ import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { DomainEvent } from "../intents/infrastructure/types";
+import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import {
   DeleteWorkspaceOperation,
   DELETE_WORKSPACE_OPERATION_ID,
-  IdempotencyInterceptor,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
 } from "./delete-workspace";
@@ -68,6 +67,7 @@ function buildDeleteIntent(
       projectPath: PROJECT_PATH,
       keepBranch: true,
       force: false,
+      removeWorktree: true,
       ...overrides,
     },
   };
@@ -311,7 +311,7 @@ interface TestHarness {
   activeWorkspace: { path: string | null };
   destroyedViews: string[];
   emittedEvents: Array<{ event: string; payload: unknown }>;
-  interceptor: IdempotencyInterceptor;
+  inProgressDeletions: Set<string>;
 }
 
 function createTestHarness(options?: {
@@ -361,14 +361,38 @@ function createTestHarness(options?: {
   // Register the operation
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation(emitProgress));
 
-  // Add interceptor via module
-  const interceptor = new IdempotencyInterceptor();
+  // Add interceptor via module (inline, matching bootstrap pattern)
+  const inProgressDeletions = new Set<string>();
   const idempotencyModule: IntentModule = {
-    interceptors: [interceptor],
+    interceptors: [
+      {
+        id: "idempotency",
+        order: 0,
+        async before(intent: Intent): Promise<Intent | null> {
+          if (intent.type !== INTENT_DELETE_WORKSPACE) {
+            return intent;
+          }
+          const deleteIntent = intent as DeleteWorkspaceIntent;
+          const workspacePath = deleteIntent.payload.workspacePath;
+
+          if (deleteIntent.payload.force) {
+            inProgressDeletions.add(workspacePath);
+            return intent;
+          }
+
+          if (inProgressDeletions.has(workspacePath)) {
+            return null;
+          }
+
+          inProgressDeletions.add(workspacePath);
+          return intent;
+        },
+      },
+    ],
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
-        interceptor.inProgressDeletions.delete(payload.workspacePath);
+        inProgressDeletions.delete(payload.workspacePath);
       },
     },
   };
@@ -700,7 +724,7 @@ function createTestHarness(options?: {
     activeWorkspace,
     destroyedViews,
     emittedEvents,
-    interceptor,
+    inProgressDeletions,
   };
 }
 
@@ -787,7 +811,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Manually mark workspace as in-progress (simulate concurrent dispatch)
-    harness.interceptor.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -804,7 +828,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace as in-progress
-    harness.interceptor.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     const forceIntent = buildDeleteIntent({ force: true });
     const result = await harness.dispatcher.dispatch(forceIntent);
@@ -826,7 +850,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     await harness.dispatcher.dispatch(intent);
 
     // After completion, the in-progress flag should be cleared
-    expect(harness.interceptor.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
 
     // Should be able to dispatch again (e.g., for a new workspace with same path)
     // Reset state for second dispatch
@@ -844,7 +868,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace A as in-progress
-    harness.interceptor.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     // Dispatch delete for workspace B -- should NOT be blocked
     const intentB = buildDeleteIntent({
@@ -1084,7 +1108,7 @@ describe("DeleteWorkspaceOperation.ipcHandler", () => {
     const harness = createTestHarness();
 
     // Simulate interceptor blocking by pre-adding to in-progress
-    harness.interceptor.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -1095,5 +1119,53 @@ describe("DeleteWorkspaceOperation.ipcHandler", () => {
     // IPC handler would do: result ?? { started: false }
     const ipcResult = result ?? { started: false };
     expect(ipcResult).toEqual({ started: false });
+  });
+});
+
+describe("DeleteWorkspaceOperation.removeWorktree", () => {
+  it("test 17: removeWorktree=false skips release and delete hooks", async () => {
+    const harness = createTestHarness();
+    const intent = buildDeleteIntent({ removeWorktree: false });
+
+    const result = await harness.dispatcher.dispatch(intent);
+    expect(result).toEqual({ started: true });
+
+    // Shutdown still runs: server stopped, view destroyed
+    expect(harness.testState.serverStopped).toBe(true);
+    expect(harness.destroyedViews).toContain(WORKSPACE_PATH);
+
+    // Delete hooks skipped: worktree NOT removed
+    expect(harness.testState.worktreeRemoved).toBe(false);
+
+    // Event still emitted (needed for state cleanup)
+    expect(harness.testState.removedWorkspaces).toContainEqual({
+      projectPath: PROJECT_PATH,
+      workspacePath: WORKSPACE_PATH,
+    });
+
+    // IPC event emitted
+    const ipcEvent = harness.emittedEvents.find((e) => e.event === "workspace:removed");
+    expect(ipcEvent).toBeDefined();
+  });
+
+  it("test 18: removeWorktree=true runs full pipeline", async () => {
+    const harness = createTestHarness();
+    const intent = buildDeleteIntent({ removeWorktree: true });
+
+    const result = await harness.dispatcher.dispatch(intent);
+    expect(result).toEqual({ started: true });
+
+    // Shutdown runs
+    expect(harness.testState.serverStopped).toBe(true);
+    expect(harness.destroyedViews).toContain(WORKSPACE_PATH);
+
+    // Delete hooks run: worktree removed
+    expect(harness.testState.worktreeRemoved).toBe(true);
+
+    // Event emitted
+    expect(harness.testState.removedWorkspaces).toContainEqual({
+      projectPath: PROJECT_PATH,
+      workspacePath: WORKSPACE_PATH,
+    });
   });
 });

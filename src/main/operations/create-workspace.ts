@@ -28,12 +28,24 @@ import { extractWorkspaceName } from "../api/id-utils";
 // Intent Types
 // =============================================================================
 
+/** Data for activating an existing (discovered) workspace via workspace:create */
+export interface ExistingWorkspaceData {
+  readonly path: string;
+  readonly name: string;
+  readonly branch: string | null;
+  readonly metadata: Readonly<Record<string, string>>;
+}
+
 export interface CreateWorkspacePayload {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly base: string;
   readonly initialPrompt?: InitialPrompt;
   readonly keepInBackground?: boolean;
+  /** When set, skip worktree creation and populate context from existing workspace data. */
+  readonly existingWorkspace?: ExistingWorkspaceData;
+  /** Authoritative project path when existingWorkspace is set (avoids re-resolution from projectId). */
+  readonly projectPath?: string;
 }
 
 export interface CreateWorkspaceIntent extends Intent<Workspace> {

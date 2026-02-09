@@ -674,6 +674,58 @@ export class AppState {
   }
 
   /**
+   * Registers a project in the internal state.
+   * Used by the open-project operation's ProjectRegistryModule to store project state.
+   * Does NOT handle view creation, agent startup, or workspace URL generation --
+   * those are handled by workspace:create dispatches from the open-project operation.
+   */
+  registerProject(project: {
+    id: ProjectId;
+    name: string;
+    path: Path;
+    workspaces: readonly InternalWorkspace[];
+    provider: IWorkspaceProvider;
+    remoteUrl?: string;
+  }): void {
+    const projectPathStr = project.path.toString();
+    this.openProjects.set(projectPathStr, {
+      id: project.id,
+      name: project.name,
+      path: project.path,
+      workspaces: project.workspaces,
+      provider: project.provider,
+      ...(project.remoteUrl !== undefined && { remoteUrl: project.remoteUrl }),
+    });
+  }
+
+  /**
+   * Removes a project from the internal state.
+   * Used by the close-project operation's ProjectCloseRegistryModule.
+   * Does NOT stop servers, destroy views, or delete files -- those are handled
+   * by workspace:delete dispatches from the close-project operation.
+   */
+  deregisterProject(projectPathInput: string): void {
+    const normalizedKey = new Path(projectPathInput).toString();
+    this.openProjects.delete(normalizedKey);
+    this.lastBaseBranches.delete(normalizedKey);
+  }
+
+  /**
+   * Checks if a project with the given path is currently open.
+   */
+  isProjectOpen(projectPathInput: string): boolean {
+    const normalizedKey = new Path(projectPathInput).toString();
+    return this.openProjects.has(normalizedKey);
+  }
+
+  /**
+   * Gets the project store (for use by hook modules).
+   */
+  getProjectStore(): ProjectStore {
+    return this.projectStore;
+  }
+
+  /**
    * Removes a workspace from the internal project state.
    * Used by the delete-workspace state module to update state after deletion.
    * Does NOT stop servers, destroy views, or delete files -- those are handled

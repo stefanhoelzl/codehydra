@@ -135,6 +135,8 @@ Some components use external libraries directly without abstraction layers. Thes
 
 Some API methods use an intent-based dispatcher with operations, hook modules, and domain events. Cross-cutting concerns (e.g., idempotency) are implemented as `IntentInterceptor` instances registered on the dispatcher. The `IdempotencyInterceptor` in `src/main/operations/delete-workspace.ts` is the reference pattern for interceptors.
 
+Operations using the intent dispatcher include workspace create/delete and project open/close. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
+
 ---
 
 ## Key Concepts
