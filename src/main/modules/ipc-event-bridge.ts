@@ -21,6 +21,8 @@ import type { ProjectOpenedEvent } from "../operations/open-project";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
 import type { ProjectClosedEvent } from "../operations/close-project";
 import { EVENT_PROJECT_CLOSED } from "../operations/close-project";
+import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
+import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 
 /**
  * Create an IpcEventBridge module that forwards domain events to the API registry.
@@ -68,6 +70,18 @@ export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
     [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
       const p = (event as ProjectClosedEvent).payload;
       apiRegistry.emit("project:closed", { projectId: p.projectId });
+    },
+    [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
+      const payload = (event as WorkspaceSwitchedEvent).payload;
+      if (payload === null) {
+        apiRegistry.emit("workspace:switched", null);
+      } else {
+        apiRegistry.emit("workspace:switched", {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          path: payload.path,
+        });
+      }
     },
   };
 

@@ -7,6 +7,3 @@ export { registerLogHandlers } from "./log-handlers";
 
 // Event wiring and utilities (still used by index.ts)
 export { wireApiEvents, formatWindowTitle } from "./api-handlers";
-
-// Types
-export type { TitleConfig } from "./api-handlers";

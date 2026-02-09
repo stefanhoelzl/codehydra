@@ -4,9 +4,10 @@
  * Responsibilities:
  * - Project queries: list, get, fetchBases
  * - Workspace operations: get, executeCommand
- * - UI operations: selectFolder, switchWorkspace
+ * - UI operations: selectFolder
  *
- * Note: workspace create/remove and project open/close/clone are handled by the intent dispatcher.
+ * Note: workspace create/remove, project open/close/clone, and ui.switchWorkspace
+ * are handled by the intent dispatcher.
  *
  * Created in startServices() after setup is complete.
  */
@@ -17,7 +18,6 @@ import type {
   ProjectIdPayload,
   WorkspaceRefPayload,
   WorkspaceExecuteCommandPayload,
-  UiSwitchWorkspacePayload,
   EmptyPayload,
 } from "../../api/registry-types";
 import type { PluginResult } from "../../../shared/plugin-protocol";
@@ -95,13 +95,13 @@ export interface CoreModuleDeps {
  * Registered methods:
  * - projects.*: list, get, fetchBases
  * - workspaces.*: get, executeCommand
- * - ui.selectFolder, ui.switchWorkspace
+ * - ui.selectFolder
  *
- * Note: workspaces.create/remove and projects.open/close/clone are handled by the intent dispatcher.
+ * Note: workspaces.create/remove, projects.open/close/clone, and ui.switchWorkspace
+ * are handled by the intent dispatcher.
  *
  * Events emitted:
  * - project:bases-updated
- * - workspace:switched (via ViewManager callback, not directly)
  */
 export class CoreModule implements IApiModule {
   private readonly logger: Logger;
@@ -144,11 +144,9 @@ export class CoreModule implements IApiModule {
     this.api.register("workspaces.executeCommand", this.workspaceExecuteCommand.bind(this));
 
     // UI methods (relocated from UiModule)
+    // Note: ui.switchWorkspace is handled by the intent dispatcher in bootstrap.ts
     this.api.register("ui.selectFolder", this.selectFolder.bind(this), {
       ipc: ApiIpcChannels.UI_SELECT_FOLDER,
-    });
-    this.api.register("ui.switchWorkspace", this.switchWorkspace.bind(this), {
-      ipc: ApiIpcChannels.UI_SWITCH_WORKSPACE,
     });
   }
 
@@ -244,15 +242,6 @@ export class CoreModule implements IApiModule {
     }
 
     return result.filePaths[0] ?? null;
-  }
-
-  private async switchWorkspace(payload: UiSwitchWorkspacePayload): Promise<void> {
-    const { workspace } = await this.resolveWorkspace(payload);
-
-    const focus = payload.focus ?? true;
-    // Note: workspace:switched event is emitted via ViewManager.onWorkspaceChange callback
-    // wired in index.ts, not directly here
-    this.deps.viewManager.setActiveWorkspace(workspace.path, focus);
   }
 
   // ===========================================================================

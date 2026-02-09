@@ -45,6 +45,12 @@ import type { DomainEvent, Intent } from "../intents/infrastructure/types";
 import type { ProjectId, Workspace } from "../../shared/api/types";
 import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
+import {
+  SwitchWorkspaceOperation,
+  INTENT_SWITCH_WORKSPACE,
+  SWITCH_WORKSPACE_OPERATION_ID,
+} from "./switch-workspace";
+import type { SwitchWorkspaceIntent, SwitchWorkspaceHookContext } from "./switch-workspace";
 
 // =============================================================================
 // Test Constants
@@ -178,6 +184,24 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+
+  // No-op SwitchViewModule for workspace:switch (just sets resolvedPath to satisfy operation)
+  const switchViewModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        activate: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as SwitchWorkspaceHookContext;
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+            // Minimal resolve: just set resolvedPath so the operation emits its event
+            hookCtx.resolvedPath = `/workspaces/${intent.payload.workspaceName}`;
+            hookCtx.projectPath = PROJECT_ROOT;
+          },
+        },
+      },
+    },
+  };
 
   // WorktreeModule: "create" hook
   const worktreeModule: IntentModule = {
@@ -307,7 +331,13 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     },
   };
 
-  const modules: IntentModule[] = [worktreeModule, keepFilesModule, agentModule, codeServerModule];
+  const modules: IntentModule[] = [
+    switchViewModule,
+    worktreeModule,
+    keepFilesModule,
+    agentModule,
+    codeServerModule,
+  ];
   if (failingSetupModule) {
     // Insert before keepFilesModule so the failing handler runs first on the "setup" hook
     modules.splice(1, 0, failingSetupModule);

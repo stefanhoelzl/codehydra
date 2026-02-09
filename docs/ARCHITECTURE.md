@@ -671,34 +671,15 @@ API event emission                    IPC handler subscription
       │                                      │                                            UI
 ```
 
-### Callback-Based Event Emission Pattern
+### Intent-Based Workspace Switching
 
-The `workspace:switched` event uses a callback pattern to ensure it's always emitted when the active workspace changes, regardless of which code path triggers the change:
+The `workspace:switched` event is emitted through the intent dispatcher via `SwitchWorkspaceOperation`:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ ViewManager.setActiveWorkspace(path)                            │
-│   └─► workspaceChangeCallbacks.forEach(cb => cb(path))          │
-│         │                                                       │
-│         ▼                                                       │
-│   ┌─────────────────────────────────────────────────────────────┐
-│   │ Callback (wired in index.ts):                               │
-│   │   path ──► appState.findProjectForWorkspace(path)           │
-│   │         ──► api.emit("workspace:switched", WorkspaceRef)    │
-│   └─────────────────────────────────────────────────────────────┘
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Why this pattern?**
-
-- ViewManager is a low-level Electron component that manages WebContentsViews
-- It doesn't have domain knowledge (ProjectId, WorkspaceRef)
-- The wiring layer in `index.ts` translates low-level state changes (workspace path) to high-level domain events
-- Ensures the event is emitted for ALL workspace changes, including:
-  - Opening a project with 0 workspaces (emits `null`)
-  - Opening a project with workspaces (emits first workspace)
-  - User switching workspaces via sidebar
-  - Workspace deletion (switches to next workspace or `null`)
+- `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace, calls `ViewManager.setActiveWorkspace`) then emits `workspace:switched` via `ctx.emit()`
+- Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `CreateWorkspaceOperation` dispatches after creating a workspace)
+- Null deactivation (delete last workspace, close last project) emits `workspace:switched(null)` directly via `ctx.emit()` without going through the intent
+- `IpcEventBridge` subscribes to `workspace:switched` and forwards to the renderer via `apiRegistry.emit()`
+- `SwitchTitleModule` subscribes to `workspace:switched` and updates the window title
 
 ### API Events
 

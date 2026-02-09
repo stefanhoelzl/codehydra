@@ -70,7 +70,7 @@ import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent } from "./operations/set-mode";
 import type { CoreModuleDeps } from "./modules/core";
-import { generateProjectId, extractWorkspaceName } from "./api/id-utils";
+import { generateProjectId } from "./api/id-utils";
 import type { ICodeHydraApi, Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import { ApiIpcChannels, type WorkspaceLoadingChangedPayload } from "../shared/ipc";
@@ -544,25 +544,14 @@ async function startServices(): Promise<void> {
   // Title suffix: branch in dev mode, version in packaged mode
   const titleSuffix = buildInfo.gitBranch ?? buildInfo.version;
 
-  // Default window title (used when no workspace is active)
-  const defaultTitle = formatWindowTitle(undefined, undefined, titleSuffix);
-
   // Capture references for closures (TypeScript narrow refinement doesn't persist)
   const windowManagerRef = windowManager;
   const appStateRef = appState;
   const viewManagerRef = viewManager;
 
-  // Wire API events to IPC emission (with window title updates)
-  apiEventCleanup = wireApiEvents(codeHydraApi, () => viewManager?.getUIWebContents() ?? null, {
-    setTitle: (title) => windowManagerRef?.setTitle(title),
-    defaultTitle,
-    ...(titleSuffix && { version: titleSuffix }),
-    getProjectName: (workspacePath) => {
-      const project = appStateRef?.findProjectForWorkspace(workspacePath);
-      return project?.name;
-    },
-    hasUpdateAvailable: () => windowManagerRef?.hasUpdateAvailable() ?? false,
-  });
+  // Wire API events to IPC emission
+  // Note: workspace:switched events are handled by IpcEventBridge + SwitchTitleModule in bootstrap.ts
+  apiEventCleanup = wireApiEvents(codeHydraApi, () => viewManager?.getUIWebContents() ?? null);
 
   // Wire auto-updater to update window title when update is available
   if (autoUpdater) {
@@ -691,27 +680,8 @@ async function startServices(): Promise<void> {
   // This prevents startup events from being emitted and racing with renderer
   await appState.loadPersistedProjects();
 
-  // Wire workspace change callback AFTER loading projects
-  // This ensures events are only emitted for user-initiated actions, not startup
-  // Capture appState for closure - it's guaranteed to be set by now
-  const appStateForCallback = appState;
-  viewManager.onWorkspaceChange((path) => {
-    if (path === null) {
-      bootstrapResult?.registry.emit("workspace:switched", null);
-      return;
-    }
-    const project = appStateForCallback.findProjectForWorkspace(path);
-    if (!project) {
-      // Workspace not found - skip event emission
-      // This can happen during cleanup or race conditions
-      return;
-    }
-    bootstrapResult?.registry.emit("workspace:switched", {
-      projectId: generateProjectId(project.path),
-      workspaceName: extractWorkspaceName(path),
-      path,
-    });
-  });
+  // Note: onWorkspaceChange callback removed -- workspace:switched events now flow through
+  // the intent dispatcher (SwitchWorkspaceOperation → IpcEventBridge + SwitchTitleModule)
 
   // Wire loading state changes to IPC
   // This emits loading changed events to the renderer for UI overlay display
@@ -1037,6 +1007,12 @@ async function bootstrap(): Promise<void> {
     },
     // Dispatcher created early so ShortcutController can dispatch intents
     dispatcherFn: () => ({ hookRegistry, dispatcher }),
+    // Window title setter for SwitchTitleModule
+    setTitleFn: () => (title: string) => windowManager?.setTitle(title),
+    // Version suffix for window title (branch in dev, version in packaged)
+    titleVersionFn: () => buildInfo.gitBranch ?? buildInfo.version,
+    // Callback to check if an update is available
+    hasUpdateAvailableFn: () => () => windowManager?.hasUpdateAvailable() ?? false,
   }) as BootstrapResult & { startServices: () => void };
 
   // Note: IPC handlers for lifecycle.* are now registered by LifecycleModule
