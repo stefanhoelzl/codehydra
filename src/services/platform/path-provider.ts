@@ -20,6 +20,9 @@ export interface PathProvider {
   /** Directory for project data: `<dataRoot>/projects/` */
   readonly projectsDir: Path;
 
+  /** Directory for cloned remote repositories: `<dataRoot>/remotes/` */
+  readonly remotesDir: Path;
+
   /** Directory for VS Code config: `<dataRoot>/vscode/` */
   readonly vscodeDir: Path;
 
@@ -138,6 +141,7 @@ export interface PathProvider {
 export class DefaultPathProvider implements PathProvider {
   readonly dataRootDir: Path;
   readonly projectsDir: Path;
+  readonly remotesDir: Path;
   readonly vscodeDir: Path;
   readonly vscodeExtensionsDir: Path;
   readonly vscodeUserDataDir: Path;
@@ -178,6 +182,7 @@ export class DefaultPathProvider implements PathProvider {
 
     // Data paths - use dataRoot
     this.projectsDir = new Path(this.dataRootDir, "projects");
+    this.remotesDir = new Path(this.dataRootDir, "remotes");
     this.vscodeDir = new Path(this.dataRootDir, "vscode");
     this.vscodeExtensionsDir = new Path(this.vscodeDir, "extensions");
     this.vscodeUserDataDir = new Path(this.vscodeDir, "user-data");

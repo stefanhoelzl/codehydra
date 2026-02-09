@@ -18,6 +18,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.dataRootDir).toBeInstanceOf(Path);
     expect(pathProvider.dataRootDir.toString()).toBe("/test/app-data");
     expect(pathProvider.projectsDir.toString()).toBe("/test/app-data/projects");
+    expect(pathProvider.remotesDir.toString()).toBe("/test/app-data/remotes");
     expect(pathProvider.vscodeDir.toString()).toBe("/test/app-data/vscode");
     expect(pathProvider.vscodeExtensionsDir.toString()).toBe("/test/app-data/vscode/extensions");
     expect(pathProvider.vscodeUserDataDir.toString()).toBe("/test/app-data/vscode/user-data");
@@ -74,6 +75,7 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeDir.toString()).toBe("/custom/vscode");
     // Data paths derived from dataRootDir should use the override
     expect(pathProvider.projectsDir.toString()).toBe("/custom/root/projects");
+    expect(pathProvider.remotesDir.toString()).toBe("/custom/root/remotes");
     // Bundle paths should still use defaults
     expect(pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toString()).toBe(
       `/test/bundles/code-server/${CODE_SERVER_VERSION}`
@@ -181,6 +183,7 @@ describe("createMockPathProvider", () => {
     // This test verifies the interface is implemented correctly - all should be Path instances
     expect(pathProvider.dataRootDir).toBeInstanceOf(Path);
     expect(pathProvider.projectsDir).toBeInstanceOf(Path);
+    expect(pathProvider.remotesDir).toBeInstanceOf(Path);
     expect(pathProvider.vscodeDir).toBeInstanceOf(Path);
     expect(pathProvider.vscodeExtensionsDir).toBeInstanceOf(Path);
     expect(pathProvider.vscodeUserDataDir).toBeInstanceOf(Path);
@@ -221,6 +224,7 @@ describe("DefaultPathProvider", () => {
       // We can't predict exact cwd, but we can verify the structure
       expect(pathProvider.dataRootDir.toString()).toMatch(/app-data$/);
       expect(pathProvider.projectsDir.toString()).toMatch(/app-data\/projects$/);
+      expect(pathProvider.remotesDir.toString()).toMatch(/app-data\/remotes$/);
       expect(pathProvider.vscodeDir.toString()).toMatch(/app-data\/vscode$/);
       expect(pathProvider.vscodeExtensionsDir.toString()).toMatch(/app-data\/vscode\/extensions$/);
       expect(pathProvider.vscodeUserDataDir.toString()).toMatch(/app-data\/vscode\/user-data$/);
@@ -323,6 +327,9 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.dataRootDir.toString()).toBe("/home/testuser/.local/share/codehydra");
       expect(pathProvider.projectsDir.toString()).toBe(
         "/home/testuser/.local/share/codehydra/projects"
+      );
+      expect(pathProvider.remotesDir.toString()).toBe(
+        "/home/testuser/.local/share/codehydra/remotes"
       );
       expect(pathProvider.vscodeDir.toString()).toBe(
         "/home/testuser/.local/share/codehydra/vscode"

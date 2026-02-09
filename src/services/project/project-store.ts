@@ -21,15 +21,18 @@ import { normalizeGitUrl } from "./url-utils";
 export class ProjectStore {
   private readonly projectsDir: string;
   private readonly fs: FileSystemLayer;
+  private readonly remotesDir: string | undefined;
 
   /**
    * Create a new ProjectStore.
    * @param projectsDir Directory to store project configurations
    * @param fs FileSystemLayer for filesystem operations
+   * @param remotesDir Optional directory for cloned remote repositories
    */
-  constructor(projectsDir: string, fs: FileSystemLayer) {
+  constructor(projectsDir: string, fs: FileSystemLayer, remotesDir?: string) {
     this.projectsDir = projectsDir;
     this.fs = fs;
+    this.remotesDir = remotesDir;
   }
 
   /**
@@ -37,18 +40,15 @@ export class ProjectStore {
    * Creates or overwrites the config.json for the project.
    *
    * @param projectPath Absolute path to the project
-   * @param options Optional save options (remoteUrl for cloned projects, configDir for custom config location)
+   * @param options Optional save options (remoteUrl for cloned projects)
    * @throws ProjectStoreError if save fails
    */
   async saveProject(projectPath: string, options?: SaveProjectOptions): Promise<void> {
     // Normalize the path to canonical format for consistent storage
     const normalizedPath = new Path(projectPath).toString();
 
-    // Use custom configDir if provided (for cloned projects),
-    // otherwise use path-based hash directory
-    const projectDir = options?.configDir
-      ? nodePath.join(this.projectsDir, options.configDir)
-      : nodePath.join(this.projectsDir, projectDirName(normalizedPath));
+    // Always use path-based hash directory
+    const projectDir = nodePath.join(this.projectsDir, projectDirName(normalizedPath));
     const configPath = nodePath.join(projectDir, "config.json");
 
     const config: ProjectConfig = {
@@ -70,11 +70,14 @@ export class ProjectStore {
 
   /**
    * Load all saved projects.
+   * Runs migration for old cloned projects on first call, then loads configs.
    * Skips invalid entries (missing config.json, malformed JSON, etc.).
    *
    * @returns Array of project paths
    */
   async loadAllProjects(): Promise<readonly string[]> {
+    // TODO: Remove migration after sufficient rollout period
+    await this.migrateClonedProjects();
     const configs = await this.loadAllProjectConfigs();
     return configs.map((c) => c.path);
   }
@@ -86,7 +89,18 @@ export class ProjectStore {
    * @returns Array of project configurations
    */
   async loadAllProjectConfigs(): Promise<readonly ProjectConfig[]> {
-    const configs: ProjectConfig[] = [];
+    const internal = await this.internalLoadAllProjectConfigs();
+    return internal.map((entry) => entry.config);
+  }
+
+  /**
+   * Internal: load all project configs with their directory entry names.
+   * Used by both loadAllProjectConfigs (public) and migration logic.
+   */
+  private async internalLoadAllProjectConfigs(): Promise<
+    readonly { config: ProjectConfig; entryName: string }[]
+  > {
+    const results: { config: ProjectConfig; entryName: string }[] = [];
 
     try {
       // readdir throws ENOENT if directory doesn't exist
@@ -120,7 +134,7 @@ export class ProjectStore {
                 path: normalizedPath,
                 ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
               };
-              configs.push(config);
+              results.push({ config, entryName: entry.name });
             } catch {
               // Invalid path format - skip this entry
               continue;
@@ -136,7 +150,53 @@ export class ProjectStore {
       return [];
     }
 
-    return configs;
+    return results;
+  }
+
+  /**
+   * Migrate old-layout cloned projects from projects/ to remotes/.
+   *
+   * Old layout: projects/<url-hash>/config.json + projects/<url-hash>/repo/
+   * New layout: remotes/<url-hash>/repo/ + projects/<path-hash>/config.json
+   *
+   * TODO: Remove after sufficient migration period
+   */
+  private async migrateClonedProjects(): Promise<void> {
+    if (!this.remotesDir) return;
+
+    const entries = await this.internalLoadAllProjectConfigs();
+    for (const { config, entryName } of entries) {
+      if (!config.remoteUrl) continue;
+
+      // Detect old layout: entry dir name doesn't match path-hashed dir name
+      const expectedDirName = projectDirName(config.path);
+      if (entryName === expectedDirName) continue; // Already in new layout
+
+      const oldDir = nodePath.join(this.projectsDir, entryName);
+      const newDir = nodePath.join(this.remotesDir, entryName);
+
+      try {
+        await this.fs.mkdir(this.remotesDir);
+        await this.fs.rename(oldDir, newDir);
+
+        // Compute new project path (under remotes/)
+        const repoName = new Path(config.path).basename;
+        const newProjectPath = new Path(newDir, repoName).toString();
+
+        // Save config at path-hashed location
+        await this.saveProject(newProjectPath, { remoteUrl: config.remoteUrl });
+
+        // Remove old config.json that moved with the directory
+        const movedConfig = nodePath.join(newDir, "config.json");
+        try {
+          await this.fs.unlink(movedConfig);
+        } catch {
+          /* ignore */
+        }
+      } catch {
+        // Migration is best-effort — skip on failure
+      }
+    }
   }
 
   /**
@@ -202,12 +262,12 @@ export class ProjectStore {
    * Completely remove a project directory including all contents.
    * Used for cloned projects when user wants to delete the local repository.
    *
-   * For cloned projects (with remoteUrl), deletes the parent directory that
-   * contains both the config.json and the git subdirectory.
+   * For cloned projects (with remoteUrl), deletes both the clone directory
+   * in remotes/ and the config+workspaces directory in projects/.
    *
    * @param projectPath Absolute path to the project (gitPath for cloned projects)
    * @param options Optional deletion options
-   * @param options.isClonedProject If true, treat as cloned project and delete parent directory
+   * @param options.isClonedProject If true, treat as cloned project and delete both directories
    * @throws ProjectStoreError if deletion fails
    */
   async deleteProjectDirectory(
@@ -221,21 +281,22 @@ export class ProjectStore {
       isCloned = config?.remoteUrl !== undefined;
     }
 
-    let dirToDelete: string;
-    if (isCloned) {
-      // Cloned project: config is in parent directory (URL-hashed directory)
-      // projectPath is the gitPath like /projects/repo-abc123/repo/
-      // We need to delete /projects/repo-abc123/
-      const normalizedPath = new Path(projectPath).toString();
-      dirToDelete = nodePath.dirname(normalizedPath);
-    } else {
-      // Local project: use path-hashed directory
-      const dirName = projectDirName(projectPath);
-      dirToDelete = nodePath.join(this.projectsDir, dirName);
-    }
-
     try {
-      await this.fs.rm(dirToDelete, { recursive: true, force: true });
+      if (isCloned) {
+        // 1. Delete clone dir (dirname of gitPath, e.g. remotes/repo-abc123/)
+        const normalizedPath = new Path(projectPath).toString();
+        const cloneDir = nodePath.dirname(normalizedPath);
+        await this.fs.rm(cloneDir, { recursive: true, force: true });
+
+        // 2. Delete config+workspaces dir in projects/
+        const configDir = nodePath.join(this.projectsDir, projectDirName(projectPath));
+        await this.fs.rm(configDir, { recursive: true, force: true });
+      } else {
+        // Local project: use path-hashed directory
+        const dirName = projectDirName(projectPath);
+        const dirToDelete = nodePath.join(this.projectsDir, dirName);
+        await this.fs.rm(dirToDelete, { recursive: true, force: true });
+      }
     } catch (error: unknown) {
       throw new ProjectStoreError(`Failed to delete project directory: ${getErrorMessage(error)}`);
     }
@@ -303,10 +364,4 @@ export class ProjectStore {
 export interface SaveProjectOptions {
   /** Remote URL if project was cloned from URL */
   remoteUrl?: string;
-  /**
-   * Custom config directory name (relative to projectsDir).
-   * Used for cloned projects to store config inside the URL-hashed directory
-   * instead of the default path-hashed directory.
-   */
-  configDir?: string;
 }

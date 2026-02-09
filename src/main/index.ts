@@ -441,7 +441,11 @@ async function startServices(): Promise<void> {
   viewManager.updateCodeServerPort(port);
 
   // Create ProjectStore and AppState
-  projectStore = new ProjectStore(pathProvider.projectsDir.toString(), fileSystemLayer);
+  projectStore = new ProjectStore(
+    pathProvider.projectsDir.toString(),
+    fileSystemLayer,
+    pathProvider.remotesDir.toString()
+  );
 
   // Create GitClient for clone operations
   gitClient = new SimpleGitClient(loggingService.createLogger("git"));
