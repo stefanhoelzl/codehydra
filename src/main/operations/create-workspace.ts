@@ -23,6 +23,7 @@ import type {
 } from "../../shared/api/types";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import { extractWorkspaceName } from "../api/id-utils";
+import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 
 // =============================================================================
 // Intent Types
@@ -189,6 +190,19 @@ export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent
       payload: eventPayload,
     };
     ctx.emit(event);
+
+    // Dispatch workspace:switch if not keepInBackground
+    if (!ctx.intent.payload.keepInBackground) {
+      const switchIntent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: {
+          projectId: ctx.intent.payload.projectId,
+          workspaceName,
+          focus: true,
+        },
+      };
+      await ctx.dispatch(switchIntent);
+    }
 
     return workspace;
   }

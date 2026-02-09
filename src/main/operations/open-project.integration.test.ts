@@ -49,6 +49,12 @@ import type { Project, ProjectId } from "../../shared/api/types";
 import { generateProjectId } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import { expandGitUrl } from "../../services/project/url-utils";
+import {
+  SwitchWorkspaceOperation,
+  INTENT_SWITCH_WORKSPACE,
+  SWITCH_WORKSPACE_OPERATION_ID,
+} from "./switch-workspace";
+import type { SwitchWorkspaceIntent, SwitchWorkspaceHookContext } from "./switch-workspace";
 
 // =============================================================================
 // Test Constants
@@ -298,6 +304,7 @@ function createTestHarness(options?: {
   // Register operations
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // Interceptor (inline, matching bootstrap pattern)
   const inProgressOpens = new Set<string>();
@@ -523,18 +530,49 @@ function createTestHarness(options?: {
     },
   };
 
-  // ProjectViewModule for project:opened (activates first workspace, preloads rest)
+  // ProjectViewModule for project:opened (preloads non-first workspaces)
+  // Note: first workspace activation is now done by OpenProjectOperation dispatching workspace:switch
   const projectViewModule: IntentModule = {
     events: {
       [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
         const payload = (event as ProjectOpenedEvent).payload;
         const workspaces = payload.project.workspaces;
-        if (workspaces.length > 0) {
-          viewManager.setActiveWorkspace(workspaces[0]!.path);
-        }
         for (let i = 1; i < workspaces.length; i++) {
           viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
         }
+      },
+    },
+  };
+
+  // SwitchViewModule for workspace:switch (sets active workspace in viewManager)
+  const switchViewModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        activate: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as SwitchWorkspaceHookContext;
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+
+            // Simple resolve: find workspace path from registered projects
+            const project = projectState.registeredProjects.find(
+              (p) => generateProjectId(p.path) === intent.payload.projectId
+            );
+            if (!project) return;
+            const workspace = project.workspaces.find((w) =>
+              w.path.endsWith(`/${intent.payload.workspaceName}`)
+            );
+            if (!workspace) return;
+
+            if (viewManager.getActiveWorkspacePath() === workspace.path) {
+              return; // no-op
+            }
+
+            const focus = intent.payload.focus ?? true;
+            viewManager.setActiveWorkspace(workspace.path, focus);
+            hookCtx.resolvedPath = workspace.path;
+            hookCtx.projectPath = project.path;
+          },
+        },
       },
     },
   };
@@ -550,6 +588,7 @@ function createTestHarness(options?: {
       stateModule,
       viewModule,
       projectViewModule,
+      switchViewModule,
     ],
     hookRegistry,
     dispatcher

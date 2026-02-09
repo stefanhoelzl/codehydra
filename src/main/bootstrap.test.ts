@@ -169,6 +169,9 @@ function createMockDeps(): BootstrapDeps {
     killTerminalsCallbackFn: () => undefined,
     workspaceLockHandlerFn: () => undefined,
     dispatcherFn: createMockDispatcher,
+    setTitleFn: () => vi.fn(),
+    titleVersionFn: () => "test",
+    hasUpdateAvailableFn: () => () => false,
   };
 }
 

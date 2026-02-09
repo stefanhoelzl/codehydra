@@ -16,6 +16,7 @@ import type { Operation, OperationContext, HookContext } from "../intents/infras
 import type { ProjectId } from "../../shared/api/types";
 import type { WorkspaceName } from "../../shared/api/types";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
+import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import { extractWorkspaceName } from "../api/id-utils";
 
 // =============================================================================
@@ -71,6 +72,8 @@ export interface CloseProjectHookContext extends HookContext {
   removeLocalRepo?: boolean;
   /** Workspaces to tear down (set by resolve hook) */
   workspaces?: ReadonlyArray<{ path: string }>;
+  /** Set by close hook: whether other projects still exist after this one is closed */
+  otherProjectsExist?: boolean;
 }
 
 // =============================================================================
@@ -130,7 +133,16 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
       throw hookCtx.error;
     }
 
-    // 4. Emit project:closed event
+    // 4. Emit workspace:switched(null) if no other projects remain
+    if (hookCtx.otherProjectsExist === false) {
+      const nullEvent: WorkspaceSwitchedEvent = {
+        type: EVENT_WORKSPACE_SWITCHED,
+        payload: null,
+      };
+      ctx.emit(nullEvent);
+    }
+
+    // 5. Emit project:closed event
     const event: ProjectClosedEvent = {
       type: EVENT_PROJECT_CLOSED,
       payload: { projectId: payload.projectId },

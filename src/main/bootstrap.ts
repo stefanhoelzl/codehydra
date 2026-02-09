@@ -22,6 +22,7 @@ import type {
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
   WorkspaceRefPayload,
+  UiSwitchWorkspacePayload,
   UiSetModePayload,
   EmptyPayload,
 } from "./api/registry-types";
@@ -117,7 +118,19 @@ import {
   INTENT_CLOSE_PROJECT,
 } from "./operations/close-project";
 import type { CloseProjectIntent, CloseProjectHookContext } from "./operations/close-project";
+import {
+  SwitchWorkspaceOperation,
+  SWITCH_WORKSPACE_OPERATION_ID,
+  INTENT_SWITCH_WORKSPACE,
+  EVENT_WORKSPACE_SWITCHED,
+} from "./operations/switch-workspace";
+import type {
+  SwitchWorkspaceIntent,
+  SwitchWorkspaceHookContext,
+  WorkspaceSwitchedEvent,
+} from "./operations/switch-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
+import { formatWindowTitle } from "./ipc/api-handlers";
 import { wireModules } from "./intents/infrastructure/wire";
 import {
   resolveWorkspace,
@@ -128,7 +141,6 @@ import {
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
 import type { Intent, DomainEvent } from "./intents/infrastructure/types";
-import type { IViewManager } from "./managers/view-manager.interface";
 import type { AppState } from "./app-state";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
@@ -181,6 +193,12 @@ export interface BootstrapDeps {
   readonly workspaceLockHandlerFn: () => WorkspaceLockHandler | undefined;
   /** Factory that returns the early-created dispatcher and hook registry */
   readonly dispatcherFn: () => { hookRegistry: HookRegistry; dispatcher: Dispatcher };
+  /** Window title setter callback (provided after setup completes) */
+  readonly setTitleFn: () => (title: string) => void;
+  /** Version suffix for window title (branch in dev, version in packaged) */
+  readonly titleVersionFn: () => string | undefined;
+  /** Callback to check if an update is available */
+  readonly hasUpdateAvailableFn: () => () => boolean;
 }
 
 /**
@@ -256,7 +274,10 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.workspaceFileServiceFn(),
       deps.emitDeletionProgressFn(),
       deps.killTerminalsCallbackFn(),
-      deps.workspaceLockHandlerFn()
+      deps.workspaceLockHandlerFn(),
+      deps.setTitleFn(),
+      deps.titleVersionFn(),
+      deps.hasUpdateAvailableFn()
     );
   }
 
@@ -305,13 +326,16 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
 /**
  * Prioritized workspace selection algorithm.
- * Selects the best workspace to switch to when the active workspace is being deleted.
+ * Returns the best workspace to switch to when the active workspace is being deleted,
+ * or null if no other workspace is available.
  */
-async function switchToNextWorkspaceIfAvailable(
+export async function findNextWorkspace(
   currentWorkspacePath: string,
-  viewManager: IViewManager,
   appState: AppState
-): Promise<boolean> {
+): Promise<{
+  projectId: import("../shared/api/types").ProjectId;
+  workspaceName: import("../shared/api/types").WorkspaceName;
+} | null> {
   const allProjects = await appState.getAllProjects();
 
   // Build sorted list (projects alphabetically, workspaces alphabetically)
@@ -319,7 +343,7 @@ async function switchToNextWorkspaceIfAvailable(
     a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
   );
 
-  const workspaces: Array<{ path: string }> = [];
+  const workspaces: Array<{ path: string; projectPath: string }> = [];
   for (const project of sortedProjects) {
     const sortedWs = [...project.workspaces].sort((a, b) => {
       const nameA = extractWorkspaceName(a.path);
@@ -327,18 +351,18 @@ async function switchToNextWorkspaceIfAvailable(
       return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
     });
     for (const ws of sortedWs) {
-      workspaces.push({ path: ws.path });
+      workspaces.push({ path: ws.path, projectPath: project.path });
     }
   }
 
   if (workspaces.length === 0) {
-    return false;
+    return null;
   }
 
   // Find current workspace index
   const currentIndex = workspaces.findIndex((w) => w.path === currentWorkspacePath);
   if (currentIndex === -1) {
-    return false;
+    return null;
   }
 
   // Score by agent status: idle=0, busy=1, none=2
@@ -359,7 +383,7 @@ async function switchToNextWorkspaceIfAvailable(
   };
 
   // Find best candidate (excluding current)
-  let bestWorkspace: { path: string } | undefined;
+  let bestWorkspace: { path: string; projectPath: string } | undefined;
   let bestKey = Infinity;
 
   for (let i = 0; i < workspaces.length; i++) {
@@ -372,11 +396,15 @@ async function switchToNextWorkspaceIfAvailable(
   }
 
   if (!bestWorkspace) {
-    return false;
+    return null;
   }
 
-  viewManager.setActiveWorkspace(bestWorkspace.path, true);
-  return true;
+  return {
+    projectId: generateProjectId(bestWorkspace.projectPath),
+    workspaceName: extractWorkspaceName(
+      bestWorkspace.path
+    ) as import("../shared/api/types").WorkspaceName,
+  };
 }
 
 // =============================================================================
@@ -401,7 +429,10 @@ function wireDispatcher(
   workspaceFileService: IWorkspaceFileService,
   emitDeletionProgress: DeletionProgressCallback,
   killTerminalsCallback: KillTerminalsCallback | undefined,
-  workspaceLockHandler: WorkspaceLockHandler | undefined
+  workspaceLockHandler: WorkspaceLockHandler | undefined,
+  setTitle: (title: string) => void,
+  titleVersion: string | undefined,
+  hasUpdateAvailable: () => boolean
 ): void {
   const { appState, viewManager, gitClient, pathProvider, projectStore } = coreDeps;
   // Register operations
@@ -419,6 +450,7 @@ function wireDispatcher(
   );
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // Idempotency module (interceptor + event handler, wired via wireModules below)
   const inProgressDeletions = new Set<string>();
@@ -750,7 +782,8 @@ function wireDispatcher(
     },
   };
 
-  // ViewModule: subscribes to workspace:created, creates and activates workspace view
+  // ViewModule: subscribes to workspace:created, creates workspace view
+  // Note: workspace activation is now handled by CreateWorkspaceOperation dispatching workspace:switch
   const viewModule: IntentModule = {
     events: {
       [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
@@ -762,9 +795,6 @@ function wireDispatcher(
           true
         );
         viewManager.preloadWorkspaceUrl(payload.workspacePath);
-        if (!payload.keepInBackground) {
-          viewManager.setActiveWorkspace(payload.workspacePath, true);
-        }
       },
     },
   };
@@ -785,14 +815,14 @@ function wireDispatcher(
 
             try {
               const isActive = viewManager.getActiveWorkspacePath() === hookCtx.workspacePath;
+              hookCtx.shutdownResults.wasActive = isActive;
+
+              // Populate nextSwitch for the operation to dispatch
               if (isActive && !hookCtx.skipSwitch) {
-                const switched = await switchToNextWorkspaceIfAvailable(
-                  hookCtx.workspacePath,
-                  viewManager,
-                  appState
-                );
-                hookCtx.shutdownResults.switchedWorkspace = switched;
-                if (!switched) {
+                const next = await findNextWorkspace(hookCtx.workspacePath, appState);
+                hookCtx.shutdownResults.nextSwitch = next;
+                // Deactivate immediately if no next (operation will emit null event)
+                if (!next) {
                   viewManager.setActiveWorkspace(null, false);
                 }
               }
@@ -1269,15 +1299,13 @@ function wireDispatcher(
     },
   };
 
-  // ProjectViewModule: subscribes to project:opened, activates first workspace and preloads rest
+  // ProjectViewModule: subscribes to project:opened, preloads non-first workspaces
+  // Note: first workspace activation is now handled by OpenProjectOperation dispatching workspace:switch
   const projectViewModule: IntentModule = {
     events: {
       [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
         const payload = (event as ProjectOpenedEvent).payload;
         const workspaces = payload.project.workspaces;
-        if (workspaces.length > 0) {
-          viewManager.setActiveWorkspace(workspaces[0]!.path);
-        }
         for (let i = 1; i < workspaces.length; i++) {
           viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
         }
@@ -1319,6 +1347,7 @@ function wireDispatcher(
   };
 
   // ProjectCloseViewModule: "close" hook -- clears active workspace if no other projects
+  // Note: workspace:switched(null) is emitted by CloseProjectOperation, not here
   const projectCloseViewModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
@@ -1327,6 +1356,7 @@ function wireDispatcher(
             const hookCtx = ctx as CloseProjectHookContext;
             const allProjects = await appState.getAllProjects();
             const otherProjectsExist = allProjects.some((p) => p.path !== hookCtx.projectPath);
+            hookCtx.otherProjectsExist = otherProjectsExist;
             if (!otherProjectsExist) {
               viewManager.setActiveWorkspace(null, false);
             }
@@ -1390,6 +1420,61 @@ function wireDispatcher(
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // Workspace:switch hook modules
+  // ---------------------------------------------------------------------------
+
+  // SwitchViewModule: "activate" hook -- resolves workspace, calls setActiveWorkspace
+  // When the workspace is already active, resolvedPath is left undefined (no-op).
+  const switchViewModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        activate: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as SwitchWorkspaceHookContext;
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+            const { workspace, projectPath } = await resolveWorkspace(intent.payload, appState);
+
+            // No-op: already the active workspace -- leave resolvedPath unset
+            if (viewManager.getActiveWorkspacePath() === workspace.path) {
+              return;
+            }
+
+            const focus = intent.payload.focus ?? true;
+            viewManager.setActiveWorkspace(workspace.path, focus);
+            hookCtx.resolvedPath = workspace.path;
+            hookCtx.projectPath = projectPath;
+          },
+        },
+      },
+    },
+  };
+
+  // SwitchTitleModule: event subscriber on workspace:switched -- updates window title
+  const switchTitleModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceSwitchedEvent).payload;
+        const hasUpdate = hasUpdateAvailable();
+
+        if (payload === null) {
+          const title = formatWindowTitle(undefined, undefined, titleVersion, hasUpdate);
+          setTitle(title);
+          return;
+        }
+
+        const project = appState.findProjectForWorkspace(payload.path);
+        const title = formatWindowTitle(
+          project?.name,
+          payload.workspaceName,
+          titleVersion,
+          hasUpdate
+        );
+        setTitle(title);
+      },
+    },
+  };
+
   // Wire IpcEventBridge and hook handler modules
   const ipcEventBridge = createIpcEventBridge(registry);
   wireModules(
@@ -1425,6 +1510,9 @@ function wireDispatcher(
       projectCloseViewModule,
       projectCloseManagerModule,
       projectCloseRegistryModule,
+      // Workspace:switch modules
+      switchViewModule,
+      switchTitleModule,
     ],
     hookRegistry,
     dispatcher
@@ -1603,6 +1691,22 @@ function wireDispatcher(
       return dispatcher.dispatch(intent);
     },
     { ipc: ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE }
+  );
+
+  registry.register(
+    "ui.switchWorkspace",
+    async (payload: UiSwitchWorkspacePayload) => {
+      const intent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          ...(payload.focus !== undefined && { focus: payload.focus }),
+        },
+      };
+      await dispatcher.dispatch(intent);
+    },
+    { ipc: ApiIpcChannels.UI_SWITCH_WORKSPACE }
   );
 
   // ---------------------------------------------------------------------------

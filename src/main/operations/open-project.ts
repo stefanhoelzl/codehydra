@@ -23,8 +23,10 @@ import {
   type CreateWorkspaceIntent,
   type ExistingWorkspaceData,
 } from "./create-workspace";
+import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { toIpcWorkspaces } from "../api/workspace-conversion";
 import { Path } from "../../services/platform/path";
+import { extractWorkspaceName } from "../api/id-utils";
 
 // =============================================================================
 // Intent Types
@@ -166,6 +168,23 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       payload: { project },
     };
     ctx.emit(event);
+
+    // Dispatch workspace:switch for the first workspace
+    if (project.workspaces.length > 0) {
+      const firstWorkspace = project.workspaces[0]!;
+      const switchIntent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: {
+          projectId: hookCtx.projectId,
+          workspaceName: extractWorkspaceName(firstWorkspace.path),
+        },
+      };
+      try {
+        await ctx.dispatch(switchIntent);
+      } catch {
+        // Best-effort: switch failure doesn't fail the project open
+      }
+    }
 
     return project;
   }

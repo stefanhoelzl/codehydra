@@ -38,6 +38,13 @@ import { generateProjectId } from "../../shared/api/id-utils";
 import { extractWorkspaceName } from "../api/id-utils";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../services/platform/path";
+import {
+  SwitchWorkspaceOperation,
+  INTENT_SWITCH_WORKSPACE,
+  SWITCH_WORKSPACE_OPERATION_ID,
+} from "./switch-workspace";
+import type { SwitchWorkspaceIntent, SwitchWorkspaceHookContext } from "./switch-workspace";
+import { findNextWorkspace } from "../bootstrap";
 
 // =============================================================================
 // Test Constants
@@ -228,78 +235,6 @@ function createTestWorkspaceFileService(): IWorkspaceFileService {
 // Test Harness: Wires all modules with real Dispatcher + HookRegistry
 // =============================================================================
 
-/**
- * Prioritized workspace selection algorithm (test copy).
- * Uses test mock references for appState and viewManager.
- */
-async function switchToNextWorkspaceIfAvailable(
-  currentWorkspacePath: string,
-  viewManager: IViewManager,
-  appState: AppState
-): Promise<boolean> {
-  const allProjects = await appState.getAllProjects();
-
-  const sortedProjects = [...allProjects].sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
-  );
-
-  const workspaces: Array<{ path: string }> = [];
-  for (const project of sortedProjects) {
-    const sortedWs = [...project.workspaces].sort((a, b) => {
-      const nameA = extractWorkspaceName(a.path);
-      const nameB = extractWorkspaceName(b.path);
-      return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
-    });
-    for (const ws of sortedWs) {
-      workspaces.push({ path: ws.path });
-    }
-  }
-
-  if (workspaces.length === 0) {
-    return false;
-  }
-
-  const currentIndex = workspaces.findIndex((w) => w.path === currentWorkspacePath);
-  if (currentIndex === -1) {
-    return false;
-  }
-
-  const agentStatusManager = appState.getAgentStatusManager();
-  const getKey = (ws: { path: string }, index: number): number => {
-    let statusKey: number;
-    const status = agentStatusManager?.getStatus(ws.path as WorkspacePath);
-    if (!status || status.status === "none") {
-      statusKey = 2;
-    } else if (status.status === "busy") {
-      statusKey = 1;
-    } else {
-      statusKey = 0;
-    }
-
-    const positionKey = (index - currentIndex + workspaces.length) % workspaces.length;
-    return statusKey * workspaces.length + positionKey;
-  };
-
-  let bestWorkspace: { path: string } | undefined;
-  let bestKey = Infinity;
-
-  for (let i = 0; i < workspaces.length; i++) {
-    if (i === currentIndex) continue;
-    const key = getKey(workspaces[i]!, i);
-    if (key < bestKey) {
-      bestKey = key;
-      bestWorkspace = workspaces[i];
-    }
-  }
-
-  if (!bestWorkspace) {
-    return false;
-  }
-
-  viewManager.setActiveWorkspace(bestWorkspace.path, true);
-  return true;
-}
-
 // =============================================================================
 
 interface TestHarness {
@@ -358,8 +293,9 @@ function createTestHarness(options?: {
   const logger = createBehavioralLogger();
   const workspaceFileService = createTestWorkspaceFileService();
 
-  // Register the operation
+  // Register operations
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation(emitProgress));
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();
@@ -413,14 +349,14 @@ function createTestHarness(options?: {
 
             try {
               const isActive = viewManager.getActiveWorkspacePath() === hookCtx.workspacePath;
+              hookCtx.shutdownResults.wasActive = isActive;
+
+              // Populate nextSwitch for the operation to dispatch
               if (isActive && !hookCtx.skipSwitch) {
-                const switched = await switchToNextWorkspaceIfAvailable(
-                  hookCtx.workspacePath,
-                  viewManager,
-                  appState
-                );
-                hookCtx.shutdownResults.switchedWorkspace = switched;
-                if (!switched) {
+                const next = await findNextWorkspace(hookCtx.workspacePath, appState);
+                hookCtx.shutdownResults.nextSwitch = next;
+                // Deactivate immediately if no next (operation will emit null event)
+                if (!next) {
                   viewManager.setActiveWorkspace(null, false);
                 }
               }
@@ -700,6 +636,39 @@ function createTestHarness(options?: {
     },
   };
 
+  // SwitchViewModule: "activate" hook -- resolves workspace, calls setActiveWorkspace
+  const switchViewModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        activate: {
+          handler: async (ctx: HookContext) => {
+            const switchCtx = ctx as SwitchWorkspaceHookContext;
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+
+            // Resolve workspace from test state
+            const allProjects = await appState.getAllProjects();
+            for (const project of allProjects) {
+              const ws = project.workspaces.find(
+                (w) => extractWorkspaceName(w.path) === intent.payload.workspaceName
+              );
+              if (ws) {
+                if (viewManager.getActiveWorkspacePath() === ws.path) {
+                  return; // No-op: already active
+                }
+                const focus = intent.payload.focus ?? true;
+                viewManager.setActiveWorkspace(ws.path, focus);
+                switchCtx.resolvedPath = ws.path;
+                switchCtx.projectPath = project.path;
+                return;
+              }
+            }
+            throw new Error(`Workspace not found: ${intent.payload.workspaceName}`);
+          },
+        },
+      },
+    },
+  };
+
   wireModules(
     [
       idempotencyModule,
@@ -710,6 +679,7 @@ function createTestHarness(options?: {
       deleteCodeServerModule,
       deleteStateModule,
       deleteIpcBridge,
+      switchViewModule,
     ],
     hookRegistry,
     dispatcher

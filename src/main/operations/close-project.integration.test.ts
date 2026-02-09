@@ -45,6 +45,7 @@ import type {
   WorkspaceDeletedEvent,
   DeletionProgressCallback,
 } from "./delete-workspace";
+import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { AppState } from "../app-state";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
@@ -290,7 +291,8 @@ function createTestHarness(options?: {
     },
   };
 
-  // ProjectCloseViewModule: "close" hook -- clears active workspace if no other projects
+  // ProjectCloseViewModule: "close" hook -- sets otherProjectsExist, clears active workspace if no other projects
+  // Note: workspace:switched(null) is emitted by CloseProjectOperation, not here
   const projectCloseViewModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
@@ -299,6 +301,7 @@ function createTestHarness(options?: {
             const hookCtx = ctx as CloseProjectHookContext;
             const allProjects = await appState.getAllProjects();
             const otherProjectsExist = allProjects.some((p) => p.path !== hookCtx.projectPath);
+            hookCtx.otherProjectsExist = otherProjectsExist;
             if (!otherProjectsExist) {
               viewManager.setActiveWorkspace(null, false);
             }
@@ -471,5 +474,22 @@ describe("CloseProjectOperation", () => {
       (c) => c.path !== null
     );
     expect(workspaceSwitchCalls).toHaveLength(0);
+  });
+
+  it("test 15: emits workspace:switched(null) when no other projects remain", async () => {
+    const harness = createTestHarness();
+
+    const switchedEvents: DomainEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+      switchedEvents.push(event);
+    });
+
+    await harness.dispatcher.dispatch(buildCloseIntent());
+
+    // Should emit workspace:switched(null) since no other projects exist
+    expect(switchedEvents).toHaveLength(1);
+    const event = switchedEvents[0] as WorkspaceSwitchedEvent;
+    expect(event.type).toBe(EVENT_WORKSPACE_SWITCHED);
+    expect(event.payload).toBeNull();
   });
 });

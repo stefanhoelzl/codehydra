@@ -117,7 +117,9 @@ describe("core.registration", () => {
     expect(registeredPaths).toContain("workspaces.get");
     expect(registeredPaths).toContain("workspaces.executeCommand");
     expect(registeredPaths).toContain("ui.selectFolder");
-    expect(registeredPaths).toContain("ui.switchWorkspace");
+
+    // Verify ui.switchWorkspace NOT registered (handled by intent dispatcher)
+    expect(registeredPaths).not.toContain("ui.switchWorkspace");
 
     // Verify workspace create/remove NOT registered (handled by intent dispatcher)
     expect(registeredPaths).not.toContain("workspaces.create");

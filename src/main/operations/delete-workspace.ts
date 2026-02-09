@@ -22,6 +22,12 @@ import type {
   BlockingProcess,
 } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
+import {
+  INTENT_SWITCH_WORKSPACE,
+  EVENT_WORKSPACE_SWITCHED,
+  type SwitchWorkspaceIntent,
+  type WorkspaceSwitchedEvent,
+} from "./switch-workspace";
 
 // =============================================================================
 // Intent Types
@@ -100,6 +106,10 @@ export interface DeleteWorkspaceHookContext extends HookContext {
     viewDestroyed?: boolean;
     viewError?: string;
     switchedWorkspace?: boolean;
+    /** Set by hook: true if deleted workspace was the active one */
+    wasActive?: boolean;
+    /** Set by hook: next workspace to switch to (projectId + workspaceName) or null if none */
+    nextSwitch?: { projectId: ProjectId; workspaceName: WorkspaceName } | null;
   };
   releaseResults?: {
     blockersDetected?: boolean;
@@ -198,6 +208,35 @@ export class DeleteWorkspaceOperation implements Operation<
     // Hook 1: "shutdown" -- ViewModule + AgentModule
     await ctx.hooks.run("shutdown", hookCtx);
     this.emitProgressFromContext(hookCtx);
+
+    // Dispatch workspace:switch if deleted workspace was the active one
+    if (hookCtx.shutdownResults?.wasActive && !hookCtx.skipSwitch) {
+      const next = hookCtx.shutdownResults.nextSwitch;
+      if (next) {
+        try {
+          const switchIntent: SwitchWorkspaceIntent = {
+            type: INTENT_SWITCH_WORKSPACE,
+            payload: {
+              projectId: next.projectId,
+              workspaceName: next.workspaceName,
+              focus: true,
+            },
+          };
+          await ctx.dispatch(switchIntent);
+          hookCtx.shutdownResults.switchedWorkspace = true;
+        } catch {
+          // Best-effort: switch failure doesn't fail the deletion
+          hookCtx.shutdownResults.switchedWorkspace = false;
+        }
+      } else {
+        // No next workspace: emit workspace:switched(null) directly
+        const nullEvent: WorkspaceSwitchedEvent = {
+          type: EVENT_WORKSPACE_SWITCHED,
+          payload: null,
+        };
+        ctx.emit(nullEvent);
+      }
+    }
 
     // Check for error after shutdown (skip remaining hooks in non-force mode)
     if (hookCtx.error && !payload.force) {

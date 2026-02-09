@@ -222,6 +222,9 @@ function createMockDeps(): BootstrapDeps {
     killTerminalsCallbackFn: () => undefined,
     workspaceLockHandlerFn: () => undefined,
     dispatcherFn: createMockDispatcher,
+    setTitleFn: () => vi.fn(),
+    titleVersionFn: () => "test",
+    hasUpdateAvailableFn: () => () => false,
   };
 }
 
@@ -313,6 +316,9 @@ describe("bootstrap.module.order", () => {
       killTerminalsCallbackFn: () => undefined,
       workspaceLockHandlerFn: () => undefined,
       dispatcherFn: createMockDispatcher,
+      setTitleFn: () => vi.fn(),
+      titleVersionFn: () => "test",
+      hasUpdateAvailableFn: () => () => false,
     };
 
     const result = initializeBootstrap(deps);
