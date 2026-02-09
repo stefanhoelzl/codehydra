@@ -1,12 +1,14 @@
 /**
  * Integration tests for CoreModule.
  *
- * Note: Workspace deletion tests have been moved to
- * src/main/operations/__tests__/delete-workspace.integration.test.ts
- * since deletion is now handled by the intent dispatcher, not CoreModule.
+ * Note: Workspace deletion tests are in
+ * src/main/operations/delete-workspace.integration.test.ts
+ * Project open/close/clone tests are in
+ * src/main/operations/open-project.integration.test.ts and
+ * src/main/operations/close-project.integration.test.ts
  *
- * This file is kept for future CoreModule-specific integration tests
- * (e.g., project clone, workspace execute command).
+ * This file tests CoreModule-specific behavior
+ * (e.g., workspace execute command, project queries).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -23,21 +25,9 @@ import { createMockLogger } from "../../../services/logging";
 
 function createMockAppState(overrides: Partial<AppState> = {}): AppState {
   return {
-    openProject: vi.fn().mockResolvedValue({
-      path: "/test/project",
-      name: "test-project",
-      workspaces: [],
-    }),
-    closeProject: vi.fn().mockResolvedValue(undefined),
     getProject: vi.fn(),
     getAllProjects: vi.fn().mockResolvedValue([]),
     getWorkspaceProvider: vi.fn().mockReturnValue({
-      createWorkspace: vi.fn().mockResolvedValue({
-        path: "/test/project/workspaces/feature",
-        branch: "feature",
-        metadata: { base: "main" },
-      }),
-      removeWorkspace: vi.fn().mockResolvedValue(undefined),
       listBases: vi.fn().mockResolvedValue([]),
       updateBases: vi.fn().mockResolvedValue(undefined),
       isDirty: vi.fn().mockResolvedValue(false),
@@ -91,6 +81,7 @@ function createMockDeps(overrides: Partial<CoreModuleDeps> = {}): CoreModuleDeps
     } as unknown as import("../../../services").IGitClient,
     pathProvider: {
       projectsDir: "/test/projects",
+      remotesDir: "/test/remotes",
     } as unknown as import("../../../services").PathProvider,
     projectStore: {
       findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
@@ -120,8 +111,6 @@ describe("core.registration", () => {
     new CoreModule(registry, deps);
 
     const registeredPaths = registry.getRegisteredPaths();
-    expect(registeredPaths).toContain("projects.open");
-    expect(registeredPaths).toContain("projects.close");
     expect(registeredPaths).toContain("projects.list");
     expect(registeredPaths).toContain("projects.get");
     expect(registeredPaths).toContain("projects.fetchBases");
@@ -133,5 +122,10 @@ describe("core.registration", () => {
     // Verify workspace create/remove NOT registered (handled by intent dispatcher)
     expect(registeredPaths).not.toContain("workspaces.create");
     expect(registeredPaths).not.toContain("workspaces.remove");
+
+    // Verify project open/close/clone NOT registered (handled by intent dispatcher)
+    expect(registeredPaths).not.toContain("projects.open");
+    expect(registeredPaths).not.toContain("projects.close");
+    expect(registeredPaths).not.toContain("projects.clone");
   });
 });

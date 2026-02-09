@@ -17,6 +17,7 @@ export interface MockPathProviderOptions {
   // Data paths - use dataRootDir
   dataRootDir?: Path | string;
   projectsDir?: Path | string;
+  remotesDir?: Path | string;
   vscodeDir?: Path | string;
   vscodeExtensionsDir?: Path | string;
   vscodeUserDataDir?: Path | string;
@@ -74,6 +75,7 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
   // Data paths - use dataRootDir
   const dataRootDir = ensurePath(overrides?.dataRootDir, "/test/app-data");
   const projectsDir = ensurePath(overrides?.projectsDir, `${dataRootDir.toString()}/projects`);
+  const remotesDir = ensurePath(overrides?.remotesDir, `${dataRootDir.toString()}/remotes`);
   const vscodeDir = ensurePath(overrides?.vscodeDir, `${dataRootDir.toString()}/vscode`);
 
   const defaultGetProjectWorkspacesDir = (projectPath: string | Path): Path => {
@@ -123,6 +125,7 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
   return {
     dataRootDir,
     projectsDir,
+    remotesDir,
     vscodeDir,
     vscodeExtensionsDir: ensurePath(
       overrides?.vscodeExtensionsDir,

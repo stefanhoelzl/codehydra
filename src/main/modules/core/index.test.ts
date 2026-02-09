@@ -1,5 +1,10 @@
 /**
  * Unit tests for CoreModule.
+ *
+ * Note: projects.open, projects.close, and projects.clone have been migrated
+ * to the intent dispatcher. Tests for those operations are in:
+ * - src/main/operations/open-project.integration.test.ts
+ * - src/main/operations/close-project.integration.test.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -9,14 +14,6 @@ import type { MockApiRegistry } from "../../api/registry.test-utils";
 import type { AppState } from "../../app-state";
 import type { IViewManager } from "../../managers/view-manager.interface";
 import { createMockLogger } from "../../../services/logging";
-import { generateProjectId } from "../../api/id-utils";
-
-// =============================================================================
-// Test Constants
-// =============================================================================
-
-const TEST_PROJECT_PATH = "/test/project";
-const TEST_PROJECT_ID = generateProjectId(TEST_PROJECT_PATH);
 
 // =============================================================================
 // Mock Factories
@@ -24,21 +21,9 @@ const TEST_PROJECT_ID = generateProjectId(TEST_PROJECT_PATH);
 
 function createMockAppState(overrides: Partial<AppState> = {}): AppState {
   return {
-    openProject: vi.fn().mockResolvedValue({
-      path: "/test/project",
-      name: "test-project",
-      workspaces: [],
-    }),
-    closeProject: vi.fn().mockResolvedValue(undefined),
     getProject: vi.fn(),
     getAllProjects: vi.fn().mockResolvedValue([]),
     getWorkspaceProvider: vi.fn().mockReturnValue({
-      createWorkspace: vi.fn().mockResolvedValue({
-        path: "/test/project/workspaces/feature",
-        branch: "feature",
-        metadata: { base: "main" },
-      }),
-      removeWorkspace: vi.fn().mockResolvedValue(undefined),
       listBases: vi.fn().mockResolvedValue([]),
       updateBases: vi.fn().mockResolvedValue(undefined),
       isDirty: vi.fn().mockResolvedValue(false),
@@ -92,6 +77,7 @@ function createMockDeps(overrides: Partial<CoreModuleDeps> = {}): CoreModuleDeps
     } as unknown as import("../../../services").IGitClient,
     pathProvider: {
       projectsDir: "/test/projects",
+      remotesDir: "/test/remotes",
     } as unknown as import("../../../services").PathProvider,
     projectStore: {
       findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
@@ -117,60 +103,6 @@ describe("core.projects", () => {
     deps = createMockDeps();
   });
 
-  describe("projects.open", () => {
-    it("opens project and emits project:opened event", async () => {
-      const appState = createMockAppState({
-        openProject: vi.fn().mockResolvedValue({
-          path: "/test/project",
-          name: "test-project",
-          workspaces: [],
-        }),
-      });
-      deps = createMockDeps({ appState });
-      new CoreModule(registry, deps);
-
-      const handler = registry.getHandler("projects.open");
-      const result = await handler!({ path: "/test/project" });
-
-      expect(result.name).toBe("test-project");
-      expect(appState.openProject).toHaveBeenCalledWith("/test/project");
-
-      const emittedEvents = registry.getEmittedEvents();
-      expect(emittedEvents).toContainEqual({
-        event: "project:opened",
-        payload: { project: expect.any(Object) },
-      });
-    });
-
-    it("includes defaultBaseBranch in project:opened event when present", async () => {
-      const appState = createMockAppState({
-        openProject: vi.fn().mockResolvedValue({
-          path: "/test/project",
-          name: "test-project",
-          workspaces: [],
-          defaultBaseBranch: "main",
-        }),
-      });
-      deps = createMockDeps({ appState });
-      new CoreModule(registry, deps);
-
-      const handler = registry.getHandler("projects.open");
-      const result = await handler!({ path: "/test/project" });
-
-      expect(result.defaultBaseBranch).toBe("main");
-
-      const emittedEvents = registry.getEmittedEvents();
-      expect(emittedEvents).toContainEqual({
-        event: "project:opened",
-        payload: {
-          project: expect.objectContaining({
-            defaultBaseBranch: "main",
-          }),
-        },
-      });
-    });
-  });
-
   describe("projects.list", () => {
     it("returns list of projects", async () => {
       const appState = createMockAppState({
@@ -190,30 +122,6 @@ describe("core.projects", () => {
       expect(result[1]?.name).toBe("project2");
     });
   });
-
-  describe("projects.close", () => {
-    it("closes project and emits project:closed event", async () => {
-      const appState = createMockAppState({
-        getAllProjects: vi
-          .fn()
-          .mockResolvedValue([{ path: TEST_PROJECT_PATH, name: "test-project", workspaces: [] }]),
-        closeProject: vi.fn().mockResolvedValue(undefined),
-      });
-      deps = createMockDeps({ appState });
-      new CoreModule(registry, deps);
-
-      const handler = registry.getHandler("projects.close");
-      await handler!({ projectId: TEST_PROJECT_ID });
-
-      expect(appState.closeProject).toHaveBeenCalledWith(TEST_PROJECT_PATH);
-
-      const emittedEvents = registry.getEmittedEvents();
-      expect(emittedEvents).toContainEqual({
-        event: "project:closed",
-        payload: { projectId: TEST_PROJECT_ID },
-      });
-    });
-  });
 });
 
 describe("core.registration", () => {
@@ -225,18 +133,21 @@ describe("core.registration", () => {
     deps = createMockDeps();
   });
 
-  it("registers all projects.* paths with IPC", () => {
+  it("registers project query paths with IPC", () => {
     new CoreModule(registry, deps);
 
     const registeredPaths = registry.getRegisteredPaths();
-    expect(registeredPaths).toContain("projects.open");
-    expect(registeredPaths).toContain("projects.close");
     expect(registeredPaths).toContain("projects.list");
     expect(registeredPaths).toContain("projects.get");
     expect(registeredPaths).toContain("projects.fetchBases");
+
+    // Verify open/close/clone NOT registered (handled by intent dispatcher)
+    expect(registeredPaths).not.toContain("projects.open");
+    expect(registeredPaths).not.toContain("projects.close");
+    expect(registeredPaths).not.toContain("projects.clone");
   });
 
-  it("registers workspaces.get and workspaces.executeCommand (remove handled by intent dispatcher)", () => {
+  it("registers workspaces.get and workspaces.executeCommand (create/remove handled by intent dispatcher)", () => {
     new CoreModule(registry, deps);
 
     const registeredPaths = registry.getRegisteredPaths();
@@ -248,8 +159,8 @@ describe("core.registration", () => {
   it("registers methods with correct IPC channels", () => {
     new CoreModule(registry, deps);
 
-    expect(registry.register).toHaveBeenCalledWith("projects.open", expect.any(Function), {
-      ipc: "api:project:open",
+    expect(registry.register).toHaveBeenCalledWith("projects.list", expect.any(Function), {
+      ipc: "api:project:list",
     });
     expect(registry.register).toHaveBeenCalledWith("workspaces.get", expect.any(Function), {
       ipc: "api:workspace:get",

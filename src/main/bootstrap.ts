@@ -15,6 +15,9 @@ import { CoreModule, type CoreModuleDeps } from "./modules/core";
 import type {
   IApiRegistry,
   IApiModule,
+  ProjectOpenPayload,
+  ProjectClosePayload,
+  ProjectClonePayload,
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
@@ -91,13 +94,29 @@ import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_DELETED,
-  IdempotencyInterceptor,
 } from "./operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeleteWorkspaceHookContext,
   WorkspaceDeletedEvent,
 } from "./operations/delete-workspace";
+import {
+  OpenProjectOperation,
+  OPEN_PROJECT_OPERATION_ID,
+  INTENT_OPEN_PROJECT,
+  EVENT_PROJECT_OPENED,
+} from "./operations/open-project";
+import type {
+  OpenProjectIntent,
+  OpenProjectHookContext,
+  ProjectOpenedEvent,
+} from "./operations/open-project";
+import {
+  CloseProjectOperation,
+  CLOSE_PROJECT_OPERATION_ID,
+  INTENT_CLOSE_PROJECT,
+} from "./operations/close-project";
+import type { CloseProjectIntent, CloseProjectHookContext } from "./operations/close-project";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { wireModules } from "./intents/infrastructure/wire";
 import {
@@ -108,18 +127,24 @@ import {
 } from "./api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
-import type { DomainEvent } from "./intents/infrastructure/types";
+import type { Intent, DomainEvent } from "./intents/infrastructure/types";
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { AppState } from "./app-state";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
-import type { IWorkspaceFileService } from "../services";
+import type { IWorkspaceFileService, IWorkspaceProvider } from "../services";
 import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-handler";
 import type { DeletionProgressCallback } from "./operations/delete-workspace";
 import { getErrorMessage } from "../shared/error-utils";
 import { normalizeInitialPrompt } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
+import {
+  expandGitUrl,
+  generateProjectIdFromUrl,
+  extractRepoName,
+} from "../services/project/url-utils";
+import { ProjectScopedWorkspaceProvider } from "../services/git/project-scoped-provider";
 
 // =============================================================================
 // Types
@@ -378,7 +403,7 @@ function wireDispatcher(
   killTerminalsCallback: KillTerminalsCallback | undefined,
   workspaceLockHandler: WorkspaceLockHandler | undefined
 ): void {
-  const { appState, viewManager } = coreDeps;
+  const { appState, viewManager, gitClient, pathProvider, projectStore } = coreDeps;
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
@@ -392,15 +417,43 @@ function wireDispatcher(
     INTENT_DELETE_WORKSPACE,
     new DeleteWorkspaceOperation(emitDeletionProgress)
   );
+  dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
+  dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
 
   // Idempotency module (interceptor + event handler, wired via wireModules below)
-  const interceptor = new IdempotencyInterceptor();
+  const inProgressDeletions = new Set<string>();
   const idempotencyModule: IntentModule = {
-    interceptors: [interceptor],
+    interceptors: [
+      {
+        id: "idempotency",
+        order: 0,
+        async before(intent: Intent): Promise<Intent | null> {
+          if (intent.type !== INTENT_DELETE_WORKSPACE) {
+            return intent;
+          }
+          const deleteIntent = intent as DeleteWorkspaceIntent;
+          const workspacePath = deleteIntent.payload.workspacePath;
+
+          // Force always passes through
+          if (deleteIntent.payload.force) {
+            inProgressDeletions.add(workspacePath);
+            return intent;
+          }
+
+          // Block if already in progress
+          if (inProgressDeletions.has(workspacePath)) {
+            return null;
+          }
+
+          inProgressDeletions.add(workspacePath);
+          return intent;
+        },
+      },
+    ],
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
-        interceptor.inProgressDeletions.delete(payload.workspacePath);
+        inProgressDeletions.delete(payload.workspacePath);
       },
     },
   };
@@ -543,6 +596,7 @@ function wireDispatcher(
   // ---------------------------------------------------------------------------
 
   // WorktreeModule: "create" hook -- creates git worktree, sets context fields
+  // When existingWorkspace is set, populates context from existing data (skips worktree creation)
   const worktreeModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
@@ -550,6 +604,16 @@ function wireDispatcher(
           handler: async (ctx: HookContext) => {
             const hookCtx = ctx as CreateWorkspaceHookContext;
             const intent = ctx.intent as CreateWorkspaceIntent;
+
+            // Existing workspace path: populate context from existing data
+            if (intent.payload.existingWorkspace) {
+              const existing = intent.payload.existingWorkspace;
+              hookCtx.workspacePath = existing.path;
+              hookCtx.branch = existing.branch ?? existing.name;
+              hookCtx.metadata = existing.metadata;
+              hookCtx.projectPath = intent.payload.projectPath!;
+              return;
+            }
 
             const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
             if (!projectPath) {
@@ -1016,6 +1080,316 @@ function wireDispatcher(
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // Project:open idempotency interceptor
+  // ---------------------------------------------------------------------------
+
+  const inProgressOpens = new Set<string>();
+
+  const openIdempotencyModule: IntentModule = {
+    interceptors: [
+      {
+        id: "project-open-idempotency",
+        order: 0,
+        async before(intent: Intent): Promise<Intent | null> {
+          if (intent.type !== INTENT_OPEN_PROJECT) {
+            return intent;
+          }
+          const { path, git } = (intent as OpenProjectIntent).payload;
+
+          // Use expanded URL as key for git (so it matches remoteUrl in cleanup)
+          const key = path ? path.toString() : expandGitUrl(git!);
+
+          if (path && appState.isProjectOpen(path.toString())) {
+            return null;
+          }
+
+          if (inProgressOpens.has(key)) {
+            return null;
+          }
+
+          inProgressOpens.add(key);
+          return intent;
+        },
+      },
+    ],
+    events: {
+      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
+        const { project } = (event as ProjectOpenedEvent).payload;
+        inProgressOpens.delete(project.path);
+        if (project.remoteUrl) {
+          inProgressOpens.delete(project.remoteUrl);
+        }
+      },
+    },
+  };
+
+  // ---------------------------------------------------------------------------
+  // Project:open hook modules
+  // ---------------------------------------------------------------------------
+
+  // ProjectResolverModule: "open" hook -- clone if URL, validate git, create provider
+  const projectResolverModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        open: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as OpenProjectHookContext;
+            const intent = ctx.intent as OpenProjectIntent;
+            const { path, git } = intent.payload;
+
+            let projectPath: Path;
+
+            if (git) {
+              const expanded = expandGitUrl(git);
+
+              // Check if we already have a project from this URL
+              const existingPath = await projectStore.findByRemoteUrl(expanded);
+              if (existingPath) {
+                logger.debug("Found existing project for URL", {
+                  url: expanded,
+                  existingPath,
+                });
+                projectPath = new Path(existingPath);
+              } else {
+                // Clone the repository into remotes/ directory
+                const urlProjectId = generateProjectIdFromUrl(expanded);
+                const repoName = extractRepoName(expanded);
+                const remotesDirPath = pathProvider.remotesDir;
+                const projectDir = new Path(remotesDirPath, urlProjectId);
+                const gitPath = new Path(projectDir.toString(), repoName);
+
+                logger.debug("Cloning repository", {
+                  url: expanded,
+                  gitPath: gitPath.toString(),
+                });
+
+                await gitClient.clone(expanded, gitPath);
+
+                // Save to project store with remoteUrl
+                await projectStore.saveProject(gitPath.toString(), {
+                  remoteUrl: expanded,
+                });
+
+                projectPath = gitPath;
+              }
+
+              hookCtx.remoteUrl = expanded;
+            } else {
+              projectPath = path!;
+            }
+
+            // Validate git repo and create provider
+            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPath);
+            await globalProvider.validateRepository(projectPath);
+            const provider: IWorkspaceProvider = new ProjectScopedWorkspaceProvider(
+              globalProvider,
+              projectPath,
+              workspacesDir
+            );
+
+            hookCtx.projectPath = projectPath.toString();
+            hookCtx.provider = provider;
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectDiscoveryModule: "open" hook -- discover workspaces, orphan cleanup
+  const projectDiscoveryModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        open: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as OpenProjectHookContext;
+            const provider = hookCtx.provider!;
+
+            hookCtx.workspaces = await provider.discover();
+
+            // Fire-and-forget cleanup
+            if (provider.cleanupOrphanedWorkspaces) {
+              void provider.cleanupOrphanedWorkspaces().catch((err: unknown) => {
+                logger.error(
+                  "Workspace cleanup failed",
+                  { projectPath: hookCtx.projectPath ?? "unknown" },
+                  err instanceof Error ? err : undefined
+                );
+              });
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectRegistryModule: "open" hook -- generate ID, load config, store state, persist
+  const projectRegistryModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        open: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as OpenProjectHookContext;
+            const projectPathStr = hookCtx.projectPath!;
+            const projectPath = new Path(projectPathStr);
+
+            // Generate project ID
+            hookCtx.projectId = generateProjectId(projectPathStr);
+
+            // Load project config for remoteUrl
+            const projectConfig = await projectStore.getProjectConfig(projectPathStr);
+            if (projectConfig?.remoteUrl) {
+              hookCtx.remoteUrl = projectConfig.remoteUrl;
+            }
+
+            // Register in AppState
+            appState.registerProject({
+              id: hookCtx.projectId,
+              name: projectPath.basename,
+              path: projectPath,
+              workspaces: hookCtx.workspaces ?? [],
+              provider: hookCtx.provider!,
+              ...(hookCtx.remoteUrl !== undefined && { remoteUrl: hookCtx.remoteUrl }),
+            });
+
+            // Get and cache default base branch
+            const defaultBaseBranch = await appState.getDefaultBaseBranch(projectPathStr);
+            if (defaultBaseBranch) {
+              appState.setLastBaseBranch(projectPathStr, defaultBaseBranch);
+              hookCtx.defaultBaseBranch = defaultBaseBranch;
+            }
+
+            // Persist to store if new
+            if (!projectConfig) {
+              await projectStore.saveProject(projectPathStr);
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectViewModule: subscribes to project:opened, activates first workspace and preloads rest
+  const projectViewModule: IntentModule = {
+    events: {
+      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
+        const payload = (event as ProjectOpenedEvent).payload;
+        const workspaces = payload.project.workspaces;
+        if (workspaces.length > 0) {
+          viewManager.setActiveWorkspace(workspaces[0]!.path);
+        }
+        for (let i = 1; i < workspaces.length; i++) {
+          viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
+        }
+      },
+    },
+  };
+
+  // ---------------------------------------------------------------------------
+  // Project:close hook modules
+  // ---------------------------------------------------------------------------
+
+  // ProjectResolveModule: "resolve" hook -- resolves projectId to path, loads config, gets workspaces
+  const projectResolveModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const intent = ctx.intent as CloseProjectIntent;
+
+            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
+            if (!projectPath) {
+              throw new Error(`Project not found: ${intent.payload.projectId}`);
+            }
+
+            const projectConfig = await projectStore.getProjectConfig(projectPath);
+            const project = appState.getProject(projectPath);
+
+            hookCtx.projectPath = projectPath;
+            hookCtx.removeLocalRepo = intent.payload.removeLocalRepo ?? false;
+            hookCtx.workspaces = project?.workspaces ?? [];
+            if (projectConfig?.remoteUrl) {
+              hookCtx.remoteUrl = projectConfig.remoteUrl;
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectCloseViewModule: "close" hook -- clears active workspace if no other projects
+  const projectCloseViewModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const allProjects = await appState.getAllProjects();
+            const otherProjectsExist = allProjects.some((p) => p.path !== hookCtx.projectPath);
+            if (!otherProjectsExist) {
+              viewManager.setActiveWorkspace(null, false);
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectCloseManagerModule: "close" hook -- dispose provider, delete dir
+  const projectCloseManagerModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const projectPath = hookCtx.projectPath!;
+
+            // Dispose workspace provider
+            const provider = appState.getWorkspaceProvider(projectPath);
+            if (provider instanceof ProjectScopedWorkspaceProvider) {
+              provider.dispose();
+            }
+
+            // If removeLocalRepo + remoteUrl: delete project directory
+            if (hookCtx.removeLocalRepo && hookCtx.remoteUrl) {
+              logger.debug("Deleting cloned project directory", {
+                projectPath,
+              });
+              await projectStore.deleteProjectDirectory(projectPath, {
+                isClonedProject: true,
+              });
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectCloseRegistryModule: "close" hook -- remove from state + store
+  const projectCloseRegistryModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const projectPath = hookCtx.projectPath!;
+
+            // Remove from AppState
+            appState.deregisterProject(projectPath);
+
+            // Remove from persistent storage
+            try {
+              await projectStore.removeProject(projectPath);
+            } catch {
+              // Fail silently as per requirements
+            }
+          },
+        },
+      },
+    },
+  };
+
   // Wire IpcEventBridge and hook handler modules
   const ipcEventBridge = createIpcEventBridge(registry);
   wireModules(
@@ -1040,6 +1414,17 @@ function wireDispatcher(
       deleteCodeServerModule,
       deleteStateModule,
       deleteIpcBridge,
+      // Project:open modules
+      openIdempotencyModule,
+      projectResolverModule,
+      projectDiscoveryModule,
+      projectRegistryModule,
+      projectViewModule,
+      // Project:close modules
+      projectResolveModule,
+      projectCloseViewModule,
+      projectCloseManagerModule,
+      projectCloseRegistryModule,
     ],
     hookRegistry,
     dispatcher
@@ -1085,6 +1470,7 @@ function wireDispatcher(
           projectPath,
           keepBranch: payload.keepBranch ?? true,
           force: payload.force ?? false,
+          removeWorktree: true,
           ...(payload.skipSwitch !== undefined && { skipSwitch: payload.skipSwitch }),
           ...(payload.unblock !== undefined && { unblock: payload.unblock }),
           ...(payload.isRetry !== undefined && { isRetry: payload.isRetry }),
@@ -1217,5 +1603,71 @@ function wireDispatcher(
       return dispatcher.dispatch(intent);
     },
     { ipc: ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Project API bridge handlers
+  // ---------------------------------------------------------------------------
+
+  registry.register(
+    "projects.open",
+    async (payload: ProjectOpenPayload) => {
+      const intent: OpenProjectIntent = {
+        type: INTENT_OPEN_PROJECT,
+        payload: { path: new Path(payload.path) },
+      };
+      const handle = dispatcher.dispatch(intent);
+      if (!(await handle.accepted)) {
+        // Idempotency: project already open, return current state
+        const project = appState.getProject(payload.path);
+        if (project) {
+          return project as import("../shared/api/types").Project;
+        }
+        throw new Error("Project open was cancelled");
+      }
+      const result = await handle;
+      if (!result) {
+        throw new Error("Open project dispatch returned no result");
+      }
+      return result;
+    },
+    { ipc: ApiIpcChannels.PROJECT_OPEN }
+  );
+
+  registry.register(
+    "projects.clone",
+    async (payload: ProjectClonePayload) => {
+      const intent: OpenProjectIntent = {
+        type: INTENT_OPEN_PROJECT,
+        payload: { git: payload.url },
+      };
+      const handle = dispatcher.dispatch(intent);
+      if (!(await handle.accepted)) {
+        throw new Error("Clone was cancelled (project may already be open)");
+      }
+      const result = await handle;
+      if (!result) {
+        throw new Error("Clone project dispatch returned no result");
+      }
+      return result;
+    },
+    { ipc: ApiIpcChannels.PROJECT_CLONE }
+  );
+
+  registry.register(
+    "projects.close",
+    async (payload: ProjectClosePayload) => {
+      const intent: CloseProjectIntent = {
+        type: INTENT_CLOSE_PROJECT,
+        payload: {
+          projectId: payload.projectId,
+          ...(payload.removeLocalRepo !== undefined && {
+            removeLocalRepo: payload.removeLocalRepo,
+          }),
+        },
+      };
+      await dispatcher.dispatch(intent);
+    },
+    { ipc: ApiIpcChannels.PROJECT_CLOSE }
   );
 }

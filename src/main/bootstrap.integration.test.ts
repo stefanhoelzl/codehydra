@@ -103,6 +103,15 @@ function createMockAppState(overrides?: Partial<AppState>): AppState {
       stopServer: vi.fn().mockResolvedValue({ success: true }),
       getPort: vi.fn().mockReturnValue(null),
     }),
+    isProjectOpen: vi.fn().mockReturnValue(false),
+    registerProject: vi.fn(),
+    deregisterProject: vi.fn(),
+    getProjectStore: vi.fn().mockReturnValue({
+      getProjectConfig: vi.fn().mockResolvedValue(undefined),
+      removeProject: vi.fn().mockResolvedValue(undefined),
+      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
+    }),
+    getMcpServerManager: vi.fn().mockReturnValue(null),
     ...overrides,
   } as unknown as AppState;
 }
@@ -150,6 +159,11 @@ function createMockCoreDeps(): CoreModuleDeps {
     } as unknown as import("../services").IGitClient,
     pathProvider: {
       projectsDir: "/test/projects",
+      remotesDir: "/test/remotes",
+      getProjectWorkspacesDir: vi.fn().mockImplementation((projectPath: unknown) => {
+        const pathStr = typeof projectPath === "string" ? projectPath : String(projectPath);
+        return { toString: () => `${pathStr}/workspaces` };
+      }),
     } as unknown as import("../services").PathProvider,
     projectStore: {
       findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
@@ -171,6 +185,7 @@ function createMockGlobalWorktreeProvider(): import("../services/git/git-worktre
     registerProject: vi.fn(),
     unregisterProject: vi.fn(),
     ensureWorkspaceRegistered: vi.fn(),
+    validateRepository: vi.fn().mockResolvedValue(undefined),
   } as unknown as import("../services/git/git-worktree-provider").GitWorktreeProvider;
 }
 

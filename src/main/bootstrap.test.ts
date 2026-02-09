@@ -111,6 +111,7 @@ function createMockCoreDeps(): CoreModuleDeps {
     } as unknown as import("../services").IGitClient,
     pathProvider: {
       projectsDir: "/test/projects",
+      remotesDir: "/test/remotes",
     } as unknown as import("../services").PathProvider,
     projectStore: {
       findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
