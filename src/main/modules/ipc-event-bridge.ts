@@ -17,6 +17,10 @@ import type { ModeChangedPayload, ModeChangedEvent } from "../operations/set-mod
 import { EVENT_MODE_CHANGED } from "../operations/set-mode";
 import type { WorkspaceCreatedEvent } from "../operations/create-workspace";
 import { EVENT_WORKSPACE_CREATED } from "../operations/create-workspace";
+import type { ProjectOpenedEvent } from "../operations/open-project";
+import { EVENT_PROJECT_OPENED } from "../operations/open-project";
+import type { ProjectClosedEvent } from "../operations/close-project";
+import { EVENT_PROJECT_CLOSED } from "../operations/close-project";
 
 /**
  * Create an IpcEventBridge module that forwards domain events to the API registry.
@@ -56,6 +60,14 @@ export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
         ...(p.initialPrompt && { hasInitialPrompt: true }),
         ...(p.keepInBackground && { keepInBackground: true }),
       });
+    },
+    [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
+      const p = (event as ProjectOpenedEvent).payload;
+      apiRegistry.emit("project:opened", { project: p.project });
+    },
+    [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
+      const p = (event as ProjectClosedEvent).payload;
+      apiRegistry.emit("project:closed", { projectId: p.projectId });
     },
   };
 

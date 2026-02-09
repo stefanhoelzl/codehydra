@@ -1,12 +1,12 @@
 /**
- * CoreModule - Handles project, workspace, and UI operations.
+ * CoreModule - Handles read-only project queries, workspace queries, and UI operations.
  *
  * Responsibilities:
- * - Project operations: open, close, list, get, fetchBases
+ * - Project queries: list, get, fetchBases
  * - Workspace operations: get, executeCommand
  * - UI operations: selectFolder, switchWorkspace
  *
- * Note: workspace create and remove are handled by the intent dispatcher.
+ * Note: workspace create/remove and project open/close/clone are handled by the intent dispatcher.
  *
  * Created in startServices() after setup is complete.
  */
@@ -14,9 +14,6 @@
 import type {
   IApiRegistry,
   IApiModule,
-  ProjectOpenPayload,
-  ProjectClosePayload,
-  ProjectClonePayload,
   ProjectIdPayload,
   WorkspaceRefPayload,
   WorkspaceExecuteCommandPayload,
@@ -38,13 +35,7 @@ import {
   tryResolveWorkspace as tryResolveWorkspaceShared,
   type InternalResolvedWorkspace,
 } from "../../api/id-utils";
-import { Path, type IGitClient, type PathProvider, type ProjectStore } from "../../../services";
-import {
-  isValidGitUrl,
-  generateProjectIdFromUrl,
-  extractRepoName,
-  expandGitUrl,
-} from "../../../services/project/url-utils";
+import type { IGitClient, PathProvider, ProjectStore } from "../../../services";
 
 // =============================================================================
 // Types
@@ -99,18 +90,18 @@ export interface CoreModuleDeps {
 // =============================================================================
 
 /**
- * CoreModule handles project and workspace operations.
+ * CoreModule handles read-only project queries, workspace queries, and UI operations.
  *
  * Registered methods:
- * - projects.*: open, close, list, get, fetchBases
+ * - projects.*: list, get, fetchBases
  * - workspaces.*: get, executeCommand
  * - ui.selectFolder, ui.switchWorkspace
  *
- * Note: workspaces.create and workspaces.remove are handled by the intent dispatcher.
+ * Note: workspaces.create/remove and projects.open/close/clone are handled by the intent dispatcher.
  *
  * Events emitted:
- * - project:opened, project:closed, project:bases-updated
- * - workspace:switched
+ * - project:bases-updated
+ * - workspace:switched (via ViewManager callback, not directly)
  */
 export class CoreModule implements IApiModule {
   private readonly logger: Logger;
@@ -130,19 +121,11 @@ export class CoreModule implements IApiModule {
   }
 
   /**
-   * Register all project and workspace methods with the API registry.
+   * Register all project query, workspace, and UI methods with the API registry.
+   * Note: projects.open/close/clone are registered by the intent dispatcher in bootstrap.ts.
    */
   private registerMethods(): void {
-    // Project methods
-    this.api.register("projects.open", this.projectOpen.bind(this), {
-      ipc: ApiIpcChannels.PROJECT_OPEN,
-    });
-    this.api.register("projects.close", this.projectClose.bind(this), {
-      ipc: ApiIpcChannels.PROJECT_CLOSE,
-    });
-    this.api.register("projects.clone", this.projectClone.bind(this), {
-      ipc: ApiIpcChannels.PROJECT_CLONE,
-    });
+    // Project query methods (open/close/clone handled by intent dispatcher in bootstrap.ts)
     this.api.register("projects.list", this.projectList.bind(this), {
       ipc: ApiIpcChannels.PROJECT_LIST,
     });
@@ -170,104 +153,8 @@ export class CoreModule implements IApiModule {
   }
 
   // ===========================================================================
-  // Project Methods
+  // Project Query Methods
   // ===========================================================================
-
-  private async projectOpen(payload: ProjectOpenPayload): Promise<Project> {
-    const internalProject = await this.deps.appState.openProject(payload.path);
-    const apiProject = this.toApiProject(internalProject, internalProject.defaultBaseBranch);
-
-    this.api.emit("project:opened", { project: apiProject });
-
-    return apiProject;
-  }
-
-  private async projectClose(payload: ProjectClosePayload): Promise<void> {
-    const projectPath = await resolveProjectPath(payload.projectId, this.deps.appState);
-    if (!projectPath) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    // Get project config BEFORE closing (closeProject removes the config)
-    // We need this to determine if it's a cloned project for removeLocalRepo
-    const projectConfig = payload.removeLocalRepo
-      ? await this.deps.projectStore.getProjectConfig(projectPath)
-      : undefined;
-
-    // Close the project (stops servers, destroys views, removes from state and config)
-    await this.deps.appState.closeProject(projectPath);
-
-    // If removeLocalRepo is requested, delete the entire project directory
-    if (payload.removeLocalRepo) {
-      if (projectConfig?.remoteUrl) {
-        this.logger.debug("Deleting cloned project directory", { projectPath });
-        // Pass isClonedProject since config was already removed by closeProject
-        await this.deps.projectStore.deleteProjectDirectory(projectPath, { isClonedProject: true });
-      } else {
-        this.logger.warn("removeLocalRepo requested but project has no remoteUrl", { projectPath });
-      }
-    }
-
-    this.api.emit("project:closed", { projectId: payload.projectId });
-  }
-
-  private async projectClone(payload: ProjectClonePayload): Promise<Project> {
-    // Expand shorthand URLs (e.g., "org/repo" -> "https://github.com/org/repo.git")
-    const url = expandGitUrl(payload.url);
-
-    // Validate URL format
-    if (!isValidGitUrl(url)) {
-      throw new Error(`Invalid git URL: ${payload.url}`);
-    }
-
-    // Check if we already have a project from this URL
-    const existingPath = await this.deps.projectStore.findByRemoteUrl(url);
-    if (existingPath) {
-      this.logger.debug("Found existing project for URL", { url, existingPath });
-
-      // Check if project is already open
-      const existingProject = this.deps.appState.getProject(existingPath);
-      if (existingProject) {
-        return this.toApiProject(existingProject, existingProject.defaultBaseBranch);
-      }
-
-      // Project exists but not open - open it
-      return this.projectOpen({ path: existingPath });
-    }
-
-    // Determine target path
-    const projectId = generateProjectIdFromUrl(url);
-    const repoName = extractRepoName(url);
-    const projectsDirPath = this.deps.pathProvider.projectsDir;
-    // Use project ID as subdirectory name to avoid collisions
-    // e.g., /projects/my-repo-abcd1234
-    const projectPath = new Path(projectsDirPath, projectId);
-    // Bare clone goes to repo-name subdirectory (name derived from URL)
-    // e.g., /projects/my-repo-abcd1234/my-repo
-    const gitPath = new Path(projectPath.toString(), repoName);
-
-    this.logger.debug("Cloning repository", { url, gitPath: gitPath.toString() });
-
-    // Clone using GitClient (bare clone to git/ subdirectory)
-    await this.deps.gitClient.clone(url, gitPath);
-
-    // Save to project store with remoteUrl (config at project level, not git subdirectory)
-    // Use configDir to store config inside the URL-hashed directory we created,
-    // not a separate path-hashed directory. This ensures findByRemoteUrl can locate the project.
-    await this.deps.projectStore.saveProject(gitPath.toString(), {
-      remoteUrl: url,
-      configDir: projectId,
-    });
-
-    // Open the newly cloned project (at git/ subdirectory where the repo is)
-    const project = await this.deps.appState.openProject(gitPath.toString());
-
-    const apiProject = this.toApiProject(project, project.defaultBaseBranch);
-
-    this.api.emit("project:opened", { project: apiProject });
-
-    return apiProject;
-  }
 
   private async projectList(payload: EmptyPayload): Promise<readonly Project[]> {
     void payload; // Required by MethodHandler interface but unused for no-arg methods

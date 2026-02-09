@@ -14,7 +14,6 @@
 
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
 import type {
   ProjectId,
   WorkspaceName,
@@ -35,6 +34,8 @@ export interface DeleteWorkspacePayload {
   readonly projectPath: string;
   readonly keepBranch: boolean;
   readonly force: boolean;
+  /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
+  readonly removeWorktree: boolean;
   readonly skipSwitch?: boolean;
   readonly unblock?: "kill" | "close" | "ignore";
   readonly isRetry?: boolean;
@@ -87,6 +88,7 @@ export interface DeleteWorkspaceHookContext extends HookContext {
   readonly workspaceName: WorkspaceName;
   readonly keepBranch: boolean;
   readonly force: boolean;
+  readonly removeWorktree: boolean;
   readonly skipSwitch?: boolean;
   readonly unblock?: "kill" | "close" | "ignore";
   readonly isRetry?: boolean;
@@ -144,6 +146,7 @@ export class DeleteWorkspaceOperation implements Operation<
       workspaceName: payload.workspaceName,
       keepBranch: payload.keepBranch,
       force: payload.force,
+      removeWorktree: payload.removeWorktree,
       ...(payload.skipSwitch !== undefined && { skipSwitch: payload.skipSwitch }),
       ...(payload.unblock !== undefined && { unblock: payload.unblock }),
       ...(payload.isRetry !== undefined && { isRetry: payload.isRetry }),
@@ -204,6 +207,12 @@ export class DeleteWorkspaceOperation implements Operation<
     // Clear error for next hook if force mode
     if (payload.force) {
       delete hookCtx.error;
+    }
+
+    // When removeWorktree is false, skip "release" and "delete" hooks (runtime teardown only)
+    if (!payload.removeWorktree) {
+      this.emitProgressFromContext(hookCtx, true, false);
+      return;
     }
 
     // Hook 2: "release" -- WindowsLockModule
@@ -356,55 +365,5 @@ export class DeleteWorkspaceOperation implements Operation<
       return "pending";
     }
     return value ? "done" : "in-progress";
-  }
-}
-
-// =============================================================================
-// Idempotency Interceptor
-// =============================================================================
-
-/**
- * Interceptor that prevents duplicate workspace deletions.
- *
- * Tracks in-progress deletions by workspace path. If a non-force delete
- * is dispatched for a workspace already being deleted, returns null (cancel).
- * Force deletes always pass through.
- *
- * The in-progress flag is cleared via a separate event handler for
- * workspace:deleted, registered in bootstrap.
- */
-export class IdempotencyInterceptor implements IntentInterceptor {
-  readonly id = "idempotency";
-  readonly order = 0;
-
-  /**
-   * Shared set of workspace paths currently being deleted.
-   * The event handler also accesses this set to clear flags.
-   */
-  readonly inProgressDeletions = new Set<string>();
-
-  async before(intent: Intent): Promise<Intent | null> {
-    // Pass through non-delete intents
-    if (intent.type !== INTENT_DELETE_WORKSPACE) {
-      return intent;
-    }
-
-    const deleteIntent = intent as DeleteWorkspaceIntent;
-    const workspacePath = deleteIntent.payload.workspacePath;
-
-    // Force always passes through
-    if (deleteIntent.payload.force) {
-      this.inProgressDeletions.add(workspacePath);
-      return intent;
-    }
-
-    // Block if already in progress
-    if (this.inProgressDeletions.has(workspacePath)) {
-      return null;
-    }
-
-    // Mark as in-progress
-    this.inProgressDeletions.add(workspacePath);
-    return intent;
   }
 }

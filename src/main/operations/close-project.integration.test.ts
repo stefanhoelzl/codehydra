@@ -1,0 +1,475 @@
+/**
+ * Integration tests for CloseProjectOperation.
+ *
+ * Tests the full project:close pipeline through dispatcher.dispatch():
+ * - Operation dispatches workspace:delete per workspace, then runs "close" hook
+ * - workspace:delete uses removeWorktree=false (runtime teardown only)
+ * - skipSwitch prevents intermediate workspace switches during sequential teardown
+ * - Hook modules dispose provider, remove state + store
+ *
+ * Test plan items covered:
+ * #9: Closes project and tears down workspaces
+ * #10: Close with removeLocalRepo deletes cloned dir
+ * #11: Close with removeLocalRepo skips for local projects
+ * #12: project:closed event emitted after close
+ * #13: Close with unknown projectId throws
+ * #14: skipSwitch prevents intermediate switches during close
+ */
+
+import { describe, it, expect, vi } from "vitest";
+import { HookRegistry } from "../intents/infrastructure/hook-registry";
+import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { wireModules } from "../intents/infrastructure/wire";
+import type { IntentModule } from "../intents/infrastructure/module";
+import type { HookContext } from "../intents/infrastructure/operation";
+import type { DomainEvent } from "../intents/infrastructure/types";
+import {
+  CloseProjectOperation,
+  CLOSE_PROJECT_OPERATION_ID,
+  INTENT_CLOSE_PROJECT,
+  EVENT_PROJECT_CLOSED,
+} from "./close-project";
+import type {
+  CloseProjectIntent,
+  CloseProjectHookContext,
+  ProjectClosedEvent,
+} from "./close-project";
+import {
+  DeleteWorkspaceOperation,
+  DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
+  EVENT_WORKSPACE_DELETED,
+} from "./delete-workspace";
+import type {
+  DeleteWorkspaceHookContext,
+  WorkspaceDeletedEvent,
+  DeletionProgressCallback,
+} from "./delete-workspace";
+import type { IViewManager } from "../managers/view-manager.interface";
+import type { AppState } from "../app-state";
+import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
+import { generateProjectId } from "../../shared/api/id-utils";
+
+// =============================================================================
+// Test Constants
+// =============================================================================
+
+const PROJECT_PATH = "/test/project";
+const PROJECT_ID = generateProjectId(PROJECT_PATH);
+const WORKSPACE_A_PATH = "/test/project/workspaces/feature-a";
+const WORKSPACE_A_NAME = "feature-a" as WorkspaceName;
+const WORKSPACE_B_PATH = "/test/project/workspaces/feature-b";
+const WORKSPACE_B_NAME = "feature-b" as WorkspaceName;
+
+// =============================================================================
+// Mock Factories
+// =============================================================================
+
+interface TestState {
+  serversStoppedForWorkspaces: string[];
+  destroyedViews: string[];
+  deregisteredProjects: string[];
+  removedProjectsFromStore: string[];
+  deletedProjectDirectories: string[];
+  disposedProviders: string[];
+  setActiveWorkspaceCalls: Array<{ path: string | null; focus?: boolean }>;
+}
+
+interface TestHarness {
+  dispatcher: Dispatcher;
+  state: TestState;
+  viewManager: IViewManager;
+}
+
+function createTestHarness(options?: {
+  withRemoteUrl?: boolean;
+  emptyProject?: boolean;
+  projectNotFound?: boolean;
+  noRemoteUrl?: boolean;
+}): TestHarness {
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
+
+  const state: TestState = {
+    serversStoppedForWorkspaces: [],
+    destroyedViews: [],
+    deregisteredProjects: [],
+    removedProjectsFromStore: [],
+    deletedProjectDirectories: [],
+    disposedProviders: [],
+    setActiveWorkspaceCalls: [],
+  };
+
+  const workspaces = options?.emptyProject
+    ? []
+    : [
+        {
+          projectId: PROJECT_ID,
+          name: WORKSPACE_A_NAME,
+          path: WORKSPACE_A_PATH,
+          branch: "feature-a",
+          metadata: { base: "main" },
+        },
+        {
+          projectId: PROJECT_ID,
+          name: WORKSPACE_B_NAME,
+          path: WORKSPACE_B_PATH,
+          branch: "feature-b",
+          metadata: { base: "main" },
+        },
+      ];
+
+  const project: Project | undefined = options?.projectNotFound
+    ? undefined
+    : {
+        id: PROJECT_ID,
+        path: PROJECT_PATH,
+        name: "test-project",
+        workspaces,
+        ...(options?.withRemoteUrl && { remoteUrl: "https://github.com/org/repo.git" }),
+      };
+
+  const viewManager = {
+    getActiveWorkspacePath: vi.fn().mockReturnValue(WORKSPACE_A_PATH),
+    setActiveWorkspace: vi.fn().mockImplementation((path: string | null, focus?: boolean) => {
+      state.setActiveWorkspaceCalls.push({
+        path,
+        ...(focus !== undefined && { focus }),
+      });
+    }),
+    destroyWorkspaceView: vi.fn().mockImplementation(async (path: string) => {
+      state.destroyedViews.push(path);
+    }),
+    getUIView: vi.fn(),
+    createWorkspaceView: vi.fn(),
+    getWorkspaceView: vi.fn(),
+    updateBounds: vi.fn(),
+    focusActiveWorkspace: vi.fn(),
+    focusUI: vi.fn(),
+    setMode: vi.fn(),
+    getMode: vi.fn().mockReturnValue("workspace"),
+    onModeChange: vi.fn().mockReturnValue(() => {}),
+    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
+    updateCodeServerPort: vi.fn(),
+    preloadWorkspaceUrl: vi.fn(),
+  } as unknown as IViewManager;
+
+  const remoteUrl = options?.withRemoteUrl
+    ? "https://github.com/org/repo.git"
+    : options?.noRemoteUrl
+      ? undefined
+      : undefined;
+
+  const appState = {
+    getAllProjects: vi.fn().mockImplementation(async () => (project ? [project] : [])),
+    getProject: vi.fn().mockReturnValue(project),
+    getWorkspaceProvider: vi.fn().mockReturnValue({
+      dispose: vi.fn().mockImplementation(() => {
+        state.disposedProviders.push(PROJECT_PATH);
+      }),
+    }),
+    isProjectOpen: vi.fn().mockReturnValue(!options?.projectNotFound),
+    deregisterProject: vi.fn().mockImplementation((path: string) => {
+      state.deregisteredProjects.push(path);
+    }),
+    getProjectStore: vi.fn().mockReturnValue({
+      getProjectConfig: vi.fn().mockImplementation(async () => {
+        if (remoteUrl) {
+          return { remoteUrl };
+        }
+        return undefined;
+      }),
+      removeProject: vi.fn().mockImplementation(async (path: string) => {
+        state.removedProjectsFromStore.push(path);
+      }),
+      deleteProjectDirectory: vi.fn().mockImplementation(async (path: string) => {
+        state.deletedProjectDirectories.push(path);
+      }),
+    }),
+    getServerManager: vi.fn().mockReturnValue({
+      stopServer: vi.fn().mockImplementation(async (path: string) => {
+        state.serversStoppedForWorkspaces.push(path);
+        return { success: true };
+      }),
+    }),
+    getMcpServerManager: vi.fn().mockReturnValue({
+      clearWorkspace: vi.fn(),
+    }),
+    getAgentStatusManager: vi.fn().mockReturnValue({
+      clearTuiTracking: vi.fn(),
+    }),
+    unregisterWorkspace: vi.fn(),
+  } as unknown as AppState;
+
+  // Register operations
+  const emitProgress: DeletionProgressCallback = () => {};
+  dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
+  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation(emitProgress));
+
+  // Delete-workspace hook modules (simplified for close-project testing)
+  const deleteViewModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        shutdown: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as DeleteWorkspaceHookContext;
+            if (!hookCtx.shutdownResults) {
+              hookCtx.shutdownResults = {};
+            }
+            // Track that skipSwitch is set
+            if (!hookCtx.skipSwitch) {
+              // Not expected for project:close -- would indicate a bug
+              viewManager.setActiveWorkspace(null, false);
+            }
+            await viewManager.destroyWorkspaceView(hookCtx.workspacePath);
+            hookCtx.shutdownResults.viewDestroyed = true;
+            hookCtx.shutdownResults.terminalsClosed = true;
+          },
+        },
+      },
+    },
+  };
+
+  const deleteAgentModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        shutdown: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as DeleteWorkspaceHookContext;
+            if (!hookCtx.shutdownResults) {
+              hookCtx.shutdownResults = {};
+            }
+            const serverManager = appState.getServerManager();
+            if (serverManager) {
+              await serverManager.stopServer(hookCtx.workspacePath);
+            }
+            hookCtx.shutdownResults.serverStopped = true;
+          },
+        },
+      },
+    },
+  };
+
+  const deleteStateModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceDeletedEvent).payload;
+        appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+      },
+    },
+  };
+
+  // ProjectResolveModule: "resolve" hook -- resolves projectId to path/config/workspaces
+  const projectResolveModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const intent = ctx.intent as CloseProjectIntent;
+
+            // Resolve using appState (mirrors bootstrap pattern)
+            const allProjects = await appState.getAllProjects();
+            const found = allProjects.find((p) => p.id === intent.payload.projectId);
+            if (!found) {
+              throw new Error(`Project not found: ${intent.payload.projectId}`);
+            }
+
+            const store = appState.getProjectStore();
+            const config = await store.getProjectConfig(found.path);
+
+            hookCtx.projectPath = found.path;
+            hookCtx.removeLocalRepo = intent.payload.removeLocalRepo ?? false;
+            hookCtx.workspaces = found.workspaces ?? [];
+            if (config?.remoteUrl) {
+              hookCtx.remoteUrl = config.remoteUrl;
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectCloseViewModule: "close" hook -- clears active workspace if no other projects
+  const projectCloseViewModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const allProjects = await appState.getAllProjects();
+            const otherProjectsExist = allProjects.some((p) => p.path !== hookCtx.projectPath);
+            if (!otherProjectsExist) {
+              viewManager.setActiveWorkspace(null, false);
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // Close-project hook modules
+  const projectCloseManagerModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const projectPath = hookCtx.projectPath!;
+
+            const provider = appState.getWorkspaceProvider(projectPath) as
+              | { dispose?: () => void }
+              | undefined;
+            if (provider && typeof provider.dispose === "function") {
+              provider.dispose();
+            }
+
+            if (hookCtx.removeLocalRepo && hookCtx.remoteUrl) {
+              const store = appState.getProjectStore();
+              await store.deleteProjectDirectory(projectPath, {
+                isClonedProject: true,
+              });
+            }
+          },
+        },
+      },
+    },
+  };
+
+  const projectCloseRegistryModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as CloseProjectHookContext;
+            const projectPath = hookCtx.projectPath!;
+            appState.deregisterProject(projectPath);
+            const store = appState.getProjectStore();
+            try {
+              await store.removeProject(projectPath);
+            } catch {
+              // Fail silently
+            }
+          },
+        },
+      },
+    },
+  };
+
+  wireModules(
+    [
+      deleteViewModule,
+      deleteAgentModule,
+      deleteStateModule,
+      projectResolveModule,
+      projectCloseViewModule,
+      projectCloseManagerModule,
+      projectCloseRegistryModule,
+    ],
+    hookRegistry,
+    dispatcher
+  );
+
+  return { dispatcher, state, viewManager };
+}
+
+function buildCloseIntent(overrides?: Partial<CloseProjectIntent["payload"]>): CloseProjectIntent {
+  return {
+    type: INTENT_CLOSE_PROJECT,
+    payload: {
+      projectId: PROJECT_ID,
+      ...overrides,
+    },
+  };
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+describe("CloseProjectOperation", () => {
+  it("test 9: closes project and tears down workspaces", async () => {
+    const harness = createTestHarness();
+    const intent = buildCloseIntent();
+
+    await harness.dispatcher.dispatch(intent);
+
+    // All workspace views destroyed
+    expect(harness.state.destroyedViews).toContain(WORKSPACE_A_PATH);
+    expect(harness.state.destroyedViews).toContain(WORKSPACE_B_PATH);
+
+    // All workspace servers stopped
+    expect(harness.state.serversStoppedForWorkspaces).toContain(WORKSPACE_A_PATH);
+    expect(harness.state.serversStoppedForWorkspaces).toContain(WORKSPACE_B_PATH);
+
+    // Project deregistered from state
+    expect(harness.state.deregisteredProjects).toContain(PROJECT_PATH);
+
+    // Project removed from store
+    expect(harness.state.removedProjectsFromStore).toContain(PROJECT_PATH);
+  });
+
+  it("test 10: close with removeLocalRepo deletes cloned dir", async () => {
+    const harness = createTestHarness({ withRemoteUrl: true });
+    const intent = buildCloseIntent({ removeLocalRepo: true });
+
+    await harness.dispatcher.dispatch(intent);
+
+    // Directory deleted
+    expect(harness.state.deletedProjectDirectories).toContain(PROJECT_PATH);
+  });
+
+  it("test 11: close with removeLocalRepo skips for local projects", async () => {
+    const harness = createTestHarness({ noRemoteUrl: true });
+    const intent = buildCloseIntent({ removeLocalRepo: true });
+
+    await harness.dispatcher.dispatch(intent);
+
+    // Directory NOT deleted (no remoteUrl)
+    expect(harness.state.deletedProjectDirectories).toHaveLength(0);
+  });
+
+  it("test 12: project:closed event emitted after close", async () => {
+    const harness = createTestHarness();
+
+    const receivedEvents: DomainEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_PROJECT_CLOSED, (event) => {
+      receivedEvents.push(event);
+    });
+
+    await harness.dispatcher.dispatch(buildCloseIntent());
+
+    expect(receivedEvents).toHaveLength(1);
+    const event = receivedEvents[0] as ProjectClosedEvent;
+    expect(event.type).toBe(EVENT_PROJECT_CLOSED);
+    expect(event.payload.projectId).toBe(PROJECT_ID);
+  });
+
+  it("test 13: close with unknown projectId throws", async () => {
+    const harness = createTestHarness({ projectNotFound: true });
+    const intent = buildCloseIntent({
+      projectId: "nonexistent-12345678" as ProjectId,
+    });
+
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Project not found");
+  });
+
+  it("test 14: skipSwitch prevents intermediate switches during close", async () => {
+    const harness = createTestHarness();
+    const intent = buildCloseIntent();
+
+    await harness.dispatcher.dispatch(intent);
+
+    // The deleteViewModule checks skipSwitch -- no setActiveWorkspace calls from
+    // individual workspace deletes (only from the project close operation itself)
+    // The operation sets active to null since no other projects exist
+    const nullCalls = harness.state.setActiveWorkspaceCalls.filter((c) => c.path === null);
+    expect(nullCalls.length).toBe(1);
+
+    // No intermediate workspace switches (no calls with workspace paths)
+    const workspaceSwitchCalls = harness.state.setActiveWorkspaceCalls.filter(
+      (c) => c.path !== null
+    );
+    expect(workspaceSwitchCalls).toHaveLength(0);
+  });
+});
