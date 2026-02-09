@@ -129,7 +129,13 @@ import type {
   SwitchWorkspaceHookContext,
   WorkspaceSwitchedEvent,
 } from "./operations/switch-workspace";
-import { createIpcEventBridge } from "./modules/ipc-event-bridge";
+import { createIpcEventBridge, type WorkspaceResolver } from "./modules/ipc-event-bridge";
+import { createBadgeModule } from "./modules/badge-module";
+import {
+  UpdateAgentStatusOperation,
+  INTENT_UPDATE_AGENT_STATUS,
+} from "./operations/update-agent-status";
+import type { BadgeManager } from "./managers/badge-manager";
 import { formatWindowTitle } from "./ipc/api-handlers";
 import { wireModules } from "./intents/infrastructure/wire";
 import {
@@ -199,6 +205,10 @@ export interface BootstrapDeps {
   readonly titleVersionFn: () => string | undefined;
   /** Callback to check if an update is available */
   readonly hasUpdateAvailableFn: () => () => boolean;
+  /** BadgeManager factory (created in index.ts, passed down) */
+  readonly badgeManagerFn: () => import("./managers/badge-manager").BadgeManager;
+  /** Workspace resolver for IPC event bridge (resolves workspace path to project/name) */
+  readonly workspaceResolverFn: () => import("./modules/ipc-event-bridge").WorkspaceResolver;
 }
 
 /**
@@ -277,7 +287,9 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.workspaceLockHandlerFn(),
       deps.setTitleFn(),
       deps.titleVersionFn(),
-      deps.hasUpdateAvailableFn()
+      deps.hasUpdateAvailableFn(),
+      deps.badgeManagerFn(),
+      deps.workspaceResolverFn()
     );
   }
 
@@ -432,7 +444,9 @@ function wireDispatcher(
   workspaceLockHandler: WorkspaceLockHandler | undefined,
   setTitle: (title: string) => void,
   titleVersion: string | undefined,
-  hasUpdateAvailable: () => boolean
+  hasUpdateAvailable: () => boolean,
+  badgeManager: BadgeManager,
+  workspaceResolver: WorkspaceResolver
 ): void {
   const { appState, viewManager, gitClient, pathProvider, projectStore } = coreDeps;
   // Register operations
@@ -451,6 +465,7 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 
   // Idempotency module (interceptor + event handler, wired via wireModules below)
   const inProgressDeletions = new Set<string>();
@@ -1475,11 +1490,13 @@ function wireDispatcher(
     },
   };
 
-  // Wire IpcEventBridge and hook handler modules
-  const ipcEventBridge = createIpcEventBridge(registry);
+  // Wire IpcEventBridge, BadgeModule, and hook handler modules
+  const ipcEventBridge = createIpcEventBridge(registry, workspaceResolver);
+  const badgeModule = createBadgeModule(badgeManager);
   wireModules(
     [
       ipcEventBridge,
+      badgeModule,
       metadataModule,
       gitStatusModule,
       agentStatusModule,

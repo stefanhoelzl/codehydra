@@ -69,10 +69,12 @@ import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent } from "./operations/set-mode";
+import { INTENT_UPDATE_AGENT_STATUS } from "./operations/update-agent-status";
+import type { UpdateAgentStatusIntent } from "./operations/update-agent-status";
 import type { CoreModuleDeps } from "./modules/core";
 import { generateProjectId } from "./api/id-utils";
 import type { ICodeHydraApi, Unsubscribe } from "../shared/api/interfaces";
-import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
+import type { WorkspaceName } from "../shared/api/types";
 import { ApiIpcChannels, type WorkspaceLoadingChangedPayload } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
@@ -213,10 +215,10 @@ let serverManager: AgentServerManager | null = null;
 let mcpServerManager: McpServerManager | null = null;
 let codeHydraApi: ICodeHydraApi | null = null;
 let apiEventCleanup: Unsubscribe | null = null;
-let agentStatusCleanup: Unsubscribe | null = null;
 let mcpFirstRequestCleanup: Unsubscribe | null = null;
 let wrapperReadyCleanup: Unsubscribe | null = null;
 let loadingChangeCleanup: Unsubscribe | null = null;
+let agentStatusUnsubscribe: Unsubscribe | null = null;
 
 /**
  * PluginServer for VS Code extension communication.
@@ -240,6 +242,12 @@ let vscodeSetupService: VscodeSetupService | null = null;
  * Created in bootstrap() with initializeBootstrap().
  */
 let bootstrapResult: (BootstrapResult & { startServices: () => void }) | null = null;
+
+/**
+ * Dispatcher instance for the intent system.
+ * Created in bootstrap() and used in startServices() for agent status dispatch.
+ */
+let dispatcherInstance: Dispatcher | null = null;
 
 /**
  * Flag to track if services have been started.
@@ -503,7 +511,7 @@ async function startServices(): Promise<void> {
     );
   }
 
-  // Create and connect BadgeManager
+  // Create BadgeManager (no longer connects to status manager directly; wired via BadgeModule)
   // Uses shared imageLayer (created in bootstrap) so ImageHandles are resolvable by WindowLayer
   if (!imageLayer) {
     throw new Error("ImageLayer not initialized - startServices called before bootstrap");
@@ -516,7 +524,6 @@ async function startServices(): Promise<void> {
     windowManager,
     loggingService.createLogger("badge")
   );
-  badgeManager.connectToStatusManager(agentStatusManager);
 
   // Inject services into AppState and wire callbacks
   appState.setAgentStatusManager(agentStatusManager);
@@ -572,42 +579,16 @@ async function startServices(): Promise<void> {
     });
   }
 
-  // Wire agent status changes to API events
-  // This bridges the AgentStatusManager callback to the registry event system
-  agentStatusCleanup = agentStatusManager.onStatusChanged((workspacePath, aggregatedStatus) => {
-    // Find the project containing this workspace
-    const project = appStateRef.findProjectForWorkspace(workspacePath);
-    if (!project) return; // Workspace not in any known project, skip
-
-    // Generate IDs
-    const projectId = generateProjectId(project.path);
-    const workspaceName = nodePath.basename(workspacePath) as WorkspaceName;
-
-    // Convert old AggregatedAgentStatus to v2 WorkspaceStatus format
-    // Note: isDirty is not available from the status callback, so we set it to false
-    // The renderer will fetch the full status via getStatus() if needed
-    const status: WorkspaceStatus =
-      aggregatedStatus.status === "none"
-        ? { isDirty: false, agent: { type: "none" } }
-        : {
-            isDirty: false,
-            agent: {
-              type: aggregatedStatus.status,
-              counts: {
-                idle: aggregatedStatus.counts.idle,
-                busy: aggregatedStatus.counts.busy,
-                total: aggregatedStatus.counts.idle + aggregatedStatus.counts.busy,
-              },
-            },
-          };
-
-    // Emit through the registry
-    bootstrapResult?.registry.emit("workspace:status-changed", {
-      projectId,
-      workspaceName,
-      path: workspacePath,
-      status,
-    });
+  // Wire agent status changes through the intent dispatcher
+  // AgentStatusManager.onStatusChanged → dispatcher.dispatch(agent:update-status)
+  // Downstream subscribers (IpcEventBridge, BadgeModule) react to the domain event
+  agentStatusUnsubscribe = agentStatusManager.onStatusChanged((workspacePath, status) => {
+    if (dispatcherInstance) {
+      void dispatcherInstance.dispatch({
+        type: INTENT_UPDATE_AGENT_STATUS,
+        payload: { workspacePath, status },
+      } as UpdateAgentStatusIntent);
+    }
   });
 
   // Initialize MCP server (must start before loading projects so port is available)
@@ -873,6 +854,7 @@ async function bootstrap(): Promise<void> {
   // 6. Create dispatcher early so ShortcutController can dispatch intents
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
+  dispatcherInstance = dispatcher;
 
   // 6b. Create ViewManager with port=0 initially
   // Port will be updated when startServices() runs
@@ -1013,6 +995,28 @@ async function bootstrap(): Promise<void> {
     titleVersionFn: () => buildInfo.gitBranch ?? buildInfo.version,
     // Callback to check if an update is available
     hasUpdateAvailableFn: () => () => windowManager?.hasUpdateAvailable() ?? false,
+    // BadgeManager (created in startServices, passed to bootstrap for BadgeModule wiring)
+    badgeManagerFn: () => {
+      if (!badgeManager) {
+        throw new Error("BadgeManager not initialized - startServices called before bootstrap");
+      }
+      return badgeManager;
+    },
+    // Workspace resolver for IPC event bridge (resolves workspace path to project/name)
+    workspaceResolverFn: () => {
+      if (!appState) {
+        throw new Error("AppState not initialized");
+      }
+      const appStateRef = appState;
+      return (workspacePath: string) => {
+        const project = appStateRef.findProjectForWorkspace(workspacePath);
+        if (!project) return undefined;
+        return {
+          projectId: generateProjectId(project.path),
+          workspaceName: nodePath.basename(workspacePath) as WorkspaceName,
+        };
+      };
+    },
   }) as BootstrapResult & { startServices: () => void };
 
   // Note: IPC handlers for lifecycle.* are now registered by LifecycleModule
@@ -1092,7 +1096,7 @@ async function cleanup(): Promise<void> {
 
   // Dispose badge manager
   if (badgeManager) {
-    badgeManager.disconnect();
+    badgeManager.dispose();
     badgeManager = null;
   }
 
@@ -1100,6 +1104,12 @@ async function cleanup(): Promise<void> {
   if (autoUpdater) {
     autoUpdater.dispose();
     autoUpdater = null;
+  }
+
+  // Cleanup agent status change subscription
+  if (agentStatusUnsubscribe) {
+    agentStatusUnsubscribe();
+    agentStatusUnsubscribe = null;
   }
 
   // Dispose agent status manager
@@ -1112,12 +1122,6 @@ async function cleanup(): Promise<void> {
   if (apiEventCleanup) {
     apiEventCleanup();
     apiEventCleanup = null;
-  }
-
-  // Cleanup agent status wiring
-  if (agentStatusCleanup) {
-    agentStatusCleanup();
-    agentStatusCleanup = null;
   }
 
   // Cleanup MCP first request callback
@@ -1165,6 +1169,7 @@ async function cleanup(): Promise<void> {
 
   windowManager = null;
   appState = null;
+  dispatcherInstance = null;
 
   // Dispose layers in reverse initialization order:
   // Initialization: IpcLayer → AppLayer → ImageLayer → MenuLayer → DialogLayer → SessionLayer → WindowLayer → ViewLayer
