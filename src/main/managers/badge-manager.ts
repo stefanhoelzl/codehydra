@@ -12,13 +12,6 @@ import type { ImageLayer } from "../../services/platform/image";
 import type { ImageHandle } from "../../services/platform/types";
 import type { WindowManager } from "./window-manager";
 import type { Logger } from "../../services/logging";
-import type { AgentStatusManager } from "../../agents/opencode/status-manager";
-import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
-
-/**
- * Unsubscribe function type.
- */
-type Unsubscribe = () => void;
 
 /**
  * Badge state representing overall workspace status.
@@ -48,11 +41,6 @@ export class BadgeManager {
    * Key is the badge state, value is the ImageHandle.
    */
   private readonly imageCache = new Map<BadgeState, ImageHandle>();
-
-  /**
-   * Unsubscribe function for status manager subscription.
-   */
-  private statusManagerUnsubscribe: Unsubscribe | null = null;
 
   constructor(
     platformInfo: PlatformInfo,
@@ -310,52 +298,12 @@ export class BadgeManager {
   }
 
   /**
-   * Connects to the AgentStatusManager to receive status updates.
-   * When status changes, the badge is updated with the aggregated state.
-   *
-   * @param statusManager - The AgentStatusManager to subscribe to
-   */
-  connectToStatusManager(statusManager: AgentStatusManager): void {
-    // Clean up any existing subscription
-    this.disconnect();
-
-    // Subscribe to status changes
-    this.statusManagerUnsubscribe = statusManager.onStatusChanged(() => {
-      const statuses = statusManager.getAllStatuses();
-      const state = this.aggregateWorkspaceStates(statuses);
-      this.updateBadge(state);
-    });
-
-    // Perform initial update with current state
-    const statuses = statusManager.getAllStatuses();
-    const state = this.aggregateWorkspaceStates(statuses);
-    this.updateBadge(state);
-
-    this.logger.info("Connected to AgentStatusManager", {
-      initialState: state,
-    });
-  }
-
-  /**
-   * Disconnects from the AgentStatusManager.
-   * Clears the badge when disconnected.
-   */
-  disconnect(): void {
-    if (this.statusManagerUnsubscribe) {
-      this.statusManagerUnsubscribe();
-      this.statusManagerUnsubscribe = null;
-      this.updateBadge("none");
-      this.logger.debug("Disconnected from AgentStatusManager");
-    }
-  }
-
-  /**
    * Disposes of the BadgeManager, releasing all resources.
-   * This includes disconnecting from status manager and releasing cached images.
+   * Clears the badge and releases cached images.
    */
   dispose(): void {
-    // Disconnect from status manager first
-    this.disconnect();
+    // Clear badge
+    this.updateBadge("none");
 
     // Release all cached badge images
     for (const handle of this.imageCache.values()) {
@@ -363,56 +311,5 @@ export class BadgeManager {
     }
     this.imageCache.clear();
     this.logger.debug("BadgeManager disposed, released cached images");
-  }
-
-  /**
-   * Aggregates workspace statuses into a single badge state.
-   *
-   * Logic:
-   * - "none": No workspaces with agents, or all workspaces are ready (idle)
-   * - "all-working": All workspaces with agents are busy
-   * - "mixed": Some workspaces ready, some working
-   *
-   * Note: Workspaces with "mixed" status (both idle and busy agents) count as "working"
-   * since they have active work in progress.
-   *
-   * @param statuses - Map of workspace paths to their aggregated statuses
-   * @returns Badge state to display
-   */
-  private aggregateWorkspaceStates(
-    statuses: Map<WorkspacePath, AggregatedAgentStatus>
-  ): BadgeState {
-    let hasReady = false;
-    let hasWorking = false;
-
-    for (const status of statuses.values()) {
-      switch (status.status) {
-        case "idle":
-          // Workspace is fully ready (all agents idle)
-          hasReady = true;
-          break;
-        case "busy":
-        case "mixed":
-          // Workspace has at least one busy agent
-          hasWorking = true;
-          break;
-        // "none" status doesn't affect the badge
-      }
-    }
-
-    if (!hasReady && !hasWorking) {
-      // No workspaces with agents
-      return "none";
-    }
-    if (hasReady && !hasWorking) {
-      // All workspaces are ready - no badge
-      return "none";
-    }
-    if (!hasReady && hasWorking) {
-      // All workspaces are working - red circle
-      return "all-working";
-    }
-    // Some ready, some working - mixed badge
-    return "mixed";
   }
 }

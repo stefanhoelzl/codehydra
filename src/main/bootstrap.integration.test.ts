@@ -225,6 +225,9 @@ function createMockDeps(): BootstrapDeps {
     setTitleFn: () => vi.fn(),
     titleVersionFn: () => "test",
     hasUpdateAvailableFn: () => () => false,
+    badgeManagerFn: () =>
+      ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
+    workspaceResolverFn: () => () => undefined,
   };
 }
 
@@ -319,6 +322,9 @@ describe("bootstrap.module.order", () => {
       setTitleFn: () => vi.fn(),
       titleVersionFn: () => "test",
       hasUpdateAvailableFn: () => () => false,
+      badgeManagerFn: () =>
+        ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
+      workspaceResolverFn: () => () => undefined,
     };
 
     const result = initializeBootstrap(deps);

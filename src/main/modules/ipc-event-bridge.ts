@@ -23,14 +23,30 @@ import type { ProjectClosedEvent } from "../operations/close-project";
 import { EVENT_PROJECT_CLOSED } from "../operations/close-project";
 import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
+import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
+import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
+import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
+
+/**
+ * Narrow workspace resolver interface for the IPC event bridge.
+ * Resolves a workspace path to its project ID and workspace name.
+ * Returns undefined if the workspace is not found in any known project.
+ */
+export type WorkspaceResolver = (
+  workspacePath: string
+) => { projectId: ProjectId; workspaceName: WorkspaceName } | undefined;
 
 /**
  * Create an IpcEventBridge module that forwards domain events to the API registry.
  *
  * @param apiRegistry - The API registry to emit events on
+ * @param workspaceResolver - Optional resolver for workspace path to project/name mapping
  * @returns IntentModule with event subscriptions
  */
-export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
+export function createIpcEventBridge(
+  apiRegistry: IApiRegistry,
+  workspaceResolver?: WorkspaceResolver
+): IntentModule {
   const events: EventDeclarations = {
     [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
       const payload = (event as MetadataChangedEvent).payload as MetadataChangedPayload;
@@ -82,6 +98,37 @@ export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
           path: payload.path,
         });
       }
+    },
+    [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
+      if (!workspaceResolver) return;
+
+      const { workspacePath, status: aggregatedStatus } = (event as AgentStatusUpdatedEvent)
+        .payload;
+
+      const resolved = workspaceResolver(workspacePath);
+      if (!resolved) return;
+
+      const status: WorkspaceStatus =
+        aggregatedStatus.status === "none"
+          ? { isDirty: false, agent: { type: "none" } }
+          : {
+              isDirty: false,
+              agent: {
+                type: aggregatedStatus.status,
+                counts: {
+                  idle: aggregatedStatus.counts.idle,
+                  busy: aggregatedStatus.counts.busy,
+                  total: aggregatedStatus.counts.idle + aggregatedStatus.counts.busy,
+                },
+              },
+            };
+
+      apiRegistry.emit("workspace:status-changed", {
+        projectId: resolved.projectId,
+        workspaceName: resolved.workspaceName,
+        path: workspacePath,
+        status,
+      });
     },
   };
 

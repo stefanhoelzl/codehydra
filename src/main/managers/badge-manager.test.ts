@@ -348,7 +348,7 @@ describe("BadgeManager", () => {
       expect(imageLayer).toHaveImages([]);
     });
 
-    it("clears overlay on dispose when connected to status manager", () => {
+    it("clears overlay on dispose", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
 
       const manager = new BadgeManager(
@@ -359,24 +359,15 @@ describe("BadgeManager", () => {
         SILENT_LOGGER
       );
 
-      // Connect to a mock status manager to enable disconnect behavior
-      const mockStatusManager = {
-        onStatusChanged: () => () => {},
-        getAllStatuses: () => new Map(),
-      };
-      manager.connectToStatusManager(
-        mockStatusManager as unknown as import("../../agents/opencode").AgentStatusManager
-      );
-
       // Show an overlay
       manager.updateBadge("all-working");
       const callsAfterUpdate = windowManager.setOverlayIconCalls.length;
       expect(callsAfterUpdate).toBeGreaterThan(0);
 
-      // Dispose - should clear overlay via disconnect
+      // Dispose - should clear overlay
       manager.dispose();
 
-      // Should have cleared overlay (null image via disconnect)
+      // Should have cleared overlay (null image via updateBadge("none"))
       const lastCall = windowManager.setOverlayIconCalls.at(-1);
       expect(lastCall?.image).toBeNull();
     });

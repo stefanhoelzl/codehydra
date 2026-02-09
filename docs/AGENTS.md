@@ -49,9 +49,21 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. The ar
 │         ▼                                                        │
 │  AgentStatusManager ◄── AgentProvider (status events)            │
 │         │                                                        │
-│         │ callback on status change                              │
+│         │ onStatusChanged callback                               │
 │         ▼                                                        │
-│  IPC Handlers ──► workspace:status-changed event                 │
+│  Dispatcher.dispatch(agent:update-status intent)                 │
+│         │                                                        │
+│         │ UpdateAgentStatusOperation emits domain event           │
+│         ▼                                                        │
+│  agent:status-updated domain event                               │
+│         │                                                        │
+│         ├──► IpcEventBridge subscriber                            │
+│         │      converts AggregatedAgentStatus → WorkspaceStatus  │
+│         │      emits workspace:status-changed via registry        │
+│         │                                                        │
+│         └──► BadgeModule subscriber                               │
+│                updates internal map, re-aggregates badge state    │
+│                calls badgeManager.updateBadge()                   │
 │                                                                  │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
