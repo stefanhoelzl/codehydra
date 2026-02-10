@@ -52,6 +52,12 @@ export class IntentHandle<T> implements PromiseLike<T> {
     return this.#result.then(onfulfilled, onrejected);
   }
 
+  catch<TResult = never>(
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
+  ): Promise<T | TResult> {
+    return this.#result.catch(onrejected);
+  }
+
   get accepted(): Promise<boolean> {
     return this.#accepted;
   }

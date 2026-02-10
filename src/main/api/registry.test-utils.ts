@@ -78,10 +78,10 @@ export interface MockApiRegistry extends IApiRegistry {
  * const mockRegistry = createMockRegistry();
  *
  * // Create module under test
- * const module = new LifecycleModule(mockRegistry, deps);
+ * const module = new CoreModule(mockRegistry, deps);
  *
  * // Verify registration
- * expect(mockRegistry.getRegisteredPaths()).toContain("lifecycle.getState");
+ * expect(mockRegistry.getRegisteredPaths()).toContain("lifecycle.quit");
  *
  * // Verify events
  * mockRegistry.emit("workspace:switched", { projectId: "test-12345678", workspaceName: "main", path: "/test" });
@@ -243,10 +243,6 @@ function createMockCodeHydraApi(
       setMode: (mode) => get("ui.setMode")({ mode }),
     },
     lifecycle: {
-      getState: () => get("lifecycle.getState")({}),
-      setAgent: (agent) => get("lifecycle.setAgent")({ agent }),
-      setup: () => get("lifecycle.setup")({}),
-      startServices: () => get("lifecycle.startServices")({}),
       quit: () => get("lifecycle.quit")({}),
     },
     on: vi.fn().mockReturnValue(() => {}),
@@ -263,10 +259,6 @@ export function registerAllMethodsWithStubs(
   overrides: Partial<{ [P in MethodPath]: MethodHandler<P> }> = {}
 ): void {
   const defaultHandlers: { [P in MethodPath]: MethodHandler<P> } = {
-    "lifecycle.getState": async () => ({ state: "ready", agent: "claude" }),
-    "lifecycle.setAgent": async () => ({ success: true as const }),
-    "lifecycle.setup": async () => ({ success: true as const }),
-    "lifecycle.startServices": async () => ({ success: true as const }),
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},

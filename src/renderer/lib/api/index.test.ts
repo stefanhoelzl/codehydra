@@ -107,12 +107,12 @@ describe("renderer API layer", () => {
       expect(result).toBeNull();
     });
 
-    it("lifecycle.getState returns app state", async () => {
+    // Note: lifecycle.getState removed in app:setup migration
+    it("lifecycle.quit calls quit", async () => {
       const api = await import("$lib/api");
-      const result = await api.lifecycle.getState();
+      await api.lifecycle.quit();
 
-      expect(mockApi.lifecycle.getState).toHaveBeenCalled();
-      expect(result).toEqual({ state: "loading", agent: "opencode" });
+      expect(mockApi.lifecycle.quit).toHaveBeenCalled();
     });
 
     it("on subscribes to events and returns unsubscribe", async () => {
@@ -136,10 +136,8 @@ describe("renderer API layer", () => {
 
       const api = await import("$lib/api");
 
-      // Verify lifecycle namespace exists with v2 API methods
+      // Verify lifecycle namespace exists - only quit remains after app:setup migration
       expect(api.lifecycle).toBeDefined();
-      expect(typeof api.lifecycle.getState).toBe("function");
-      expect(typeof api.lifecycle.setup).toBe("function");
       expect(typeof api.lifecycle.quit).toBe("function");
     });
 

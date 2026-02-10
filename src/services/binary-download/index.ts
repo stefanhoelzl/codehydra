@@ -27,6 +27,14 @@ export { TarExtractor, ZipExtractor, DefaultArchiveExtractor } from "./archive-e
 export type { BinaryDownloadService } from "./binary-download-service.js";
 export { DefaultBinaryDownloadService } from "./binary-download-service.js";
 
+// Agent binary manager
+export type {
+  AgentBinaryPreflightResult,
+  AgentBinaryPreflightError,
+  AgentBinaryType,
+} from "./agent-binary-manager.js";
+export { AgentBinaryManager } from "./agent-binary-manager.js";
+
 // Test utilities
 export { createArchiveExtractorMock } from "./archive-extractor.state-mock.js";
 export type { MockArchiveExtractor } from "./archive-extractor.state-mock.js";

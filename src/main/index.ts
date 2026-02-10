@@ -33,7 +33,7 @@ import {
   type BuildInfo,
   type LoggingService,
 } from "../services";
-import { VscodeSetupService } from "../services/vscode-setup";
+import { setupBinDirectory } from "../services/vscode-setup/bin-setup";
 import { ConfigService } from "../services/config/config-service";
 import { PostHogTelemetryService, type TelemetryService } from "../services/telemetry";
 import { AutoUpdater } from "../services/auto-updater";
@@ -49,10 +49,12 @@ import { DefaultSessionLayer, type SessionLayer } from "../services/shell/sessio
 import {
   DefaultBinaryDownloadService,
   DefaultArchiveExtractor,
+  AgentBinaryManager,
   type BinaryDownloadService,
   CODE_SERVER_VERSION,
   OPENCODE_VERSION,
 } from "../services/binary-download";
+import { ExtensionManager } from "../services/vscode-setup/extension-manager";
 import { AgentStatusManager, type AgentType, type AgentServerManager } from "../agents";
 import { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import { PluginServer } from "../services/plugin-server";
@@ -67,14 +69,14 @@ import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent } from "./operations/set-mode";
-import { INTENT_APP_START } from "./operations/app-start";
-import type { AppStartIntent } from "./operations/app-start";
 import { INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
+import { INTENT_APP_START } from "./operations/app-start";
+import type { AppStartIntent } from "./operations/app-start";
 import type { CoreModuleDeps } from "./modules/core";
 import { generateProjectId } from "./api/id-utils";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
-import type { WorkspaceName } from "../shared/api/types";
+import type { WorkspaceName, ConfigAgentType } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
@@ -222,31 +224,31 @@ let codeHydraApi: ICodeHydraApi | null = null;
 let pluginServer: PluginServer | null = null;
 
 /**
- * Shared ProcessRunner instance for both VscodeSetupService and CodeServerManager.
+ * Shared ProcessRunner instance for CodeServerManager and other services.
  * Created once in bootstrap() and reused for all process spawning.
  */
 let processRunner: ExecaProcessRunner | null = null;
 
 /**
- * Setup service for first-run configuration.
- */
-let vscodeSetupService: VscodeSetupService | null = null;
-
-/**
  * Bootstrap result containing API registry and modules.
  * Created in bootstrap() with initializeBootstrap().
  */
-let bootstrapResult: (BootstrapResult & { startServices: () => void }) | null = null;
+let bootstrapResult:
+  | (BootstrapResult & {
+      startServices: () => void;
+      setBeforeAppStart: (fn: () => Promise<void>) => void;
+    })
+  | null = null;
 
 /**
  * Dispatcher instance for the intent system.
- * Created in bootstrap() and used in startServices() for agent status dispatch.
+ * Created in bootstrap() and used in createServicesAndWireDispatcher() for agent status dispatch.
  */
 let dispatcherInstance: Dispatcher | null = null;
 
 /**
  * Flag to track if services have been started.
- * Prevents double-initialization when both bootstrap and setup flow might call startServices.
+ * Prevents double-initialization if createServicesAndWireDispatcher is called multiple times.
  */
 let servicesStarted = false;
 
@@ -338,11 +340,20 @@ let workspaceFileService: import("../services").IWorkspaceFileService | null = n
  * 1. Construction: Build all service instances (constructors/factories, no I/O)
  * 2. Dispatch: `app:start` intent runs hook-based startup via lifecycle modules
  *
- * CRITICAL: Called by LifecycleModule's onSetupComplete callback BEFORE
+ * CRITICAL: Called by the app:start intent's "wire" hook point BEFORE
  * returning the setup result to the renderer. This ensures IPC handlers
  * are registered before MainView mounts.
  */
-async function startServices(): Promise<void> {
+/**
+ * Creates all service instances and wires the intent dispatcher.
+ *
+ * Called by the app:start intent's beforeAppStart callback after setup completes.
+ * This function:
+ * 1. Creates all service instances (PluginServer, CodeServerManager, AppState, etc.)
+ * 2. Calls bootstrapResult.startServices() to wire the remaining intent operations
+ * 3. Does NOT dispatch app:start (that's handled by the start intent flow)
+ */
+async function createServicesAndWireDispatcher(): Promise<void> {
   // Guard against double initialization
   if (servicesStarted) return;
   if (!windowManager || !viewManager) return;
@@ -354,13 +365,17 @@ async function startServices(): Promise<void> {
 
   // Load agent type from config (saved by user via agent selection dialog)
   if (!configService) {
-    throw new Error("ConfigService not initialized - startServices called before bootstrap");
+    throw new Error(
+      "ConfigService not initialized - createServicesAndWireDispatcher called before bootstrap"
+    );
   }
   const appConfig = await configService.load();
   const selectedAgentType: AgentType = appConfig.agent ?? "opencode";
 
   if (!processRunner) {
-    throw new Error("ProcessRunner not initialized - startServices called before bootstrap");
+    throw new Error(
+      "ProcessRunner not initialized - createServicesAndWireDispatcher called before bootstrap"
+    );
   }
 
   // Create shared network layer for all network operations
@@ -441,7 +456,9 @@ async function startServices(): Promise<void> {
 
   // Create BadgeManager
   if (!imageLayer) {
-    throw new Error("ImageLayer not initialized - startServices called before bootstrap");
+    throw new Error(
+      "ImageLayer not initialized - createServicesAndWireDispatcher called before bootstrap"
+    );
   }
   const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
   badgeManager = new BadgeManager(
@@ -465,11 +482,13 @@ async function startServices(): Promise<void> {
   }
 
   // =========================================================================
-  // Phase 2: Wire dispatcher and dispatch app:start
+  // Phase 2: Wire dispatcher (CoreModule and remaining operations)
   // =========================================================================
 
   if (!bootstrapResult) {
-    throw new Error("Bootstrap not initialized - startServices called before bootstrap");
+    throw new Error(
+      "Bootstrap not initialized - createServicesAndWireDispatcher called before bootstrap"
+    );
   }
 
   // Create remaining modules (CoreModule) and wire intent dispatcher
@@ -489,17 +508,13 @@ async function startServices(): Promise<void> {
     loggingService.createLogger("mcp")
   );
 
-  // Dispatch app:start -- lifecycle modules handle all I/O (start servers,
-  // wire callbacks, load data, activate first workspace)
-  await dispatcherInstance!.dispatch({
-    type: INTENT_APP_START,
-    payload: {},
-  } as AppStartIntent);
+  // Note: app:start is NOT dispatched here - the start intent flow handles that after
+  // this callback returns. This function only creates services and wires the dispatcher.
 }
 
 // NOTE: Legacy setup handlers (registerSetupReadyHandler, registerSetupRetryAndQuitHandlers,
 // runSetupProcess, createSetupEmitters) have been removed. Setup is now handled entirely
-// through the LifecycleModule (which registers lifecycle.* IPC handlers).
+// through the intent dispatcher (lifecycle.quit dispatches app:shutdown).
 
 /**
  * Bootstraps the application.
@@ -509,15 +524,12 @@ async function startServices(): Promise<void> {
  *
  * The initialization flow is:
  * 1. Initialize logging and disable application menu
- * 2. Create VscodeSetupService, BinaryDownloadService
+ * 2. Create BinaryDownloadService and setup managers
  * 3. Regenerate wrapper scripts (cheap operation on every startup)
- * 4. Run preflight to determine if setup is needed
- * 5. Create WindowManager and ViewManager
- * 6. Initialize bootstrap with ApiRegistry and LifecycleModule
- * 7. If setup complete, start services immediately
- * 8. Load UI (renderer will call lifecycle.getState() in onMount)
- *    - If "ready": renderer shows MainView
- *    - If "setup": renderer shows SetupScreen, calls lifecycle.setup()
+ * 4. Create WindowManager and ViewManager
+ * 5. Initialize bootstrap with ApiRegistry and lifecycle handlers
+ * 6. Load UI
+ * 7. Dispatch app:start intent (checks setup, runs app:setup if needed, starts services)
  */
 async function bootstrap(): Promise<void> {
   // 0. Initialize logging service (enables renderer logging via IPC)
@@ -567,7 +579,7 @@ async function bootstrap(): Promise<void> {
     throw error;
   });
 
-  // 3. Create VscodeSetupService early (needed for LifecycleModule)
+  // 3. Create platform layers and setup services
   // Note: Process tree provider is created lazily in startServices() using the factory
 
   // Store processRunner in module-level variable for reuse by CodeServerManager
@@ -587,39 +599,39 @@ async function bootstrap(): Promise<void> {
     loggingService.createLogger("binary-download")
   );
 
-  // Factory to create VscodeSetupService for the current agent type
-  // This is called each time setup needs to run, ensuring it uses the latest agent selection
-  // Capture references to avoid null checks (they're set by the time the factory is called)
-  const configServiceRef = configService;
-  const processRunnerRef = processRunner;
-  const createVscodeSetupService = async (): Promise<VscodeSetupService> => {
-    // Re-read config to get current agent selection
-    const currentConfig = await configServiceRef.load();
-    const currentAgentType: AgentType = currentConfig.agent ?? "opencode";
+  // 3. Regenerate wrapper scripts (cheap operation, ensures they always exist)
+  await setupBinDirectory(fileSystemLayer, pathProvider);
 
-    return new VscodeSetupService(
-      processRunnerRef,
-      pathProvider,
-      fileSystemLayer,
-      platformInfo,
+  // 3b. Create setup managers for app:setup hook modules
+  // CodeServerManager for setup (preflight + download only, not runtime)
+  const codeServerConfig = createCodeServerConfig();
+  const setupCodeServerManager = new CodeServerManager(
+    codeServerConfig,
+    processRunner,
+    networkLayerForSetup,
+    networkLayerForSetup,
+    loggingService.createLogger("code-server"),
+    binaryDownloadService
+  );
+
+  // AgentBinaryManager factory - creates manager for specific agent type
+  const getAgentBinaryManager = (agentType: ConfigAgentType): AgentBinaryManager => {
+    return new AgentBinaryManager(
+      agentType,
       binaryDownloadService,
-      loggingService.createLogger("vscode-setup"),
-      undefined, // Agent extension ID no longer used
-      currentAgentType // Pass agent binary type for download operations
+      loggingService.createLogger("agent-binary")
     );
   };
 
-  // Create initial VscodeSetupService for bootstrap operations (preflight, bin directory)
-  vscodeSetupService = await createVscodeSetupService();
+  // ExtensionManager for extension preflight/install
+  const setupExtensionManager = new ExtensionManager(
+    pathProvider,
+    fileSystemLayer,
+    processRunner,
+    loggingService.createLogger("ext-manager")
+  );
 
-  // 3. Regenerate wrapper scripts (cheap operation, ensures they always exist)
-  await vscodeSetupService.setupBinDirectory();
-
-  // 4. Run preflight to determine if setup is needed
-  const preflightResult = await vscodeSetupService.preflight();
-  const setupComplete = preflightResult.success && !preflightResult.needsSetup;
-
-  // 5. Create WindowManager with appropriate title and icon
+  // 4. Create WindowManager with appropriate title and icon
   // In dev mode, show branch name: "CodeHydra (branch-name)"
   const windowTitle =
     buildInfo.isDevelopment && buildInfo.gitBranch
@@ -683,25 +695,13 @@ async function bootstrap(): Promise<void> {
   const viewManagerRef = viewManager;
 
   // 7. Initialize bootstrap with API registry and modules
-  // LifecycleModule is created immediately (handles lifecycle.* IPC)
-  // CoreModule and intent dispatcher are created when startServices() calls bootstrapResult.startServices()
+  // lifecycle.quit is registered immediately, CoreModule and intent dispatcher are created
+  // when startServices() calls bootstrapResult.startServices()
   const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
   bootstrapResult = initializeBootstrap({
     logger: loggingService.createLogger("api"),
     ipcLayer,
-    // Lifecycle module deps - available now
-    lifecycleDeps: {
-      // Factory to create VscodeSetupService with current agent type from config
-      getVscodeSetup: createVscodeSetupService,
-      configService,
-      app,
-      doStartServices: async () => {
-        appLogger.info("Starting services");
-        await startServices();
-        appLogger.info("Services started");
-      },
-      logger: loggingService.createLogger("lifecycle"),
-    },
+    app,
     // Core module deps - factory that captures module-level appState
     // Called when bootstrapResult.startServices() runs in startServices()
     coreDepsFn: (): CoreModuleDeps => {
@@ -874,13 +874,30 @@ async function bootstrap(): Promise<void> {
         windowManager: windowManagerRef,
       };
     },
-  }) as BootstrapResult & { startServices: () => void };
+    // Function to get UI webContents for setup error IPC events
+    // ViewManager is available after bootstrap creates it
+    getUIWebContentsFn: () => viewManager?.getUIWebContents() ?? null,
+    // Setup dependencies for app:setup hook modules
+    setupDeps: {
+      configService: configService!,
+      codeServerManager: setupCodeServerManager,
+      getAgentBinaryManager,
+      extensionManager: setupExtensionManager,
+    },
+  }) as BootstrapResult & {
+    startServices: () => void;
+    setBeforeAppStart: (fn: () => Promise<void>) => void;
+  };
 
-  // Note: IPC handlers for lifecycle.* are now registered by LifecycleModule
+  // Note: IPC handlers for lifecycle.quit are registered by initializeBootstrap()
   // No need to call registerLifecycleHandlers() separately
 
+  // Wire the beforeAppStart callback - creates services then wires dispatcher
+  // Called by app:start intent after setup completes, before running start/activate hooks
+  bootstrapResult.setBeforeAppStart(createServicesAndWireDispatcher);
+
   // Wire lifecycle:setup-progress events to IPC immediately (before UI loads)
-  // This is needed because setup runs before startServices() which wires other events
+  // This is needed because setup runs before services are created
   bootstrapResult.registry.on("lifecycle:setup-progress", (payload) => {
     const webContents = viewManager?.getUIWebContents();
     if (webContents && !webContents.isDestroyed()) {
@@ -888,23 +905,32 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  // 8. Services are NOT started here anymore
-  // The renderer will call lifecycle.startServices() after loading
-  // This allows the UI to display a loading screen during service startup
-  if (setupComplete) {
-    appLogger.debug("Setup complete, renderer will start services");
-  } else {
-    appLogger.info("Setup required");
-  }
-
-  // 9. Load UI layer HTML
-  // Renderer will call lifecycle.getState() in onMount and route based on response
+  // 8. Load UI layer HTML
+  // Renderer starts in "initializing" mode and waits for IPC events
   // Use file:// URL to load local HTML file
   const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
   await viewLayer.loadURL(viewManager.getUIViewHandle(), uiHtmlPath);
 
   // Focus UI layer so keyboard shortcuts (Alt+X) work immediately on startup
   viewManager.focusUI();
+
+  // 9. Dispatch app:start to orchestrate the startup flow
+  // This shows the starting screen, checks if setup is needed, and dispatches app:setup if required.
+  // After setup (if any), it runs wire, start, and activate hooks to complete startup.
+  appLogger.info("Dispatching app:start");
+  void dispatcherInstance!
+    .dispatch({
+      type: INTENT_APP_START,
+      payload: {},
+    } as AppStartIntent)
+    .catch((error: unknown) => {
+      appLogger.error(
+        "Startup failed",
+        { error: getErrorMessage(error) },
+        error instanceof Error ? error : undefined
+      );
+      // Error is already emitted to renderer via the setup error handler
+    });
 
   // 10. Open DevTools in development only
   // Note: DevTools not auto-opened to avoid z-order issues on Linux.

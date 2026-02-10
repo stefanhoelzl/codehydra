@@ -11,9 +11,6 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  SetupResult,
-  AppStateResult,
-  ConfigAgentType,
   InitialPrompt,
   AgentSession,
 } from "../../shared/api/types";
@@ -110,11 +107,6 @@ export interface UiSetModePayload {
   readonly mode: UIMode;
 }
 
-/** lifecycle.setAgent */
-export interface LifecycleSetAgentPayload {
-  readonly agent: ConfigAgentType;
-}
-
 // =============================================================================
 // Method Registry - Single Source of Truth
 // =============================================================================
@@ -127,10 +119,6 @@ export interface LifecycleSetAgentPayload {
  */
 export interface MethodRegistry {
   // Lifecycle
-  "lifecycle.getState": (payload: EmptyPayload) => Promise<AppStateResult>;
-  "lifecycle.setAgent": (payload: LifecycleSetAgentPayload) => Promise<SetupResult>;
-  "lifecycle.setup": (payload: EmptyPayload) => Promise<SetupResult>;
-  "lifecycle.startServices": (payload: EmptyPayload) => Promise<SetupResult>;
   "lifecycle.quit": (payload: EmptyPayload) => Promise<void>;
 
   // Projects
@@ -177,12 +165,7 @@ export type MethodPath = keyof MethodRegistry;
  * Grouped method paths for better organization.
  * @internal Exported for testing only - used for type-level verification
  */
-export type LifecyclePath =
-  | "lifecycle.getState"
-  | "lifecycle.setAgent"
-  | "lifecycle.setup"
-  | "lifecycle.startServices"
-  | "lifecycle.quit";
+export type LifecyclePath = "lifecycle.quit";
 /** @internal Exported for testing only */
 export type ProjectPath =
   | "projects.open"
@@ -229,10 +212,6 @@ export type MethodResult<P extends MethodPath> = Awaited<ReturnType<MethodRegist
  * This array must contain all keys from MethodRegistry.
  */
 export const ALL_METHOD_PATHS = [
-  "lifecycle.getState",
-  "lifecycle.setAgent",
-  "lifecycle.setup",
-  "lifecycle.startServices",
   "lifecycle.quit",
   "projects.open",
   "projects.close",

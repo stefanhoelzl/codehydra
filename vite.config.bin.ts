@@ -7,7 +7,7 @@
  * - src/agents/claude/hook-handler.ts -> hook-handler.cjs
  *
  * Also copies compiled wrappers to ./dist/bin/ for production packaging.
- * Runtime copying to app-data/bin/ is handled by VscodeSetupService.setupBinDirectory().
+ * Runtime copying to app-data/bin/ is handled by setupBinDirectory() from bin-setup.ts.
  */
 
 import { defineConfig } from "vite";

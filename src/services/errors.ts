@@ -31,10 +31,12 @@ export interface SerializedError {
     | "code-server"
     | "project-store"
     | "opencode"
-    | "vscode-setup"
     | "filesystem"
     | "binary-download"
-    | "archive";
+    | "archive"
+    | "setup"
+    | "agent-binary"
+    | "extension";
   readonly message: string;
   readonly code?: string;
   readonly path?: string;
@@ -107,13 +109,6 @@ export class OpenCodeError extends ServiceError {
 }
 
 /**
- * Error from VS Code setup operations.
- */
-export class VscodeSetupError extends ServiceError {
-  readonly type = "vscode-setup" as const;
-}
-
-/**
  * Error from binary download operations (code-server, opencode).
  */
 export class BinaryDownloadError extends ServiceError {
@@ -173,6 +168,46 @@ export class FileSystemError extends ServiceError {
       code: this.fsCode,
     };
   }
+}
+
+/**
+ * Error codes for setup operations.
+ */
+export type SetupErrorCode =
+  | "TIMEOUT"
+  | "AGENT_SELECTION_REQUIRED"
+  | "CONFIG_SAVE_FAILED"
+  | "BINARY_DOWNLOAD_FAILED"
+  | "EXTENSION_INSTALL_FAILED"
+  | "UNKNOWN";
+
+/**
+ * Error from application setup operations (app:setup intent).
+ */
+export class SetupError extends ServiceError {
+  readonly type = "setup" as const;
+
+  constructor(
+    message: string,
+    readonly errorCode?: SetupErrorCode
+  ) {
+    super(message, errorCode);
+    this.name = "SetupError";
+  }
+}
+
+/**
+ * Error from agent binary operations.
+ */
+export class AgentBinaryError extends ServiceError {
+  readonly type = "agent-binary" as const;
+}
+
+/**
+ * Error from extension operations.
+ */
+export class ExtensionError extends ServiceError {
+  readonly type = "extension" as const;
 }
 
 /**

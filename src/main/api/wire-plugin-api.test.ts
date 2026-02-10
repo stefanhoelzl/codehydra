@@ -53,10 +53,6 @@ function createMockApi(): ICodeHydraApi {
       setMode: vi.fn(),
     },
     lifecycle: {
-      getState: vi.fn().mockResolvedValue({ state: "ready", agent: "opencode" }),
-      setup: vi.fn().mockResolvedValue({ success: true }),
-      startServices: vi.fn().mockResolvedValue({ success: true }),
-      setAgent: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn(),
     },
     on: vi.fn().mockReturnValue(() => {}),

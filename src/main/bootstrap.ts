@@ -5,12 +5,11 @@
  * pattern from planning/API_REGISTRY_REFACTOR.md.
  *
  * The bootstrap flow:
- * 1. initializeBootstrap() - Creates registry + lifecycle module
+ * 1. initializeBootstrap() - Creates registry + lifecycle handlers + early operations
  * 2. startServices() - Called when setup completes, creates remaining modules
  */
 
 import { ApiRegistry } from "./api/registry";
-import { LifecycleModule, type LifecycleModuleDeps } from "./modules/lifecycle";
 import { CoreModule, type CoreModuleDeps } from "./modules/core";
 import type {
   IApiRegistry,
@@ -33,6 +32,7 @@ import {
   ApiIpcChannels,
   type WorkspacePath,
   type WorkspaceLoadingChangedPayload,
+  type SetupErrorPayload,
 } from "../shared/ipc";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
@@ -150,7 +150,24 @@ import {
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
 } from "./operations/app-shutdown";
+import type { AppShutdownIntent } from "./operations/app-shutdown";
+import {
+  SetupOperation,
+  INTENT_SETUP,
+  SETUP_OPERATION_ID,
+  EVENT_SETUP_ERROR,
+} from "./operations/setup";
+import type { SetupHookContext, SetupErrorEvent } from "./operations/setup";
 import type { BadgeManager } from "./managers/badge-manager";
+import type { IpcEventHandler } from "../services/platform/ipc";
+import { SetupError } from "../services/errors";
+import type { AgentBinaryType } from "../services/binary-download";
+import {
+  ApiIpcChannels as SetupIpcChannels,
+  type LifecycleAgentType,
+  type ShowAgentSelectionPayload,
+  type AgentSelectedPayload,
+} from "../shared/ipc";
 import nodePath from "node:path";
 import { wireApiEvents, formatWindowTitle } from "./ipc/api-handlers";
 import { wirePluginApi } from "./api/wire-plugin-api";
@@ -175,7 +192,12 @@ import type { IWorkspaceFileService, IWorkspaceProvider } from "../services";
 import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-handler";
 import type { DeletionProgressCallback } from "./operations/delete-workspace";
 import { getErrorMessage } from "../shared/error-utils";
-import { normalizeInitialPrompt } from "../shared/api/types";
+import {
+  normalizeInitialPrompt,
+  type SetupRowId,
+  type SetupRowProgress,
+  type SetupRowStatus,
+} from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
 import {
@@ -184,6 +206,15 @@ import {
   extractRepoName,
 } from "../services/project/url-utils";
 import { ProjectScopedWorkspaceProvider } from "../services/git/project-scoped-provider";
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/**
+ * Available agents for selection.
+ */
+const AVAILABLE_AGENTS: readonly LifecycleAgentType[] = ["opencode", "claude"];
 
 // =============================================================================
 // Types
@@ -251,8 +282,8 @@ export interface BootstrapDeps {
   readonly logger: Logger;
   /** IPC layer for handler registration */
   readonly ipcLayer: IpcLayer;
-  /** Lifecycle module dependencies */
-  readonly lifecycleDeps: LifecycleModuleDeps;
+  /** App interface for quit() */
+  readonly app: { quit(): void };
   /** Core module dependencies (provided after setup completes) */
   readonly coreDepsFn: () => CoreModuleDeps;
   /** Global worktree provider for metadata operations (provided after setup completes) */
@@ -281,6 +312,21 @@ export interface BootstrapDeps {
   readonly workspaceResolverFn: () => import("./modules/ipc-event-bridge").WorkspaceResolver;
   /** Lifecycle service references for app:start/shutdown modules */
   readonly lifecycleRefsFn: () => LifecycleServiceRefs;
+  /** Function to get UI webContents for setup error IPC events */
+  readonly getUIWebContentsFn: () => import("electron").WebContents | null;
+  /** Setup dependencies for app:setup hook modules (available immediately) */
+  readonly setupDeps: {
+    /** ConfigService for config check/save modules */
+    readonly configService: import("../services/config/config-service").ConfigService;
+    /** CodeServerManager for binary preflight/download */
+    readonly codeServerManager: import("../services").CodeServerManager;
+    /** Factory to create AgentBinaryManager for a specific agent type */
+    readonly getAgentBinaryManager: (
+      agentType: import("../shared/api/types").ConfigAgentType
+    ) => import("../services/binary-download").AgentBinaryManager;
+    /** ExtensionManager for extension preflight/install */
+    readonly extensionManager: import("../services/vscode-setup/extension-manager").ExtensionManager;
+  };
 }
 
 /**
@@ -300,38 +346,575 @@ export interface BootstrapResult {
 // =============================================================================
 
 /**
- * Initialize the bootstrap with lifecycle module only.
+ * Initialize the bootstrap with lifecycle handlers and early operations.
  *
  * This is the first phase of the two-phase startup:
- * 1. initializeBootstrap() - Creates registry + lifecycle module
+ * 1. initializeBootstrap() - Creates registry, registers lifecycle.quit, wires app:shutdown
  * 2. startServices() - Called when setup completes, creates remaining modules
  *
  * @param deps Bootstrap dependencies
  * @returns Bootstrap result with registry and interface getter
  */
 export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
+  const logger = deps.logger;
+
   // 1. Create registry FIRST (before any modules)
   const registry = new ApiRegistry({
-    logger: deps.logger,
+    logger,
     ipcLayer: deps.ipcLayer,
   });
 
   // 2. Track modules for disposal (reverse order)
   const modules: IApiModule[] = [];
 
-  // 3. Create LifecycleModule - must be ready before UI loads
-  const lifecycleModule = new LifecycleModule(registry, deps.lifecycleDeps);
-  modules.push(lifecycleModule);
+  // 3. Get dispatcher early for operation registration
+  // The dispatcher is created in index.ts bootstrap() before initializeBootstrap() is called
+  const { hookRegistry, dispatcher } = deps.dispatcherFn();
 
-  // 4. Services started flag
+  // 4. Register app:shutdown early so it's available during setup
+  // (e.g., quit from setup screen dispatches app:shutdown)
+  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+  // 5. Shutdown idempotency interceptor: ensures only one app:shutdown execution proceeds.
+  // Uses a simple boolean flag (no completion event since the process exits).
+  let shutdownStarted = false;
+  const shutdownIdempotencyModule: IntentModule = {
+    interceptors: [
+      {
+        id: "shutdown-idempotency",
+        order: 0,
+        async before(intent: Intent): Promise<Intent | null> {
+          if (intent.type !== INTENT_APP_SHUTDOWN) {
+            return intent;
+          }
+          if (shutdownStarted) {
+            return null; // Block duplicate
+          }
+          shutdownStarted = true;
+          return intent;
+        },
+      },
+    ],
+  };
+
+  // 6. Quit hook module: calls app.quit() after all stop hooks complete
+  const quitModule: IntentModule = {
+    hooks: {
+      [APP_SHUTDOWN_OPERATION_ID]: {
+        quit: {
+          handler: async () => {
+            deps.app.quit();
+          },
+        },
+      },
+    },
+  };
+
+  wireModules([shutdownIdempotencyModule, quitModule], hookRegistry, dispatcher);
+
+  // 7. Register lifecycle.quit IPC handler - dispatches app:shutdown
+  registry.register(
+    "lifecycle.quit",
+    async () => {
+      logger.debug("Quit requested");
+      await dispatcher.dispatch({
+        type: INTENT_APP_SHUTDOWN,
+        payload: {},
+      } as AppShutdownIntent);
+    },
+    { ipc: ApiIpcChannels.LIFECYCLE_QUIT }
+  );
+
+  // 8. Setup idempotency interceptor to prevent concurrent setup attempts
+  // Note: Flag is only reset on error (via setup:error event handler) to allow retry.
+  // On success, setup completes and no reset is needed (app won't restart setup).
+  let setupInProgress = false;
+  const resetSetupInProgress = () => {
+    setupInProgress = false;
+  };
+  const setupIdempotencyModule: IntentModule = {
+    interceptors: [
+      {
+        id: "setup-idempotency",
+        order: 0,
+        async before(intent: Intent): Promise<Intent | null> {
+          if (intent.type !== INTENT_SETUP) {
+            return intent;
+          }
+          if (setupInProgress) {
+            return null; // Block concurrent setup
+          }
+          setupInProgress = true;
+          return intent;
+        },
+      },
+    ],
+  };
+  wireModules([setupIdempotencyModule], hookRegistry, dispatcher);
+
+  // 9. Wire module for app-start operation - handles the "wire" hook point
+  // Uses late-binding via closure because the actual function is passed from index.ts.
+  let startServicesFn: (() => Promise<void>) | null = null;
+  const appStartWireModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        wire: {
+          handler: async () => {
+            if (startServicesFn) {
+              await startServicesFn();
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // 10. Domain event handler for setup:error
+  // Resets idempotency flag and sends IPC to renderer
+  const setupErrorModule: IntentModule = {
+    events: {
+      [EVENT_SETUP_ERROR]: (event) => {
+        resetSetupInProgress();
+        const webContents = deps.getUIWebContentsFn();
+        if (webContents && !webContents.isDestroyed()) {
+          const { message, code } = (event as SetupErrorEvent).payload;
+          const payload: SetupErrorPayload = {
+            message,
+            ...(code !== undefined && { code }),
+          };
+          webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, payload);
+        }
+      },
+    },
+  };
+
+  // 11. UI hooks for app-start and setup operations
+  const appStartUIModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        "show-ui": {
+          handler: async () => {
+            const webContents = deps.getUIWebContentsFn();
+            if (webContents && !webContents.isDestroyed()) {
+              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
+            }
+          },
+        },
+      },
+    },
+  };
+
+  const setupUIModule: IntentModule = {
+    hooks: {
+      [SETUP_OPERATION_ID]: {
+        "show-ui": {
+          handler: async () => {
+            const webContents = deps.getUIWebContentsFn();
+            if (webContents && !webContents.isDestroyed()) {
+              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_SETUP);
+            }
+          },
+        },
+        "hide-ui": {
+          handler: async () => {
+            const webContents = deps.getUIWebContentsFn();
+            if (webContents && !webContents.isDestroyed()) {
+              // Return to starting screen
+              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // RetryModule: "show-ui" hook on app-start -- sets waitForRetry on context
+  // waitForRetry returns a promise that resolves when the renderer sends lifecycle:retry IPC
+  const retryModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        "show-ui": {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as AppStartHookContext;
+            hookCtx.waitForRetry = () =>
+              new Promise<void>((resolve) => {
+                const handleRetry: IpcEventHandler = () => {
+                  deps.ipcLayer.removeListener(SetupIpcChannels.LIFECYCLE_RETRY, handleRetry);
+                  resolve();
+                };
+                deps.ipcLayer.on(SetupIpcChannels.LIFECYCLE_RETRY, handleRetry);
+              });
+          },
+        },
+      },
+    },
+  };
+
+  wireModules(
+    [appStartWireModule, setupErrorModule, appStartUIModule, setupUIModule, retryModule],
+    hookRegistry,
+    dispatcher
+  );
+
+  // 12. Register AppStartOperation and SetupOperation immediately (before UI loads)
+  // app:start is dispatched first in index.ts, so both must be registered early
+  // Hook modules will be wired when setup dependencies are available
+  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+  dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
+
+  // 13. Wire setup hook modules (these run during app:setup, before startServices)
+  const { configService, codeServerManager, getAgentBinaryManager, extensionManager } =
+    deps.setupDeps;
+  const setupLogger = deps.logger;
+
+  // ConfigCheckModule: "check" hook -- loads config, sets needsAgentSelection
+  const configCheckModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        check: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as AppStartHookContext;
+            const config = await configService.load();
+            hookCtx.configuredAgent = config.agent;
+            if (config.agent === null) {
+              hookCtx.needsAgentSelection = true;
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // BinaryPreflightModule: "check" hook -- checks if binaries need download
+  const binaryPreflightModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        check: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as AppStartHookContext;
+            const missingBinaries: import("../services/vscode-setup/types").BinaryType[] = [];
+
+            // Check code-server binary
+            const codeServerResult = await codeServerManager.preflight();
+            if (codeServerResult.success && codeServerResult.needsDownload) {
+              missingBinaries.push("code-server");
+            }
+
+            // Check agent binary (only if agent is already configured)
+            if (hookCtx.configuredAgent) {
+              const agentBinaryManager = getAgentBinaryManager(hookCtx.configuredAgent);
+              const agentResult = await agentBinaryManager.preflight();
+              if (agentResult.success && agentResult.needsDownload) {
+                const binaryType = agentBinaryManager.getBinaryType() as AgentBinaryType;
+                missingBinaries.push(binaryType);
+              }
+            }
+
+            hookCtx.missingBinaries = missingBinaries;
+            hookCtx.needsBinaryDownload = missingBinaries.length > 0;
+          },
+        },
+      },
+    },
+  };
+
+  // ExtensionPreflightModule: "check" hook -- checks if extensions need install
+  const extensionPreflightModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        check: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as AppStartHookContext;
+            const result = await extensionManager.preflight();
+            if (result.success) {
+              hookCtx.missingExtensions = result.missingExtensions;
+              hookCtx.outdatedExtensions = result.outdatedExtensions;
+              hookCtx.needsExtensions = result.needsInstall;
+            } else {
+              // Treat preflight failure as needing extensions (full install)
+              hookCtx.needsExtensions = true;
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // NeedsSetupModule: "check" hook -- calculates needsSetup from individual flags
+  const needsSetupModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        check: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as AppStartHookContext;
+            hookCtx.needsSetup =
+              hookCtx.needsAgentSelection ||
+              hookCtx.needsBinaryDownload ||
+              hookCtx.needsExtensions ||
+              false;
+          },
+        },
+      },
+    },
+  };
+
+  // RendererSetupModule: "agent-selection" hook -- shows agent selection UI, waits for response
+  // Also handles "activate" hook for app:start -- shows main view
+  const rendererSetupModule: IntentModule = {
+    hooks: {
+      [SETUP_OPERATION_ID]: {
+        "agent-selection": {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as SetupHookContext;
+            const webContents = deps.getUIWebContentsFn();
+
+            if (!webContents || webContents.isDestroyed()) {
+              throw new SetupError("UI not available for agent selection", "TIMEOUT");
+            }
+
+            setupLogger.debug("Showing agent selection dialog");
+
+            // Create a promise that resolves when the renderer responds
+            const agentPromise = new Promise<LifecycleAgentType>((resolve) => {
+              const handleAgentSelected: IpcEventHandler = (_event, ...args) => {
+                deps.ipcLayer.removeListener(
+                  SetupIpcChannels.LIFECYCLE_AGENT_SELECTED,
+                  handleAgentSelected
+                );
+                const payload = args[0] as AgentSelectedPayload;
+                resolve(payload.agent);
+              };
+
+              deps.ipcLayer.on(SetupIpcChannels.LIFECYCLE_AGENT_SELECTED, handleAgentSelected);
+            });
+
+            // Send IPC event to show agent selection
+            const payload: ShowAgentSelectionPayload = {
+              agents: AVAILABLE_AGENTS,
+            };
+            webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION, payload);
+
+            // Wait for response
+            const selectedAgent = await agentPromise;
+            setupLogger.info("Agent selected", { agent: selectedAgent });
+
+            hookCtx.selectedAgent = selectedAgent;
+          },
+        },
+      },
+    },
+  };
+
+  // ConfigSaveModule: "save-agent" hook -- saves agent selection to config
+  const configSaveModule: IntentModule = {
+    hooks: {
+      [SETUP_OPERATION_ID]: {
+        "save-agent": {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as SetupHookContext;
+
+            if (!hookCtx.selectedAgent) {
+              throw new SetupError(
+                "No agent selected in save-agent hook",
+                "AGENT_SELECTION_REQUIRED"
+              );
+            }
+
+            try {
+              await configService.setAgent(hookCtx.selectedAgent);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              throw new SetupError(
+                `Failed to save agent selection: ${message}`,
+                "CONFIG_SAVE_FAILED"
+              );
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // Progress tracking for setup screen
+  const progressState: Record<SetupRowId, SetupRowProgress> = {
+    vscode: { id: "vscode", status: "pending" },
+    agent: { id: "agent", status: "pending" },
+    setup: { id: "setup", status: "pending" },
+  };
+
+  let lastEmitTime = 0;
+  const THROTTLE_MS = 100;
+
+  const emitProgress = (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastEmitTime < THROTTLE_MS) return;
+    lastEmitTime = now;
+    registry.emit("lifecycle:setup-progress", {
+      rows: [progressState.vscode, progressState.agent, progressState.setup],
+    });
+  };
+
+  const updateProgress = (
+    id: SetupRowId,
+    status: SetupRowStatus,
+    message?: string,
+    error?: string,
+    progress?: number
+  ) => {
+    progressState[id] = {
+      id,
+      status,
+      ...(message !== undefined && { message }),
+      ...(error !== undefined && { error }),
+      ...(progress !== undefined && { progress }),
+    };
+    emitProgress(status !== "running");
+  };
+
+  // BinaryDownloadModule: "binary" hook -- downloads missing binaries
+  const binaryDownloadModule: IntentModule = {
+    hooks: {
+      [SETUP_OPERATION_ID]: {
+        binary: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as SetupHookContext;
+            const missingBinaries = hookCtx.missingBinaries ?? [];
+
+            // Download code-server if missing
+            if (missingBinaries.includes("code-server")) {
+              updateProgress("vscode", "running", "Downloading...");
+              try {
+                await codeServerManager.downloadBinary((p) => {
+                  if (p.phase === "downloading" && p.totalBytes) {
+                    const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
+                    updateProgress("vscode", "running", "Downloading...", undefined, pct);
+                  } else if (p.phase === "extracting") {
+                    updateProgress("vscode", "running", "Extracting...");
+                  }
+                });
+                updateProgress("vscode", "done");
+              } catch (error) {
+                updateProgress("vscode", "failed", undefined, getErrorMessage(error));
+                throw new SetupError(
+                  `Failed to download code-server: ${getErrorMessage(error)}`,
+                  "BINARY_DOWNLOAD_FAILED"
+                );
+              }
+            } else {
+              updateProgress("vscode", "done");
+            }
+
+            // Get the agent type from context (set by ConfigCheckModule or ConfigSaveModule)
+            const agentType = hookCtx.selectedAgent ?? hookCtx.configuredAgent;
+            if (agentType) {
+              const agentBinaryManager = getAgentBinaryManager(agentType);
+              const binaryType = agentBinaryManager.getBinaryType();
+
+              // Download agent binary if missing
+              if (missingBinaries.includes(binaryType)) {
+                updateProgress("agent", "running", "Downloading...");
+                try {
+                  await agentBinaryManager.downloadBinary((p) => {
+                    if (p.phase === "downloading" && p.totalBytes) {
+                      const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
+                      updateProgress("agent", "running", "Downloading...", undefined, pct);
+                    } else if (p.phase === "extracting") {
+                      updateProgress("agent", "running", "Extracting...");
+                    }
+                  });
+                  updateProgress("agent", "done");
+                } catch (error) {
+                  updateProgress("agent", "failed", undefined, getErrorMessage(error));
+                  throw new SetupError(
+                    `Failed to download ${binaryType}: ${getErrorMessage(error)}`,
+                    "BINARY_DOWNLOAD_FAILED"
+                  );
+                }
+              } else {
+                updateProgress("agent", "done");
+              }
+            } else {
+              updateProgress("agent", "done");
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // ExtensionInstallModule: "extensions" hook -- installs missing/outdated extensions
+  const extensionInstallModule: IntentModule = {
+    hooks: {
+      [SETUP_OPERATION_ID]: {
+        extensions: {
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as SetupHookContext;
+            const missingExtensions = hookCtx.missingExtensions ?? [];
+            const outdatedExtensions = hookCtx.outdatedExtensions ?? [];
+
+            const extensionsToInstall = [...missingExtensions, ...outdatedExtensions];
+            if (extensionsToInstall.length === 0) {
+              updateProgress("setup", "done");
+              return;
+            }
+
+            updateProgress("setup", "running", "Installing extensions...");
+
+            // Clean outdated extensions before reinstalling
+            if (outdatedExtensions.length > 0) {
+              try {
+                await extensionManager.cleanOutdated(outdatedExtensions);
+              } catch (error) {
+                updateProgress("setup", "failed", undefined, getErrorMessage(error));
+                throw new SetupError(
+                  `Failed to clean outdated extensions: ${getErrorMessage(error)}`,
+                  "EXTENSION_INSTALL_FAILED"
+                );
+              }
+            }
+
+            // Install extensions
+            try {
+              await extensionManager.install(extensionsToInstall, (message) => {
+                updateProgress("setup", "running", message);
+              });
+              updateProgress("setup", "done");
+            } catch (error) {
+              updateProgress("setup", "failed", undefined, getErrorMessage(error));
+              throw new SetupError(
+                `Failed to install extensions: ${getErrorMessage(error)}`,
+                "EXTENSION_INSTALL_FAILED"
+              );
+            }
+          },
+        },
+      },
+    },
+  };
+
+  // Wire all startup modules (check hooks on app-start, work hooks on setup)
+  wireModules(
+    [
+      configCheckModule,
+      binaryPreflightModule,
+      extensionPreflightModule,
+      needsSetupModule,
+      rendererSetupModule,
+      configSaveModule,
+      binaryDownloadModule,
+      extensionInstallModule,
+    ],
+    hookRegistry,
+    dispatcher
+  );
+
+  // 14. Services started flag
   let servicesStarted = false;
-
-  // 5. The onSetupComplete callback triggers startServices
-  // This is wired through deps.lifecycleDeps.onSetupComplete
 
   /**
    * Start remaining services after setup completes.
-   * This creates CoreModule and wires the intent dispatcher.
+   * This creates CoreModule and wires the remaining intent operations.
+   * Note: SetupOperation was already registered in initializeBootstrap().
    */
   function startServices(): void {
     if (servicesStarted) return;
@@ -343,8 +926,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     const coreModule = new CoreModule(registry, coreDeps);
     modules.push(coreModule);
 
-    // Wire shared intent dispatcher for all operations
-    const { hookRegistry, dispatcher } = deps.dispatcherFn();
+    // Wire remaining operations (hookRegistry and dispatcher already available)
     wireDispatcher(
       registry,
       hookRegistry,
@@ -394,12 +976,25 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     await registry.dispose();
   }
 
+  /**
+   * Set the wire hook handler function.
+   * This is called by index.ts to wire the async service creation.
+   * The handler is invoked during the "wire" hook point in SetupOperation.
+   */
+  function setBeforeAppStart(fn: () => Promise<void>): void {
+    startServicesFn = fn;
+  }
+
   // Return bootstrap result with start function attached
-  const result: BootstrapResult & { startServices: () => void } = {
+  const result: BootstrapResult & {
+    startServices: () => void;
+    setBeforeAppStart: (fn: () => Promise<void>) => void;
+  } = {
     registry,
     getInterface,
     dispose,
     startServices,
+    setBeforeAppStart,
   };
 
   return result;
@@ -540,8 +1135,7 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
-  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
-  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+  // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
   // Idempotency module (interceptor + event handler, wired via wireModules below)
   const inProgressDeletions = new Set<string>();
@@ -2033,29 +2627,29 @@ function wireDispatcher(
     },
   };
 
-  // Shutdown idempotency interceptor: ensures only one app:shutdown execution proceeds.
-  // Uses a simple boolean flag (no completion event since the process exits).
-  let shutdownStarted = false;
-  const shutdownIdempotencyModule: IntentModule = {
-    interceptors: [
-      {
-        id: "shutdown-idempotency",
-        order: 0,
-        async before(intent: Intent): Promise<Intent | null> {
-          if (intent.type !== INTENT_APP_SHUTDOWN) {
-            return intent;
-          }
-          if (shutdownStarted) {
-            return null; // Block duplicate
-          }
-          shutdownStarted = true;
-          return intent;
+  // ShowMainViewModule: activate → tell renderer to show main view.
+  // Must run AFTER dataLifecycleModule (loads projects) and viewLifecycleModule (sets active workspace)
+  // so the renderer's initial projects.list query returns the full project list.
+  const showMainViewModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        activate: {
+          handler: async () => {
+            const webContents = viewManager.getUIWebContents();
+            if (!webContents || webContents.isDestroyed()) {
+              lifecycleLogger.warn("UI not available to show main view");
+              return;
+            }
+            lifecycleLogger.debug("Showing main view");
+            webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
+          },
         },
       },
-    ],
+    },
   };
 
   // Wire IpcEventBridge, BadgeModule, and hook handler modules
+  // Note: shutdownIdempotencyModule and quitModule are wired early in initializeBootstrap()
   const ipcEventBridge = createIpcEventBridge(registry, workspaceResolver);
   const badgeModule = createBadgeModule(badgeManager);
   wireModules(
@@ -2105,7 +2699,7 @@ function wireDispatcher(
       ipcBridgeLifecycleModule,
       dataLifecycleModule,
       viewLifecycleModule,
-      shutdownIdempotencyModule,
+      showMainViewModule,
     ],
     hookRegistry,
     dispatcher

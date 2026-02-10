@@ -7,7 +7,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { initializeBootstrap } from "./bootstrap";
 import type { BootstrapDeps } from "./bootstrap";
-import type { LifecycleModuleDeps } from "./modules/lifecycle";
 import type { CoreModuleDeps } from "./modules/core";
 import { createMockLogger } from "../services/logging";
 import type { IKeepFilesService } from "../services/keepfiles";
@@ -20,23 +19,6 @@ import type { IViewManager } from "./managers/view-manager.interface";
 // =============================================================================
 // Mock Factories
 // =============================================================================
-
-function createMockLifecycleDeps(): LifecycleModuleDeps {
-  return {
-    getVscodeSetup: vi.fn().mockResolvedValue(undefined),
-    configService: {
-      load: vi.fn().mockResolvedValue({
-        agent: "opencode",
-        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
-      }),
-      save: vi.fn().mockResolvedValue(undefined),
-      updateAgent: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services/config/config-service").ConfigService,
-    app: { quit: vi.fn() },
-    doStartServices: vi.fn().mockResolvedValue(undefined),
-    logger: createMockLogger(),
-  };
-}
 
 function createMockAppState(): AppState {
   return {
@@ -157,7 +139,7 @@ function createMockDeps(): BootstrapDeps {
   return {
     logger: createMockLogger(),
     ipcLayer: createBehavioralIpcLayer(),
-    lifecycleDeps: createMockLifecycleDeps(),
+    app: { quit: vi.fn() },
     coreDepsFn: () => createMockCoreDeps(),
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     keepFilesServiceFn: () => createMockKeepFilesService(),
@@ -179,6 +161,27 @@ function createMockDeps(): BootstrapDeps {
       ({
         loggingService: { createLogger: () => createMockLogger() },
       }) as unknown as import("./bootstrap").LifecycleServiceRefs,
+    getUIWebContentsFn: () => null,
+    setupDeps: {
+      configService: {
+        load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
+        save: vi.fn().mockResolvedValue(undefined),
+        setAgent: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services/config/config-service").ConfigService,
+      codeServerManager: {
+        preflight: vi.fn().mockResolvedValue({ needsDownload: false }),
+        downloadBinary: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services").CodeServerManager,
+      getAgentBinaryManager: () =>
+        ({
+          preflight: vi.fn().mockResolvedValue({ needsDownload: false }),
+          downloadBinary: vi.fn().mockResolvedValue(undefined),
+        }) as unknown as import("../services/binary-download").AgentBinaryManager,
+      extensionManager: {
+        preflight: vi.fn().mockResolvedValue({ needsInstall: false, missing: [], outdated: [] }),
+        install: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
+    },
   };
 }
 

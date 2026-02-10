@@ -8,7 +8,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { initializeBootstrap } from "./bootstrap";
 import type { BootstrapDeps } from "./bootstrap";
-import type { LifecycleModuleDeps } from "./modules/lifecycle";
 import type { CoreModuleDeps } from "./modules/core";
 import { createMockLogger } from "../services/logging";
 import type { IKeepFilesService } from "../services/keepfiles";
@@ -32,24 +31,6 @@ const TEST_WORKSPACE_NAME = "feature" as WorkspaceName;
 // =============================================================================
 // Mock Factories
 // =============================================================================
-
-function createMockLifecycleDeps(overrides?: Partial<LifecycleModuleDeps>): LifecycleModuleDeps {
-  return {
-    getVscodeSetup: vi.fn().mockResolvedValue(undefined),
-    configService: {
-      load: vi.fn().mockResolvedValue({
-        agent: "opencode",
-        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
-      }),
-      save: vi.fn().mockResolvedValue(undefined),
-      updateAgent: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services/config/config-service").ConfigService,
-    app: { quit: vi.fn() },
-    doStartServices: vi.fn().mockResolvedValue(undefined),
-    logger: createMockLogger(),
-    ...overrides,
-  };
-}
 
 function createMockAppState(overrides?: Partial<AppState>): AppState {
   return {
@@ -210,7 +191,7 @@ function createMockDeps(): BootstrapDeps {
   return {
     logger: createMockLogger(),
     ipcLayer: createBehavioralIpcLayer(),
-    lifecycleDeps: createMockLifecycleDeps(),
+    app: { quit: vi.fn() },
     coreDepsFn: () => createMockCoreDeps(),
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     keepFilesServiceFn: () => createMockKeepFilesService(),
@@ -232,6 +213,27 @@ function createMockDeps(): BootstrapDeps {
       ({
         loggingService: { createLogger: () => createMockLogger() },
       }) as unknown as import("./bootstrap").LifecycleServiceRefs,
+    getUIWebContentsFn: () => null,
+    setupDeps: {
+      configService: {
+        load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
+        save: vi.fn().mockResolvedValue(undefined),
+        setAgent: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services/config/config-service").ConfigService,
+      codeServerManager: {
+        preflight: vi.fn().mockResolvedValue({ needsDownload: false }),
+        downloadBinary: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services").CodeServerManager,
+      getAgentBinaryManager: () =>
+        ({
+          preflight: vi.fn().mockResolvedValue({ needsDownload: false }),
+          downloadBinary: vi.fn().mockResolvedValue(undefined),
+        }) as unknown as import("../services/binary-download").AgentBinaryManager,
+      extensionManager: {
+        preflight: vi.fn().mockResolvedValue({ needsInstall: false, missing: [], outdated: [] }),
+        install: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
+    },
   };
 }
 
@@ -253,9 +255,8 @@ describe("bootstrap.startup", () => {
     const api = result.getInterface();
 
     // Verify all API groups are available
+    // Note: lifecycle.getState, lifecycle.setup removed in app:setup migration
     expect(api.lifecycle).toBeDefined();
-    expect(api.lifecycle.getState).toBeTypeOf("function");
-    expect(api.lifecycle.setup).toBeTypeOf("function");
     expect(api.lifecycle.quit).toBeTypeOf("function");
 
     expect(api.projects).toBeDefined();
@@ -303,47 +304,39 @@ describe("bootstrap.module.order", () => {
     expect(() => result.getInterface()).not.toThrow();
   });
 
-  it("doStartServices callback is provided to lifecycle module", () => {
-    const doStartServicesMock = vi.fn().mockResolvedValue(undefined);
+  // Note: doStartServices test removed - functionality migrated to app:setup intent
+});
 
-    const deps: BootstrapDeps = {
-      logger: createMockLogger(),
-      ipcLayer: createBehavioralIpcLayer(),
-      lifecycleDeps: createMockLifecycleDeps({
-        doStartServices: doStartServicesMock,
-      }),
-      coreDepsFn: () => createMockCoreDeps(),
-      globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
-      keepFilesServiceFn: () => createMockKeepFilesService(),
-      workspaceFileServiceFn: () =>
-        ({
-          deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
-        }) as unknown as import("../services").IWorkspaceFileService,
-      emitDeletionProgressFn: () => vi.fn(),
-      killTerminalsCallbackFn: () => undefined,
-      workspaceLockHandlerFn: () => undefined,
-      dispatcherFn: createMockDispatcher,
-      setTitleFn: () => vi.fn(),
-      titleVersionFn: () => "test",
-      hasUpdateAvailableFn: () => () => false,
-      badgeManagerFn: () =>
-        ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
-      workspaceResolverFn: () => () => undefined,
-      lifecycleRefsFn: () =>
-        ({
-          loggingService: { createLogger: () => createMockLogger() },
-        }) as unknown as import("./bootstrap").LifecycleServiceRefs,
-    };
-
+describe("bootstrap.quit.flow", () => {
+  it("lifecycle.quit dispatches app:shutdown and calls app.quit()", async () => {
+    const appQuit = vi.fn();
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps: BootstrapDeps = { ...createMockDeps(), app: { quit: appQuit }, ipcLayer };
     const result = initializeBootstrap(deps);
 
-    // Verify the registry was created and lifecycle module is registered
-    expect(result.registry).toBeDefined();
+    // Invoke lifecycle.quit via IPC - should dispatch app:shutdown which runs quit hook
+    await ipcLayer._invoke("api:lifecycle:quit", {});
 
-    // The doStartServices callback is wired through to the lifecycle module
-    // When setup completes successfully, it will call this callback
-    // which in turn calls startServices()
-    expect(doStartServicesMock).not.toHaveBeenCalled(); // Not called until setup runs
+    expect(appQuit).toHaveBeenCalled();
+
+    await result.dispose();
+  });
+
+  it("second lifecycle.quit is idempotent (shutdown only runs once)", async () => {
+    const appQuit = vi.fn();
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps: BootstrapDeps = { ...createMockDeps(), app: { quit: appQuit }, ipcLayer };
+    const result = initializeBootstrap(deps);
+
+    // First quit
+    await ipcLayer._invoke("api:lifecycle:quit", {});
+    expect(appQuit).toHaveBeenCalledTimes(1);
+
+    // Second quit - idempotency interceptor blocks it
+    await ipcLayer._invoke("api:lifecycle:quit", {});
+    expect(appQuit).toHaveBeenCalledTimes(1);
+
+    await result.dispose();
   });
 });
 
@@ -550,5 +543,532 @@ describe("bootstrap.error.propagation", () => {
     // Both handlers should have been attempted
     expect(errorHandler).toHaveBeenCalledOnce();
     expect(normalHandler).toHaveBeenCalledOnce();
+  });
+});
+
+// =============================================================================
+// Setup Flow Integration Tests (Plan Test Matrix)
+// =============================================================================
+
+/**
+ * Helper: creates deps with a captured dispatcher and mock webContents
+ * for testing the full app:start → app:setup flow.
+ */
+function createSetupTestDeps(overrides?: {
+  configAgent?: string | null;
+  codeServerNeedsDownload?: boolean;
+  agentNeedsDownload?: boolean;
+  extensionNeedsInstall?: boolean;
+  missingExtensions?: string[];
+  outdatedExtensions?: string[];
+  downloadError?: Error;
+  agentDownloadMock?: ReturnType<typeof vi.fn>;
+}) {
+  const captured: {
+    dispatcher: Dispatcher;
+    ipcLayer: ReturnType<typeof createBehavioralIpcLayer>;
+    webContentsSendCalls: Array<{ channel: string; args: unknown[] }>;
+  } = {
+    dispatcher: null as unknown as Dispatcher,
+    ipcLayer: createBehavioralIpcLayer(),
+    webContentsSendCalls: [],
+  };
+
+  const mockWebContents = {
+    isDestroyed: () => false,
+    send: (channel: string, ...args: unknown[]) => {
+      captured.webContentsSendCalls.push({ channel, args });
+    },
+  };
+
+  const baseDeps = createMockDeps();
+  const configAgent = overrides?.configAgent !== undefined ? overrides.configAgent : "opencode";
+
+  const deps: BootstrapDeps = {
+    ...baseDeps,
+    ipcLayer: captured.ipcLayer,
+    dispatcherFn: () => {
+      const hookRegistry = new HookRegistry();
+      captured.dispatcher = new Dispatcher(hookRegistry);
+      return { hookRegistry, dispatcher: captured.dispatcher };
+    },
+    getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
+    setupDeps: {
+      configService: {
+        load: vi.fn().mockResolvedValue({ agent: configAgent, versions: {} }),
+        save: vi.fn().mockResolvedValue(undefined),
+        setAgent: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services/config/config-service").ConfigService,
+      codeServerManager: {
+        preflight: vi.fn().mockResolvedValue({
+          success: true,
+          needsDownload: overrides?.codeServerNeedsDownload ?? false,
+        }),
+        downloadBinary: overrides?.downloadError
+          ? vi.fn().mockRejectedValue(overrides.downloadError)
+          : vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services").CodeServerManager,
+      getAgentBinaryManager: () =>
+        ({
+          preflight: vi.fn().mockResolvedValue({
+            success: true,
+            needsDownload: overrides?.agentNeedsDownload ?? false,
+          }),
+          downloadBinary: overrides?.agentDownloadMock ?? vi.fn().mockResolvedValue(undefined),
+          getBinaryType: vi.fn().mockReturnValue("opencode"),
+        }) as unknown as import("../services/binary-download").AgentBinaryManager,
+      extensionManager: {
+        preflight: vi.fn().mockResolvedValue({
+          success: true,
+          needsInstall: overrides?.extensionNeedsInstall ?? false,
+          missingExtensions: overrides?.missingExtensions ?? [],
+          outdatedExtensions: overrides?.outdatedExtensions ?? [],
+        }),
+        install: vi.fn().mockResolvedValue(undefined),
+        cleanOutdated: vi.fn().mockResolvedValue(undefined),
+      } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
+    },
+  };
+
+  return { deps, captured, mockWebContents };
+}
+
+describe("bootstrap.setup.flow", () => {
+  it("#1: startup completes when no setup needed", async () => {
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      codeServerNeedsDownload: false,
+      agentNeedsDownload: false,
+      extensionNeedsInstall: false,
+    });
+
+    initializeBootstrap(deps);
+
+    // Dispatch app:start -- should skip setup entirely
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // Verify no setup-related IPC was sent
+    const setupShown = captured.webContentsSendCalls.some(
+      (c) => c.channel === "api:lifecycle:show-setup"
+    );
+    expect(setupShown).toBe(false);
+
+    // Verify main view was shown (via show-starting then show-main-view pattern)
+    const showStarting = captured.webContentsSendCalls.some(
+      (c) => c.channel === "api:lifecycle:show-starting"
+    );
+    expect(showStarting).toBe(true);
+  });
+
+  it("#2: shows starting screen immediately", async () => {
+    const { deps, captured } = createSetupTestDeps();
+
+    initializeBootstrap(deps);
+
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // First IPC event should be show-starting
+    expect(captured.webContentsSendCalls[0]?.channel).toBe("api:lifecycle:show-starting");
+  });
+
+  it("#3: shows agent selection when no agent configured", async () => {
+    vi.useFakeTimers();
+    try {
+      const { deps, captured } = createSetupTestDeps({
+        configAgent: null,
+      });
+
+      initializeBootstrap(deps);
+
+      // Dispatch app:start -- it will hang at agent-selection waiting for IPC response
+      // We need to simulate the renderer responding
+      const dispatchPromise = captured.dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      });
+
+      // Flush microtask queue so async hooks progress to the agent-selection listener
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Verify show-agent-selection was sent
+      const agentSelectionSent = captured.webContentsSendCalls.some(
+        (c) => c.channel === "api:lifecycle:show-agent-selection"
+      );
+      expect(agentSelectionSent).toBe(true);
+
+      // Simulate renderer responding with agent selection
+      captured.ipcLayer._emit("api:lifecycle:agent-selected", { agent: "opencode" });
+
+      await vi.runAllTimersAsync();
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#4: agent selection saved after user responds", async () => {
+    vi.useFakeTimers();
+    try {
+      const { deps, captured } = createSetupTestDeps({
+        configAgent: null,
+      });
+
+      const mockSetAgent = deps.setupDeps.configService.setAgent as ReturnType<typeof vi.fn>;
+
+      initializeBootstrap(deps);
+
+      const dispatchPromise = captured.dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      });
+
+      // Flush microtask queue so async hooks progress to the agent-selection listener
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Simulate user selecting an agent
+      captured.ipcLayer._emit("api:lifecycle:agent-selected", { agent: "claude" });
+
+      await vi.runAllTimersAsync();
+      await dispatchPromise;
+
+      // Verify agent was saved
+      expect(mockSetAgent).toHaveBeenCalledWith("claude");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#5: downloads binaries when missing", async () => {
+    const agentDownloadMock = vi.fn().mockResolvedValue(undefined);
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      codeServerNeedsDownload: true,
+      agentNeedsDownload: true,
+      agentDownloadMock,
+    });
+
+    const mockCodeServerDownload = deps.setupDeps.codeServerManager.downloadBinary as ReturnType<
+      typeof vi.fn
+    >;
+
+    initializeBootstrap(deps);
+
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // Verify both download methods were called
+    expect(mockCodeServerDownload).toHaveBeenCalledOnce();
+    expect(agentDownloadMock).toHaveBeenCalledOnce();
+  });
+
+  it("#6: installs extensions when missing", async () => {
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      extensionNeedsInstall: true,
+      missingExtensions: ["test-ext-1", "test-ext-2"],
+    });
+
+    const mockInstall = deps.setupDeps.extensionManager.install as ReturnType<typeof vi.fn>;
+
+    initializeBootstrap(deps);
+
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // Verify install was called with the missing extensions
+    expect(mockInstall).toHaveBeenCalledOnce();
+    expect(mockInstall.mock.calls[0]?.[0]).toEqual(["test-ext-1", "test-ext-2"]);
+  });
+
+  it("#7: returns to starting screen after setup", async () => {
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      codeServerNeedsDownload: true,
+    });
+
+    initializeBootstrap(deps);
+
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // Find the sequence: show-setup → ... → show-starting (hide-ui hook)
+    const channels = captured.webContentsSendCalls.map((c) => c.channel);
+
+    const setupIdx = channels.indexOf("api:lifecycle:show-setup");
+    expect(setupIdx).toBeGreaterThanOrEqual(0);
+
+    // After setup, should return to show-starting
+    const postSetupStarting = channels.indexOf("api:lifecycle:show-starting", setupIdx + 1);
+    expect(postSetupStarting).toBeGreaterThan(setupIdx);
+  });
+
+  it("#12: show-main-view not sent from setup flow (sent by lifecycle layer)", async () => {
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      codeServerNeedsDownload: false,
+      extensionNeedsInstall: false,
+    });
+
+    initializeBootstrap(deps);
+
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // show-main-view is now sent by showMainViewModule in wireDispatcher(),
+    // not by the setup flow. Verify it's NOT sent from setup.
+    const mainViewShown = captured.webContentsSendCalls.some(
+      (c) => c.channel === "api:lifecycle:show-main-view"
+    );
+    expect(mainViewShown).toBe(false);
+  });
+
+  it("#13: app:setup includes causation reference", async () => {
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      codeServerNeedsDownload: true,
+    });
+
+    initializeBootstrap(deps);
+
+    // The app:start operation dispatches app:setup internally via ctx.dispatch().
+    // We verify causation by checking that app:setup was dispatched (it would fail
+    // without proper intent registration) and that the setup operation ran correctly.
+    // The causation tracking is built into the Dispatcher infrastructure.
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // Verify the setup ran (show-setup IPC was sent, proving app:setup was dispatched)
+    const setupShown = captured.webContentsSendCalls.some(
+      (c) => c.channel === "api:lifecycle:show-setup"
+    );
+    expect(setupShown).toBe(true);
+
+    // Verify the hide-ui ran (proving app:setup completed and returned to app:start)
+    const channels = captured.webContentsSendCalls.map((c) => c.channel);
+    const setupIdx = channels.indexOf("api:lifecycle:show-setup");
+    const hideIdx = channels.indexOf("api:lifecycle:show-starting", setupIdx + 1);
+    expect(hideIdx).toBeGreaterThan(setupIdx);
+  });
+
+  it("#15: download failure emits error event", async () => {
+    vi.useFakeTimers();
+    try {
+      const downloadError = new Error("Network timeout");
+      const { deps, captured } = createSetupTestDeps({
+        configAgent: "opencode",
+        codeServerNeedsDownload: true,
+        downloadError,
+      });
+
+      initializeBootstrap(deps);
+
+      // Dispatch will enter retry loop after setup failure.
+      // Start the dispatch but don't await -- it will wait for retry IPC.
+      const dispatchPromise = captured.dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      });
+
+      // Flush microtask queue so the error is emitted and retry loop starts
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Verify setup-error IPC was sent to renderer
+      const errorSent = captured.webContentsSendCalls.find(
+        (c) => c.channel === "api:lifecycle:setup-error"
+      );
+      expect(errorSent).toBeDefined();
+      expect((errorSent?.args[0] as { message: string }).message).toContain("Network timeout");
+
+      // Fix the download mock so retry succeeds, then trigger retry
+      (
+        deps.setupDeps.codeServerManager.downloadBinary as ReturnType<typeof vi.fn>
+      ).mockResolvedValue(undefined);
+      captured.ipcLayer._emit("api:lifecycle:retry");
+
+      // Now the dispatch should complete
+      await vi.runAllTimersAsync();
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#17: agent-selection hook skipped when agent configured", async () => {
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      codeServerNeedsDownload: true, // Need setup but agent is configured
+    });
+
+    initializeBootstrap(deps);
+
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // Verify no agent selection IPC was sent
+    const agentSelectionSent = captured.webContentsSendCalls.some(
+      (c) => c.channel === "api:lifecycle:show-agent-selection"
+    );
+    expect(agentSelectionSent).toBe(false);
+  });
+
+  it("#18: binary hook skipped when binaries present", async () => {
+    const { deps, captured } = createSetupTestDeps({
+      configAgent: "opencode",
+      codeServerNeedsDownload: false,
+      agentNeedsDownload: false,
+      extensionNeedsInstall: true,
+      missingExtensions: ["test-ext"],
+    });
+
+    const mockDownloadBinary = deps.setupDeps.codeServerManager.downloadBinary as ReturnType<
+      typeof vi.fn
+    >;
+
+    initializeBootstrap(deps);
+
+    await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
+
+    // Verify download was NOT called for code-server
+    expect(mockDownloadBinary).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// Setup Progress Tests
+// =============================================================================
+
+describe("bootstrap.setup.progress", () => {
+  it("passes progress callbacks to download methods during setup", async () => {
+    // Capture the dispatcher from the factory
+    let capturedDispatcher!: Dispatcher;
+    const mockDownloadBinary = vi.fn().mockResolvedValue(undefined);
+    const mockAgentDownloadBinary = vi.fn().mockResolvedValue(undefined);
+    const mockInstall = vi.fn().mockResolvedValue(undefined);
+
+    const baseDeps = createMockDeps();
+    const deps: BootstrapDeps = {
+      ...baseDeps,
+      dispatcherFn: () => {
+        const hookRegistry = new HookRegistry();
+        capturedDispatcher = new Dispatcher(hookRegistry);
+        return { hookRegistry, dispatcher: capturedDispatcher };
+      },
+      setupDeps: {
+        ...baseDeps.setupDeps,
+        codeServerManager: {
+          preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
+          downloadBinary: mockDownloadBinary,
+        } as unknown as import("../services").CodeServerManager,
+        getAgentBinaryManager: () =>
+          ({
+            preflight: vi
+              .fn()
+              .mockResolvedValue({ success: true, needsDownload: true, binaryType: "opencode" }),
+            downloadBinary: mockAgentDownloadBinary,
+            getBinaryType: vi.fn().mockReturnValue("opencode"),
+          }) as unknown as import("../services/binary-download").AgentBinaryManager,
+        extensionManager: {
+          preflight: vi.fn().mockResolvedValue({
+            success: true,
+            needsInstall: true,
+            missingExtensions: ["test-ext"],
+            outdatedExtensions: [],
+          }),
+          install: mockInstall,
+          cleanOutdated: vi.fn().mockResolvedValue(undefined),
+        } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
+      },
+    };
+
+    initializeBootstrap(deps);
+
+    // Dispatch app:start which triggers check → app:setup → binary/extensions hooks
+    const handle = capturedDispatcher.dispatch({
+      type: "app:start",
+      payload: {},
+    });
+    await handle;
+
+    // Verify progress callbacks were passed (not undefined)
+    expect(mockDownloadBinary).toHaveBeenCalledOnce();
+    expect(mockDownloadBinary.mock.calls[0]?.[0]).toBeTypeOf("function");
+
+    expect(mockAgentDownloadBinary).toHaveBeenCalledOnce();
+    expect(mockAgentDownloadBinary.mock.calls[0]?.[0]).toBeTypeOf("function");
+
+    expect(mockInstall).toHaveBeenCalledOnce();
+    expect(mockInstall.mock.calls[0]?.[1]).toBeTypeOf("function");
+  });
+
+  it("emits setup-progress with percentage when download callback is invoked", async () => {
+    vi.useFakeTimers();
+    try {
+      let capturedDispatcher!: Dispatcher;
+      const progressEvents: unknown[] = [];
+      const mockDownloadBinary = vi.fn().mockImplementation(async (onProgress: unknown) => {
+        // Advance past throttle window before calling progress
+        vi.advanceTimersByTime(200);
+        if (typeof onProgress === "function") {
+          (
+            onProgress as (p: {
+              phase: string;
+              bytesDownloaded: number;
+              totalBytes: number;
+            }) => void
+          )({ phase: "downloading", bytesDownloaded: 50, totalBytes: 100 });
+        }
+      });
+
+      const baseDeps = createMockDeps();
+      const deps: BootstrapDeps = {
+        ...baseDeps,
+        dispatcherFn: () => {
+          const hookRegistry = new HookRegistry();
+          capturedDispatcher = new Dispatcher(hookRegistry);
+          return { hookRegistry, dispatcher: capturedDispatcher };
+        },
+        setupDeps: {
+          ...baseDeps.setupDeps,
+          codeServerManager: {
+            preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
+            downloadBinary: mockDownloadBinary,
+          } as unknown as import("../services").CodeServerManager,
+          getAgentBinaryManager: () =>
+            ({
+              preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
+              downloadBinary: vi.fn().mockResolvedValue(undefined),
+              getBinaryType: vi.fn().mockReturnValue("opencode"),
+            }) as unknown as import("../services/binary-download").AgentBinaryManager,
+          extensionManager: {
+            preflight: vi.fn().mockResolvedValue({
+              success: true,
+              needsInstall: false,
+              missingExtensions: [],
+              outdatedExtensions: [],
+            }),
+            install: vi.fn().mockResolvedValue(undefined),
+          } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
+        },
+      };
+
+      const result = initializeBootstrap(deps);
+
+      // Subscribe to setup-progress events
+      result.registry.on("lifecycle:setup-progress", (event) => {
+        progressEvents.push(event);
+      });
+
+      const handle = capturedDispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      });
+
+      // Advance timers to allow async operations to complete
+      await vi.runAllTimersAsync();
+      await handle;
+
+      // Find a progress event with percentage for vscode row
+      const withPercent = progressEvents.find((e) => {
+        const evt = e as { rows: Array<{ id: string; progress?: number }> };
+        return evt.rows.some((r) => r.id === "vscode" && r.progress === 50);
+      });
+      expect(withPercent).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -46,26 +46,20 @@ describe("registry.register", () => {
   });
 
   it("throws on duplicate registration", () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
-      state: "ready" as const,
-      agent: "opencode" as const,
-    });
-    registry.register("lifecycle.getState", handler);
+    const handler: MethodHandler<"lifecycle.quit"> = async () => {};
+    registry.register("lifecycle.quit", handler);
 
-    expect(() => registry.register("lifecycle.getState", handler)).toThrow(
-      "Method already registered: lifecycle.getState"
+    expect(() => registry.register("lifecycle.quit", handler)).toThrow(
+      "Method already registered: lifecycle.quit"
     );
   });
 
   it("throws when registering on disposed registry", async () => {
     await registry.dispose();
 
-    expect(() =>
-      registry.register("lifecycle.getState", async () => ({
-        state: "ready" as const,
-        agent: "opencode" as const,
-      }))
-    ).toThrow("Cannot register on disposed registry");
+    expect(() => registry.register("lifecycle.quit", async () => {})).toThrow(
+      "Cannot register on disposed registry"
+    );
   });
 });
 
@@ -83,22 +77,16 @@ describe("registry.register.ipc", () => {
   });
 
   it("auto-creates IPC handler when ipc option provided", () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
-      state: "ready" as const,
-      agent: "opencode" as const,
-    });
-    registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
+    const handler: MethodHandler<"lifecycle.quit"> = async () => {};
+    registry.register("lifecycle.quit", handler, { ipc: "api:lifecycle:quit" });
 
     const state = ipcLayer._getState();
-    expect(state.handlers.has("api:lifecycle:get-state")).toBe(true);
+    expect(state.handlers.has("api:lifecycle:quit")).toBe(true);
   });
 
   it("does not create IPC handler when ipc option not provided", () => {
-    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
-      state: "ready" as const,
-      agent: "opencode" as const,
-    });
-    registry.register("lifecycle.getState", handler);
+    const handler: MethodHandler<"lifecycle.quit"> = async () => {};
+    registry.register("lifecycle.quit", handler);
 
     const state = ipcLayer._getState();
     expect(state.handlers.size).toBe(0);
@@ -106,11 +94,8 @@ describe("registry.register.ipc", () => {
 
   it("does not create IPC handler when no ipcLayer provided", () => {
     const noIpcRegistry = new ApiRegistry();
-    const handler: MethodHandler<"lifecycle.getState"> = async () => ({
-      state: "ready" as const,
-      agent: "opencode" as const,
-    });
-    noIpcRegistry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
+    const handler: MethodHandler<"lifecycle.quit"> = async () => {};
+    noIpcRegistry.register("lifecycle.quit", handler, { ipc: "api:lifecycle:quit" });
 
     // Should not throw, just skip IPC registration
     const state = ipcLayer._getState();
@@ -133,26 +118,24 @@ describe("registry.ipc.payload", () => {
 
   it("handler receives {} when payload undefined", async () => {
     const receivedPayload = vi.fn();
-    const handler: MethodHandler<"lifecycle.getState"> = async (payload) => {
+    const handler: MethodHandler<"lifecycle.quit"> = async (payload) => {
       receivedPayload(payload);
-      return { state: "ready" as const, agent: "opencode" as const };
     };
-    registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
+    registry.register("lifecycle.quit", handler, { ipc: "api:lifecycle:quit" });
 
-    await ipcLayer._invoke("api:lifecycle:get-state", undefined);
+    await ipcLayer._invoke("api:lifecycle:quit", undefined);
 
     expect(receivedPayload).toHaveBeenCalledWith({});
   });
 
   it("handler receives {} when payload null", async () => {
     const receivedPayload = vi.fn();
-    const handler: MethodHandler<"lifecycle.getState"> = async (payload) => {
+    const handler: MethodHandler<"lifecycle.quit"> = async (payload) => {
       receivedPayload(payload);
-      return { state: "ready" as const, agent: "opencode" as const };
     };
-    registry.register("lifecycle.getState", handler, { ipc: "api:lifecycle:get-state" });
+    registry.register("lifecycle.quit", handler, { ipc: "api:lifecycle:quit" });
 
-    await ipcLayer._invoke("api:lifecycle:get-state", null);
+    await ipcLayer._invoke("api:lifecycle:quit", null);
 
     expect(receivedPayload).toHaveBeenCalledWith({});
   });
@@ -305,7 +288,7 @@ describe("registry.getInterface", () => {
     expect(typeof api.projects.open).toBe("function");
     expect(typeof api.workspaces.create).toBe("function");
     expect(typeof api.ui.selectFolder).toBe("function");
-    expect(typeof api.lifecycle.getState).toBe("function");
+    expect(typeof api.lifecycle.quit).toBe("function");
   });
 });
 
@@ -322,27 +305,21 @@ describe("registry.getInterface.partial", () => {
 
   it("throws if not all methods registered", () => {
     // Only register one method
-    registry.register("lifecycle.getState", async () => ({
-      state: "ready" as const,
-      agent: "opencode" as const,
-    }));
+    registry.register("lifecycle.quit", async () => {});
 
     expect(() => registry.getInterface()).toThrow("Missing method registrations:");
   });
 
   it("error message lists missing methods", () => {
     // Only register one method
-    registry.register("lifecycle.getState", async () => ({
-      state: "ready" as const,
-      agent: "opencode" as const,
-    }));
+    registry.register("lifecycle.quit", async () => {});
 
     try {
       registry.getInterface();
       expect.fail("Should have thrown");
     } catch (error) {
-      expect((error as Error).message).toContain("lifecycle.setup");
       expect((error as Error).message).toContain("projects.open");
+      expect((error as Error).message).toContain("workspaces.create");
     }
   });
 });
@@ -357,24 +334,20 @@ describe("registry.dispose", () => {
   });
 
   it("cleans up IPC handlers and subscriptions", async () => {
-    registry.register(
-      "lifecycle.getState",
-      async () => ({ state: "ready" as const, agent: "opencode" as const }),
-      {
-        ipc: "api:lifecycle:get-state",
-      }
-    );
+    registry.register("lifecycle.quit", async () => {}, {
+      ipc: "api:lifecycle:quit",
+    });
 
     const handler = vi.fn();
     registry.on("project:opened", handler);
 
     // Verify handler is registered
-    expect(ipcLayer._getState().handlers.has("api:lifecycle:get-state")).toBe(true);
+    expect(ipcLayer._getState().handlers.has("api:lifecycle:quit")).toBe(true);
 
     await registry.dispose();
 
     // IPC handler should be removed
-    expect(ipcLayer._getState().handlers.has("api:lifecycle:get-state")).toBe(false);
+    expect(ipcLayer._getState().handlers.has("api:lifecycle:quit")).toBe(false);
 
     // Event should not be delivered after dispose
     registry.emit("project:opened", { project: createMockProject() });
@@ -392,13 +365,9 @@ describe("registry.dispose.twice", () => {
   });
 
   it("second dispose is no-op (idempotent)", async () => {
-    registry.register(
-      "lifecycle.getState",
-      async () => ({ state: "ready" as const, agent: "opencode" as const }),
-      {
-        ipc: "api:lifecycle:get-state",
-      }
-    );
+    registry.register("lifecycle.quit", async () => {}, {
+      ipc: "api:lifecycle:quit",
+    });
 
     await registry.dispose();
     expect(ipcLayer._getState().handlers.size).toBe(0);
@@ -517,11 +486,9 @@ function registerAllMethodsWithStubs(
     [P in MethodPath]: MethodHandler<P>;
   }> = {}
 ): void {
+  // Note: lifecycle.getState, lifecycle.setAgent, lifecycle.setup, lifecycle.startServices
+  // were removed in the app:setup migration
   const defaultHandlers: { [P in MethodPath]: MethodHandler<P> } = {
-    "lifecycle.getState": async () => ({ state: "ready" as const, agent: "opencode" as const }),
-    "lifecycle.setAgent": async () => ({ success: true }),
-    "lifecycle.setup": async () => ({ success: true }),
-    "lifecycle.startServices": async () => ({ success: true }),
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},

@@ -11,9 +11,6 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  SetupResult,
-  AppStateResult,
-  ConfigAgentType,
   InitialPrompt,
   AgentSession,
   SetupScreenProgress,
@@ -188,23 +185,9 @@ export interface IUiApi {
 }
 
 export interface ILifecycleApi {
-  getState(): Promise<AppStateResult>;
   /**
-   * Set the selected agent type.
-   * Called after user selects an agent in the selection dialog.
-   * Saves selection to config and returns success/failure.
+   * Quit the application.
    */
-  setAgent(agent: ConfigAgentType): Promise<SetupResult>;
-  setup(): Promise<SetupResult>;
-  /**
-   * Start application services (code-server, OpenCode, etc.).
-   *
-   * Idempotent - second call returns success without side effects.
-   * Called by renderer after getState() returns "loading" or after setup() succeeds.
-   *
-   * @returns Success result, or failure with error message
-   */
-  startServices(): Promise<SetupResult>;
   quit(): Promise<void>;
 }
 

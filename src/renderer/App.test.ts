@@ -34,13 +34,13 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
         setMode: vi.fn().mockResolvedValue(undefined),
       },
+      // Note: lifecycle.getState, lifecycle.setup, lifecycle.startServices, lifecycle.setAgent
+      // have been removed - setup is now handled via app:setup intent in main process.
+      // Renderer is passive and waits for lifecycle:show-main-view IPC event.
       lifecycle: {
-        getState: vi.fn().mockResolvedValue({ state: "loading", agent: "opencode" }),
-        setup: vi.fn().mockResolvedValue({ success: true }),
-        startServices: vi.fn().mockResolvedValue({ success: true }),
-        setAgent: vi.fn().mockResolvedValue(undefined),
         quit: vi.fn().mockResolvedValue(undefined),
       },
+      sendAgentSelected: vi.fn(),
       // on() captures callbacks by event name for tests to fire events
       on: vi.fn((event: string, callback: EventCallback) => {
         callbacks.set(event, callback);
@@ -76,6 +76,16 @@ function fireEvent(event: string, payload?: unknown): void {
 // Helper to clear event callbacks between tests
 function clearEventCallbacks(): void {
   eventCallbacks.clear();
+}
+
+/**
+ * Trigger the main view to show.
+ * With the new passive renderer flow, App starts in "initializing" mode and waits
+ * for the main process to send "lifecycle:show-main-view" event before rendering MainView.
+ * Call this after render() to simulate the main process completing startup.
+ */
+function showMainView(): void {
+  fireEvent("lifecycle:show-main-view");
 }
 
 // Mock the API module before any imports use it
@@ -117,10 +127,6 @@ describe("App component", () => {
     });
     // Default to returning empty projects
     mockApi.projects.list.mockResolvedValue([]);
-    // Default to loading state (services need to be started)
-    mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
-    mockApi.lifecycle.setup.mockResolvedValue({ success: true });
-    mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
   });
 
   afterEach(() => {
@@ -130,6 +136,7 @@ describe("App component", () => {
   describe("rendering", () => {
     it("renders Sidebar component", async () => {
       render(App);
+      showMainView();
 
       // Sidebar has a nav with aria-label="Projects"
       const nav = await screen.findByRole("navigation", { name: "Projects" });
@@ -138,6 +145,7 @@ describe("App component", () => {
 
     it("renders CreateWorkspaceDialog when dialog type is 'create'", async () => {
       render(App);
+      showMainView();
 
       // Open create dialog
       dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
@@ -154,6 +162,7 @@ describe("App component", () => {
 
     it("renders RemoveWorkspaceDialog when dialog type is 'remove'", async () => {
       render(App);
+      showMainView();
 
       // Open remove dialog
       dialogsStore.openRemoveDialog(
@@ -172,6 +181,7 @@ describe("App component", () => {
 
     it("does not render dialogs when dialog type is 'closed'", async () => {
       render(App);
+      showMainView();
 
       // Dialog state is closed by default after reset
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -181,6 +191,7 @@ describe("App component", () => {
   describe("initialization", () => {
     it("calls listProjects on mount to initialize", async () => {
       render(App);
+      showMainView();
 
       await waitFor(() => {
         // Now uses v2 API
@@ -201,6 +212,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       // Wait for loading to complete
       await waitFor(() => {
@@ -213,6 +225,7 @@ describe("App component", () => {
       mockApi.projects.list.mockRejectedValue(new Error("Network error"));
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.loadingState.value).toBe("error");
@@ -224,6 +237,7 @@ describe("App component", () => {
   describe("event subscriptions", () => {
     it("subscribes to all domain events via api.on() on mount", async () => {
       render(App);
+      showMainView();
 
       await waitFor(() => {
         // Uses api.on() for domain events
@@ -238,13 +252,16 @@ describe("App component", () => {
     it("unsubscribes from all v2 events on unmount", async () => {
       // Track unsubscribe functions per event
       const unsubFunctions = new Map<string, ReturnType<typeof vi.fn>>();
-      mockApi.on.mockImplementation((event: string) => {
+      mockApi.on.mockImplementation((event: string, callback: EventCallback) => {
+        // Still populate eventCallbacks so showMainView() works
+        eventCallbacks.set(event, callback);
         const unsub = vi.fn();
         unsubFunctions.set(event, unsub);
         return unsub;
       });
 
       const { unmount } = render(App);
+      showMainView();
 
       // Wait for subscriptions to be set up
       await waitFor(() => {
@@ -264,6 +281,7 @@ describe("App component", () => {
 
     it("handles project:opened event by adding project to store", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscriptions
       await waitFor(() => {
@@ -296,6 +314,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue([existingProject]);
 
       render(App);
+      showMainView();
 
       // Wait for initial load and subscriptions
       await waitFor(() => {
@@ -315,6 +334,7 @@ describe("App component", () => {
 
     it("handles workspace:switched event by updating active workspace", async () => {
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(getEventCallback("workspace:switched")).toBeDefined();
@@ -333,6 +353,7 @@ describe("App component", () => {
   describe("shortcut mode handling", () => {
     it("should-render-shortcut-overlay-component: ShortcutOverlay is rendered", async () => {
       render(App);
+      showMainView();
 
       // Wait for normal app mode to be active (after listProjects resolves)
       await waitFor(() => {
@@ -346,6 +367,7 @@ describe("App component", () => {
 
     it("should-pass-active-prop-to-overlay: overlay shows when shortcut mode active", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscription
       await waitFor(() => {
@@ -368,6 +390,7 @@ describe("App component", () => {
 
     it("should-wire-blur-handler-to-window: window blur exits shortcut mode", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscription
       await waitFor(() => {
@@ -386,6 +409,7 @@ describe("App component", () => {
 
     it("does not call setMode when shortcut mode is not active", async () => {
       render(App);
+      showMainView();
 
       // Wait for component to mount
       await waitFor(() => {
@@ -424,6 +448,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(getEventCallback("ui:mode-changed")).toBeDefined();
@@ -443,6 +468,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue([]);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(getEventCallback("ui:mode-changed")).toBeDefined();
@@ -465,6 +491,7 @@ describe("App component", () => {
 
     it("should-subscribe-to-mode-change-on-mount: subscribes to onModeChange via $effect", async () => {
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(mockApi.onModeChange).toHaveBeenCalledWith(expect.any(Function));
@@ -473,6 +500,7 @@ describe("App component", () => {
 
     it("should-show-overlay-on-shortcut-mode: onModeChange with mode=shortcut shows overlay", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscription
       await waitFor(() => {
@@ -491,6 +519,7 @@ describe("App component", () => {
 
     it("should-hide-overlay-on-workspace-mode: onModeChange with mode=workspace hides overlay", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscription
       await waitFor(() => {
@@ -521,6 +550,7 @@ describe("App component", () => {
       mockApi.onModeChange.mockReturnValue(unsubModeChange);
 
       const { unmount } = render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(mockApi.onModeChange).toHaveBeenCalledWith(expect.any(Function));
@@ -533,6 +563,7 @@ describe("App component", () => {
 
     it("should-announce-shortcut-mode-for-screen-readers: ARIA live region announces mode change", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscription
       await waitFor(() => {
@@ -553,6 +584,7 @@ describe("App component", () => {
 
     it("subscribes to onShortcut on mount", async () => {
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(mockApi.onShortcut).toHaveBeenCalledWith(expect.any(Function));
@@ -574,6 +606,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.projects.value).toHaveLength(1);
@@ -613,6 +646,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.projects.value).toHaveLength(1);
@@ -653,6 +687,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.projects.value).toHaveLength(1);
@@ -692,6 +727,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.projects.value).toHaveLength(1);
@@ -726,6 +762,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.projects.value).toHaveLength(1);
@@ -758,6 +795,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.projects.value).toHaveLength(1);
@@ -793,6 +831,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(projectsStore.projects.value).toHaveLength(1);
@@ -824,6 +863,7 @@ describe("App component", () => {
       mockApi.onShortcut.mockReturnValue(unsubShortcut);
 
       const { unmount } = render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(mockApi.onShortcut).toHaveBeenCalledWith(expect.any(Function));
@@ -838,6 +878,7 @@ describe("App component", () => {
 
     it("Escape key in shortcut mode calls api.ui.setMode('workspace')", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscription
       await waitFor(() => {
@@ -858,6 +899,7 @@ describe("App component", () => {
 
     it("Escape key when not in shortcut mode does not call setMode", async () => {
       render(App);
+      showMainView();
 
       // Wait for subscription
       await waitFor(() => {
@@ -891,6 +933,7 @@ describe("App component", () => {
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         // Should call getStatus for each workspace
@@ -932,6 +975,7 @@ describe("App component", () => {
       );
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         // Verify statuses were stored directly as v2 AgentStatus (no conversion)
@@ -948,6 +992,7 @@ describe("App component", () => {
 
     it("subscribes to workspace:status-changed via v2.on() on mount", async () => {
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(mockApi.on).toHaveBeenCalledWith("workspace:status-changed", expect.any(Function));
@@ -956,6 +1001,7 @@ describe("App component", () => {
 
     it("updates store on workspace:status-changed v2 event", async () => {
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(getEventCallback("workspace:status-changed")).toBeDefined();
@@ -982,13 +1028,16 @@ describe("App component", () => {
     it("unsubscribes from workspace:status-changed v2 event on unmount", async () => {
       // Track unsubscribe functions per event
       const unsubFunctions = new Map<string, ReturnType<typeof vi.fn>>();
-      mockApi.on.mockImplementation((event: string) => {
+      mockApi.on.mockImplementation((event: string, callback: EventCallback) => {
+        // Still populate eventCallbacks so showMainView() works
+        eventCallbacks.set(event, callback);
         const unsub = vi.fn();
         unsubFunctions.set(event, unsub);
         return unsub;
       });
 
       const { unmount } = render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(mockApi.on).toHaveBeenCalledWith("workspace:status-changed", expect.any(Function));
@@ -1000,223 +1049,10 @@ describe("App component", () => {
     });
   });
 
-  describe("setup flow handling", () => {
-    it("calls lifecycle.getState on mount", async () => {
-      render(App);
-
-      await waitFor(() => {
-        expect(mockApi.lifecycle.getState).toHaveBeenCalledTimes(1);
-      });
-    });
-
-    it("shows SetupScreen when state is 'setup'", async () => {
-      // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // Keep setup running indefinitely
-      mockApi.lifecycle.setup.mockReturnValue(new Promise(() => {}));
-
-      render(App);
-
-      // Should show setup screen with static message
-      await waitFor(() => {
-        expect(screen.getByText("Setting up CodeHydra")).toBeInTheDocument();
-        expect(screen.getByText("This is only required on first startup.")).toBeInTheDocument();
-      });
-    });
-
-    it("shows SetupComplete when lifecycle.setup() returns success", async () => {
-      // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // Setup completes successfully
-      mockApi.lifecycle.setup.mockResolvedValue({ success: true });
-      // Keep startServices running indefinitely so we stay at SetupComplete
-      mockApi.lifecycle.startServices.mockReturnValue(new Promise(() => {}));
-
-      render(App);
-
-      // Should show setup complete after setup() resolves
-      await waitFor(() => {
-        expect(screen.getByText("Setup complete!")).toBeInTheDocument();
-      });
-    });
-
-    it("shows SetupError when lifecycle.setup() returns failure", async () => {
-      // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // Setup fails
-      mockApi.lifecycle.setup.mockResolvedValue({
-        success: false,
-        message: "Network error",
-        code: "NETWORK_ERROR",
-      });
-
-      render(App);
-
-      await waitFor(() => {
-        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
-        expect(screen.getByText("Error: Network error")).toBeInTheDocument();
-      });
-    });
-
-    it("calls lifecycle.setup() when Retry button clicked on error screen", async () => {
-      // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // First setup fails, second succeeds
-      mockApi.lifecycle.setup
-        .mockResolvedValueOnce({
-          success: false,
-          message: "Failed",
-          code: "NETWORK_ERROR",
-        })
-        .mockResolvedValueOnce({ success: true });
-
-      render(App);
-
-      // Wait for error screen
-      await waitFor(() => {
-        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
-      });
-
-      // Clear mock to track retry call
-      mockApi.lifecycle.setup.mockClear();
-      mockApi.lifecycle.setup.mockResolvedValue({ success: true });
-
-      // Click retry button
-      const retryButton = screen.getByRole("button", { name: "Retry" });
-      retryButton.click();
-
-      await waitFor(() => {
-        expect(mockApi.lifecycle.setup).toHaveBeenCalledTimes(1);
-      });
-    });
-
-    it("calls lifecycle.quit() when Quit button clicked on error screen", async () => {
-      // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // Setup fails
-      mockApi.lifecycle.setup.mockResolvedValue({
-        success: false,
-        message: "Failed",
-        code: "NETWORK_ERROR",
-      });
-
-      render(App);
-
-      // Wait for error screen
-      await waitFor(() => {
-        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
-      });
-
-      // Click quit button
-      const quitButton = screen.getByRole("button", { name: "Quit" });
-      quitButton.click();
-
-      expect(mockApi.lifecycle.quit).toHaveBeenCalledTimes(1);
-    });
-
-    it("shows loading screen when state is 'loading'", async () => {
-      // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
-      // Keep startServices running indefinitely
-      mockApi.lifecycle.startServices.mockReturnValue(new Promise(() => {}));
-
-      render(App);
-
-      // Should show loading screen with "CodeHydra is starting..." message
-      await waitFor(() => {
-        expect(screen.getByText("CodeHydra is starting...")).toBeInTheDocument();
-      });
-    });
-
-    it("transitions to ready after startServices() succeeds", async () => {
-      // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
-      // startServices completes successfully
-      mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
-      mockApi.projects.list.mockResolvedValue([]);
-
-      render(App);
-
-      // Should show Sidebar (normal app) after startServices succeeds
-      await waitFor(() => {
-        expect(screen.getByRole("navigation", { name: "Projects" })).toBeInTheDocument();
-      });
-    });
-
-    it("shows error with Retry/Quit when startServices() fails", async () => {
-      // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
-      // startServices fails
-      mockApi.lifecycle.startServices.mockResolvedValue({
-        success: false,
-        message: "Connection failed",
-        code: "SERVICE_START_ERROR",
-      });
-
-      render(App);
-
-      await waitFor(() => {
-        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
-        expect(screen.getByText("Error: Connection failed")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Quit" })).toBeInTheDocument();
-      });
-    });
-
-    it("retries startServices when Retry clicked in loading mode", async () => {
-      // Loading mode - lifecycle.getState returns "loading"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
-      // First startServices fails, second succeeds
-      mockApi.lifecycle.startServices
-        .mockResolvedValueOnce({
-          success: false,
-          message: "Connection failed",
-          code: "SERVICE_START_ERROR",
-        })
-        .mockResolvedValueOnce({ success: true });
-
-      render(App);
-
-      // Wait for error screen
-      await waitFor(() => {
-        expect(screen.getByText("Setup Failed")).toBeInTheDocument();
-      });
-
-      // Click retry button
-      const retryButton = screen.getByRole("button", { name: "Retry" });
-      retryButton.click();
-
-      // Should call startServices again (not setup)
-      await waitFor(() => {
-        expect(mockApi.lifecycle.startServices).toHaveBeenCalledTimes(2);
-        expect(mockApi.lifecycle.setup).not.toHaveBeenCalled();
-      });
-    });
-
-    it("setup success transitions through loading to ready", async () => {
-      // Setup mode - lifecycle.getState returns "setup"
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // Setup completes successfully
-      mockApi.lifecycle.setup.mockResolvedValue({ success: true });
-      // startServices completes successfully
-      mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
-      mockApi.projects.list.mockResolvedValue([]);
-
-      render(App);
-
-      // Wait for the full transition: setup → SetupComplete → loading → ready
-      // SetupComplete has a 1.5s timer, so we need a longer timeout
-      await waitFor(
-        () => {
-          // Should end up at ready mode with Sidebar visible
-          expect(screen.getByRole("navigation", { name: "Projects" })).toBeInTheDocument();
-        },
-        { timeout: 3000 }
-      );
-
-      // Verify the flow was: setup() → startServices()
-      expect(mockApi.lifecycle.setup).toHaveBeenCalled();
-      expect(mockApi.lifecycle.startServices).toHaveBeenCalled();
-    });
-  });
+  // ============================================================================
+  // NOTE: "setup flow handling" tests have been removed.
+  // Setup is now handled via app:setup intent in the main process. The renderer
+  // is passive and waits for lifecycle:show-main-view IPC event before showing
+  // MainView. See APP_SETUP_MIGRATION.md for details.
+  // ============================================================================
 });
