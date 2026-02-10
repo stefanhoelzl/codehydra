@@ -127,7 +127,7 @@ describe("CodeServerManager (boundary)", () => {
   // Ensure binaries are available before running tests
   beforeAll(async () => {
     await ensureBinariesForTests(["code-server", "opencode"]);
-  });
+  }, 300_000); // 5 minutes — binary download can be slow
 
   beforeEach(async (): Promise<void> => {
     // Use documented test utility for temp directory

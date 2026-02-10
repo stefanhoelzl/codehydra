@@ -41,12 +41,13 @@ export type LoggerName =
   | "app" // Application lifecycle
   | "ui" // Renderer UI components
   | "binary-download" // BinaryDownloadService - binary downloads
-  | "vscode-setup" // VscodeSetupService - VS Code setup
+  | "agent-binary" // AgentBinaryManager - agent binary management
   | "lifecycle" // LifecycleApi - app lifecycle
   | "plugin" // PluginServer - VS Code extension communication
   | "badge" // BadgeManager - app icon badge
   | "mcp" // McpServerManager - MCP server
   | "extension" // PluginServer - extension-side logs forwarded to main
+  | "ext-manager" // ExtensionManager - extension preflight/install
   | "dialog" // DialogLayer - system dialogs
   | "menu" // MenuLayer - application menu
   | "workspace-file" // WorkspaceFileService - .code-workspace file management

@@ -24,6 +24,16 @@ function clearEventCallbacks(): void {
   eventCallbacks.clear();
 }
 
+/**
+ * Trigger the main view to show.
+ * With the new passive renderer flow, App starts in "initializing" mode and waits
+ * for the main process to send "lifecycle:show-main-view" event before rendering MainView.
+ * Call this after render() to simulate the main process completing startup.
+ */
+function showMainView(): void {
+  fireApiEvent("lifecycle:show-main-view");
+}
+
 const mockApi = vi.hoisted(() => ({
   // Normal API (flat structure)
   workspaces: {
@@ -45,13 +55,13 @@ const mockApi = vi.hoisted(() => ({
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
     setMode: vi.fn().mockResolvedValue(undefined),
   },
+  // Note: lifecycle.getState, lifecycle.setup, lifecycle.startServices, lifecycle.setAgent
+  // have been removed - setup is now handled via app:setup intent in main process.
+  // Renderer is passive and waits for lifecycle:show-main-view IPC event.
   lifecycle: {
-    getState: vi.fn().mockResolvedValue({ state: "loading", agent: "opencode" }),
-    setup: vi.fn().mockResolvedValue({ success: true }),
-    startServices: vi.fn().mockResolvedValue({ success: true }),
-    setAgent: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn().mockResolvedValue(undefined),
   },
+  sendAgentSelected: vi.fn(),
   // on() captures callbacks by event name for tests to fire events
   on: vi.fn((event: string, callback: EventCallback) => {
     eventCallbacks.set(event, callback);
@@ -234,6 +244,7 @@ describe("Integration tests", () => {
       mockApi.ui.selectFolder.mockResolvedValue(projectPath);
 
       render(App);
+      showMainView();
 
       // Wait for initial load
       await waitFor(() => {
@@ -278,6 +289,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for project to appear
       await waitFor(() => {
@@ -329,6 +341,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for project to appear
       await waitFor(() => {
@@ -372,6 +385,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for workspace to appear
       await waitFor(() => {
@@ -430,6 +444,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for workspaces to appear
       await waitFor(() => {
@@ -476,6 +491,7 @@ describe("Integration tests", () => {
       mockApi.ui.selectFolder.mockResolvedValue(null);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText("existing")).toBeInTheDocument();
@@ -508,6 +524,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockRejectedValue(new Error("Database connection failed"));
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText(/database connection failed/i)).toBeInTheDocument();
@@ -524,6 +541,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText("my-project")).toBeInTheDocument();
@@ -553,6 +571,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText("feature-x")).toBeInTheDocument();
@@ -599,6 +618,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for initial load
       await waitFor(() => {
@@ -626,6 +646,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for initial load
       await waitFor(() => {
@@ -662,6 +683,7 @@ describe("Integration tests", () => {
       mockApi.ui.setMode.mockRejectedValue(new Error("IPC failed"));
 
       render(App);
+      showMainView();
 
       // Wait for initial load
       await waitFor(() => {
@@ -689,6 +711,7 @@ describe("Integration tests", () => {
       });
 
       render(App);
+      showMainView();
 
       // Wait for initial load and active workspace to be set
       await waitFor(() => {
@@ -726,6 +749,7 @@ describe("Integration tests", () => {
       mockApi.ui.getActiveWorkspace.mockResolvedValue(null); // No active workspace
 
       render(App);
+      showMainView();
 
       // Wait for initial load
       await waitFor(() => {
@@ -766,6 +790,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for load
       await waitFor(() => {
@@ -799,6 +824,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText("main")).toBeInTheDocument();
@@ -851,6 +877,7 @@ describe("Integration tests", () => {
 
     it("mode change events update store state correctly", async () => {
       render(App);
+      showMainView();
 
       // Wait for initial load
       await waitFor(() => {
@@ -890,6 +917,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for load
       await waitFor(() => {
@@ -952,6 +980,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for load
       await waitFor(() => {
@@ -999,6 +1028,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       // Wait for load
       await waitFor(() => {
@@ -1044,6 +1074,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText("first")).toBeInTheDocument();
@@ -1079,6 +1110,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([]);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
@@ -1110,6 +1142,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
+      showMainView();
 
       await waitFor(() => {
         expect(screen.getByText("only")).toBeInTheDocument();
@@ -1151,6 +1184,7 @@ describe("Integration tests", () => {
       });
 
       render(App);
+      showMainView();
 
       // Wait for Create Workspace dialog to auto-open (new behavior)
       await waitFor(() => {
@@ -1197,6 +1231,7 @@ describe("Integration tests", () => {
       mockApi.projects.list.mockResolvedValue([]);
 
       render(App);
+      showMainView();
 
       // Wait for Create Workspace dialog to auto-open
       await waitFor(() => {
@@ -1218,6 +1253,7 @@ describe("Integration tests", () => {
       mockApi.ui.selectFolder.mockResolvedValue(projectPath);
 
       render(App);
+      showMainView();
 
       // Wait for load
       await waitFor(() => {
@@ -1263,113 +1299,10 @@ describe("Integration tests", () => {
     });
   });
 
-  describe("setup flow integration", () => {
-    it("routes-to-mainview-when-loading: lifecycle.getState returns 'loading', startServices called, MainView mounts", async () => {
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
-      mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
-      mockApi.projects.list.mockResolvedValue([]);
-
-      render(App);
-
-      // Wait for MainView to mount and call listProjects (v2 API)
-      await waitFor(() => {
-        expect(mockApi.projects.list).toHaveBeenCalled();
-      });
-
-      // Verify startServices was called
-      expect(mockApi.lifecycle.startServices).toHaveBeenCalled();
-
-      // Verify we're in normal app mode (empty state shown)
-      await waitFor(() => {
-        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
-      });
-    });
-
-    it("routes-to-setupscreen-when-setup: lifecycle.getState returns 'setup', SetupScreen shown", async () => {
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // Keep setup running indefinitely
-      mockApi.lifecycle.setup.mockReturnValue(new Promise(() => {}));
-
-      render(App);
-
-      // Wait for setup screen to appear
-      await waitFor(() => {
-        expect(screen.getByText("Setting up CodeHydra")).toBeInTheDocument();
-      });
-
-      // Verify v2.projects.list was NOT called (we're in setup mode)
-      expect(mockApi.projects.list).not.toHaveBeenCalled();
-    });
-
-    // Note: setup completion transition is tested in App.test.ts with proper mock setup
-    // The integration test focuses on the routing behavior verified above
-
-    it("does-not-call-listProjects-during-setup: IPC calls deferred until MainView mounts", async () => {
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      // Keep setup running indefinitely
-      mockApi.lifecycle.setup.mockReturnValue(new Promise(() => {}));
-
-      render(App);
-
-      // Wait for setup screen
-      await waitFor(() => {
-        expect(screen.getByText("Setting up CodeHydra")).toBeInTheDocument();
-      });
-
-      // Verify no domain IPC calls during setup
-      expect(mockApi.projects.list).not.toHaveBeenCalled();
-    });
-
-    it("setup-success-triggers-mainview-mount: lifecycle.setup success triggers startServices, then MainView mount", async () => {
-      // Start in setup mode
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "setup", agent: "opencode" });
-      mockApi.projects.list.mockResolvedValue([]);
-      // Setup completes successfully
-      mockApi.lifecycle.setup.mockResolvedValue({ success: true });
-      // startServices completes successfully (called after setup succeeds)
-      mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
-
-      render(App);
-
-      // Wait for SetupComplete screen to show (setup completes quickly)
-      await waitFor(() => {
-        expect(screen.getByText("Setup complete!")).toBeInTheDocument();
-      });
-
-      // The SetupComplete timer will transition to loading state, then call startServices
-      // After startServices succeeds, MainView should mount and call v2.projects.list
-      await waitFor(
-        () => {
-          expect(mockApi.projects.list).toHaveBeenCalled();
-        },
-        { timeout: 3000 }
-      ); // Allow time for the 1.5s success screen + startServices
-
-      // Verify the full flow: setup() → startServices()
-      expect(mockApi.lifecycle.setup).toHaveBeenCalled();
-      expect(mockApi.lifecycle.startServices).toHaveBeenCalled();
-    });
-
-    it("handlers-registered-before-lifecycle-getState-returns: normal handlers available when startServices completes", async () => {
-      // This test verifies that when lifecycle.startServices completes,
-      // the IPC handlers that MainView needs are already registered.
-      // We can verify this by checking that v2.projects.list succeeds.
-      mockApi.lifecycle.getState.mockResolvedValue({ state: "loading", agent: "opencode" });
-      mockApi.lifecycle.startServices.mockResolvedValue({ success: true });
-      const mockProjects = [createProject("my-project", [])];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-
-      // Wait for MainView to mount and successfully call IPC
-      await waitFor(() => {
-        expect(mockApi.projects.list).toHaveBeenCalled();
-      });
-
-      // Verify the project loaded successfully (no handler-not-registered error)
-      await waitFor(() => {
-        expect(screen.getByText("my-project")).toBeInTheDocument();
-      });
-    });
-  });
+  // ============================================================================
+  // NOTE: "setup flow integration" tests have been removed.
+  // Setup is now handled via app:setup intent in the main process. The renderer
+  // is passive and waits for lifecycle:show-main-view IPC event before showing
+  // MainView. See APP_SETUP_MIGRATION.md for details.
+  // ============================================================================
 });

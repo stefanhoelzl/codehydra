@@ -6,17 +6,25 @@
  * - Boundary testing of DefaultIpcLayer against real ipcMain
  * - Consistent error handling via PlatformError
  *
- * Note: This layer only handles ipcMain.handle() registration.
+ * Supports two patterns:
+ * - handle()/removeHandler(): Request-response (ipcMain.handle)
+ * - on()/removeListener(): Fire-and-forget events (ipcMain.on)
+ *
  * Sending messages to renderer is done via ViewLayer's webContents access.
  */
 
-import type { IpcMainInvokeEvent } from "electron";
+import type { IpcMainInvokeEvent, IpcMainEvent } from "electron";
 import { PlatformError } from "./errors";
 
 /**
- * Handler function type for IPC invoke handlers.
+ * Handler function type for IPC invoke handlers (request-response).
  */
 export type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+
+/**
+ * Handler function type for IPC event listeners (fire-and-forget).
+ */
+export type IpcEventHandler = (event: IpcMainEvent, ...args: unknown[]) => void;
 
 /**
  * Abstraction over IPC handler registration.
@@ -27,7 +35,7 @@ export type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unkn
  */
 export interface IpcLayer {
   /**
-   * Register a handler for an IPC invoke channel.
+   * Register a handler for an IPC invoke channel (request-response).
    *
    * @param channel - The IPC channel name
    * @param handler - The handler function
@@ -48,6 +56,23 @@ export interface IpcLayer {
    * This is useful for cleanup during shutdown.
    */
   removeAllHandlers(): void;
+
+  /**
+   * Register a listener for a fire-and-forget IPC event from the renderer.
+   * Unlike handle(), multiple listeners can be registered for the same channel.
+   *
+   * @param channel - The IPC channel name
+   * @param listener - The event handler function
+   */
+  on(channel: string, listener: IpcEventHandler): void;
+
+  /**
+   * Remove a specific listener for a fire-and-forget IPC event.
+   *
+   * @param channel - The IPC channel name
+   * @param listener - The listener function to remove (must be the same reference)
+   */
+  removeListener(channel: string, listener: IpcEventHandler): void;
 }
 
 // ============================================================================
@@ -100,5 +125,15 @@ export class DefaultIpcLayer implements IpcLayer {
       this.logger.debug("IPC handler removed", { channel });
     }
     this.registeredChannels.clear();
+  }
+
+  on(channel: string, listener: IpcEventHandler): void {
+    ipcMain.on(channel, listener);
+    this.logger.debug("IPC event listener registered", { channel });
+  }
+
+  removeListener(channel: string, listener: IpcEventHandler): void {
+    ipcMain.removeListener(channel, listener);
+    this.logger.debug("IPC event listener removed", { channel });
   }
 }

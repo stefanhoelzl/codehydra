@@ -20,22 +20,23 @@
   - Sidebar, dialogs, ShortcutOverlay rendering
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
   import * as api from "$lib/api";
-  import type { ConfigAgentType } from "$lib/api";
-  import type { SetupRowProgress, SetupScreenProgress } from "@shared/api/types";
-  import { getErrorMessage } from "@shared/error-utils";
+  import type { SetupRowProgress, SetupScreenProgress, ConfigAgentType } from "@shared/api/types";
+  import type {
+    ShowAgentSelectionPayload,
+    SetupErrorPayload,
+    LifecycleAgentType,
+  } from "@shared/ipc";
   import {
     handleModeChange,
     handleKeyDown,
     handleWindowBlur,
     handleShortcutKey,
   } from "$lib/stores/shortcuts.svelte.js";
-  import { setupState, completeSetup, errorSetup, resetSetup } from "$lib/stores/setup.svelte.js";
+  import { setupState, errorSetup, resetSetup } from "$lib/stores/setup.svelte.js";
   import { createLogger } from "$lib/logging";
   import MainView from "$lib/components/MainView.svelte";
   import SetupScreen from "$lib/components/SetupScreen.svelte";
-  import SetupComplete from "$lib/components/SetupComplete.svelte";
   import SetupError from "$lib/components/SetupError.svelte";
   import AgentSelectionDialog from "$lib/components/AgentSelectionDialog.svelte";
 
@@ -115,90 +116,85 @@
     };
   });
 
-  // Check setup status on mount
-  onMount(async () => {
-    try {
-      const result = await api.lifecycle.getState();
-      // Store selected agent for display in SetupScreen
-      selectedAgent = result.agent;
-      if (result.state === "agent-selection") {
-        // Agent not selected - show selection dialog
-        appMode = { type: "agent-selection" };
-      } else if (result.state === "loading") {
-        // No setup needed, but services not started yet
-        appMode = { type: "loading" };
-        void runStartServices();
-      } else if (result.state === "setup") {
-        // Setup needed - start setup automatically
-        appMode = { type: "setup" };
-        void runSetup();
-      } else {
-        // Unexpected "ready" state (should not happen with new flow)
-        appMode = { type: "ready" };
-      }
-    } catch (error) {
-      // If lifecycle.getState() fails, try to start services anyway
-      const message = getErrorMessage(error);
-      logger.warn("UI error", { component: "App", error: message });
-      console.error("Setup state check failed:", error);
+  // Subscribe to lifecycle:show-starting event from main process
+  // Main process tells us to show the starting screen (loading mode)
+  $effect(() => {
+    const unsub = api.on<void>("lifecycle:show-starting", () => {
+      logger.debug("Showing starting screen");
       appMode = { type: "loading" };
-      void runStartServices();
-    }
+    });
+    return () => {
+      unsub();
+    };
   });
 
-  /**
-   * Run the setup process via lifecycle API.
-   * On success, transitions to loading state to start services.
-   */
-  async function runSetup(): Promise<void> {
-    try {
-      const result = await api.lifecycle.setup();
-      if (result.success) {
-        completeSetup();
-      } else {
-        errorSetup(result.message);
-      }
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("UI error", { component: "App", error: message });
-      errorSetup(message);
-    }
-  }
+  // Subscribe to lifecycle:show-setup event from main process
+  // Main process tells us to show the setup screen (setup mode)
+  $effect(() => {
+    const unsub = api.on<void>("lifecycle:show-setup", () => {
+      logger.debug("Showing setup screen");
+      // Clear any previous progress state when entering setup
+      setupProgress = [];
+      appMode = { type: "setup" };
+    });
+    return () => {
+      unsub();
+    };
+  });
 
-  /**
-   * Start application services via lifecycle API.
-   * Called after setup completes or when getState returns "loading".
-   */
-  async function runStartServices(): Promise<void> {
-    try {
-      const result = await api.lifecycle.startServices();
-      if (result.success) {
-        appMode = { type: "ready" };
-        // Announce mode transition for screen readers
-        announceMessage = "Application ready.";
-        setTimeout(() => {
-          announceMessage = "";
-        }, ARIA_ANNOUNCEMENT_CLEAR_MS);
-      } else {
-        // Show error with retry option
-        errorSetup(result.message);
-      }
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("UI error", { component: "App", error: message });
-      errorSetup(message);
-    }
-  }
+  // Subscribe to lifecycle:show-agent-selection event from main process
+  // Main process tells us when to show the agent selection dialog
+  $effect(() => {
+    const unsub = api.on<ShowAgentSelectionPayload>("lifecycle:show-agent-selection", (payload) => {
+      logger.debug("Showing agent selection", { agents: payload.agents.join(",") });
+      // Store available agents if needed for display
+      appMode = { type: "agent-selection" };
+    });
+    return () => {
+      unsub();
+    };
+  });
+
+  // Subscribe to lifecycle:show-main-view event from main process
+  // Main process tells us when setup is complete and we can show the main view
+  $effect(() => {
+    const unsub = api.on<void>("lifecycle:show-main-view", () => {
+      logger.debug("Showing main view");
+      appMode = { type: "ready" };
+      // Announce mode transition for screen readers
+      announceMessage = "Application ready.";
+      setTimeout(() => {
+        announceMessage = "";
+      }, ARIA_ANNOUNCEMENT_CLEAR_MS);
+    });
+    return () => {
+      unsub();
+    };
+  });
+
+  // Subscribe to lifecycle:setup-error event from main process
+  // Main process tells us when setup fails and we should show an error
+  $effect(() => {
+    const unsub = api.on<SetupErrorPayload>("lifecycle:setup-error", (payload) => {
+      logger.warn("Setup error received", { message: payload.message, code: payload.code ?? null });
+      errorSetup(payload.message);
+    });
+    return () => {
+      unsub();
+    };
+  });
+
+  // No onMount needed - main process drives the flow via IPC events
+  // The renderer starts in "initializing" mode and waits for IPC instructions
 
   // Handle setup/service retry
+  // Sends a signal to main process to retry the startup flow
   function handleSetupRetry(): void {
     resetSetup();
-    // If we're in loading mode, retry startServices, otherwise retry setup
-    if (appMode.type === "loading") {
-      void runStartServices();
-    } else {
-      void runSetup();
-    }
+    // Show loading state while main process re-dispatches app:setup
+    appMode = { type: "loading" };
+    // Signal main process to retry
+    api.sendRetry();
   }
 
   // Handle setup quit
@@ -206,44 +202,21 @@
     void api.lifecycle.quit();
   }
 
-  // Handle setup complete transition (after success screen timer)
-  // Transitions to loading state to start services
-  function handleSetupCompleteTransition(): void {
-    appMode = { type: "loading" };
-    // Start services after setup completes
-    void runStartServices();
-  }
-
   /**
    * Handle agent selection from the dialog.
-   * Saves selection via API and proceeds to setup or loading.
+   * Sends IPC event to main process with selected agent.
+   * Main process will continue the setup flow and send next IPC event.
    */
-  async function handleAgentSelect(agent: ConfigAgentType): Promise<void> {
-    try {
-      const result = await api.lifecycle.setAgent(agent);
-      if (result.success) {
-        logger.info("Agent selected", { agent });
-        // Store selected agent for display in SetupScreen
-        selectedAgent = agent;
-        // Clear any previous progress state
-        setupProgress = [];
-        // Re-check state after selection (will return setup or loading)
-        const stateResult = await api.lifecycle.getState();
-        if (stateResult.state === "setup") {
-          appMode = { type: "setup" };
-          void runSetup();
-        } else {
-          appMode = { type: "loading" };
-          void runStartServices();
-        }
-      } else {
-        errorSetup(result.message);
-      }
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("UI error", { component: "App", error: message });
-      errorSetup(message);
-    }
+  function handleAgentSelect(agent: ConfigAgentType): void {
+    logger.info("Agent selected", { agent });
+    // Store selected agent for display in SetupScreen
+    selectedAgent = agent;
+    // Clear any previous progress state
+    setupProgress = [];
+    // Transition to setup mode while main process continues
+    appMode = { type: "setup" };
+    // Send IPC event to main process
+    api.sendAgentSelected(agent as LifecycleAgentType);
   }
 
   // Get aria-label for main element based on mode
@@ -251,6 +224,7 @@
     if (appMode.type === "ready") return "Application workspace";
     if (appMode.type === "loading") return "Loading services";
     if (appMode.type === "agent-selection") return "Agent selection";
+    if (appMode.type === "initializing") return "Application starting";
     return "Setup wizard";
   }
 </script>
@@ -264,10 +238,8 @@
 
 <main class="app" aria-label={getAriaLabel()}>
   {#if appMode.type === "initializing"}
-    <!-- Loading state while checking setup status -->
-    <div class="setup-container">
-      <SetupScreen />
-    </div>
+    <!-- Minimal blank state while waiting for main process IPC -->
+    <div class="setup-container" aria-busy="true"></div>
   {:else if appMode.type === "agent-selection"}
     <!-- Agent selection mode - show selection dialog -->
     <div class="setup-container">
@@ -282,10 +254,8 @@
           onretry={handleSetupRetry}
           onquit={handleSetupQuit}
         />
-      {:else if setupState.value.type === "complete"}
-        <SetupComplete oncomplete={handleSetupCompleteTransition} />
       {:else}
-        <!-- loading state -->
+        <!-- Setup in progress - main process will send lifecycle:show-main-view when done -->
         <SetupScreen
           agent={selectedAgent}
           progress={setupProgress}

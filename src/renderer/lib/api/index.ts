@@ -2,11 +2,9 @@
  * Renderer API layer.
  * Re-exports window.api for mockability in tests.
  *
- * Setup operations use lifecycle API:
- * - lifecycle.getState() returns "setup" | "loading"
- * - lifecycle.setup() runs setup and returns success/failure (does NOT start services)
- * - lifecycle.startServices() starts services and returns success/failure
- * - lifecycle.quit() quits the app
+ * Setup is driven by the main process (app:setup intent).
+ * Renderer subscribes to lifecycle events and responds to agent selection.
+ * lifecycle.quit() is the only method the renderer can call.
  */
 
 // Check that window.api is available
@@ -27,6 +25,10 @@ export const {
   onModeChange,
   // Shortcut key event (main process → renderer)
   onShortcut,
+  // Agent selection event (renderer → main process)
+  sendAgentSelected,
+  // Retry event (renderer → main process)
+  sendRetry,
 } = window.api;
 
 // Re-export branded path types from IPC (still used for type safety)
@@ -34,7 +36,7 @@ export type { ProjectPath, WorkspacePath } from "@shared/ipc";
 
 export type { Unsubscribe } from "@shared/electron-api";
 
-// Re-export v2 API types for convenience
+// Re-export API types for convenience
 export type {
   Project,
   Workspace,
@@ -43,10 +45,6 @@ export type {
   AgentStatus,
   AgentStatusCounts,
   BaseInfo,
-  SetupResult,
-  AppState,
-  AppStateResult,
-  ConfigAgentType,
   ProjectId,
   WorkspaceName,
 } from "@shared/api/types";

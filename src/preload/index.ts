@@ -5,7 +5,12 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
-import type { UIModeChangedEvent, LogContext } from "../shared/ipc";
+import type {
+  UIModeChangedEvent,
+  LogContext,
+  LifecycleAgentType,
+  AgentSelectedPayload,
+} from "../shared/ipc";
 import type { ShortcutKey } from "../shared/shortcuts";
 
 /**
@@ -86,11 +91,22 @@ contextBridge.exposeInMainWorld("api", {
     setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),
   },
   lifecycle: {
-    getState: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_GET_STATE),
-    setAgent: (agent: string) => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_SET_AGENT, { agent }),
-    setup: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_SETUP),
-    startServices: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_START_SERVICES),
     quit: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_QUIT),
+  },
+  /**
+   * Send agent selected event to main process.
+   * Used when user selects an agent in the agent selection dialog.
+   */
+  sendAgentSelected: (agent: LifecycleAgentType) => {
+    const payload: AgentSelectedPayload = { agent };
+    ipcRenderer.send(ApiIpcChannels.LIFECYCLE_AGENT_SELECTED, payload);
+  },
+  /**
+   * Send retry event to main process.
+   * Used when user clicks retry after a setup/startup error.
+   */
+  sendRetry: () => {
+    ipcRenderer.send(ApiIpcChannels.LIFECYCLE_RETRY);
   },
   // Log API (renderer → main, fire-and-forget)
   log: {

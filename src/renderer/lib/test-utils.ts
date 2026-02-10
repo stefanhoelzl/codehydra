@@ -55,10 +55,6 @@ export function createMockApi(): Api {
       setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
-      getState: vi.fn().mockResolvedValue({ state: "loading", agent: "opencode" }),
-      setup: vi.fn().mockResolvedValue({ success: true }),
-      startServices: vi.fn().mockResolvedValue({ success: true }),
-      setAgent: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn().mockResolvedValue(undefined),
     },
     log: {
@@ -70,5 +66,7 @@ export function createMockApi(): Api {
     on: vi.fn(() => vi.fn()),
     onModeChange: vi.fn(() => vi.fn()),
     onShortcut: vi.fn(() => vi.fn()),
+    sendAgentSelected: vi.fn(),
+    sendRetry: vi.fn(),
   };
 }

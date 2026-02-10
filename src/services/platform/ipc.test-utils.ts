@@ -5,7 +5,7 @@
  * and allows state inspection for testing.
  */
 
-import type { IpcLayer, IpcHandler } from "./ipc";
+import type { IpcLayer, IpcHandler, IpcEventHandler } from "./ipc";
 import { PlatformError } from "./errors";
 
 /**
@@ -34,6 +34,23 @@ export interface BehavioralIpcLayer extends IpcLayer {
    * @throws PlatformError with code IPC_HANDLER_NOT_FOUND if no handler registered
    */
   _invoke(channel: string, ...args: unknown[]): unknown;
+
+  /**
+   * Simulate sending a fire-and-forget event (for testing event listeners).
+   * This is NOT part of the real IpcLayer interface - it's a test helper.
+   *
+   * @param channel - The IPC channel name
+   * @param args - Arguments to pass to the listeners
+   */
+  _emit(channel: string, ...args: unknown[]): void;
+
+  /**
+   * Get registered event listeners for a channel (for test inspection).
+   *
+   * @param channel - The IPC channel name
+   * @returns Array of registered listeners
+   */
+  _getListeners(channel: string): readonly IpcEventHandler[];
 }
 
 /**
@@ -64,6 +81,7 @@ export interface BehavioralIpcLayer extends IpcLayer {
  */
 export function createBehavioralIpcLayer(): BehavioralIpcLayer {
   const handlers = new Map<string, IpcHandler>();
+  const eventListeners = new Map<string, IpcEventHandler[]>();
 
   return {
     handle(channel: string, handler: IpcHandler): void {
@@ -90,6 +108,25 @@ export function createBehavioralIpcLayer(): BehavioralIpcLayer {
       handlers.clear();
     },
 
+    on(channel: string, listener: IpcEventHandler): void {
+      const listeners = eventListeners.get(channel) ?? [];
+      listeners.push(listener);
+      eventListeners.set(channel, listeners);
+    },
+
+    removeListener(channel: string, listener: IpcEventHandler): void {
+      const listeners = eventListeners.get(channel);
+      if (listeners) {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) {
+          listeners.splice(index, 1);
+        }
+        if (listeners.length === 0) {
+          eventListeners.delete(channel);
+        }
+      }
+    },
+
     _getState(): IpcLayerState {
       return {
         handlers: new Map(handlers),
@@ -107,6 +144,20 @@ export function createBehavioralIpcLayer(): BehavioralIpcLayer {
       // Create a minimal mock event object for testing
       const mockEvent = {} as Parameters<IpcHandler>[0];
       return handler(mockEvent, ...args);
+    },
+
+    _emit(channel: string, ...args: unknown[]): void {
+      const listeners = eventListeners.get(channel);
+      if (listeners) {
+        const mockEvent = {} as Parameters<IpcEventHandler>[0];
+        for (const listener of [...listeners]) {
+          listener(mockEvent, ...args);
+        }
+      }
+    },
+
+    _getListeners(channel: string): readonly IpcEventHandler[] {
+      return eventListeners.get(channel) ?? [];
     },
   };
 }

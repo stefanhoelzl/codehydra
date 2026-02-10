@@ -13,6 +13,7 @@ const { mockIpcRenderer, mockContextBridge } = vi.hoisted(() => ({
     invoke: vi.fn(),
     on: vi.fn(),
     removeListener: vi.fn(),
+    send: vi.fn(),
   },
   mockContextBridge: {
     exposeInMainWorld: vi.fn(),
@@ -418,25 +419,7 @@ describe("preload API", () => {
   });
 
   describe("lifecycle", () => {
-    it("lifecycle.getState calls api:lifecycle:get-state", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue("ready");
-
-      const lifecycle = exposedApi.lifecycle as { getState: () => Promise<string> };
-      const result = await lifecycle.getState();
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:lifecycle:get-state");
-      expect(result).toBe("ready");
-    });
-
-    it("lifecycle.setup calls api:lifecycle:setup", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue({ success: true });
-
-      const lifecycle = exposedApi.lifecycle as { setup: () => Promise<unknown> };
-      const result = await lifecycle.setup();
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:lifecycle:setup");
-      expect(result).toEqual({ success: true });
-    });
+    // Note: lifecycle.getState and lifecycle.setup tests removed - migrated to app:setup intent
 
     it("lifecycle.quit calls api:lifecycle:quit", async () => {
       mockIpcRenderer.invoke.mockResolvedValue(undefined);
@@ -445,6 +428,26 @@ describe("preload API", () => {
       await lifecycle.quit();
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:lifecycle:quit");
+    });
+  });
+
+  describe("sendAgentSelected", () => {
+    it("sends lifecycle:agent-selected IPC event with agent payload", () => {
+      const sendAgentSelected = exposedApi.sendAgentSelected as (agent: string) => void;
+      sendAgentSelected("opencode");
+
+      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:lifecycle:agent-selected", {
+        agent: "opencode",
+      });
+    });
+  });
+
+  describe("sendRetry", () => {
+    it("sends lifecycle:retry IPC event", () => {
+      const sendRetry = exposedApi.sendRetry as () => void;
+      sendRetry();
+
+      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:lifecycle:retry");
     });
   });
 

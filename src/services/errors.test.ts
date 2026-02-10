@@ -7,7 +7,6 @@ import {
   CodeServerError,
   ProjectStoreError,
   OpenCodeError,
-  VscodeSetupError,
   FileSystemError,
   isServiceError,
   getErrorMessage,
@@ -152,55 +151,6 @@ describe("ServiceError", () => {
         message: "Connection failed",
         code: "CONNECTION_REFUSED",
       });
-    });
-  });
-});
-
-describe("VscodeSetupError", () => {
-  it("has correct type", () => {
-    const error = new VscodeSetupError("Setup failed");
-    expect(error.type).toBe("vscode-setup");
-  });
-
-  it("preserves message", () => {
-    const error = new VscodeSetupError("Setup failed");
-    expect(error.message).toBe("Setup failed");
-  });
-
-  it("preserves optional code", () => {
-    const error = new VscodeSetupError("Setup failed", "NETWORK_ERROR");
-    expect(error.code).toBe("NETWORK_ERROR");
-  });
-
-  it("is instanceof Error", () => {
-    const error = new VscodeSetupError("test");
-    expect(error).toBeInstanceOf(Error);
-  });
-
-  it("is instanceof ServiceError", () => {
-    const error = new VscodeSetupError("test");
-    expect(error).toBeInstanceOf(ServiceError);
-  });
-
-  it("serializes correctly", () => {
-    const error = new VscodeSetupError("Setup failed", "NETWORK_ERROR");
-    const json = error.toJSON();
-
-    expect(json).toEqual({
-      type: "vscode-setup",
-      message: "Setup failed",
-      code: "NETWORK_ERROR",
-    });
-  });
-
-  it("serializes without code when not provided", () => {
-    const error = new VscodeSetupError("Setup failed");
-    const json = error.toJSON();
-
-    expect(json).toEqual({
-      type: "vscode-setup",
-      message: "Setup failed",
-      code: undefined,
     });
   });
 });

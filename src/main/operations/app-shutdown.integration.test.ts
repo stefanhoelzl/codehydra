@@ -319,6 +319,40 @@ describe("AppShutdown Operation", () => {
     });
   });
 
+  describe("quit hook runs after stop hooks", () => {
+    it("quit hook fires after all stop hooks complete", async () => {
+      const order: string[] = [];
+      const stopModule: IntentModule = {
+        hooks: {
+          [APP_SHUTDOWN_OPERATION_ID]: {
+            stop: {
+              handler: async () => {
+                order.push("stop");
+              },
+            },
+          },
+        },
+      };
+      const quitModule: IntentModule = {
+        hooks: {
+          [APP_SHUTDOWN_OPERATION_ID]: {
+            quit: {
+              handler: async () => {
+                order.push("quit");
+              },
+            },
+          },
+        },
+      };
+
+      const { dispatcher } = createTestSetup([stopModule, quitModule]);
+
+      await dispatcher.dispatch(appShutdownIntent());
+
+      expect(order).toEqual(["stop", "quit"]);
+    });
+  });
+
   describe("shutdown idempotency (#9)", () => {
     it("second dispatch is no-op, services disposed only once", async () => {
       let disposeCount = 0;

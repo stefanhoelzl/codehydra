@@ -2,74 +2,6 @@
  * Types for VS Code setup service.
  */
 
-// Re-export ProcessRunner from platform/process.
-// VscodeSetupService now uses the SpawnedProcess pattern via .wait().
-export type { ProcessRunner, ProcessResult } from "../platform/process";
-
-/**
- * Current version of the setup process.
- * Increment when setup steps change to force re-setup on existing installs.
- *
- * Version history:
- * - v6: Added binary download phase (code-server + opencode) before extension installation
- * - v7: Track setupVersion in marker to force bin/ script updates on version changes
- */
-export const CURRENT_SETUP_VERSION = 7;
-
-/**
- * Setup steps for progress tracking.
- */
-export type SetupStep = "binary-download" | "extensions" | "config" | "finalize";
-
-/**
- * Progress information for setup UI updates.
- */
-export interface SetupProgress {
-  readonly step: SetupStep;
-  readonly message: string;
-  /** Binary type being downloaded (only for binary-download step) */
-  readonly binaryType?: BinaryType;
-  /** Download progress percentage (0-100), only for binary-download step */
-  readonly percent?: number;
-}
-
-/**
- * Callback for receiving setup progress updates.
- */
-export type ProgressCallback = (progress: SetupProgress) => void;
-
-/**
- * New marker file content indicating setup completion (schemaVersion 1+).
- */
-export interface SetupMarker {
-  /** Schema version of the marker file. Increment to force re-setup on existing installs. */
-  readonly schemaVersion: number;
-  /** ISO timestamp when setup completed */
-  readonly completedAt: string;
-}
-
-/**
- * Error information for failed setup.
- */
-export interface SetupError {
-  readonly type:
-    | "network"
-    | "binary-not-found"
-    | "permission"
-    | "disk-full"
-    | "missing-assets"
-    | "unknown";
-  readonly message: string;
-  readonly code?: string;
-}
-
-/**
- * Result of a setup operation (discriminated union).
- */
-export type SetupResult =
-  | { readonly success: true }
-  | { readonly success: false; readonly error: SetupError };
-
 /**
  * Configuration for an extension in manifest.json.
  */
@@ -150,88 +82,9 @@ export function validateExtensionsManifest(value: unknown): ExtensionsManifestVa
   return { isValid: true, manifest: extensions };
 }
 
-/**
- * Interface for VS Code setup service.
- */
-export interface IVscodeSetup {
-  /**
-   * Check if setup has been completed with the current version.
-   * @returns true if setup is complete and version matches
-   */
-  isSetupComplete(): Promise<boolean>;
-
-  /**
-   * Run preflight checks to determine what needs to be installed/updated.
-   *
-   * This is a read-only operation that checks:
-   * - Binary versions (code-server, opencode)
-   * - Installed extension versions
-   * - Setup marker validity
-   *
-   * @returns PreflightResult indicating what components need setup
-   */
-  preflight(): Promise<PreflightResult>;
-
-  /**
-   * Run the full setup process.
-   * @param preflightResult Preflight result indicating what components need setup
-   * @param onProgress Optional callback for progress updates
-   * @returns Result indicating success or failure with error details
-   */
-  setup(preflightResult: PreflightResult, onProgress?: ProgressCallback): Promise<SetupResult>;
-
-  /**
-   * Remove the vscode directory to prepare for fresh setup.
-   * Safe to call if directory doesn't exist.
-   */
-  cleanVscodeDir(): Promise<void>;
-
-  /**
-   * Remove specific extension directories before reinstallation.
-   * @param extensionIds Extension IDs to clean (e.g., "codehydra.codehydra")
-   */
-  cleanComponents(extensionIds: readonly string[]): Promise<void>;
-}
-
 // ============================================================================
 // Preflight Types
 // ============================================================================
 
 /** Binary types that can be checked by preflight */
 export type BinaryType = "code-server" | "opencode" | "claude";
-
-/** Error types for preflight failures */
-export type PreflightErrorType = "filesystem-unreadable" | "unknown";
-
-/** Error information for preflight failures */
-export interface PreflightError {
-  readonly type: PreflightErrorType;
-  readonly message: string;
-}
-
-/**
- * Result of preflight checks.
- *
- * Discriminated union that indicates either:
- * - Success: All checks completed, may or may not need setup
- * - Failure: Checks could not be completed due to an error
- */
-export type PreflightResult =
-  | {
-      readonly success: true;
-      /** True if any component needs installation/update */
-      readonly needsSetup: boolean;
-      /** Binary types that are missing or at wrong version */
-      readonly missingBinaries: readonly BinaryType[];
-      /** Extension IDs that are not installed (any version) */
-      readonly missingExtensions: readonly string[];
-      /** Extension IDs installed but at wrong version */
-      readonly outdatedExtensions: readonly string[];
-    }
-  | {
-      readonly success: false;
-      readonly error: PreflightError;
-    };
-
-// Note: Bin script types (BinTargetPaths, ScriptFilename, GeneratedScript) have been
-// removed. CLI wrapper scripts are now static files in resources/bin/ compiled by Vite.

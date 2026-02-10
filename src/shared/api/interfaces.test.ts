@@ -21,8 +21,6 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  SetupResult,
-  AppStateResult,
   AgentSession,
   SetupScreenProgress,
 } from "./types";
@@ -201,28 +199,15 @@ describe("IUiApi Interface", () => {
 
 describe("ILifecycleApi Interface", () => {
   it("should have correct method signatures", () => {
+    // Note: getState, setup, startServices, setAgent have been migrated to app:setup intent.
+    // Only quit() remains in the ILifecycleApi.
     const api: ILifecycleApi = {
-      async getState(): Promise<AppStateResult> {
-        return { state: "loading", agent: "opencode" };
-      },
-      async setup(): Promise<SetupResult> {
-        return { success: true };
-      },
-      async startServices(): Promise<SetupResult> {
-        return { success: true };
-      },
-      async setAgent(): Promise<SetupResult> {
-        return { success: true };
-      },
       async quit(): Promise<void> {
         // no-op
       },
     };
 
     expect(api).toBeDefined();
-    expect(typeof api.getState).toBe("function");
-    expect(typeof api.setup).toBe("function");
-    expect(typeof api.startServices).toBe("function");
     expect(typeof api.quit).toBe("function");
   });
 });

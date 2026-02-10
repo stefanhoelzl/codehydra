@@ -38,8 +38,6 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  SetupResult,
-  AppStateResult,
   AgentSession,
 } from "../../shared/api/types";
 import type { UIMode } from "../../shared/ipc";
@@ -48,7 +46,8 @@ describe("registry-types.paths", () => {
   it("ALL_METHOD_PATHS contains all MethodRegistry keys", () => {
     // This test is compile-time verified by the `satisfies` constraint in registry-types.ts
     // At runtime, we verify the count matches
-    const registryKeyCount = 24; // Count of all methods in MethodRegistry
+    // Note: lifecycle methods (getState, setAgent, setup, startServices) were removed in app:setup migration
+    const registryKeyCount = 20; // Count of all methods in MethodRegistry
     expect(ALL_METHOD_PATHS.length).toBe(registryKeyCount);
   });
 
@@ -61,16 +60,14 @@ describe("registry-types.paths", () => {
 
   it("MethodPath is union of all paths", () => {
     // MethodPath should accept any valid path
-    expectTypeOf<"lifecycle.getState">().toExtend<MethodPath>();
+    expectTypeOf<"lifecycle.quit">().toExtend<MethodPath>();
     expectTypeOf<"projects.open">().toExtend<MethodPath>();
     expectTypeOf<"workspaces.create">().toExtend<MethodPath>();
     expectTypeOf<"ui.selectFolder">().toExtend<MethodPath>();
   });
 
   it("grouped paths match their expected values", () => {
-    // Lifecycle paths
-    expectTypeOf<"lifecycle.getState">().toExtend<LifecyclePath>();
-    expectTypeOf<"lifecycle.setup">().toExtend<LifecyclePath>();
+    // Lifecycle paths - only quit remains after app:setup migration
     expectTypeOf<"lifecycle.quit">().toExtend<LifecyclePath>();
 
     // Project paths
@@ -99,8 +96,7 @@ describe("registry-types.paths", () => {
 
 describe("registry-types.payload", () => {
   it("extracts EmptyPayload for no-arg methods", () => {
-    expectTypeOf<MethodPayload<"lifecycle.getState">>().toEqualTypeOf<EmptyPayload>();
-    expectTypeOf<MethodPayload<"lifecycle.setup">>().toEqualTypeOf<EmptyPayload>();
+    // Note: lifecycle.getState, lifecycle.setup removed in app:setup migration
     expectTypeOf<MethodPayload<"lifecycle.quit">>().toEqualTypeOf<EmptyPayload>();
     expectTypeOf<MethodPayload<"projects.list">>().toEqualTypeOf<EmptyPayload>();
     expectTypeOf<MethodPayload<"ui.selectFolder">>().toEqualTypeOf<EmptyPayload>();
@@ -196,8 +192,9 @@ describe("registry-types.handler", () => {
 
   it("MethodHandler matches MethodRegistry definition", () => {
     // MethodHandler<P> should be exactly MethodRegistry[P]
-    expectTypeOf<MethodHandler<"lifecycle.getState">>().toEqualTypeOf<
-      MethodRegistry["lifecycle.getState"]
+    // Note: lifecycle.getState removed in app:setup migration
+    expectTypeOf<MethodHandler<"lifecycle.quit">>().toEqualTypeOf<
+      MethodRegistry["lifecycle.quit"]
     >();
     expectTypeOf<MethodHandler<"projects.list">>().toEqualTypeOf<MethodRegistry["projects.list"]>();
     expectTypeOf<MethodHandler<"workspaces.create">>().toEqualTypeOf<
@@ -209,9 +206,7 @@ describe("registry-types.handler", () => {
 
 describe("registry-types.result", () => {
   it("MethodResult extracts correct return type", () => {
-    // Lifecycle methods
-    expectTypeOf<MethodResult<"lifecycle.getState">>().toEqualTypeOf<AppStateResult>();
-    expectTypeOf<MethodResult<"lifecycle.setup">>().toEqualTypeOf<SetupResult>();
+    // Lifecycle methods - only quit remains after app:setup migration
     expectTypeOf<MethodResult<"lifecycle.quit">>().toEqualTypeOf<void>();
 
     // Project methods

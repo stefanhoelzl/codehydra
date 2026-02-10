@@ -3,7 +3,7 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { UIModeChangedEvent, LogContext } from "./ipc";
+import type { UIModeChangedEvent, LogContext, LifecycleAgentType } from "./ipc";
 import type { UIMode } from "./ipc";
 import type { ShortcutKey } from "./shortcuts";
 
@@ -12,9 +12,6 @@ import type {
   Workspace,
   WorkspaceRef,
   WorkspaceStatus,
-  SetupResult,
-  AppStateResult,
-  ConfigAgentType,
   BaseInfo as ApiBaseInfo,
 } from "./api/types";
 
@@ -26,8 +23,8 @@ export type Unsubscribe = () => void;
 /**
  * Type-safe Electron API exposed to the renderer via contextBridge.
  *
- * All setup operations use the lifecycle API (lifecycle.getState, lifecycle.setup, lifecycle.quit).
- * Setup progress events are consumed via on("setup:progress", handler).
+ * Setup is driven by the main process (app:setup intent).
+ * Renderer subscribes to lifecycle events and responds to agent selection requests.
  */
 export interface Api {
   // ============ API (api: prefixed channels) ============
@@ -91,19 +88,9 @@ export interface Api {
     setMode(mode: UIMode): Promise<void>;
   };
   lifecycle: {
-    getState(): Promise<AppStateResult>;
     /**
-     * Set the selected agent type.
-     * Called after user selects an agent in the selection dialog.
-     * Saves selection to config and returns success/failure.
+     * Quit the application.
      */
-    setAgent(agent: ConfigAgentType): Promise<SetupResult>;
-    setup(): Promise<SetupResult>;
-    /**
-     * Start application services (code-server, OpenCode, etc.).
-     * Idempotent - second call returns success without side effects.
-     */
-    startServices(): Promise<SetupResult>;
     quit(): Promise<void>;
   };
   /**
@@ -138,6 +125,20 @@ export interface Api {
    * @returns Unsubscribe function to remove the listener
    */
   onShortcut(callback: (key: ShortcutKey) => void): Unsubscribe;
+
+  /**
+   * Send agent selected event to main process.
+   * Used when user selects an agent in the agent selection dialog.
+   * Fire-and-forget - does not return a promise.
+   */
+  sendAgentSelected(agent: LifecycleAgentType): void;
+
+  /**
+   * Send retry event to main process.
+   * Used when user clicks retry after a setup/startup error.
+   * Fire-and-forget - does not return a promise.
+   */
+  sendRetry(): void;
 }
 
 declare global {

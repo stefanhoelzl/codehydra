@@ -34,6 +34,10 @@ export { ProjectScopedWorkspaceProvider };
 
 // Code server
 export type { InstanceState, CodeServerConfig } from "./code-server/types";
+export type {
+  CodeServerPreflightResult,
+  CodeServerPreflightError,
+} from "./code-server/code-server-manager";
 export {
   CodeServerManager,
   urlForFolder,
@@ -127,18 +131,8 @@ export {
 } from "./platform/filesystem.state-mock";
 
 // VSCode setup
-export { VscodeSetupService, CURRENT_SETUP_VERSION } from "./vscode-setup";
-export type {
-  IVscodeSetup,
-  SetupResult,
-  SetupError,
-  SetupStep,
-  SetupProgress,
-  ProgressCallback,
-  SetupMarker,
-} from "./vscode-setup";
-// Note: ProcessRunner and ProcessResult are exported from platform/process.
-// VscodeSetupService uses ProcessRunner via vscode-setup/types.ts re-export.
+export type { BinaryType, ExtensionConfig, ExtensionsManifest } from "./vscode-setup";
+export { validateExtensionsManifest } from "./vscode-setup";
 
 // KeepFiles service
 export { KeepFilesService } from "./keepfiles";
