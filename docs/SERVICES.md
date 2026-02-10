@@ -461,6 +461,12 @@ The application uses dependency injection to abstract build mode detection and p
    - Call `redirectElectronDataPaths(pathProvider)` - requires paths early
 2. In `bootstrap()`:
    - Pass `pathProvider` and `fileSystemLayer` to services via constructor DI
+3. In `startServices()` (construction phase):
+   - Construct all remaining services (CodeServerManager, AppState, agent services, etc.)
+   - No I/O -- constructors/factories only
+4. In `startServices()` (dispatch phase):
+   - Wire intent dispatcher, get API, then dispatch `app:start`
+   - Lifecycle modules handle all I/O (starting servers, loading data, wiring callbacks)
 
 **Testing with PathProvider:**
 

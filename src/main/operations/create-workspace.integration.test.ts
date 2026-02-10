@@ -19,6 +19,13 @@
  * #10: Keepfiles copies files after worktree creation
  * #11: Keepfiles failure does not fail workspace creation
  * #12: No keepfiles side effects when worktree creation fails
+ *
+ * Regression coverage (APP_LIFECYCLE_INTENTS #10):
+ * The agentModule's setup hook behavior (starting per-workspace server) is tested
+ * in test #4 ("agent server failure produces workspace without envVars"). This
+ * verifies that the extended agentModule (which now also has app:start/stop hooks
+ * in the production bootstrap) still correctly handles per-workspace server startup
+ * via its workspace:create setup hook.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";

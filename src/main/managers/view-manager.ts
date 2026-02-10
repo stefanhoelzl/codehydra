@@ -142,6 +142,10 @@ export class ViewManager implements IViewManager {
    * Reentrant guard to prevent concurrent workspace changes.
    */
   private isChangingWorkspace = false;
+  /**
+   * Flag to skip focus operations during shutdown.
+   */
+  private destroying = false;
   private readonly unsubscribeResize: Unsubscribe;
   private readonly logger: Logger;
   /**
@@ -758,6 +762,9 @@ export class ViewManager implements IViewManager {
    * When no workspace is active, focuses UI as fallback to ensure keyboard shortcuts work.
    */
   focusActiveWorkspace(): void {
+    // Skip focus operations during shutdown
+    if (this.destroying) return;
+
     if (!this.activeWorkspacePath) {
       // No workspace active - focus UI to ensure keyboard shortcuts still work
       this.focusUI();
@@ -774,6 +781,8 @@ export class ViewManager implements IViewManager {
    * Focuses the UI layer view.
    */
   focusUI(): void {
+    // Skip focus operations during shutdown
+    if (this.destroying) return;
     this.viewLayer.focus(this.uiViewHandle);
   }
 
@@ -1035,6 +1044,9 @@ export class ViewManager implements IViewManager {
    * Called on application shutdown.
    */
   destroy(): void {
+    // Mark as destroying to skip focus operations
+    this.destroying = true;
+
     // Unsubscribe from resize events
     this.unsubscribeResize();
 

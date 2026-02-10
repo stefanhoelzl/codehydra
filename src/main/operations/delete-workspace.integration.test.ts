@@ -9,6 +9,15 @@
  *
  * All tests use behavioral mocks -- state changes and outcomes are verified,
  * not call tracking. Windows behavior is tested via behavioral mocks on all platforms.
+ *
+ * Regression coverage (APP_LIFECYCLE_INTENTS #11):
+ * The deleteAgentModule's shutdown hook behavior (stopping per-workspace server) is
+ * tested in test #9 ("agent resources cleaned up after deletion"). This verifies that
+ * the extended agentModule (which now also has app:start/stop hooks in the production
+ * bootstrap) still correctly handles per-workspace server shutdown via its
+ * workspace:delete shutdown hook. The badgeModule's workspace:deleted event handler
+ * (evicting from map) is also verified via the IPC event bridge tests which depend
+ * on event emission.
  */
 
 import { describe, it, expect, vi } from "vitest";
