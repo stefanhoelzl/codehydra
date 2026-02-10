@@ -193,6 +193,23 @@ export class CodeServerManager {
   }
 
   /**
+   * Get the code-server configuration.
+   */
+  getConfig(): CodeServerConfig {
+    return this.config;
+  }
+
+  /**
+   * Set the plugin port for VS Code extension communication.
+   * Must be called before ensureRunning() to take effect.
+   *
+   * @param port - The PluginServer port number
+   */
+  setPluginPort(port: number): void {
+    (this.config as { pluginPort?: number }).pluginPort = port;
+  }
+
+  /**
    * Ensure the server is running.
    * If already running, returns the current port.
    * If starting, waits for startup to complete.

@@ -55,27 +55,27 @@ import {
 } from "../services/binary-download";
 import { AgentStatusManager, type AgentType, type AgentServerManager } from "../agents";
 import { ClaudeCodeServerManager } from "../agents/claude/server-manager";
-import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import { PluginServer } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
-import { wirePluginApi } from "./api/wire-plugin-api";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
 import { AppState } from "./app-state";
-import { wireApiEvents, formatWindowTitle, registerLogHandlers } from "./ipc";
-import { initializeBootstrap, type BootstrapResult } from "./bootstrap";
+import { registerLogHandlers } from "./ipc";
+import { initializeBootstrap, type BootstrapResult, type LifecycleServiceRefs } from "./bootstrap";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent } from "./operations/set-mode";
-import { INTENT_UPDATE_AGENT_STATUS } from "./operations/update-agent-status";
-import type { UpdateAgentStatusIntent } from "./operations/update-agent-status";
+import { INTENT_APP_START } from "./operations/app-start";
+import type { AppStartIntent } from "./operations/app-start";
+import { INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
+import type { AppShutdownIntent } from "./operations/app-shutdown";
 import type { CoreModuleDeps } from "./modules/core";
 import { generateProjectId } from "./api/id-utils";
-import type { ICodeHydraApi, Unsubscribe } from "../shared/api/interfaces";
+import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { WorkspaceName } from "../shared/api/types";
-import { ApiIpcChannels, type WorkspaceLoadingChangedPayload } from "../shared/ipc";
+import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
 import { getErrorMessage } from "../shared/error-utils";
@@ -214,11 +214,6 @@ let badgeManager: BadgeManager | null = null;
 let serverManager: AgentServerManager | null = null;
 let mcpServerManager: McpServerManager | null = null;
 let codeHydraApi: ICodeHydraApi | null = null;
-let apiEventCleanup: Unsubscribe | null = null;
-let mcpFirstRequestCleanup: Unsubscribe | null = null;
-let wrapperReadyCleanup: Unsubscribe | null = null;
-let loadingChangeCleanup: Unsubscribe | null = null;
-let agentStatusUnsubscribe: Unsubscribe | null = null;
 
 /**
  * PluginServer for VS Code extension communication.
@@ -339,6 +334,10 @@ let workspaceFileService: import("../services").IWorkspaceFileService | null = n
  * This is the second phase of the two-phase startup:
  * bootstrap() → startServices()
  *
+ * The function has two phases:
+ * 1. Construction: Build all service instances (constructors/factories, no I/O)
+ * 2. Dispatch: `app:start` intent runs hook-based startup via lifecycle modules
+ *
  * CRITICAL: Called by LifecycleModule's onSetupComplete callback BEFORE
  * returning the setup result to the renderer. This ensures IPC handlers
  * are registered before MainView mounts.
@@ -349,41 +348,17 @@ async function startServices(): Promise<void> {
   if (!windowManager || !viewManager) return;
   servicesStarted = true;
 
+  // =========================================================================
+  // Phase 1: Construction (sync/factory calls, no I/O except config load)
+  // =========================================================================
+
   // Load agent type from config (saved by user via agent selection dialog)
-  // Guard: configService must be initialized by bootstrap()
   if (!configService) {
     throw new Error("ConfigService not initialized - startServices called before bootstrap");
   }
   const appConfig = await configService.load();
-  const selectedAgentType: AgentType = appConfig.agent ?? "opencode"; // Default to opencode if not set
+  const selectedAgentType: AgentType = appConfig.agent ?? "opencode";
 
-  // Capture app launch event with agent type
-  // Note: telemetryService may be null if initialization failed in bootstrap
-  telemetryService?.capture("app_launched", {
-    platform: platformInfo.platform,
-    arch: platformInfo.arch,
-    isDevelopment: buildInfo.isDevelopment,
-    agent: selectedAgentType,
-  });
-
-  // Initialize auto-updater (checks once per session after startup, applies on quit)
-  autoUpdater = new AutoUpdater({
-    logger: loggingService.createLogger("updater"),
-    isDevelopment: buildInfo.isDevelopment,
-  });
-  autoUpdater.start();
-
-  // Start code-server
-  const config = createCodeServerConfig();
-
-  // Ensure required directories exist
-  await Promise.all([
-    fileSystemLayer.mkdir(config.runtimeDir),
-    fileSystemLayer.mkdir(config.extensionsDir),
-    fileSystemLayer.mkdir(config.userDataDir),
-  ]);
-
-  // Guard: processRunner must be initialized by bootstrap()
   if (!processRunner) {
     throw new Error("ProcessRunner not initialized - startServices called before bootstrap");
   }
@@ -391,81 +366,36 @@ async function startServices(): Promise<void> {
   // Create shared network layer for all network operations
   const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
 
-  // Start PluginServer BEFORE code-server so port is available for environment variable
-  // Graceful degradation: if PluginServer fails, log warning and continue (plugin is optional)
-  try {
-    const pluginLogger = loggingService.createLogger("plugin");
-    const extensionLogger = loggingService.createLogger("extension");
-    pluginServer = new PluginServer(networkLayer, pluginLogger, {
-      isDevelopment: buildInfo.isDevelopment,
-      extensionLogger,
-    });
-    const pluginPort = await pluginServer.start();
-    loggingService.createLogger("app").info("PluginServer started", { port: pluginPort });
+  // Construct PluginServer (start() moves to CodeServerLifecycleModule)
+  const pluginLogger = loggingService.createLogger("plugin");
+  const extensionLogger = loggingService.createLogger("extension");
+  pluginServer = new PluginServer(networkLayer, pluginLogger, {
+    isDevelopment: buildInfo.isDevelopment,
+    extensionLogger,
+  });
 
-    // Wire up config data provider - called when workspace extension connects
-    // Provides environment variables and agent type for terminal launching
-    pluginServer.onConfigData((workspacePath) => {
-      // Get agent environment variables for terminal integration
-      const env =
-        appState
-          ?.getAgentStatusManager()
-          ?.getEnvironmentVariables(workspacePath as import("../shared/ipc").WorkspacePath) ?? null;
-
-      // Get the agent type for terminal launching
-      // Note: appState may be null during early startup
-      const agentType = appState?.getAgentType() ?? null;
-
-      return { env, agentType };
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    loggingService.createLogger("app").warn("PluginServer start failed", { error: message });
-    // Continue without plugin server - it's optional functionality
-    pluginServer = null;
-  }
-
-  // Use process runner directly (logging is now integrated)
-  // Pass plugin port to code-server for CODEHYDRA_PLUGIN_PORT env var
-  const codeServerConfig = pluginServer?.getPort()
-    ? { ...config, pluginPort: pluginServer.getPort()! }
-    : config;
+  // Construct CodeServerManager (ensureRunning() moves to CodeServerLifecycleModule)
+  const config = createCodeServerConfig();
   codeServerManager = new CodeServerManager(
-    codeServerConfig,
+    config,
     processRunner,
     networkLayer,
     networkLayer,
     loggingService.createLogger("code-server")
   );
 
-  // Start code-server - errors propagate to lifecycle module which returns
-  // failure to the renderer, which shows the error screen with retry/quit options
-  await codeServerManager.ensureRunning();
-
-  // Port is guaranteed to be set after successful ensureRunning()
-  const port = codeServerManager.port()!;
-
-  // Update ViewManager with code-server port
-  viewManager.updateCodeServerPort(port);
-
-  // Create ProjectStore and AppState
+  // Create ProjectStore, GitClient, GitWorktreeProvider, WorkspaceFileService
   projectStore = new ProjectStore(
     pathProvider.projectsDir.toString(),
     fileSystemLayer,
     pathProvider.remotesDir.toString()
   );
-
-  // Create GitClient for clone operations
   gitClient = new SimpleGitClient(loggingService.createLogger("git"));
-
-  // Create global GitWorktreeProvider (shared across all projects)
   globalWorktreeProvider = new GitWorktreeProvider(
     gitClient,
     fileSystemLayer,
     loggingService.createLogger("worktree")
   );
-
-  // Create WorkspaceFileService for .code-workspace file management
   const workspaceFileConfig = createWorkspaceFileConfig();
   workspaceFileService = new WorkspaceFileService(
     fileSystemLayer,
@@ -473,11 +403,12 @@ async function startServices(): Promise<void> {
     loggingService.createLogger("workspace-file")
   );
 
+  // Create AppState (port=0, updated by CodeServerLifecycleModule after start)
   appState = new AppState(
     projectStore,
     viewManager,
     pathProvider,
-    port,
+    0,
     fileSystemLayer,
     loggingService,
     selectedAgentType,
@@ -486,12 +417,10 @@ async function startServices(): Promise<void> {
     globalWorktreeProvider
   );
 
-  // Initialize agent-specific services based on selected agent type
-  // Create AgentStatusManager with appropriate logger
+  // Create agent services
   const agentLoggerName = selectedAgentType === "claude" ? "claude" : "opencode";
   agentStatusManager = new AgentStatusManager(loggingService.createLogger(agentLoggerName));
 
-  // Create agent-specific server manager
   if (selectedAgentType === "claude") {
     serverManager = new ClaudeCodeServerManager({
       portManager: networkLayer,
@@ -500,7 +429,6 @@ async function startServices(): Promise<void> {
       logger: loggingService.createLogger("claude"),
     });
   } else {
-    // OpenCode: create OpenCodeServerManager to spawn and manage opencode serve processes
     const { OpenCodeServerManager } = await import("../agents/opencode/server-manager");
     serverManager = new OpenCodeServerManager(
       processRunner,
@@ -511,8 +439,7 @@ async function startServices(): Promise<void> {
     );
   }
 
-  // Create BadgeManager (no longer connects to status manager directly; wired via BadgeModule)
-  // Uses shared imageLayer (created in bootstrap) so ImageHandles are resolvable by WindowLayer
+  // Create BadgeManager
   if (!imageLayer) {
     throw new Error("ImageLayer not initialized - startServices called before bootstrap");
   }
@@ -525,177 +452,49 @@ async function startServices(): Promise<void> {
     loggingService.createLogger("badge")
   );
 
-  // Inject services into AppState and wire callbacks
+  // Create AutoUpdater (start() moves to AutoUpdaterLifecycleModule)
+  autoUpdater = new AutoUpdater({
+    logger: loggingService.createLogger("updater"),
+    isDevelopment: buildInfo.isDevelopment,
+  });
+
+  // Inject services into AppState
   appState.setAgentStatusManager(agentStatusManager);
   if (serverManager) {
     appState.setServerManager(serverManager);
   }
 
-  // Guard: bootstrapResult must be initialized by bootstrap()
+  // =========================================================================
+  // Phase 2: Wire dispatcher and dispatch app:start
+  // =========================================================================
+
   if (!bootstrapResult) {
     throw new Error("Bootstrap not initialized - startServices called before bootstrap");
   }
 
   // Create remaining modules (CoreModule) and wire intent dispatcher
-  // The deps factory functions reference module-level appState/viewManager which are now set
+  // Note: lifecycleRefsFn uses getters for late-bound references (codeHydraApi, mcpServerManager)
   bootstrapResult.startServices();
 
   // Get the typed API interface (all methods are now registered)
   codeHydraApi = bootstrapResult.getInterface();
 
-  // Wire PluginServer to CodeHydraApi (if PluginServer is running)
-  if (pluginServer) {
-    wirePluginApi(pluginServer, codeHydraApi, appState, loggingService.createLogger("plugin"));
-  }
+  // Create McpServerManager now that API is available
+  // (start() moves to McpLifecycleModule's start hook)
+  mcpServerManager = new McpServerManager(
+    networkLayer,
+    pathProvider,
+    codeHydraApi,
+    appState,
+    loggingService.createLogger("mcp")
+  );
 
-  // Title suffix: branch in dev mode, version in packaged mode
-  const titleSuffix = buildInfo.gitBranch ?? buildInfo.version;
-
-  // Capture references for closures (TypeScript narrow refinement doesn't persist)
-  const windowManagerRef = windowManager;
-  const appStateRef = appState;
-  const viewManagerRef = viewManager;
-
-  // Wire API events to IPC emission
-  // Note: workspace:switched events are handled by IpcEventBridge + SwitchTitleModule in bootstrap.ts
-  apiEventCleanup = wireApiEvents(codeHydraApi, () => viewManager?.getUIWebContents() ?? null);
-
-  // Wire auto-updater to update window title when update is available
-  if (autoUpdater) {
-    autoUpdater.onUpdateAvailable(() => {
-      windowManagerRef?.setUpdateAvailable();
-      // Update the current title immediately to show update availability
-      // Get current active workspace to rebuild the title
-      const activeWorkspace = viewManagerRef?.getActiveWorkspacePath();
-      if (activeWorkspace) {
-        const project = appStateRef?.findProjectForWorkspace(activeWorkspace);
-        const workspaceName = nodePath.basename(activeWorkspace);
-        const title = formatWindowTitle(project?.name, workspaceName, titleSuffix, true);
-        windowManagerRef?.setTitle(title);
-      } else {
-        const title = formatWindowTitle(undefined, undefined, titleSuffix, true);
-        windowManagerRef?.setTitle(title);
-      }
-    });
-  }
-
-  // Wire agent status changes through the intent dispatcher
-  // AgentStatusManager.onStatusChanged → dispatcher.dispatch(agent:update-status)
-  // Downstream subscribers (IpcEventBridge, BadgeModule) react to the domain event
-  agentStatusUnsubscribe = agentStatusManager.onStatusChanged((workspacePath, status) => {
-    if (dispatcherInstance) {
-      void dispatcherInstance.dispatch({
-        type: INTENT_UPDATE_AGENT_STATUS,
-        payload: { workspacePath, status },
-      } as UpdateAgentStatusIntent);
-    }
-  });
-
-  // Initialize MCP server (must start before loading projects so port is available)
-  // MCP server provides AI agent access to workspace API
-  try {
-    mcpServerManager = new McpServerManager(
-      networkLayer, // PortManager
-      pathProvider,
-      codeHydraApi, // ICoreApi
-      appState, // WorkspaceLookup
-      loggingService.createLogger("mcp")
-    );
-    const mcpPort = await mcpServerManager.start();
-    loggingService.createLogger("app").info("MCP server started", {
-      port: mcpPort,
-      configPath: pathProvider.opencodeConfig.toString(),
-    });
-
-    // Register callback for first MCP request per workspace
-    // This is the primary signal for TUI attachment (marks workspace as loaded)
-    // Also signals AgentStatusManager that agent is active (for status indicator)
-    const agentStatusManagerRef = agentStatusManager;
-    mcpFirstRequestCleanup = mcpServerManager.onFirstRequest((workspacePath) => {
-      // setWorkspaceLoaded is idempotent (guards internally), no need to check isWorkspaceLoading
-      viewManagerRef.setWorkspaceLoaded(workspacePath);
-      // Mark agent as active for status indicator (shows green when TUI attaches)
-      agentStatusManagerRef.markActive(workspacePath as import("../shared/ipc").WorkspacePath);
-    });
-
-    // Register callback for wrapper start (Claude Code only)
-    // This signals when the wrapper has started (before Claude shows dialogs)
-    // Allows loading screen to clear immediately rather than waiting for MCP or timeout
-    if (selectedAgentType === "claude" && serverManager) {
-      // Type narrowing: cast to ClaudeCodeServerManager which has onWorkspaceReady
-      const claudeServerManager = serverManager as ClaudeCodeServerManager;
-      wrapperReadyCleanup = claudeServerManager.onWorkspaceReady((workspacePath) => {
-        // setWorkspaceLoaded is idempotent, safe if both WrapperStart and MCP first request fire
-        viewManagerRef.setWorkspaceLoaded(workspacePath);
-      });
-    }
-
-    // Configure server manager to connect to MCP
-    // Each manager has its own setMcpConfig signature, so we cast to the specific type
-    if (serverManager && selectedAgentType === "claude") {
-      // Claude Code: only needs port (config files are generated per-workspace)
-      const claudeManager = serverManager as ClaudeCodeServerManager;
-      claudeManager.setMcpConfig({
-        port: mcpServerManager.getPort()!,
-      });
-    } else if (serverManager) {
-      // OpenCode: needs configPath (shared config) and port
-      // Cast to the OpenCodeServerManager type which has the full setMcpConfig signature
-      const opencodeManager = serverManager as OpenCodeServerManager;
-      opencodeManager.setMcpConfig({
-        configPath: pathProvider.opencodeConfig.toString(),
-        port: mcpServerManager.getPort()!,
-      });
-    }
-
-    // Inject MCP server manager into AppState (for clearing seen workspaces on deletion)
-    appState.setMcpServerManager(mcpServerManager);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    loggingService.createLogger("app").warn("MCP server start failed", { error: message });
-    // Continue without MCP server - it's optional functionality
-    mcpServerManager = null;
-  }
-
-  // Load persisted projects FIRST (before wiring callback)
-  // This prevents startup events from being emitted and racing with renderer
-  await appState.loadPersistedProjects();
-
-  // Note: onWorkspaceChange callback removed -- workspace:switched events now flow through
-  // the intent dispatcher (SwitchWorkspaceOperation → IpcEventBridge + SwitchTitleModule)
-
-  // Wire loading state changes to IPC
-  // This emits loading changed events to the renderer for UI overlay display
-  loadingChangeCleanup = viewManager.onLoadingChange((path, loading) => {
-    try {
-      const webContents = viewManagerRef.getUIWebContents();
-      if (webContents && !webContents.isDestroyed()) {
-        const payload: WorkspaceLoadingChangedPayload = {
-          path: path as import("../shared/ipc").WorkspacePath,
-          loading,
-        };
-        webContents.send(ApiIpcChannels.WORKSPACE_LOADING_CHANGED, payload);
-      }
-    } catch {
-      // Ignore errors - UI might be disconnected during shutdown
-    }
-  });
-
-  // Set first workspace active if any projects loaded
-  const projects = await appState.getAllProjects();
-  if (projects.length > 0) {
-    const firstWorkspace = projects[0]?.workspaces[0];
-    if (firstWorkspace) {
-      viewManager.setActiveWorkspace(firstWorkspace.path);
-
-      // Set initial window title (event is emitted but UI not loaded yet,
-      // so renderer will get correct state via getActiveWorkspace() on mount)
-      const projectName = projects[0]?.name;
-      const workspaceName = nodePath.basename(firstWorkspace.path);
-      const title = formatWindowTitle(projectName, workspaceName, titleSuffix);
-      windowManager.setTitle(title);
-    }
-  }
+  // Dispatch app:start -- lifecycle modules handle all I/O (start servers,
+  // wire callbacks, load data, activate first workspace)
+  await dispatcherInstance!.dispatch({
+    type: INTENT_APP_START,
+    payload: {},
+  } as AppStartIntent);
 }
 
 // NOTE: Legacy setup handlers (registerSetupReadyHandler, registerSetupRetryAndQuitHandlers,
@@ -1017,6 +816,64 @@ async function bootstrap(): Promise<void> {
         };
       };
     },
+    // Lifecycle service references for app:start/shutdown modules
+    // Uses getters for references that are set after wireDispatcher() runs
+    lifecycleRefsFn: (): LifecycleServiceRefs => {
+      if (!appState || !viewManager || !windowManager) {
+        throw new Error("Core services not initialized");
+      }
+      if (!agentStatusManager || !serverManager) {
+        throw new Error("Agent services not initialized");
+      }
+      if (!codeServerManager || !autoUpdater || !badgeManager) {
+        throw new Error("Lifecycle services not initialized");
+      }
+
+      // Capture for getter closures
+      const appStateRef = appState;
+      const agentStatusManagerRef = agentStatusManager;
+      const serverManagerRef = serverManager;
+      const codeServerManagerRef = codeServerManager;
+      const autoUpdaterRef = autoUpdater;
+      const windowManagerRef = windowManager;
+
+      return {
+        pluginServer,
+        codeServerManager: codeServerManagerRef,
+        fileSystemLayer,
+        agentStatusManager: agentStatusManagerRef,
+        serverManager: serverManagerRef,
+        // Getter: mcpServerManager is created after wireDispatcher runs
+        get mcpServerManager() {
+          if (!mcpServerManager) {
+            throw new Error(
+              "McpServerManager not initialized - accessed before app:start dispatch"
+            );
+          }
+          return mcpServerManager;
+        },
+        telemetryService,
+        autoUpdater: autoUpdaterRef,
+        loggingService,
+        selectedAgentType: appStateRef.getAgentType(),
+        platformInfo,
+        buildInfo,
+        pathProvider,
+        configService: configService!,
+        dispatcher,
+        viewLayer,
+        windowLayer,
+        sessionLayer,
+        // Getter: codeHydraApi is set after bootstrapResult.getInterface()
+        getApi: () => {
+          if (!codeHydraApi) {
+            throw new Error("API not initialized - accessed before startServices completes");
+          }
+          return codeHydraApi;
+        },
+        windowManager: windowManagerRef,
+      };
+    },
   }) as BootstrapResult & { startServices: () => void };
 
   // Note: IPC handlers for lifecycle.* are now registered by LifecycleModule
@@ -1071,75 +928,38 @@ async function bootstrap(): Promise<void> {
 
 /**
  * Cleans up resources on shutdown.
+ *
+ * Dispatches `app:shutdown` intent, which runs lifecycle module stop hooks
+ * (each module disposes its own resources, best-effort with internal try/catch).
+ * The shutdown idempotency interceptor ensures only one execution proceeds.
+ *
+ * After the intent completes, disposes the API registry/modules and clears
+ * module-level references.
  */
 async function cleanup(): Promise<void> {
   const appLogger = loggingService.createLogger("app");
   appLogger.info("Shutdown initiated");
 
-  // Flush telemetry events before shutdown
-  if (telemetryService) {
-    await telemetryService.shutdown();
-    telemetryService = null;
+  // Dispatch app:shutdown -- lifecycle modules handle all disposal
+  // Idempotency interceptor blocks duplicate dispatches (from before-quit + window-all-closed)
+  if (dispatcherInstance) {
+    try {
+      await dispatcherInstance.dispatch({
+        type: INTENT_APP_SHUTDOWN,
+        payload: {},
+      } as AppShutdownIntent);
+    } catch (error) {
+      appLogger.error(
+        "Shutdown dispatch failed (continuing cleanup)",
+        {},
+        error instanceof Error ? error : undefined
+      );
+    }
   }
 
-  // Dispose OpenCode server manager (stops all servers)
-  if (serverManager) {
-    await serverManager.dispose();
-    serverManager = null;
-  }
-
-  // Dispose MCP server manager AFTER OpenCode (servers may still be using it)
-  if (mcpServerManager) {
-    await mcpServerManager.dispose();
-    mcpServerManager = null;
-  }
-
-  // Dispose badge manager
-  if (badgeManager) {
-    badgeManager.dispose();
-    badgeManager = null;
-  }
-
-  // Dispose auto-updater
-  if (autoUpdater) {
-    autoUpdater.dispose();
-    autoUpdater = null;
-  }
-
-  // Cleanup agent status change subscription
-  if (agentStatusUnsubscribe) {
-    agentStatusUnsubscribe();
-    agentStatusUnsubscribe = null;
-  }
-
-  // Dispose agent status manager
-  if (agentStatusManager) {
-    agentStatusManager.dispose();
-    agentStatusManager = null;
-  }
-
-  // Cleanup API event wiring
-  if (apiEventCleanup) {
-    apiEventCleanup();
-    apiEventCleanup = null;
-  }
-
-  // Cleanup MCP first request callback
-  if (mcpFirstRequestCleanup) {
-    mcpFirstRequestCleanup();
-    mcpFirstRequestCleanup = null;
-  }
-
-  // Cleanup wrapper ready callback
-  if (wrapperReadyCleanup) {
-    wrapperReadyCleanup();
-    wrapperReadyCleanup = null;
-  }
-
-  // Cleanup loading state change callback
-  if (loadingChangeCleanup) {
-    loadingChangeCleanup();
-    loadingChangeCleanup = null;
+  // Destroy all views (concrete ViewManager, not on IViewManager interface)
+  if (viewManager) {
+    viewManager.destroy();
   }
 
   // Dispose API registry and modules
@@ -1149,48 +969,26 @@ async function cleanup(): Promise<void> {
   }
   codeHydraApi = null;
 
-  // Destroy all views
-  if (viewManager) {
-    viewManager.destroy();
-    viewManager = null;
-  }
-
-  // Stop code-server
-  if (codeServerManager) {
-    await codeServerManager.stop();
-    codeServerManager = null;
-  }
-
-  // Close PluginServer AFTER code-server (extensions disconnect first)
-  if (pluginServer) {
-    await pluginServer.close();
-    pluginServer = null;
-  }
-
+  // Clear module-level references
   windowManager = null;
+  viewManager = null;
   appState = null;
+  codeServerManager = null;
+  agentStatusManager = null;
+  badgeManager = null;
+  serverManager = null;
+  mcpServerManager = null;
   dispatcherInstance = null;
 
-  // Dispose layers in reverse initialization order:
-  // Initialization: IpcLayer → AppLayer → ImageLayer → MenuLayer → DialogLayer → SessionLayer → WindowLayer → ViewLayer
-  // Dispose: ViewLayer → WindowLayer → SessionLayer → ...
-  // Note: ViewLayer already disposed via viewManager.destroy() above
-  // Note: Some layers don't have dispose() or are not stored
+  // Clear shell layer references (disposed by ViewLifecycleModule)
+  viewLayer = null;
+  windowLayer = null;
+  sessionLayer = null;
 
-  if (viewLayer) {
-    await viewLayer.dispose();
-    viewLayer = null;
-  }
-
-  if (windowLayer) {
-    await windowLayer.dispose();
-    windowLayer = null;
-  }
-
-  if (sessionLayer) {
-    await sessionLayer.dispose();
-    sessionLayer = null;
-  }
+  // Clear lifecycle service references (disposed by their respective modules)
+  pluginServer = null;
+  autoUpdater = null;
+  telemetryService = null;
 
   // DialogLayer, MenuLayer don't have dispose() methods
   dialogLayer = null;
@@ -1232,21 +1030,7 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
-  // Explicit cleanup for OpenCode services - synchronous operations
-  // These are done explicitly to ensure they happen even if cleanup() is async
-  if (serverManager) {
-    void serverManager.dispose();
-    serverManager = null;
-  }
-  if (mcpServerManager) {
-    void mcpServerManager.dispose();
-    mcpServerManager = null;
-  }
-  if (agentStatusManager) {
-    agentStatusManager.dispose();
-    agentStatusManager = null;
-  }
-
-  // Run full cleanup for remaining resources (code-server, views, etc.)
+  // Fire-and-forget cleanup. The shutdown idempotency interceptor ensures
+  // only one execution proceeds (window-all-closed also calls cleanup).
   void cleanup();
 });

@@ -599,6 +599,8 @@ Some API methods are implemented through an intent-based dispatcher (`Dispatcher
 | `delete-workspace`     | `workspace:delete`       | `shutdown`, `release`, `delete` | `workspace:deleted` |
 | `open-project`         | `project:open`           | `open`                          | `project:opened`    |
 | `close-project`        | `project:close`          | `close`                         | `project:closed`    |
+| `app-start`            | `app:start`              | `start`, `activate`             | --                  |
+| `app-shutdown`         | `app:shutdown`           | `stop`                          | --                  |
 
 Bridge handlers in `wireDispatcher()` map IPC payloads to intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event modules (StateModule, ViewModule) and transformed to IPC events by IpcEventBridge.
 
@@ -627,6 +629,17 @@ The `close-project` operation uses these hook modules:
 - **close**: ProjectCloseManagerModule (dispose provider, delete cloned dir if removeLocalRepo), ProjectCloseRegistryModule (remove from state + store)
 
 Before the close hook, the operation resolves projectId to path, gets the workspace list, then dispatches `workspace:delete { removeWorktree: false, skipSwitch: true }` per workspace for runtime-only teardown. After all workspaces are torn down, it sets active workspace to null if no other projects are open, runs the close hook, then emits `project:closed`.
+
+The `app-start` operation uses two hook points:
+
+- **start**: CodeServerLifecycleModule (start PluginServer with graceful degradation, ensure dirs, start code-server, update ports), AgentLifecycleModule (wire status changes to dispatcher), McpLifecycleModule (start MCP server, wire callbacks, configure agent server manager), TelemetryLifecycleModule (capture app_launched), AutoUpdaterLifecycleModule (start auto-updater, wire title updates), IpcBridgeLifecycleModule (wire API events to IPC, wire Plugin API)
+- **activate**: DataLifecycleModule (load persisted projects), ViewLifecycleModule (wire loading-state IPC, set first workspace active + title)
+
+The two-phase design ensures servers are running before data is loaded (activate hook modules can read ports from the shared hook context). Errors in the start hook abort startup; errors in the activate hook propagate to the renderer error screen.
+
+The `app-shutdown` operation uses a single hook point:
+
+- **stop**: All lifecycle modules dispose their resources independently, each wrapping its own logic in try/catch (best-effort). A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across `window-all-closed` and `before-quit` entry points.
 
 ### Branded ID Types
 
