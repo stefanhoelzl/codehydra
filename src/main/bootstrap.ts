@@ -144,7 +144,12 @@ import {
   INTENT_APP_START,
   APP_START_OPERATION_ID,
 } from "./operations/app-start";
-import type { AppStartHookContext } from "./operations/app-start";
+import type {
+  AppStartHookContext,
+  CheckConfigResult,
+  CheckDepsHookContext,
+  CheckDepsResult,
+} from "./operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -567,31 +572,27 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     deps.setupDeps;
   const setupLogger = deps.logger;
 
-  // ConfigCheckModule: "check" hook -- loads config, sets needsAgentSelection
+  // ConfigCheckModule: "check-config" hook -- loads config, returns configuredAgent
   const configCheckModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        check: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
+        "check-config": {
+          handler: async (): Promise<CheckConfigResult> => {
             const config = await configService.load();
-            hookCtx.configuredAgent = config.agent;
-            if (config.agent === null) {
-              hookCtx.needsAgentSelection = true;
-            }
+            return { configuredAgent: config.agent };
           },
         },
       },
     },
   };
 
-  // BinaryPreflightModule: "check" hook -- checks if binaries need download
+  // BinaryPreflightModule: "check-deps" hook -- checks if binaries need download
   const binaryPreflightModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        check: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
+        "check-deps": {
+          handler: async (ctx: HookContext): Promise<CheckDepsResult> => {
+            const { configuredAgent } = ctx as CheckDepsHookContext;
             const missingBinaries: import("../services/vscode-setup/types").BinaryType[] = [];
 
             // Check code-server binary
@@ -601,8 +602,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
             }
 
             // Check agent binary (only if agent is already configured)
-            if (hookCtx.configuredAgent) {
-              const agentBinaryManager = getAgentBinaryManager(hookCtx.configuredAgent);
+            if (configuredAgent) {
+              const agentBinaryManager = getAgentBinaryManager(configuredAgent);
               const agentResult = await agentBinaryManager.preflight();
               if (agentResult.success && agentResult.needsDownload) {
                 const binaryType = agentBinaryManager.getBinaryType() as AgentBinaryType;
@@ -610,48 +611,28 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
               }
             }
 
-            hookCtx.missingBinaries = missingBinaries;
-            hookCtx.needsBinaryDownload = missingBinaries.length > 0;
+            return { missingBinaries };
           },
         },
       },
     },
   };
 
-  // ExtensionPreflightModule: "check" hook -- checks if extensions need install
+  // ExtensionPreflightModule: "check-deps" hook -- checks if extensions need install
   const extensionPreflightModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        check: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
+        "check-deps": {
+          handler: async (): Promise<CheckDepsResult> => {
             const result = await extensionManager.preflight();
             if (result.success) {
-              hookCtx.missingExtensions = result.missingExtensions;
-              hookCtx.outdatedExtensions = result.outdatedExtensions;
-              hookCtx.needsExtensions = result.needsInstall;
-            } else {
-              // Treat preflight failure as needing extensions (full install)
-              hookCtx.needsExtensions = true;
+              return {
+                missingExtensions: result.missingExtensions,
+                outdatedExtensions: result.outdatedExtensions,
+              };
             }
-          },
-        },
-      },
-    },
-  };
-
-  // NeedsSetupModule: "check" hook -- calculates needsSetup from individual flags
-  const needsSetupModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        check: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
-            hookCtx.needsSetup =
-              hookCtx.needsAgentSelection ||
-              hookCtx.needsBinaryDownload ||
-              hookCtx.needsExtensions ||
-              false;
+            // Preflight failed -- return empty arrays; operation derives needsExtensions=false
+            return {};
           },
         },
       },
@@ -898,7 +879,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       configCheckModule,
       binaryPreflightModule,
       extensionPreflightModule,
-      needsSetupModule,
       rendererSetupModule,
       configSaveModule,
       binaryDownloadModule,

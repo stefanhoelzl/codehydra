@@ -1,19 +1,24 @@
 /**
  * AppStartOperation - Orchestrates application startup.
  *
- * Runs six hook points in sequence:
+ * Runs hook points in sequence:
  * 1. "show-ui" - Show starting screen
- * 2. "check" - Check if setup is needed (agent, binaries, extensions)
- * 3. "wire" - Wire services (after setup completes if dispatched)
- * 4. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
+ * 2. "check-config" - Load configuration (collect, isolated contexts)
+ * 3. "check-deps" - Check binaries and extensions (collect, isolated contexts)
+ * 4. "wire" - Wire services (after setup completes if dispatched)
+ * 5. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
  *              Telemetry, AutoUpdater, IpcBridge)
- * 5. "activate" - Wire callbacks, gather project paths (Data, View)
- * 6. "finalize" - Post-project-load actions (show main view)
+ * 6. "activate" - Wire callbacks, gather project paths (Data, View)
+ * 7. "finalize" - Post-project-load actions (show main view)
  *
  * Between "activate" and "finalize", dispatches project:open for each saved
  * project path (best-effort, skips invalid projects).
  *
- * If check hooks determine setup is needed, dispatches app:setup as a blocking
+ * The "check-config" and "check-deps" hook points use collect() for isolated
+ * handler contexts. Each handler returns a typed result; the operation merges
+ * results and derives boolean flags (needsSetup, needsBinaryDownload, etc.).
+ *
+ * If checks determine setup is needed, dispatches app:setup as a blocking
  * sub-operation. Setup manages its own UI (shows/hides setup screen).
  *
  * Aborts on error in any hook. Services that are optional must handle
@@ -48,41 +53,43 @@ export interface AppStartIntent extends Intent<void> {
 export const INTENT_APP_START = "app:start" as const;
 
 // =============================================================================
-// Hook Context
+// Hook Context & Result Types
 // =============================================================================
 
 export const APP_START_OPERATION_ID = "app-start";
 
+/** Per-handler result for "check-config" hook point. Returns just configuredAgent. */
+export interface CheckConfigResult {
+  readonly configuredAgent: ConfigAgentType | null;
+}
+
+/** Input context for "check-deps" -- carries configuredAgent from check-config. */
+export interface CheckDepsHookContext extends HookContext {
+  readonly configuredAgent: ConfigAgentType | null;
+}
+
+/** Per-handler result for "check-deps" hook point. Arrays only -- booleans derived by operation. */
+export interface CheckDepsResult {
+  readonly missingBinaries?: readonly BinaryType[];
+  readonly missingExtensions?: readonly string[];
+  readonly outdatedExtensions?: readonly string[];
+}
+
 /**
  * Extended hook context for app:start.
  *
- * Fields are populated by hook modules across the six hook points:
+ * Fields are populated by hook modules across the shared-context hook points:
  * - "show-ui": (no fields, sends IPC to show starting screen)
- * - "check": needsSetup, needsAgentSelection, needsBinaryDownload, needsExtensions, configuredAgent
  * - "wire": (no fields, wires services)
  * - "start": codeServerPort, mcpPort
  * - "activate": projectPaths (modules read context set by start hook)
  * - "finalize": (post-project-load actions, e.g. show main view)
+ *
+ * Check fields (configuredAgent, missingBinaries, etc.) are NOT on this context.
+ * They flow through isolated collect() hook points (check-config, check-deps)
+ * and are merged by the operation into a CheckResult.
  */
 export interface AppStartHookContext extends HookContext {
-  // Check hook fields
-  /** Set by check hooks: true if any setup is needed */
-  needsSetup?: boolean;
-  /** Set by ConfigCheckModule: true if agent not selected in config */
-  needsAgentSelection?: boolean;
-  /** Set by BinaryPreflightModule: true if any binaries need download */
-  needsBinaryDownload?: boolean;
-  /** Set by BinaryPreflightModule: list of binaries that need download */
-  missingBinaries?: readonly BinaryType[];
-  /** Set by ExtensionPreflightModule: true if any extensions need install */
-  needsExtensions?: boolean;
-  /** Set by ExtensionPreflightModule: list of extensions that need install */
-  missingExtensions?: readonly string[];
-  /** Set by ExtensionPreflightModule: list of extensions that need update */
-  outdatedExtensions?: readonly string[];
-  /** Set by ConfigCheckModule: currently configured agent (may be null) */
-  configuredAgent?: ConfigAgentType | null;
-
   // Start hook fields
   /** Set by CodeServerModule (start hook) -- consumed by activate hook modules. */
   codeServerPort?: number;
@@ -99,6 +106,18 @@ export interface AppStartHookContext extends HookContext {
    * Used by the operation to wait for user action before re-dispatching app:setup.
    */
   waitForRetry?: () => Promise<void>;
+}
+
+/** Merged check results produced by runChecks(). */
+interface CheckResult {
+  readonly needsSetup: boolean;
+  readonly configuredAgent: ConfigAgentType | null;
+  readonly needsAgentSelection: boolean;
+  readonly needsBinaryDownload: boolean;
+  readonly missingBinaries: readonly BinaryType[];
+  readonly needsExtensions: boolean;
+  readonly missingExtensions: readonly string[];
+  readonly outdatedExtensions: readonly string[];
 }
 
 // =============================================================================
@@ -119,16 +138,13 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       throw hookCtx.error;
     }
 
-    // Hook 2: "check" -- Check if setup is needed
-    await ctx.hooks.run("check", hookCtx);
-    if (hookCtx.error) {
-      throw hookCtx.error;
-    }
+    // Hooks 2-3: "check-config" + "check-deps" (collect, isolated contexts)
+    let checkResult = await this.runChecks(ctx);
 
     // Dispatch app:setup if needed (blocking sub-operation)
     // Setup manages its own UI (shows/hides setup screen)
     // Retry loop: if setup fails and waitForRetry is available, wait for user retry signal
-    if (hookCtx.needsSetup) {
+    if (checkResult.needsSetup) {
       let setupComplete = false;
       while (!setupComplete) {
         try {
@@ -136,13 +152,13 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
             {
               type: INTENT_SETUP,
               payload: {
-                needsAgentSelection: hookCtx.needsAgentSelection,
-                needsBinaryDownload: hookCtx.needsBinaryDownload,
-                missingBinaries: hookCtx.missingBinaries,
-                needsExtensions: hookCtx.needsExtensions,
-                missingExtensions: hookCtx.missingExtensions,
-                outdatedExtensions: hookCtx.outdatedExtensions,
-                configuredAgent: hookCtx.configuredAgent,
+                needsAgentSelection: checkResult.needsAgentSelection,
+                needsBinaryDownload: checkResult.needsBinaryDownload,
+                missingBinaries: checkResult.missingBinaries,
+                needsExtensions: checkResult.needsExtensions,
+                missingExtensions: checkResult.missingExtensions,
+                outdatedExtensions: checkResult.outdatedExtensions,
+                configuredAgent: checkResult.configuredAgent,
               },
             },
             ctx.causation
@@ -154,20 +170,8 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
           if (hookCtx.waitForRetry) {
             await hookCtx.waitForRetry();
             // Re-run check hooks to get fresh preflight state for retry
-            delete hookCtx.needsSetup;
-            delete hookCtx.needsAgentSelection;
-            delete hookCtx.needsBinaryDownload;
-            delete hookCtx.missingBinaries;
-            delete hookCtx.needsExtensions;
-            delete hookCtx.missingExtensions;
-            delete hookCtx.outdatedExtensions;
-            delete hookCtx.error;
-            await ctx.hooks.run("check", hookCtx);
-            if (hookCtx.error) {
-              throw hookCtx.error;
-            }
-            // If no longer needs setup after re-check, break out
-            if (!hookCtx.needsSetup) {
+            checkResult = await this.runChecks(ctx);
+            if (!checkResult.needsSetup) {
               setupComplete = true;
             }
             // Otherwise loop continues to retry app:setup
@@ -179,19 +183,19 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 3: "wire" -- Wire services (after setup completes)
+    // Hook 4: "wire" -- Wire services (after setup completes)
     await ctx.hooks.run("wire", hookCtx);
     if (hookCtx.error) {
       throw hookCtx.error;
     }
 
-    // Hook 4: "start" -- Start servers and wire services
+    // Hook 5: "start" -- Start servers and wire services
     await ctx.hooks.run("start", hookCtx);
     if (hookCtx.error) {
       throw hookCtx.error;
     }
 
-    // Hook 5: "activate" -- Wire callbacks, gather project paths
+    // Hook 6: "activate" -- Wire callbacks, gather project paths
     await ctx.hooks.run("activate", hookCtx);
     if (hookCtx.error) {
       throw hookCtx.error;
@@ -213,10 +217,63 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 6: "finalize" -- Post-project-load actions (show main view)
+    // Hook 7: "finalize" -- Post-project-load actions (show main view)
     await ctx.hooks.run("finalize", hookCtx);
     if (hookCtx.error) {
       throw hookCtx.error;
     }
+  }
+
+  /**
+   * Run check-config and check-deps hook points using collect() (isolated contexts).
+   * Merges results and derives boolean flags.
+   */
+  private async runChecks(ctx: OperationContext<AppStartIntent>): Promise<CheckResult> {
+    // 1. check-config: get agent configuration
+    const { results: configResults, errors: configErrors } =
+      await ctx.hooks.collect<CheckConfigResult>("check-config", { intent: ctx.intent });
+    if (configErrors.length > 0) {
+      throw new AggregateError(configErrors, "check-config hooks failed");
+    }
+
+    const configuredAgent = configResults[0]?.configuredAgent ?? null;
+
+    // 2. check-deps: binary + extension checks (collect, isolated contexts)
+    const depsCtx: CheckDepsHookContext = { intent: ctx.intent, configuredAgent };
+    const { results: depsResults, errors: depsErrors } = await ctx.hooks.collect<CheckDepsResult>(
+      "check-deps",
+      depsCtx
+    );
+    if (depsErrors.length > 0) {
+      throw new AggregateError(depsErrors, "check-deps hooks failed");
+    }
+
+    // Merge dep results (concatenate arrays from all handlers)
+    const missingBinaries: BinaryType[] = [];
+    const missingExtensions: string[] = [];
+    const outdatedExtensions: string[] = [];
+
+    for (const result of depsResults) {
+      if (result.missingBinaries) missingBinaries.push(...result.missingBinaries);
+      if (result.missingExtensions) missingExtensions.push(...result.missingExtensions);
+      if (result.outdatedExtensions) outdatedExtensions.push(...result.outdatedExtensions);
+    }
+
+    // Derive booleans (dissolved from needsSetupModule)
+    const needsAgentSelection = configuredAgent === null;
+    const needsBinaryDownload = missingBinaries.length > 0;
+    const needsExtensions = missingExtensions.length > 0 || outdatedExtensions.length > 0;
+    const needsSetup = needsAgentSelection || needsBinaryDownload || needsExtensions;
+
+    return {
+      needsSetup,
+      configuredAgent,
+      needsAgentSelection,
+      needsBinaryDownload,
+      missingBinaries,
+      needsExtensions,
+      missingExtensions,
+      outdatedExtensions,
+    };
   }
 }
