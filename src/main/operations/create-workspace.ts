@@ -1,10 +1,14 @@
 /**
  * CreateWorkspaceOperation - Orchestrates workspace creation.
  *
- * Runs three hook points:
- * 1. "create" - Creates git worktree via WorktreeModule
- * 2. "setup" - Best-effort setup: KeepFilesModule (keepfiles copying), AgentModule (agent server)
- * 3. "finalize" - Creates .code-workspace file via CodeServerModule
+ * Uses isolated hook contexts with collect() — each hook point returns typed
+ * results that are merged field-by-field with conflict detection.
+ *
+ * Hook points:
+ * 1. "create" → CreateHookResult — worktree creation (fatal)
+ * 2. "setup" → SetupHookResult — keepfiles (best-effort, internal try/catch),
+ *    agent server (fatal)
+ * 3. "finalize" → FinalizeHookResult — workspace URL (fatal)
  *
  * On success, builds a Workspace return value and emits a
  * workspace:created domain event.
@@ -86,97 +90,130 @@ export const EVENT_WORKSPACE_CREATED = "workspace:created" as const;
 
 export const CREATE_WORKSPACE_OPERATION_ID = "create-workspace";
 
-/**
- * Extended hook context for create-workspace.
- *
- * Fields are populated by hook modules across the three hook points:
- * - "create": workspacePath, branch, metadata, projectPath
- * - "setup": envVars (best-effort, may be undefined)
- * - "finalize": workspaceUrl
- */
-export interface CreateWorkspaceHookContext extends HookContext {
-  // Set by WorktreeModule (create hook)
-  workspacePath?: string;
-  branch?: string;
-  metadata?: Readonly<Record<string, string>>;
-  projectPath?: string;
+// =============================================================================
+// Per-hook-point types
+// =============================================================================
 
-  // Set by AgentModule (setup hook) -- may be undefined if agent fails
-  envVars?: Record<string, string>;
+/** Result from the "create" hook point. Fields are optional — multiple handlers may each contribute a subset. */
+export interface CreateHookResult {
+  readonly workspacePath?: string;
+  readonly branch?: string;
+  readonly metadata?: Readonly<Record<string, string>>;
+  readonly projectPath?: string;
+}
 
-  // Set by CodeServerModule (finalize hook)
-  workspaceUrl?: string;
+/** Input context for the "setup" hook point (enriched with merged create results). */
+export interface SetupHookInput extends HookContext {
+  readonly workspacePath: string;
+  readonly projectPath: string;
+}
+
+/** Result from the "setup" hook point. */
+export interface SetupHookResult {
+  readonly envVars?: Record<string, string>;
+}
+
+/** Input context for the "finalize" hook point (enriched with create+setup results). */
+export interface FinalizeHookInput extends HookContext {
+  readonly workspacePath: string;
+  readonly envVars: Record<string, string>;
+}
+
+/** Result from the "finalize" hook point. */
+export interface FinalizeHookResult {
+  readonly workspaceUrl?: string;
+}
+
+/** Merge hook results field-by-field. Throws if two handlers contribute the same field. */
+function mergeHookResults<T extends object>(results: readonly T[], hookPoint: string): Partial<T> {
+  const merged: Record<string, unknown> = {};
+  for (const result of results) {
+    for (const [key, value] of Object.entries(result)) {
+      if (value !== undefined) {
+        if (key in merged) {
+          throw new Error(`${hookPoint} hook conflict: "${key}" provided by multiple handlers`);
+        }
+        merged[key] = value;
+      }
+    }
+  }
+  return merged as Partial<T>;
 }
 
 export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent, Workspace> {
   readonly id = CREATE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<CreateWorkspaceIntent>): Promise<Workspace> {
-    const hookCtx: CreateWorkspaceHookContext = {
+    // Hook 1: "create" — worktree creation (fatal on error)
+    const createCtx: HookContext = { intent: ctx.intent };
+    const { results: createResults, errors: createErrors } =
+      await ctx.hooks.collect<CreateHookResult>("create", createCtx);
+
+    if (createErrors.length > 0) throw createErrors[0]!;
+
+    const create = mergeHookResults(createResults, "create");
+    const { workspacePath, branch, metadata, projectPath } = create;
+    if (
+      workspacePath === undefined ||
+      branch === undefined ||
+      metadata === undefined ||
+      projectPath === undefined
+    ) {
+      throw new Error("Create hook did not provide all required fields");
+    }
+
+    // Hook 2: "setup" — keepfiles is best-effort (internal try/catch), agent is fatal
+    const setupCtx: SetupHookInput = {
       intent: ctx.intent,
+      workspacePath,
+      projectPath,
     };
+    const { results: setupResults, errors: setupErrors } = await ctx.hooks.collect<SetupHookResult>(
+      "setup",
+      setupCtx
+    );
 
-    // Hook 1: "create" -- WorktreeModule creates git worktree
-    await ctx.hooks.run("create", hookCtx);
+    if (setupErrors.length > 0) throw setupErrors[0]!;
 
-    if (hookCtx.error) {
-      throw hookCtx.error;
-    }
+    const setup = mergeHookResults(setupResults, "setup");
+    const envVars = setup.envVars ?? {};
 
-    // Validate required context from "create" hook
-    if (!hookCtx.workspacePath) {
-      throw new Error("Create hook did not provide workspacePath");
-    }
-    if (!hookCtx.branch) {
-      throw new Error("Create hook did not provide branch");
-    }
-    if (!hookCtx.metadata) {
-      throw new Error("Create hook did not provide metadata");
-    }
-    if (!hookCtx.projectPath) {
-      throw new Error("Create hook did not provide projectPath");
-    }
+    // Hook 3: "finalize" — workspace URL (fatal on error)
+    const finalizeCtx: FinalizeHookInput = {
+      intent: ctx.intent,
+      workspacePath,
+      envVars,
+    };
+    const { results: finalizeResults, errors: finalizeErrors } =
+      await ctx.hooks.collect<FinalizeHookResult>("finalize", finalizeCtx);
 
-    // Hook 2: "setup" -- AgentModule (best-effort)
-    // Reset error before setup since setup is best-effort
-    delete hookCtx.error;
-    await ctx.hooks.run("setup", hookCtx);
-    // Do NOT check hookCtx.error -- setup is best-effort
-    // Reset error so it doesn't affect finalize
-    delete hookCtx.error;
+    if (finalizeErrors.length > 0) throw finalizeErrors[0]!;
 
-    // Hook 3: "finalize" -- CodeServerModule creates .code-workspace file
-    await ctx.hooks.run("finalize", hookCtx);
-
-    if (hookCtx.error) {
-      throw hookCtx.error;
-    }
-
-    // Validate required context from "finalize" hook
-    if (!hookCtx.workspaceUrl) {
+    const finalize = mergeHookResults(finalizeResults, "finalize");
+    if (!finalize.workspaceUrl) {
       throw new Error("Finalize hook did not provide workspaceUrl");
     }
 
     // Build Workspace return value
-    const workspaceName = extractWorkspaceName(hookCtx.workspacePath);
+    const workspaceName = extractWorkspaceName(workspacePath);
     const workspace: Workspace = {
       projectId: ctx.intent.payload.projectId,
       name: workspaceName,
-      branch: hookCtx.branch,
-      metadata: hookCtx.metadata,
-      path: hookCtx.workspacePath,
+      branch,
+      metadata,
+      path: workspacePath,
     };
 
     // Build and emit domain event
     const eventPayload: WorkspaceCreatedPayload = {
       projectId: ctx.intent.payload.projectId,
       workspaceName,
-      workspacePath: hookCtx.workspacePath,
-      projectPath: hookCtx.projectPath,
-      branch: hookCtx.branch,
+      workspacePath,
+      projectPath,
+      branch,
       base: ctx.intent.payload.base,
-      metadata: hookCtx.metadata,
-      workspaceUrl: hookCtx.workspaceUrl,
+      metadata,
+      workspaceUrl: finalize.workspaceUrl,
       ...(ctx.intent.payload.initialPrompt !== undefined && {
         initialPrompt: normalizeInitialPrompt(ctx.intent.payload.initialPrompt),
       }),

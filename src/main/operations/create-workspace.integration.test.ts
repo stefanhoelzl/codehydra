@@ -4,14 +4,14 @@
  *
  * Tests verify the full dispatch pipeline: intent -> hooks -> event -> result,
  * including event emission on success, error propagation on failure,
- * and best-effort handling of agent/keepfiles failures.
+ * and fatal handling of agent/setup failures.
  *
  * Test plan items covered:
  * #1: Creates workspace with correct return value
  * #2: Emits workspace:created event with full payload
  * #3: Worktree creation failure propagates error
- * #4: Agent server failure produces workspace without envVars
- * #5: Best-effort setup hook failure still produces workspace
+ * #4: Agent server failure fails workspace creation
+ * #5: Setup handler failure fails workspace creation
  * #6: Unknown project throws
  * #7: Initial prompt included in event payload
  * #8: keepInBackground flag included in event payload
@@ -22,10 +22,10 @@
  *
  * Regression coverage (APP_LIFECYCLE_INTENTS #10):
  * The agentModule's setup hook behavior (starting per-workspace server) is tested
- * in test #4 ("agent server failure produces workspace without envVars"). This
- * verifies that the extended agentModule (which now also has app:start/stop hooks
- * in the production bootstrap) still correctly handles per-workspace server startup
- * via its workspace:create setup hook.
+ * in test #4 ("agent server failure fails workspace creation"). This verifies that
+ * the extended agentModule (which now also has app:start/stop hooks in the production
+ * bootstrap) still correctly handles per-workspace server startup via its
+ * workspace:create setup hook.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -41,7 +41,11 @@ import {
 } from "./create-workspace";
 import type {
   CreateWorkspaceIntent,
-  CreateWorkspaceHookContext,
+  CreateHookResult,
+  SetupHookInput,
+  SetupHookResult,
+  FinalizeHookInput,
+  FinalizeHookResult,
   CreateWorkspacePayload,
   WorkspaceCreatedEvent,
   ExistingWorkspaceData,
@@ -210,23 +214,23 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     },
   };
 
-  // WorktreeModule: "create" hook
+  // WorktreeModule: "create" hook — returns CreateHookResult
   const worktreeModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         create: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<CreateHookResult> => {
             const intent = ctx.intent as CreateWorkspaceIntent;
 
-            // Existing workspace path: populate context from existing data
+            // Existing workspace path: return context from existing data
             if (intent.payload.existingWorkspace) {
               const existing = intent.payload.existingWorkspace;
-              hookCtx.workspacePath = existing.path;
-              hookCtx.branch = existing.branch ?? existing.name;
-              hookCtx.metadata = existing.metadata;
-              hookCtx.projectPath = intent.payload.projectPath!;
-              return;
+              return {
+                workspacePath: existing.path,
+                branch: existing.branch ?? existing.name,
+                metadata: existing.metadata,
+                projectPath: intent.payload.projectPath!,
+              };
             }
 
             if (intent.payload.projectId !== projectId) {
@@ -242,10 +246,12 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
               intent.payload.base
             );
 
-            hookCtx.workspacePath = workspace.path.toString();
-            hookCtx.branch = workspace.branch;
-            hookCtx.metadata = workspace.metadata;
-            hookCtx.projectPath = PROJECT_ROOT;
+            return {
+              workspacePath: workspace.path.toString(),
+              branch: workspace.branch,
+              metadata: workspace.metadata,
+              projectPath: PROJECT_ROOT,
+            };
           },
         },
       },
@@ -257,47 +263,43 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
+            const setupCtx = ctx as SetupHookInput;
             try {
-              const workspacePath = hookCtx.workspacePath!;
-              const projectPath = hookCtx.projectPath!;
               await keepFilesService.copyToWorkspace(
-                new Path(projectPath),
-                new Path(workspacePath)
+                new Path(setupCtx.projectPath),
+                new Path(setupCtx.workspacePath)
               );
             } catch {
               // Best-effort: do not re-throw
             }
+            return {};
           },
         },
       },
     },
   };
 
-  // AgentModule: "setup" hook (best-effort, try/catch internal)
+  // AgentModule: "setup" hook (fatal — no try/catch)
   const agentModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
+            const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as CreateWorkspaceIntent;
-            try {
-              await serverManager.startServer(hookCtx.workspacePath!);
 
-              if (intent.payload.initialPrompt && serverManager.setInitialPrompt) {
-                await serverManager.setInitialPrompt(
-                  hookCtx.workspacePath!,
-                  intent.payload.initialPrompt
-                );
-              }
+            await serverManager.startServer(setupCtx.workspacePath);
 
-              const agentProvider = agentStatusManager.getProvider(hookCtx.workspacePath!);
-              hookCtx.envVars = agentProvider?.getEnvironmentVariables() ?? {};
-            } catch {
-              // Best-effort: do not re-throw
+            if (intent.payload.initialPrompt && serverManager.setInitialPrompt) {
+              await serverManager.setInitialPrompt(
+                setupCtx.workspacePath,
+                intent.payload.initialPrompt
+              );
             }
+
+            const agentProvider = agentStatusManager.getProvider(setupCtx.workspacePath);
+            return { envVars: agentProvider?.getEnvironmentVariables() ?? {} };
           },
         },
       },
@@ -305,8 +307,8 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   };
 
   // Failing setup hook: simulates a setup handler that throws without
-  // internal try/catch. The hook runner will set ctx.error, but the
-  // operation's execute() clears it, so the workspace is still created.
+  // internal try/catch. With collect(), the error is returned in the errors
+  // array, and the operation throws on any setup error (fatal).
   // Only registered when setupThrows is true.
   const failingSetupModule: IntentModule | null = opts?.setupThrows
     ? {
@@ -322,16 +324,14 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       }
     : null;
 
-  // CodeServerModule: "finalize" hook
+  // CodeServerModule: "finalize" hook — returns FinalizeHookResult
   const codeServerModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
-            // Use envVars with fallback (agent may have failed)
-            void (hookCtx.envVars ?? {});
-            hookCtx.workspaceUrl = workspaceUrl;
+          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+            void (ctx as FinalizeHookInput).envVars;
+            return { workspaceUrl };
           },
         },
       },
@@ -444,8 +444,8 @@ describe("CreateWorkspace Operation", () => {
     });
   });
 
-  describe("agent server failure produces workspace without envVars (#4)", () => {
-    it("returns valid workspace when agent fails", async () => {
+  describe("agent server failure fails workspace creation (#4)", () => {
+    it("throws error and does not emit event when agent fails", async () => {
       const setup = createTestSetup({
         serverManager: createMockServerManager({ throwOnStart: true }),
         agentStatusManager: createMockAgentStatusManager(undefined),
@@ -456,23 +456,16 @@ describe("CreateWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      const result = await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      await expect(setup.dispatcher.dispatch(createIntent(setup.projectId))).rejects.toThrow(
+        "Agent server failed to start"
+      );
 
-      // Operation succeeds
-      expect(result).toBeDefined();
-      const workspace = result as Workspace;
-      expect(workspace.path).toBe(WORKSPACE_PATH);
-      expect(workspace.branch).toBe(WORKSPACE_BRANCH);
-
-      // Event is emitted
-      expect(receivedEvents).toHaveLength(1);
-      const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
+      expect(receivedEvents).toHaveLength(0);
     });
   });
 
-  describe("best-effort setup failure still produces workspace (#5)", () => {
-    it("returns valid workspace when a setup handler throws without try/catch", async () => {
+  describe("setup handler failure fails workspace creation (#5)", () => {
+    it("throws error and does not emit event when a setup handler throws", async () => {
       const setup = createTestSetup({ setupThrows: true });
 
       const receivedEvents: DomainEvent[] = [];
@@ -480,18 +473,11 @@ describe("CreateWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      const result = await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      await expect(setup.dispatcher.dispatch(createIntent(setup.projectId))).rejects.toThrow(
+        "Setup handler failed"
+      );
 
-      // Operation succeeds despite setup hook error
-      expect(result).toBeDefined();
-      const workspace = result as Workspace;
-      expect(workspace.path).toBe(WORKSPACE_PATH);
-      expect(workspace.branch).toBe(WORKSPACE_BRANCH);
-
-      // Event is emitted
-      expect(receivedEvents).toHaveLength(1);
-      const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
+      expect(receivedEvents).toHaveLength(0);
     });
   });
 
