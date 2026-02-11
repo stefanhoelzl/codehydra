@@ -55,7 +55,7 @@ import {
 } from "./operations/get-workspace-status";
 import type {
   GetWorkspaceStatusIntent,
-  GetWorkspaceStatusHookContext,
+  GetStatusHookResult,
 } from "./operations/get-workspace-status";
 import {
   GetAgentSessionOperation,
@@ -1209,11 +1209,12 @@ function wireDispatcher(
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (ctx: GetWorkspaceStatusHookContext) => {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const { projectPath, workspace } = await resolveWorkspace(intent.payload, appState);
             const provider = appState.getWorkspaceProvider(projectPath);
-            ctx.isDirty = provider ? await provider.isDirty(new Path(workspace.path)) : false;
+            const isDirty = provider ? await provider.isDirty(new Path(workspace.path)) : false;
+            return { isDirty };
           },
         },
       },
@@ -1224,13 +1225,14 @@ function wireDispatcher(
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (ctx: GetWorkspaceStatusHookContext) => {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const { workspace } = await resolveWorkspace(intent.payload, appState);
             const agentStatusManager = appState.getAgentStatusManager();
             if (agentStatusManager) {
-              ctx.agentStatus = agentStatusManager.getStatus(workspace.path as WorkspacePath);
+              return { agentStatus: agentStatusManager.getStatus(workspace.path as WorkspacePath) };
             }
+            return {};
           },
         },
       },

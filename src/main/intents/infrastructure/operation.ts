@@ -42,20 +42,35 @@ export interface HookContext {
 /**
  * A handler registered for a hook point.
  * If `onError` is true, the handler runs even after a previous handler errors.
+ *
+ * Generic parameter `T` is the return type for `collect()` — defaults to `unknown`
+ * so that `HookDeclarations` (which uses `HookHandler`) accepts handlers with any return type.
  */
-export interface HookHandler {
-  readonly handler: (ctx: HookContext) => Promise<void>;
+export interface HookHandler<T = unknown> {
+  readonly handler: (ctx: HookContext) => Promise<T>;
   readonly onError?: boolean;
 }
 
 /**
+ * Result of `collect()` — typed results from all handlers plus any collected errors.
+ * All handlers always run regardless of earlier errors.
+ */
+export interface HookResult<T = unknown> {
+  readonly results: readonly T[];
+  readonly errors: readonly Error[];
+}
+
+/**
  * Resolved hooks for a specific operation.
- * The `run` method executes all handlers for a hook point.
- * It does NOT throw — it sets `ctx.error` on failure and skips
- * subsequent non-onError handlers.
+ *
+ * - `run()`: Legacy shared-context execution. Sets `ctx.error` on failure, skips
+ *   subsequent non-onError handlers. Does NOT throw.
+ * - `collect()`: Isolated-context execution. Each handler receives a frozen clone
+ *   of the input context. All handlers always run. Returns typed results + errors.
  */
 export interface ResolvedHooks {
   run(hookPointId: string, ctx: HookContext): Promise<void>;
+  collect<T = unknown>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>>;
 }
 
 // =============================================================================

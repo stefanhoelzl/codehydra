@@ -6,7 +6,7 @@
  * and skip subsequent non-onError handlers. `run()` never throws.
  */
 
-import type { HookContext, HookHandler, ResolvedHooks } from "./operation";
+import type { HookContext, HookHandler, HookResult, ResolvedHooks } from "./operation";
 
 // =============================================================================
 // IHookRegistry Interface
@@ -69,6 +69,30 @@ export class HookRegistry implements IHookRegistry {
             ctx.error = err instanceof Error ? err : new Error(String(err));
           }
         }
+      },
+
+      async collect<T = unknown>(
+        hookPointId: string,
+        inputCtx: HookContext
+      ): Promise<HookResult<T>> {
+        const handlers = opMap?.get(hookPointId);
+        if (!handlers) {
+          return { results: [], errors: [] };
+        }
+
+        const results: T[] = [];
+        const errors: Error[] = [];
+
+        for (const entry of handlers) {
+          try {
+            const frozenCtx = Object.freeze({ ...inputCtx });
+            results.push((await entry.handler(frozenCtx)) as T);
+          } catch (err) {
+            errors.push(err instanceof Error ? err : new Error(String(err)));
+          }
+        }
+
+        return { results, errors };
       },
     };
   }
