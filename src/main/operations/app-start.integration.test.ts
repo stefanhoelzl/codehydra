@@ -12,6 +12,13 @@
  * #5: PluginServer graceful degradation
  * #6: project:open dispatched for each saved project path
  * #7: finalize hook runs after project dispatches
+ * #8: check hooks -- no setup needed
+ * #9: check hooks -- setup needed (agent null)
+ * #10: check hooks -- setup needed (binaries)
+ * #11: check hooks -- setup needed (extensions)
+ * #12: check-config error aborts
+ * #13: check-deps error aborts
+ * #14: configuredAgent flows to check-deps
  */
 
 import { describe, it, expect } from "vitest";
@@ -19,12 +26,21 @@ import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
 import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
-import type { AppStartIntent, AppStartHookContext } from "./app-start";
+import type {
+  AppStartIntent,
+  AppStartHookContext,
+  CheckConfigResult,
+  CheckDepsHookContext,
+  CheckDepsResult,
+} from "./app-start";
+import { INTENT_SETUP } from "./setup";
+import type { SetupIntent } from "./setup";
 import { INTENT_OPEN_PROJECT } from "./open-project";
 import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext, Operation, OperationContext } from "../intents/infrastructure/operation";
-import type { Project } from "../../shared/api/types";
+import type { ConfigAgentType, Project } from "../../shared/api/types";
+import type { BinaryType } from "../../services/vscode-setup/types";
 
 // =============================================================================
 // Test Setup
@@ -216,11 +232,32 @@ function createProjectOpenStub(
   };
 }
 
+/**
+ * Default check modules that make checks pass (agent configured, no missing deps).
+ * Existing tests that don't care about check hooks get these by default.
+ */
+function defaultCheckModules(): IntentModule[] {
+  return [
+    {
+      hooks: {
+        [APP_START_OPERATION_ID]: {
+          "check-config": {
+            handler: async (): Promise<CheckConfigResult> => ({
+              configuredAgent: "claude",
+            }),
+          },
+        },
+      },
+    },
+  ];
+}
+
 function createTestSetup(
   modules: IntentModule[],
   options?: {
     state?: TestState;
     projectOpenStub?: Operation<OpenProjectIntent, Project>;
+    skipDefaultChecks?: boolean;
   }
 ): { dispatcher: Dispatcher } {
   const hookRegistry = new HookRegistry();
@@ -230,7 +267,9 @@ function createTestSetup(
   if (options?.projectOpenStub) {
     dispatcher.registerOperation(INTENT_OPEN_PROJECT, options.projectOpenStub);
   }
-  wireModules(modules, hookRegistry, dispatcher);
+
+  const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
+  wireModules(allModules, hookRegistry, dispatcher);
 
   return { dispatcher };
 }
@@ -452,6 +491,266 @@ describe("AppStart Operation", () => {
         "project-open:/project-a",
         "finalize",
       ]);
+    });
+  });
+
+  // ===========================================================================
+  // Check Hooks (collect-based, isolated contexts)
+  // ===========================================================================
+
+  describe("check hooks", () => {
+    // -- Helpers for check hook modules --
+
+    function createConfigCheckModule(agent: ConfigAgentType | null): IntentModule {
+      return {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "check-config": {
+              handler: async (): Promise<CheckConfigResult> => {
+                return { configuredAgent: agent };
+              },
+            },
+          },
+        },
+      };
+    }
+
+    function createBinaryCheckModule(missingBinaries: BinaryType[]): IntentModule {
+      return {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "check-deps": {
+              handler: async (): Promise<CheckDepsResult> => {
+                return { missingBinaries };
+              },
+            },
+          },
+        },
+      };
+    }
+
+    function createExtensionCheckModule(opts: {
+      missing?: string[];
+      outdated?: string[];
+    }): IntentModule {
+      return {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "check-deps": {
+              handler: async (): Promise<CheckDepsResult> => {
+                return {
+                  ...(opts.missing !== undefined && { missingExtensions: opts.missing }),
+                  ...(opts.outdated !== undefined && { outdatedExtensions: opts.outdated }),
+                };
+              },
+            },
+          },
+        },
+      };
+    }
+
+    /** Stub setup operation that records dispatch and succeeds. */
+    function createSetupStub(state: TestState): Operation<SetupIntent, void> {
+      return {
+        id: "setup",
+        async execute(ctx: OperationContext<SetupIntent>): Promise<void> {
+          state.executionOrder.push("setup");
+          void ctx;
+        },
+      };
+    }
+
+    function createCheckTestSetup(
+      modules: IntentModule[],
+      options?: { setupStub?: Operation<SetupIntent, void> }
+    ): { dispatcher: Dispatcher } {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+      if (options?.setupStub) {
+        dispatcher.registerOperation(INTENT_SETUP, options.setupStub);
+      }
+      wireModules(modules, hookRegistry, dispatcher);
+
+      return { dispatcher };
+    }
+
+    it("no setup needed -- all checks pass, app:setup not dispatched (#8)", async () => {
+      const state = createTestState();
+      const setupStub = createSetupStub(state);
+      const { dispatcher } = createCheckTestSetup(
+        [
+          createConfigCheckModule("claude"),
+          createBinaryCheckModule([]),
+          createExtensionCheckModule({}),
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+        ],
+        { setupStub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      // Setup was never dispatched
+      expect(state.executionOrder).not.toContain("setup");
+      // start hooks ran
+      expect(state.codeServerStarted).toBe(true);
+      expect(state.mcpStarted).toBe(true);
+    });
+
+    it("setup needed -- agent null triggers app:setup (#9)", async () => {
+      const state = createTestState();
+      const setupStub = createSetupStub(state);
+      const { dispatcher } = createCheckTestSetup(
+        [
+          createConfigCheckModule(null),
+          createBinaryCheckModule([]),
+          createExtensionCheckModule({}),
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+        ],
+        { setupStub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(state.executionOrder).toContain("setup");
+      // start hooks still ran after setup
+      expect(state.codeServerStarted).toBe(true);
+    });
+
+    it("setup needed -- missing binaries triggers app:setup (#10)", async () => {
+      const state = createTestState();
+      const setupStub = createSetupStub(state);
+      const { dispatcher } = createCheckTestSetup(
+        [
+          createConfigCheckModule("claude"),
+          createBinaryCheckModule(["code-server"]),
+          createExtensionCheckModule({}),
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+        ],
+        { setupStub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(state.executionOrder).toContain("setup");
+    });
+
+    it("setup needed -- missing extensions triggers app:setup (#11)", async () => {
+      const state = createTestState();
+      const setupStub = createSetupStub(state);
+      const { dispatcher } = createCheckTestSetup(
+        [
+          createConfigCheckModule("claude"),
+          createBinaryCheckModule([]),
+          createExtensionCheckModule({ missing: ["ext-a"] }),
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+        ],
+        { setupStub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(state.executionOrder).toContain("setup");
+    });
+
+    it("check-config error aborts startup (#12)", async () => {
+      const state = createTestState();
+      const failingConfigModule: IntentModule = {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "check-config": {
+              handler: async (): Promise<CheckConfigResult> => {
+                throw new Error("Config load failed");
+              },
+            },
+          },
+        },
+      };
+
+      const { dispatcher } = createCheckTestSetup([
+        failingConfigModule,
+        createBinaryCheckModule([]),
+        createCodeServerModule(state),
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
+        "check-config hooks failed"
+      );
+      expect(state.codeServerStarted).toBe(false);
+    });
+
+    it("check-deps error aborts startup (#13)", async () => {
+      const state = createTestState();
+      const failingDepsModule: IntentModule = {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "check-deps": {
+              handler: async (): Promise<CheckDepsResult> => {
+                throw new Error("Binary preflight failed");
+              },
+            },
+          },
+        },
+      };
+
+      const { dispatcher } = createCheckTestSetup([
+        createConfigCheckModule("claude"),
+        failingDepsModule,
+        createCodeServerModule(state),
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
+        "check-deps hooks failed"
+      );
+      expect(state.codeServerStarted).toBe(false);
+    });
+
+    it("configuredAgent flows from check-config to check-deps context (#14)", async () => {
+      const state = createTestState();
+      let receivedAgent: ConfigAgentType | null | undefined;
+
+      const agentReadingDepsModule: IntentModule = {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "check-deps": {
+              handler: async (ctx: HookContext): Promise<CheckDepsResult> => {
+                receivedAgent = (ctx as CheckDepsHookContext).configuredAgent;
+                return {};
+              },
+            },
+          },
+        },
+      };
+
+      const setupStub = createSetupStub(state);
+      const { dispatcher } = createCheckTestSetup(
+        [
+          createConfigCheckModule("opencode"),
+          agentReadingDepsModule,
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+        ],
+        { setupStub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(receivedAgent).toBe("opencode");
     });
   });
 });
