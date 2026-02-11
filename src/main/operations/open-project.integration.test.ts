@@ -40,7 +40,9 @@ import {
   EVENT_WORKSPACE_CREATED,
 } from "./create-workspace";
 import type {
-  CreateWorkspaceHookContext,
+  CreateHookResult,
+  FinalizeHookInput,
+  FinalizeHookResult,
   CreateWorkspaceIntent,
   WorkspaceCreatedEvent,
 } from "./create-workspace";
@@ -460,8 +462,7 @@ function createTestHarness(options?: {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         create: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<CreateHookResult> => {
             const intent = ctx.intent as CreateWorkspaceIntent;
 
             if (intent.payload.existingWorkspace) {
@@ -472,11 +473,12 @@ function createTestHarness(options?: {
                 throw new Error("Workspace activation failed");
               }
 
-              hookCtx.workspacePath = existing.path;
-              hookCtx.branch = existing.branch ?? existing.name;
-              hookCtx.metadata = existing.metadata;
-              hookCtx.projectPath = intent.payload.projectPath!;
-              return;
+              return {
+                workspacePath: existing.path,
+                branch: existing.branch ?? existing.name,
+                metadata: existing.metadata,
+                projectPath: intent.payload.projectPath!,
+              };
             }
 
             throw new Error("Expected existingWorkspace in project:open context");
@@ -491,9 +493,9 @@ function createTestHarness(options?: {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
-            hookCtx.workspaceUrl = WORKSPACE_URL;
+          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+            void (ctx as FinalizeHookInput).envVars;
+            return { workspaceUrl: WORKSPACE_URL };
           },
         },
       },

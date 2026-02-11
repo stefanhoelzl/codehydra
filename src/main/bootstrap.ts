@@ -91,7 +91,11 @@ import {
 } from "./operations/create-workspace";
 import type {
   CreateWorkspaceIntent,
-  CreateWorkspaceHookContext,
+  CreateHookResult,
+  SetupHookInput,
+  SetupHookResult,
+  FinalizeHookInput,
+  FinalizeHookResult,
   WorkspaceCreatedEvent,
 } from "./operations/create-workspace";
 import {
@@ -1294,24 +1298,24 @@ function wireDispatcher(
   // Create-workspace hook modules
   // ---------------------------------------------------------------------------
 
-  // WorktreeModule: "create" hook -- creates git worktree, sets context fields
-  // When existingWorkspace is set, populates context from existing data (skips worktree creation)
+  // WorktreeModule: "create" hook -- creates git worktree, returns CreateHookResult
+  // When existingWorkspace is set, returns context from existing data (skips worktree creation)
   const worktreeModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         create: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<CreateHookResult> => {
             const intent = ctx.intent as CreateWorkspaceIntent;
 
-            // Existing workspace path: populate context from existing data
+            // Existing workspace path: return context from existing data
             if (intent.payload.existingWorkspace) {
               const existing = intent.payload.existingWorkspace;
-              hookCtx.workspacePath = existing.path;
-              hookCtx.branch = existing.branch ?? existing.name;
-              hookCtx.metadata = existing.metadata;
-              hookCtx.projectPath = intent.payload.projectPath!;
-              return;
+              return {
+                workspacePath: existing.path,
+                branch: existing.branch ?? existing.name,
+                metadata: existing.metadata,
+                projectPath: intent.payload.projectPath!,
+              };
             }
 
             const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
@@ -1329,102 +1333,94 @@ function wireDispatcher(
               intent.payload.base
             );
 
-            hookCtx.workspacePath = internalWorkspace.path.toString();
-            hookCtx.branch = internalWorkspace.branch ?? internalWorkspace.name;
-            hookCtx.metadata = internalWorkspace.metadata;
-            hookCtx.projectPath = projectPath;
+            return {
+              workspacePath: internalWorkspace.path.toString(),
+              branch: internalWorkspace.branch ?? internalWorkspace.name,
+              metadata: internalWorkspace.metadata,
+              projectPath,
+            };
           },
         },
       },
     },
   };
 
-  // KeepFilesModule: "setup" hook -- copies .keepfiles to workspace
-  // Wraps body in try/catch to prevent errors from propagating (best-effort)
+  // KeepFilesModule: "setup" hook -- copies .keepfiles to workspace (best-effort)
   const keepFilesModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
+            const setupCtx = ctx as SetupHookInput;
 
             try {
-              const workspacePath = hookCtx.workspacePath!;
-              const projectPath = hookCtx.projectPath!;
-
               await keepFilesService.copyToWorkspace(
-                new Path(projectPath),
-                new Path(workspacePath)
+                new Path(setupCtx.projectPath),
+                new Path(setupCtx.workspacePath)
               );
             } catch (error) {
               logger.error(
                 "Keepfiles copy failed for workspace (non-fatal)",
-                { workspacePath: hookCtx.workspacePath ?? "unknown" },
+                { workspacePath: setupCtx.workspacePath },
                 error instanceof Error ? error : undefined
               );
               // Do not re-throw -- keepfiles is best-effort
             }
+
+            return {};
           },
         },
       },
     },
   };
 
-  // AgentModule: "setup" hook -- starts agent server, sets initial prompt, gets env vars
-  // Wraps body in try/catch to prevent errors from propagating (best-effort)
+  // AgentModule: "setup" hook -- starts agent server, sets initial prompt, gets env vars (fatal)
   const agentModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
+            const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as CreateWorkspaceIntent;
+            const workspacePath = setupCtx.workspacePath;
 
-            try {
-              const workspacePath = hookCtx.workspacePath!;
+            // 1. Start agent server
+            const serverManager = appState.getServerManager();
+            if (serverManager) {
+              await serverManager.startServer(workspacePath);
 
-              // 1. Start agent server
-              const serverManager = appState.getServerManager();
-              if (serverManager) {
-                await serverManager.startServer(workspacePath);
+              // 2. Wait for provider registration (handleServerStarted runs async)
+              await appState.waitForProvider(workspacePath);
 
-                // 2. Wait for provider registration (handleServerStarted runs async)
-                await appState.waitForProvider(workspacePath);
-
-                // 3. Set initial prompt if provided (must happen after startServer)
-                if (intent.payload.initialPrompt && serverManager.setInitialPrompt) {
-                  const normalizedPrompt = normalizeInitialPrompt(intent.payload.initialPrompt);
-                  await serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
-                }
+              // 3. Set initial prompt if provided (must happen after startServer)
+              if (intent.payload.initialPrompt && serverManager.setInitialPrompt) {
+                const normalizedPrompt = normalizeInitialPrompt(intent.payload.initialPrompt);
+                await serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
               }
-
-              // 4. Get environment variables from agent provider
-              const agentStatusManager = appState.getAgentStatusManager();
-              const agentProvider = agentStatusManager?.getProvider(workspacePath as WorkspacePath);
-              hookCtx.envVars = agentProvider?.getEnvironmentVariables() ?? {};
-            } catch (error) {
-              logger.error(
-                "Agent setup failed for workspace (non-fatal)",
-                { workspacePath: hookCtx.workspacePath ?? "unknown" },
-                error instanceof Error ? error : undefined
-              );
-              // Do not re-throw -- agent setup is best-effort
             }
+
+            // 4. Get environment variables from agent provider
+            const agentStatusManager = appState.getAgentStatusManager();
+            const agentProvider = agentStatusManager?.getProvider(workspacePath as WorkspacePath);
+            return { envVars: agentProvider?.getEnvironmentVariables() ?? {} };
           },
         },
       },
     },
   };
 
-  // CodeServerModule: "finalize" hook -- creates .code-workspace file, sets workspaceUrl
+  // CodeServerModule: "finalize" hook -- creates .code-workspace file, returns workspaceUrl
   const codeServerModule: IntentModule = {
     hooks: {
       [CREATE_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CreateWorkspaceHookContext;
-            const envVars = hookCtx.envVars ?? {};
-            hookCtx.workspaceUrl = await appState.getWorkspaceUrl(hookCtx.workspacePath!, envVars);
+          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+            const finalizeCtx = ctx as FinalizeHookInput;
+            const workspaceUrl = await appState.getWorkspaceUrl(
+              finalizeCtx.workspacePath,
+              finalizeCtx.envVars
+            );
+            return { workspaceUrl };
           },
         },
       },
