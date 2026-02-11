@@ -14,6 +14,7 @@ export type {
   DispatchFn,
   HookContext,
   HookHandler,
+  HookResult,
   ResolvedHooks,
 } from "./operation";
 

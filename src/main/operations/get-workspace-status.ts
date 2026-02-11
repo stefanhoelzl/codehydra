@@ -37,16 +37,12 @@ export const INTENT_GET_WORKSPACE_STATUS = "workspace:get-status" as const;
 export const GET_WORKSPACE_STATUS_OPERATION_ID = "get-workspace-status";
 
 /**
- * Extended hook context for get-workspace-status.
- * Each hook handler populates its own entry:
- * - Git handler sets `isDirty`
- * - Agent handler sets `agentStatus`
- *
- * The operation assembles WorkspaceStatus from both fields.
+ * Per-handler result contract for the "get" hook point.
+ * Each handler returns its contribution — the operation merges them.
  */
-export interface GetWorkspaceStatusHookContext extends HookContext {
-  isDirty?: boolean;
-  agentStatus?: AggregatedAgentStatus;
+export interface GetStatusHookResult {
+  readonly isDirty?: boolean;
+  readonly agentStatus?: AggregatedAgentStatus;
 }
 
 export class GetWorkspaceStatusOperation implements Operation<
@@ -56,39 +52,38 @@ export class GetWorkspaceStatusOperation implements Operation<
   readonly id = GET_WORKSPACE_STATUS_OPERATION_ID;
 
   async execute(ctx: OperationContext<GetWorkspaceStatusIntent>): Promise<WorkspaceStatus> {
-    const hookCtx: GetWorkspaceStatusHookContext = {
-      intent: ctx.intent,
-    };
+    const hookCtx: HookContext = { intent: ctx.intent };
 
-    // Run "get" hook -- handlers populate isDirty and agentStatus
-    await ctx.hooks.run("get", hookCtx);
-
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results, errors } = await ctx.hooks.collect<GetStatusHookResult>("get", hookCtx);
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "get-workspace-status hooks failed");
     }
 
-    if (hookCtx.isDirty === undefined) {
-      throw new Error("Get workspace status hook did not provide isDirty result");
+    // Merge results — isDirty uses OR (any hook says dirty = dirty)
+    let isDirty = false;
+    let agentStatus: AggregatedAgentStatus | undefined;
+
+    for (const result of results) {
+      if (result.isDirty) isDirty = true;
+      if (result.agentStatus !== undefined) agentStatus = result.agentStatus;
     }
 
-    // Assemble WorkspaceStatus from handler contributions
-    const agentStatus = hookCtx.agentStatus ?? {
+    const finalAgentStatus = agentStatus ?? {
       status: "none" as const,
       counts: { idle: 0, busy: 0 },
     };
 
     return {
-      isDirty: hookCtx.isDirty,
+      isDirty,
       agent:
-        agentStatus.status === "none"
+        finalAgentStatus.status === "none"
           ? { type: "none" }
           : {
-              type: agentStatus.status,
+              type: finalAgentStatus.status,
               counts: {
-                idle: agentStatus.counts.idle,
-                busy: agentStatus.counts.busy,
-                total: agentStatus.counts.idle + agentStatus.counts.busy,
+                idle: finalAgentStatus.counts.idle,
+                busy: finalAgentStatus.counts.busy,
+                total: finalAgentStatus.counts.idle + finalAgentStatus.counts.busy,
               },
             },
     };

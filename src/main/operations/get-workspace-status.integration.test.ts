@@ -20,10 +20,7 @@ import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   INTENT_GET_WORKSPACE_STATUS,
 } from "./get-workspace-status";
-import type {
-  GetWorkspaceStatusIntent,
-  GetWorkspaceStatusHookContext,
-} from "./get-workspace-status";
+import type { GetWorkspaceStatusIntent, GetStatusHookResult } from "./get-workspace-status";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -121,13 +118,12 @@ function createTestSetup(opts: {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext) => {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
             const provider = opts.workspaceProvider;
-            (ctx as GetWorkspaceStatusHookContext).isDirty = provider
-              ? await provider.isDirty(new Path(workspace.path))
-              : false;
+            const isDirty = provider ? await provider.isDirty(new Path(workspace.path)) : false;
+            return { isDirty };
           },
         },
       },
@@ -139,15 +135,14 @@ function createTestSetup(opts: {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext) => {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
             const manager = opts.agentStatusManager;
             if (manager) {
-              (ctx as GetWorkspaceStatusHookContext).agentStatus = manager.getStatus(
-                workspace.path as WorkspacePath
-              );
+              return { agentStatus: manager.getStatus(workspace.path as WorkspacePath) };
             }
+            return {};
           },
         },
       },
@@ -287,9 +282,14 @@ describe("GetWorkspaceStatus Operation", () => {
         agentStatusManager: null,
       });
 
-      await expect(
-        setup.dispatcher.dispatch(statusIntent(setup.projectId, "nonexistent" as WorkspaceName))
-      ).rejects.toThrow("Workspace not found");
+      const error: AggregateError = await setup.dispatcher
+        .dispatch(statusIntent(setup.projectId, "nonexistent" as WorkspaceName))
+        .then(() => expect.unreachable("should have thrown"))
+        .catch((e: AggregateError) => e);
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(error.errors).toHaveLength(2);
+      expect(error.errors.some((e: Error) => e.message.includes("Workspace not found"))).toBe(true);
     });
 
     it("unknown project throws", async () => {
@@ -298,11 +298,14 @@ describe("GetWorkspaceStatus Operation", () => {
         agentStatusManager: null,
       });
 
-      await expect(
-        setup.dispatcher.dispatch(
-          statusIntent("nonexistent-12345678" as ProjectId, setup.workspaceName)
-        )
-      ).rejects.toThrow("Project not found");
+      const error: AggregateError = await setup.dispatcher
+        .dispatch(statusIntent("nonexistent-12345678" as ProjectId, setup.workspaceName))
+        .then(() => expect.unreachable("should have thrown"))
+        .catch((e: AggregateError) => e);
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(error.errors).toHaveLength(2);
+      expect(error.errors.some((e: Error) => e.message.includes("Project not found"))).toBe(true);
     });
   });
 
