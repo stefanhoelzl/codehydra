@@ -1,12 +1,12 @@
 /**
  * DeleteWorkspaceOperation - Orchestrates workspace deletion.
  *
- * Runs three hook points in sequence:
+ * Runs three hook points in sequence using collect():
  * 1. "shutdown" - ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
  * 2. "release" - WindowsLockModule (detect + kill/close blockers) [Windows-only]
  * 3. "delete" - WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
  *
- * Emits progress after each hook point, mapping hook context results to DeletionOperationId values.
+ * Each handler returns a typed result; the operation merges results and tracks errors.
  * On success (or force=true), emits a workspace:deleted domain event for state cleanup.
  *
  * No provider dependencies - hook handlers do the actual work.
@@ -73,54 +73,125 @@ export interface WorkspaceDeletedEvent extends DomainEvent {
 export const EVENT_WORKSPACE_DELETED = "workspace:deleted" as const;
 
 // =============================================================================
-// Hook Context
+// Hook Result Types (returned by handlers via collect())
 // =============================================================================
 
 export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
 
 /**
- * Extended hook context for delete-workspace.
- *
- * Fields are populated by hook modules across three hook points:
- * - "shutdown": shutdownResults (ViewModule + AgentModule)
- * - "release": releaseResults (WindowsLockModule)
- * - "delete": deleteResults (WorktreeModule + CodeServerModule)
+ * Per-handler result for the "shutdown" hook point.
+ * ViewModule provides wasActive/nextSwitch; AgentModule may provide error.
  */
-export interface DeleteWorkspaceHookContext extends HookContext {
-  readonly intent: DeleteWorkspaceIntent;
-  readonly projectId: ProjectId;
-  readonly projectPath: string;
-  readonly workspacePath: string;
-  readonly workspaceName: WorkspaceName;
-  readonly keepBranch: boolean;
-  readonly force: boolean;
-  readonly removeWorktree: boolean;
-  readonly skipSwitch?: boolean;
-  readonly unblock?: "kill" | "close" | "ignore";
-  readonly isRetry?: boolean;
+export interface ShutdownHookResult {
+  readonly wasActive?: boolean;
+  readonly nextSwitch?: { projectId: ProjectId; workspaceName: WorkspaceName } | null;
+  readonly error?: string;
+}
 
-  shutdownResults?: {
-    terminalsClosed?: boolean;
-    serverStopped?: boolean;
-    serverError?: string;
-    viewDestroyed?: boolean;
-    viewError?: string;
-    switchedWorkspace?: boolean;
-    /** Set by hook: true if deleted workspace was the active one */
-    wasActive?: boolean;
-    /** Set by hook: next workspace to switch to (projectId + workspaceName) or null if none */
-    nextSwitch?: { projectId: ProjectId; workspaceName: WorkspaceName } | null;
+/**
+ * Per-handler result for the "release" hook point.
+ * blockingProcesses field present = detection was attempted.
+ */
+export interface ReleaseHookResult {
+  readonly blockingProcesses?: readonly BlockingProcess[];
+  readonly unblockPerformed?: boolean;
+  readonly error?: string;
+}
+
+/**
+ * Per-handler result for the "delete" hook point.
+ * reactiveBlockingProcesses = detected after worktree removal failure (Windows).
+ */
+export interface DeleteHookResult {
+  readonly reactiveBlockingProcesses?: readonly BlockingProcess[];
+  readonly error?: string;
+}
+
+// =============================================================================
+// Merged Result Types (internal to operation)
+// =============================================================================
+
+interface MergedShutdown {
+  readonly wasActive: boolean;
+  readonly nextSwitch?: { projectId: ProjectId; workspaceName: WorkspaceName } | null;
+  readonly errors: readonly string[];
+}
+
+interface MergedRelease {
+  readonly blockingProcesses?: readonly BlockingProcess[];
+  readonly unblockPerformed?: boolean;
+  readonly errors: readonly string[];
+}
+
+interface MergedDelete {
+  readonly reactiveBlockingProcesses?: readonly BlockingProcess[];
+  readonly errors: readonly string[];
+}
+
+// =============================================================================
+// Merge Functions
+// =============================================================================
+
+function mergeShutdown(
+  results: readonly ShutdownHookResult[],
+  collectErrors: readonly Error[]
+): MergedShutdown {
+  let wasActive = false;
+  let nextSwitch: { projectId: ProjectId; workspaceName: WorkspaceName } | null | undefined;
+  const errors: string[] = [];
+
+  for (const e of collectErrors) errors.push(e.message);
+  for (const r of results) {
+    if (r.wasActive) wasActive = true;
+    if (r.nextSwitch !== undefined) nextSwitch = r.nextSwitch;
+    if (r.error) errors.push(r.error);
+  }
+
+  return {
+    wasActive,
+    ...(nextSwitch !== undefined && { nextSwitch }),
+    errors,
   };
-  releaseResults?: {
-    blockersDetected?: boolean;
-    blockingProcesses?: readonly BlockingProcess[];
-    unblockPerformed?: boolean;
-    unblockError?: string;
+}
+
+function mergeRelease(
+  results: readonly ReleaseHookResult[],
+  collectErrors: readonly Error[]
+): MergedRelease {
+  let blockingProcesses: readonly BlockingProcess[] | undefined;
+  let unblockPerformed: boolean | undefined;
+  const errors: string[] = [];
+
+  for (const e of collectErrors) errors.push(e.message);
+  for (const r of results) {
+    if (r.blockingProcesses !== undefined) blockingProcesses = r.blockingProcesses;
+    if (r.unblockPerformed !== undefined) unblockPerformed = r.unblockPerformed;
+    if (r.error) errors.push(r.error);
+  }
+
+  return {
+    ...(blockingProcesses !== undefined && { blockingProcesses }),
+    ...(unblockPerformed !== undefined && { unblockPerformed }),
+    errors,
   };
-  deleteResults?: {
-    worktreeRemoved?: boolean;
-    worktreeError?: string;
-    workspaceFileDeleted?: boolean;
+}
+
+function mergeDelete(
+  results: readonly DeleteHookResult[],
+  collectErrors: readonly Error[]
+): MergedDelete {
+  let reactiveBlockingProcesses: readonly BlockingProcess[] | undefined;
+  const errors: string[] = [];
+
+  for (const e of collectErrors) errors.push(e.message);
+  for (const r of results) {
+    if (r.reactiveBlockingProcesses) reactiveBlockingProcesses = r.reactiveBlockingProcesses;
+    if (r.error) errors.push(r.error);
+  }
+
+  return {
+    ...(reactiveBlockingProcesses && { reactiveBlockingProcesses }),
+    errors,
   };
 }
 
@@ -132,6 +203,16 @@ export interface DeleteWorkspaceHookContext extends HookContext {
  * Callback for emitting deletion progress events.
  */
 export type DeletionProgressCallback = (progress: DeletionProgress) => void;
+
+// =============================================================================
+// Pipeline State (for progress emission)
+// =============================================================================
+
+interface PipelineState {
+  readonly shutdown?: MergedShutdown;
+  readonly release?: MergedRelease;
+  readonly del?: MergedDelete;
+}
 
 // =============================================================================
 // Operation
@@ -147,20 +228,7 @@ export class DeleteWorkspaceOperation implements Operation<
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
     const { payload } = ctx.intent;
-
-    const hookCtx: DeleteWorkspaceHookContext = {
-      intent: ctx.intent,
-      projectId: payload.projectId,
-      projectPath: payload.projectPath,
-      workspacePath: payload.workspacePath,
-      workspaceName: payload.workspaceName,
-      keepBranch: payload.keepBranch,
-      force: payload.force,
-      removeWorktree: payload.removeWorktree,
-      ...(payload.skipSwitch !== undefined && { skipSwitch: payload.skipSwitch }),
-      ...(payload.unblock !== undefined && { unblock: payload.unblock }),
-      ...(payload.isRetry !== undefined && { isRetry: payload.isRetry }),
-    };
+    const hookCtx: HookContext = { intent: ctx.intent };
 
     const emitEvent = (): void => {
       const event: WorkspaceDeletedEvent = {
@@ -177,16 +245,16 @@ export class DeleteWorkspaceOperation implements Operation<
 
     if (payload.force) {
       try {
-        await this.executeHooks(ctx, hookCtx);
+        await this.runPipeline(ctx, hookCtx);
       } finally {
         // Force mode: always emit workspace:deleted for state cleanup
         emitEvent();
       }
     } else {
-      await this.executeHooks(ctx, hookCtx);
+      const hasErrors = await this.runPipeline(ctx, hookCtx);
 
       // Normal mode: only emit if no errors
-      if (!hookCtx.error) {
+      if (!hasErrors) {
         emitEvent();
       }
     }
@@ -194,24 +262,21 @@ export class DeleteWorkspaceOperation implements Operation<
     return { started: true };
   }
 
-  private async executeHooks(
+  private async runPipeline(
     ctx: OperationContext<DeleteWorkspaceIntent>,
-    hookCtx: DeleteWorkspaceHookContext
-  ): Promise<void> {
+    hookCtx: HookContext
+  ): Promise<boolean> {
     const { payload } = ctx.intent;
 
-    // Initialize results
-    hookCtx.shutdownResults = {};
-    hookCtx.releaseResults = {};
-    hookCtx.deleteResults = {};
-
-    // Hook 1: "shutdown" -- ViewModule + AgentModule
-    await ctx.hooks.run("shutdown", hookCtx);
-    this.emitProgressFromContext(hookCtx);
+    // --- Shutdown ---
+    const { results: shutdownResults, errors: shutdownCollectErrors } =
+      await ctx.hooks.collect<ShutdownHookResult>("shutdown", hookCtx);
+    const shutdown = mergeShutdown(shutdownResults, shutdownCollectErrors);
+    this.emitPipelineProgress(payload, { shutdown });
 
     // Dispatch workspace:switch if deleted workspace was the active one
-    if (hookCtx.shutdownResults?.wasActive && !hookCtx.skipSwitch) {
-      const next = hookCtx.shutdownResults.nextSwitch;
+    if (shutdown.wasActive && !payload.skipSwitch) {
+      const next = shutdown.nextSwitch;
       if (next) {
         try {
           const switchIntent: SwitchWorkspaceIntent = {
@@ -223,10 +288,8 @@ export class DeleteWorkspaceOperation implements Operation<
             },
           };
           await ctx.dispatch(switchIntent);
-          hookCtx.shutdownResults.switchedWorkspace = true;
         } catch {
           // Best-effort: switch failure doesn't fail the deletion
-          hookCtx.shutdownResults.switchedWorkspace = false;
         }
       } else {
         // No next workspace: emit workspace:switched(null) directly
@@ -238,160 +301,153 @@ export class DeleteWorkspaceOperation implements Operation<
       }
     }
 
-    // Check for error after shutdown (skip remaining hooks in non-force mode)
-    if (hookCtx.error && !payload.force) {
-      this.emitProgressFromContext(hookCtx, true, true);
-      return;
-    }
-    // Clear error for next hook if force mode
-    if (payload.force) {
-      delete hookCtx.error;
+    const shutdownFailed = shutdown.errors.length > 0;
+    if (shutdownFailed && !payload.force) {
+      this.emitPipelineProgress(payload, { shutdown }, true, true);
+      return true;
     }
 
     // When removeWorktree is false, skip "release" and "delete" hooks (runtime teardown only)
     if (!payload.removeWorktree) {
-      this.emitProgressFromContext(hookCtx, true, false);
-      return;
+      this.emitPipelineProgress(payload, { shutdown }, true, false);
+      return false;
     }
 
-    // Hook 2: "release" -- WindowsLockModule
-    await ctx.hooks.run("release", hookCtx);
-    this.emitProgressFromContext(hookCtx);
+    // --- Release ---
+    const { results: releaseResults, errors: releaseCollectErrors } =
+      await ctx.hooks.collect<ReleaseHookResult>("release", hookCtx);
+    const release = mergeRelease(releaseResults, releaseCollectErrors);
+    this.emitPipelineProgress(payload, { shutdown, release });
 
-    // Check for error after release (skip delete hook)
-    if (hookCtx.error && !payload.force) {
-      this.emitProgressFromContext(hookCtx, true, true);
-      return;
+    const releaseFailed =
+      release.errors.length > 0 ||
+      (release.blockingProcesses !== undefined && release.blockingProcesses.length > 0);
+    if (releaseFailed && !payload.force) {
+      this.emitPipelineProgress(payload, { shutdown, release }, true, true);
+      return true;
     }
-    if (payload.force) {
-      delete hookCtx.error;
-    }
 
-    // Hook 3: "delete" -- WorktreeModule + CodeServerModule
-    await ctx.hooks.run("delete", hookCtx);
+    // --- Delete ---
+    const { results: deleteResults, errors: deleteCollectErrors } =
+      await ctx.hooks.collect<DeleteHookResult>("delete", hookCtx);
+    const del = mergeDelete(deleteResults, deleteCollectErrors);
 
-    // Final progress
-    const hasErrors =
-      !!hookCtx.error ||
-      !!hookCtx.shutdownResults?.serverError ||
-      !!hookCtx.shutdownResults?.viewError ||
-      !!hookCtx.releaseResults?.unblockError ||
-      !!hookCtx.deleteResults?.worktreeError;
-    this.emitProgressFromContext(hookCtx, true, hasErrors);
+    // Merge reactive blocking processes into release for progress display
+    const finalRelease =
+      del.reactiveBlockingProcesses && del.reactiveBlockingProcesses.length > 0
+        ? {
+            ...release,
+            blockingProcesses: release.blockingProcesses ?? del.reactiveBlockingProcesses,
+          }
+        : release;
+
+    const deleteFailed = del.errors.length > 0;
+    const hasErrors = shutdownFailed || releaseFailed || deleteFailed;
+    this.emitPipelineProgress(payload, { shutdown, release: finalRelease, del }, true, hasErrors);
+    return hasErrors;
   }
 
   /**
-   * Build DeletionOperation[] from hook context and emit progress.
+   * Build DeletionOperation[] from pipeline state and emit progress.
    */
-  private emitProgressFromContext(
-    hookCtx: DeleteWorkspaceHookContext,
+  private emitPipelineProgress(
+    payload: DeleteWorkspacePayload,
+    state: PipelineState,
     completed = false,
     hasErrors = false
   ): void {
     const operations: DeletionOperation[] = [];
 
     // Unblock operations (prepended, from release hook)
-    if (hookCtx.releaseResults?.unblockPerformed !== undefined) {
-      const unblockType = hookCtx.unblock;
+    if (state.release?.unblockPerformed !== undefined) {
+      const unblockType = payload.unblock;
+      const hasUnblockError = state.release.errors.length > 0;
       if (unblockType === "kill") {
         operations.push({
           id: "killing-blockers",
           label: "Killing blocking tasks...",
-          status: hookCtx.releaseResults.unblockError
+          status: hasUnblockError
             ? "error"
-            : hookCtx.releaseResults.unblockPerformed
+            : state.release.unblockPerformed
               ? "done"
               : "in-progress",
-          ...(hookCtx.releaseResults.unblockError !== undefined && {
-            error: hookCtx.releaseResults.unblockError,
-          }),
+          ...(hasUnblockError && { error: state.release.errors[0] }),
         });
       } else if (unblockType === "close") {
         operations.push({
           id: "closing-handles",
           label: "Closing blocking handles...",
-          status: hookCtx.releaseResults.unblockError
+          status: hasUnblockError
             ? "error"
-            : hookCtx.releaseResults.unblockPerformed
+            : state.release.unblockPerformed
               ? "done"
               : "in-progress",
-          ...(hookCtx.releaseResults.unblockError !== undefined && {
-            error: hookCtx.releaseResults.unblockError,
-          }),
+          ...(hasUnblockError && { error: state.release.errors[0] }),
         });
       }
     }
 
     // Shutdown operations (always present)
+    const shutdownStatus = this.hookPointStatus(state.shutdown);
+    const shutdownError =
+      state.shutdown && state.shutdown.errors.length > 0
+        ? state.shutdown.errors.join("; ")
+        : undefined;
+
     operations.push({
       id: "kill-terminals",
       label: "Terminating processes",
-      status: this.resolveStatus(hookCtx.shutdownResults?.terminalsClosed),
+      status: shutdownStatus,
     });
     operations.push({
       id: "stop-server",
       label: "Stopping OpenCode server",
-      status: hookCtx.shutdownResults?.serverError
-        ? "error"
-        : this.resolveStatus(hookCtx.shutdownResults?.serverStopped),
-      ...(hookCtx.shutdownResults?.serverError !== undefined && {
-        error: hookCtx.shutdownResults.serverError,
-      }),
+      status: shutdownStatus,
+      ...(shutdownError && { error: shutdownError }),
     });
     operations.push({
       id: "cleanup-vscode",
       label: "Closing VS Code view",
-      status: hookCtx.shutdownResults?.viewError
-        ? "error"
-        : this.resolveStatus(hookCtx.shutdownResults?.viewDestroyed),
-      ...(hookCtx.shutdownResults?.viewError !== undefined && {
-        error: hookCtx.shutdownResults.viewError,
-      }),
+      status: shutdownStatus,
+      ...(shutdownError && { error: shutdownError }),
     });
 
-    // Detection operation (conditional, after cleanup-vscode)
-    if (hookCtx.releaseResults?.blockersDetected !== undefined) {
-      const blockersFound =
-        hookCtx.releaseResults.blockingProcesses &&
-        hookCtx.releaseResults.blockingProcesses.length > 0;
+    // Detection operation (conditional, from release hook)
+    if (state.release?.blockingProcesses !== undefined) {
+      const blockersFound = state.release.blockingProcesses.length > 0;
       operations.push({
         id: "detecting-blockers",
         label: "Detecting blocking processes...",
-        status: blockersFound
-          ? "error"
-          : hookCtx.releaseResults.blockersDetected
-            ? "done"
-            : "in-progress",
+        status: blockersFound ? "error" : "done",
         ...(blockersFound && {
-          error: `Blocked by ${hookCtx.releaseResults.blockingProcesses!.length} process(es)`,
+          error: `Blocked by ${state.release.blockingProcesses.length} process(es)`,
         }),
       });
     }
 
     // Delete operation (always present)
+    const deleteStatus = this.hookPointStatus(state.del);
+    const deleteError =
+      state.del && state.del.errors.length > 0 ? state.del.errors.join("; ") : undefined;
+
     operations.push({
       id: "cleanup-workspace",
       label: "Removing workspace",
-      status: hookCtx.deleteResults?.worktreeError
-        ? "error"
-        : this.resolveStatus(hookCtx.deleteResults?.worktreeRemoved),
-      ...(hookCtx.deleteResults?.worktreeError !== undefined && {
-        error: hookCtx.deleteResults.worktreeError,
-      }),
+      status: deleteStatus,
+      ...(deleteError && { error: deleteError }),
     });
 
     // Build blocking processes from release results
     const blockingProcesses =
-      hookCtx.releaseResults?.blockingProcesses &&
-      hookCtx.releaseResults.blockingProcesses.length > 0
-        ? hookCtx.releaseResults.blockingProcesses
+      state.release?.blockingProcesses && state.release.blockingProcesses.length > 0
+        ? state.release.blockingProcesses
         : undefined;
 
     this.emitProgress({
-      workspacePath: hookCtx.workspacePath as WorkspacePath,
-      workspaceName: hookCtx.workspaceName,
-      projectId: hookCtx.projectId,
-      keepBranch: hookCtx.keepBranch,
+      workspacePath: payload.workspacePath as WorkspacePath,
+      workspaceName: payload.workspaceName,
+      projectId: payload.projectId,
+      keepBranch: payload.keepBranch,
       operations,
       completed,
       hasErrors,
@@ -399,10 +455,10 @@ export class DeleteWorkspaceOperation implements Operation<
     });
   }
 
-  private resolveStatus(value: boolean | undefined): "pending" | "in-progress" | "done" {
-    if (value === undefined) {
-      return "pending";
-    }
-    return value ? "done" : "in-progress";
+  private hookPointStatus(
+    merged: { readonly errors: readonly string[] } | undefined
+  ): "pending" | "done" | "error" {
+    if (!merged) return "pending";
+    return merged.errors.length > 0 ? "error" : "done";
   }
 }

@@ -41,9 +41,10 @@ import {
   EVENT_WORKSPACE_DELETED,
 } from "./delete-workspace";
 import type {
-  DeleteWorkspaceHookContext,
+  DeleteWorkspaceIntent,
   WorkspaceDeletedEvent,
   DeletionProgressCallback,
+  ShutdownHookResult,
 } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
@@ -212,19 +213,15 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as DeleteWorkspaceHookContext;
-            if (!hookCtx.shutdownResults) {
-              hookCtx.shutdownResults = {};
-            }
+          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
             // Track that skipSwitch is set
-            if (!hookCtx.skipSwitch) {
+            if (!payload.skipSwitch) {
               // Not expected for project:close -- would indicate a bug
               viewManager.setActiveWorkspace(null, false);
             }
-            await viewManager.destroyWorkspaceView(hookCtx.workspacePath);
-            hookCtx.shutdownResults.viewDestroyed = true;
-            hookCtx.shutdownResults.terminalsClosed = true;
+            await viewManager.destroyWorkspaceView(payload.workspacePath);
+            return {};
           },
         },
       },
@@ -235,16 +232,13 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as DeleteWorkspaceHookContext;
-            if (!hookCtx.shutdownResults) {
-              hookCtx.shutdownResults = {};
-            }
+          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const serverManager = appState.getServerManager();
             if (serverManager) {
-              await serverManager.stopServer(hookCtx.workspacePath);
+              await serverManager.stopServer(payload.workspacePath);
             }
-            hookCtx.shutdownResults.serverStopped = true;
+            return {};
           },
         },
       },
