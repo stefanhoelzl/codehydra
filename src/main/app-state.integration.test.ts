@@ -4,7 +4,7 @@
  * Integration tests for AppState.
  *
  * Tests verify project and workspace state management, including
- * workspace registration/unregistration and active workspace switching.
+ * workspace registration/unregistration.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AppState } from "./app-state";
@@ -19,6 +19,7 @@ import {
   type MockLoggingService,
   Path,
 } from "../services";
+import { generateProjectId } from "../shared/api/id-utils";
 
 // =============================================================================
 // Mock Factories
@@ -26,57 +27,46 @@ import {
 
 const WORKSPACES_DIR = "/test/workspaces";
 
-// Mock workspace provider and git factory
-const { mockProjectStore, mockWorkspaceProvider, mockCreateGitWorktreeProvider } = vi.hoisted(
-  () => {
-    const mockProvider = {
-      projectRoot: "/project",
-      discover: vi.fn(() =>
-        Promise.resolve([
-          { name: "feature-1", path: "/project/.worktrees/feature-1", branch: "feature-1" },
-        ])
-      ),
-      isMainWorkspace: vi.fn(() => false),
-      createWorkspace: vi.fn((name: string) =>
-        Promise.resolve({
-          name,
-          path: `/project/.worktrees/${name}`,
-          branch: name,
-        })
-      ),
-      removeWorkspace: vi.fn(() => Promise.resolve({ workspaceRemoved: true, baseDeleted: false })),
-      listBases: vi.fn(() =>
-        Promise.resolve([
-          { name: "main", isRemote: false },
-          { name: "origin/main", isRemote: true },
-        ])
-      ),
-      updateBases: vi.fn(() => Promise.resolve({ fetchedRemotes: ["origin"], failedRemotes: [] })),
-      isDirty: vi.fn(() => Promise.resolve(false)),
-      cleanupOrphanedWorkspaces: vi.fn(() => Promise.resolve({ removedCount: 0, failedPaths: [] })),
-      defaultBase: vi.fn(() => Promise.resolve("main")),
-    };
+// Mock workspace provider
+const { mockProjectStore, mockWorkspaceProvider } = vi.hoisted(() => {
+  const mockProvider = {
+    projectRoot: "/project",
+    discover: vi.fn(() =>
+      Promise.resolve([
+        { name: "feature-1", path: "/project/.worktrees/feature-1", branch: "feature-1" },
+      ])
+    ),
+    isMainWorkspace: vi.fn(() => false),
+    createWorkspace: vi.fn((name: string) =>
+      Promise.resolve({
+        name,
+        path: `/project/.worktrees/${name}`,
+        branch: name,
+      })
+    ),
+    removeWorkspace: vi.fn(() => Promise.resolve({ workspaceRemoved: true, baseDeleted: false })),
+    listBases: vi.fn(() =>
+      Promise.resolve([
+        { name: "main", isRemote: false },
+        { name: "origin/main", isRemote: true },
+      ])
+    ),
+    updateBases: vi.fn(() => Promise.resolve({ fetchedRemotes: ["origin"], failedRemotes: [] })),
+    isDirty: vi.fn(() => Promise.resolve(false)),
+    cleanupOrphanedWorkspaces: vi.fn(() => Promise.resolve({ removedCount: 0, failedPaths: [] })),
+    defaultBase: vi.fn(() => Promise.resolve("main")),
+  };
 
-    const mockStore = {
-      saveProject: vi.fn(() => Promise.resolve()),
-      removeProject: vi.fn(() => Promise.resolve()),
-      loadAllProjects: vi.fn(() => Promise.resolve([] as string[])),
-      getProjectConfig: vi.fn(() => Promise.resolve(undefined)),
-    };
+  const mockStore = {
+    saveProject: vi.fn(() => Promise.resolve()),
+    removeProject: vi.fn(() => Promise.resolve()),
+    loadAllProjects: vi.fn(() => Promise.resolve([] as string[])),
+    getProjectConfig: vi.fn(() => Promise.resolve(undefined)),
+  };
 
-    return {
-      mockProjectStore: mockStore,
-      mockWorkspaceProvider: mockProvider,
-      mockCreateGitWorktreeProvider: vi.fn(() => Promise.resolve(mockProvider)),
-    };
-  }
-);
-
-vi.mock("../services", async () => {
-  const actual = await vi.importActual("../services");
   return {
-    ...actual,
-    createGitWorktreeProvider: mockCreateGitWorktreeProvider,
+    mockProjectStore: mockStore,
+    mockWorkspaceProvider: mockProvider,
   };
 });
 
@@ -112,6 +102,31 @@ function createMockWorkspaceFileService() {
   };
 }
 
+/**
+ * Helper: register a project in AppState via the public registerProject() API.
+ */
+function registerTestProject(
+  appState: AppState,
+  projectPath: string,
+  workspaces: Array<{ name: string; path: string; branch: string }> = [
+    { name: "feature-1", path: `${projectPath}/.worktrees/feature-1`, branch: "feature-1" },
+  ]
+): void {
+  const path = new Path(projectPath);
+  appState.registerProject({
+    id: generateProjectId(path.toString()),
+    name: path.basename,
+    path,
+    workspaces: workspaces.map((w) => ({
+      name: w.name,
+      path: new Path(w.path),
+      branch: w.branch,
+      metadata: {},
+    })),
+    provider: mockWorkspaceProvider as never,
+  });
+}
+
 // =============================================================================
 // Integration Tests: Workspace Removal Cleanup Flow
 // =============================================================================
@@ -135,21 +150,16 @@ describe("AppState Integration", () => {
     mockLoggingService = createMockLoggingService();
     mockWorkspaceFileService = createMockWorkspaceFileService();
 
-    // Set up workspace provider mock implementations with Path objects
-    // (Type assertions needed because hoisted mock types are strings but runtime uses Path)
-    mockWorkspaceProvider.discover.mockResolvedValue([
-      {
-        name: "feature-1",
-        path: new Path("/project/.worktrees/feature-1") as unknown as string,
-        branch: "feature-1",
-      },
-    ]);
-    mockWorkspaceProvider.createWorkspace.mockImplementation((name: string) =>
-      Promise.resolve({
-        name,
-        path: new Path(`/project/.worktrees/${name}`) as unknown as string,
-        branch: name,
-      })
+    appState = new AppState(
+      mockProjectStore as unknown as ProjectStore,
+      mockViewManager,
+      mockPathProvider,
+      8080,
+      mockFileSystemLayer,
+      mockLoggingService,
+      "claude",
+      mockWorkspaceFileService,
+      MOCK_WRAPPER_PATH
     );
   });
 
@@ -158,26 +168,14 @@ describe("AppState Integration", () => {
   });
 
   describe("unregisterWorkspace", () => {
-    it("removes workspace from project state without stopping servers or destroying views", async () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-
-      await appState.openProject("/project");
+    it("removes workspace from project state without stopping servers or destroying views", () => {
+      registerTestProject(appState, "/project");
 
       // Verify workspace exists
       const projectBefore = appState.getProject("/project");
       expect(projectBefore?.workspaces).toHaveLength(1);
 
-      // Clear mocks from openProject
+      // Clear mocks
       vi.clearAllMocks();
 
       // Unregister workspace (state-only removal)
@@ -192,123 +190,10 @@ describe("AppState Integration", () => {
     });
 
     it("handles non-existent project gracefully", () => {
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-
       // Should not throw
       expect(() =>
         appState.unregisterWorkspace("/nonexistent", "/nonexistent/.worktrees/feature-1")
       ).not.toThrow();
-    });
-  });
-
-  describe("workspace:switched event via onWorkspaceChange callback", () => {
-    it("opening empty project does not change active workspace", async () => {
-      // Configure mock to return empty workspace list
-      mockWorkspaceProvider.discover.mockResolvedValue([]);
-
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-
-      await appState.openProject("/project");
-
-      // Verify setActiveWorkspace was NOT called for empty project
-      // This preserves the currently active workspace from another project
-      expect(mockViewManager.setActiveWorkspace).not.toHaveBeenCalled();
-    });
-
-    it("opening project with workspaces sets first workspace active", async () => {
-      // Configure mock to return workspaces
-      mockWorkspaceProvider.discover.mockResolvedValue([
-        {
-          name: "feature-1",
-          path: "/project/.worktrees/feature-1",
-          branch: "feature-1",
-        },
-        {
-          name: "feature-2",
-          path: "/project/.worktrees/feature-2",
-          branch: "feature-2",
-        },
-      ]);
-
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-
-      await appState.openProject("/project");
-
-      // Verify setActiveWorkspace was called with first workspace path
-      expect(mockViewManager.setActiveWorkspace).toHaveBeenCalledWith(
-        "/project/.worktrees/feature-1"
-      );
-    });
-
-    it("opening empty project AFTER non-empty project preserves active workspace", async () => {
-      const workspaceChanges: Array<string | null> = [];
-
-      // Mock setActiveWorkspace to track calls
-      vi.mocked(mockViewManager.setActiveWorkspace).mockImplementation((path: string | null) => {
-        workspaceChanges.push(path);
-      });
-
-      appState = new AppState(
-        mockProjectStore as unknown as ProjectStore,
-        mockViewManager,
-        mockPathProvider,
-        8080,
-        mockFileSystemLayer,
-        mockLoggingService,
-        "claude",
-        mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
-      );
-
-      // First: open project A with workspaces
-      mockWorkspaceProvider.discover.mockResolvedValue([
-        {
-          name: "feature-1",
-          path: "/projectA/.worktrees/feature-1",
-          branch: "feature-1",
-        },
-      ]);
-      mockWorkspaceProvider.projectRoot = "/projectA";
-      await appState.openProject("/projectA");
-
-      // Second: open project B with no workspaces (empty)
-      mockWorkspaceProvider.discover.mockResolvedValue([]);
-      mockWorkspaceProvider.projectRoot = "/projectB";
-      await appState.openProject("/projectB");
-
-      // Verify only first project changed active workspace
-      // Empty project should NOT call setActiveWorkspace, preserving the current active workspace
-      expect(workspaceChanges).toEqual(["/projectA/.worktrees/feature-1"]);
     });
   });
 });

@@ -10,10 +10,7 @@
  */
 
 import {
-  createGitWorktreeProvider,
   Path,
-  ProjectScopedWorkspaceProvider,
-  type GitWorktreeProvider,
   type IWorkspaceProvider,
   type PathProvider,
   type ProjectStore,
@@ -37,7 +34,6 @@ import type { PendingPrompt } from "../agents/opencode/server-manager";
 import type { McpServerManager } from "../services/mcp-server";
 import { getErrorMessage } from "../shared/error-utils";
 import { toIpcWorkspaces } from "./api/workspace-conversion";
-import { generateProjectId } from "../shared/api/id-utils";
 
 /**
  * Runtime state for an open project.
@@ -62,16 +58,11 @@ interface OpenProject {
  */
 export class AppState {
   private readonly projectStore: ProjectStore;
-  private readonly viewManager: IViewManager;
-  private readonly pathProvider: PathProvider;
   private codeServerPort: number;
-  private readonly fileSystemLayer: FileSystemLayer;
-  private readonly loggingService: LoggingService;
   private readonly logger: Logger;
   private readonly agentType: AgentType;
   private readonly workspaceFileService: IWorkspaceFileService;
   private readonly wrapperPath: string;
-  private readonly globalWorktreeProvider: GitWorktreeProvider | null;
   /**
    * Map of normalized project path strings to open project state.
    * Keys use path.toString() for consistent cross-platform lookup.
@@ -79,9 +70,7 @@ export class AppState {
   private readonly openProjects: Map<string, OpenProject> = new Map();
   /**
    * Map of normalized project path strings to default base branch.
-   * Populated by:
-   * - Explicit user selection during workspace creation (via setLastBaseBranch)
-   * - openProject() caching provider.defaultBase() result for performance
+   * Populated by explicit user selection during workspace creation (via setLastBaseBranch).
    */
   private readonly lastBaseBranches: Map<string, string> = new Map();
   private agentStatusManager: AgentStatusManager | null = null;
@@ -94,27 +83,21 @@ export class AppState {
 
   constructor(
     projectStore: ProjectStore,
-    viewManager: IViewManager,
-    pathProvider: PathProvider,
+    _viewManager: IViewManager,
+    _pathProvider: PathProvider,
     codeServerPort: number,
-    fileSystemLayer: FileSystemLayer,
+    _fileSystemLayer: FileSystemLayer,
     loggingService: LoggingService,
     agentType: AgentType,
     workspaceFileService: IWorkspaceFileService,
-    wrapperPath: string,
-    globalWorktreeProvider?: GitWorktreeProvider
+    wrapperPath: string
   ) {
     this.projectStore = projectStore;
-    this.viewManager = viewManager;
-    this.pathProvider = pathProvider;
     this.codeServerPort = codeServerPort;
-    this.fileSystemLayer = fileSystemLayer;
-    this.loggingService = loggingService;
     this.logger = loggingService.createLogger("app");
     this.agentType = agentType;
     this.workspaceFileService = workspaceFileService;
     this.wrapperPath = wrapperPath;
-    this.globalWorktreeProvider = globalWorktreeProvider ?? null;
   }
 
   /**
@@ -369,177 +352,6 @@ export class AppState {
   }
 
   /**
-   * Opens a project by path.
-   * Validates it's a git repository, discovers workspaces, creates views.
-   *
-   * @param projectPathInput - Absolute path to the project (git repository)
-   * @returns The opened Project (IPC type with string paths)
-   * @throws WorkspaceError if path is not a valid git repository
-   */
-  async openProject(projectPathInput: string): Promise<Project> {
-    // Normalize the project path immediately
-    const projectPath = new Path(projectPathInput);
-    const projectPathStr = projectPath.toString();
-
-    // Create workspace provider (validates it's a git repo)
-    const workspacesDir = this.pathProvider.getProjectWorkspacesDir(projectPath);
-    let provider: IWorkspaceProvider;
-    if (this.globalWorktreeProvider) {
-      // Use global provider with per-project adapter
-      await this.globalWorktreeProvider.validateRepository(projectPath);
-      provider = new ProjectScopedWorkspaceProvider(
-        this.globalWorktreeProvider,
-        projectPath,
-        workspacesDir
-      );
-    } else {
-      // Fallback: standalone provider (used in tests that mock createGitWorktreeProvider)
-      provider = await createGitWorktreeProvider(
-        projectPath,
-        workspacesDir,
-        this.fileSystemLayer,
-        this.loggingService.createLogger("git"),
-        this.loggingService.createLogger("worktree")
-      );
-    }
-
-    // Run cleanup non-blocking (fire and forget)
-    if (provider.cleanupOrphanedWorkspaces) {
-      void provider.cleanupOrphanedWorkspaces().catch((err: unknown) => {
-        this.logger.error(
-          "Workspace cleanup failed",
-          { projectPath: projectPathStr },
-          err instanceof Error ? err : undefined
-        );
-      });
-    }
-
-    // Discover existing workspaces (excludes main directory)
-    // Returns internal Workspace with Path-based paths
-    const workspaces = await provider.discover();
-
-    // Create views for each workspace
-    // Start agent server FIRST so env vars are available for workspace file
-    // ViewManager still uses string paths (will be migrated in Step 5.5)
-    for (const workspace of workspaces) {
-      const workspacePathStr = workspace.path.toString();
-
-      // 1. Start agent server first (await so env vars become available)
-      await this.startAgentServer(workspacePathStr);
-
-      // 2. Get environment variables from provider (now available)
-      const provider = this.agentStatusManager?.getProvider(workspacePathStr as WorkspacePath);
-      const agentEnvVars = provider?.getEnvironmentVariables() ?? {};
-
-      // 3. Create workspace file with env vars and get URL
-      const url = await this.getWorkspaceUrl(workspacePathStr, agentEnvVars);
-
-      // 4. Create view with workspace URL
-      this.viewManager.createWorkspaceView(workspacePathStr, url, projectPathStr, true);
-    }
-
-    // First workspace will be set as active after project is registered
-    const firstWorkspace = workspaces[0];
-
-    // Generate project ID from normalized path
-    const projectId = generateProjectId(projectPathStr);
-
-    // Load remoteUrl from project config (if this is a cloned project)
-    const projectConfig = await this.projectStore.getProjectConfig(projectPathStr);
-    const remoteUrl = projectConfig?.remoteUrl;
-
-    // Store in internal state first (needed for getDefaultBaseBranch to work)
-    this.openProjects.set(projectPathStr, {
-      id: projectId,
-      name: projectPath.basename,
-      path: projectPath,
-      workspaces,
-      provider,
-      ...(remoteUrl !== undefined && { remoteUrl }),
-    });
-
-    // Get default base branch (uses lastBaseBranches cache or provider fallback)
-    const defaultBaseBranch = await this.getDefaultBaseBranch(projectPathStr);
-
-    // Cache computed default for performance (redundant writes are harmless - just overwrites Map entry)
-    if (defaultBaseBranch) {
-      this.setLastBaseBranch(projectPathStr, defaultBaseBranch);
-    }
-
-    // Build IPC Project object with string-based paths
-    const project: Project = {
-      id: projectId,
-      path: projectPathStr,
-      name: projectPath.basename,
-      workspaces: toIpcWorkspaces(workspaces, projectId),
-      ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-      ...(remoteUrl !== undefined && { remoteUrl }),
-    };
-
-    // Set first workspace as active now that project is registered
-    // (callback in setActiveWorkspace needs findProjectForWorkspace to work)
-    // Only change active workspace if the new project has workspaces
-    // If empty, keep the current active workspace (user can still work in other projects)
-    if (firstWorkspace) {
-      this.viewManager.setActiveWorkspace(firstWorkspace.path.toString());
-    }
-
-    // Preload remaining workspace URLs in parallel (fire-and-forget)
-    // This loads code-server in background so switching workspaces is instant.
-    // First workspace was loaded by setActiveWorkspace, so start from index 1.
-    for (let i = 1; i < workspaces.length; i++) {
-      const workspace = workspaces[i]!;
-      this.viewManager.preloadWorkspaceUrl(workspace.path.toString());
-    }
-
-    // Persist to store only if not already saved (e.g., cloned projects already have config)
-    if (!projectConfig) {
-      await this.projectStore.saveProject(projectPathStr);
-    }
-
-    return project;
-  }
-
-  /**
-   * Closes a project.
-   * Destroys all workspace views, cleans up state, and removes from persistent storage.
-   *
-   * @param projectPathInput - Path to the project to close
-   */
-  async closeProject(projectPathInput: string): Promise<void> {
-    const normalizedKey = new Path(projectPathInput).toString();
-    const openProject = this.openProjects.get(normalizedKey);
-    if (!openProject) {
-      return;
-    }
-
-    // Stop all OpenCode servers for this project
-    if (this.serverManager) {
-      await this.serverManager.stopAllForProject(normalizedKey);
-    }
-
-    // Destroy all workspace views
-    for (const workspace of openProject.workspaces) {
-      await this.viewManager.destroyWorkspaceView(workspace.path.toString());
-    }
-
-    // Dispose workspace provider adapter (unregisters project from global provider)
-    if (openProject.provider instanceof ProjectScopedWorkspaceProvider) {
-      openProject.provider.dispose();
-    }
-
-    // Remove from state
-    this.openProjects.delete(normalizedKey);
-
-    // Remove from persistent storage (fail silently)
-    try {
-      await this.projectStore.removeProject(normalizedKey);
-    } catch {
-      // Fail silently as per requirements
-    }
-  }
-
-  /**
    * Gets a project by path.
    *
    * @param projectPathInput - Path to the project
@@ -632,23 +444,6 @@ export class AppState {
         error: error instanceof Error ? error.message : String(error),
       });
       return urlForFolder(this.codeServerPort, workspacePath);
-    }
-  }
-
-  /**
-   * Loads persisted projects at startup.
-   * Skips projects that are no longer valid git repositories.
-   */
-  async loadPersistedProjects(): Promise<void> {
-    const projectPaths = await this.projectStore.loadAllProjects();
-
-    for (const projectPath of projectPaths) {
-      try {
-        await this.openProject(projectPath);
-      } catch {
-        // Skip invalid projects (no longer exist, not git repos, etc.)
-        // Optionally could delete from store here
-      }
     }
   }
 
@@ -781,25 +576,5 @@ export class AppState {
     };
 
     this.openProjects.set(normalizedKey, updatedProject);
-  }
-
-  /**
-   * Start agent server and wait for it to be ready.
-   * Failures are logged but don't throw.
-   *
-   * @param workspacePath - Path to the workspace
-   */
-  private async startAgentServer(workspacePath: string): Promise<void> {
-    if (this.serverManager) {
-      try {
-        await this.serverManager.startServer(workspacePath);
-      } catch (err: unknown) {
-        this.logger.error(
-          "Failed to start agent server",
-          { workspacePath },
-          err instanceof Error ? err : undefined
-        );
-      }
-    }
   }
 }

@@ -1965,7 +1965,7 @@ function wireDispatcher(
               id: hookCtx.projectId,
               name: projectPath.basename,
               path: projectPath,
-              workspaces: hookCtx.workspaces ?? [],
+              workspaces: [],
               provider: hookCtx.provider!,
               ...(hookCtx.remoteUrl !== undefined && { remoteUrl: hookCtx.remoteUrl }),
             });
@@ -2535,29 +2535,31 @@ function wireDispatcher(
     },
   };
 
-  // DataLifecycleModule: activate → load persisted projects.
+  // DataLifecycleModule: activate → gather saved project paths into hook context.
+  // The AppStartOperation dispatches project:open for each path after the activate hook.
   const dataLifecycleModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
-          handler: async () => {
-            await appState.loadPersistedProjects();
+          handler: async (ctx: HookContext) => {
+            const hookCtx = ctx as AppStartHookContext;
+            hookCtx.projectPaths = await projectStore.loadAllProjects();
           },
         },
       },
     },
   };
 
-  // ViewLifecycleModule: activate → wire loading-state→IPC callback, set first workspace
-  // active + title. stop → destroy views, cleanup loading-state callback, dispose layers.
+  // ViewLifecycleModule: activate → wire loading-state→IPC callback.
+  // stop → destroy views, cleanup loading-state callback, dispose layers.
+  // Note: first workspace activation + window title are now handled by
+  // project:open → workspace:switch dispatches during startup.
   let loadingChangeCleanupFn: Unsubscribe | null = null;
   const viewLifecycleModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
           handler: async () => {
-            const refs = lifecycleRefs;
-
             // Wire loading state changes to IPC
             loadingChangeCleanupFn = viewManager.onLoadingChange((path, loading) => {
               try {
@@ -2573,22 +2575,6 @@ function wireDispatcher(
                 // Ignore errors - UI might be disconnected during shutdown
               }
             });
-
-            // Set first workspace active if any projects loaded
-            const projects = await appState.getAllProjects();
-            if (projects.length > 0) {
-              const firstWorkspace = projects[0]?.workspaces[0];
-              if (firstWorkspace) {
-                viewManager.setActiveWorkspace(firstWorkspace.path);
-
-                // Set initial window title
-                const projectName = projects[0]?.name;
-                const workspaceName = nodePath.basename(firstWorkspace.path);
-                const titleVersion = refs.buildInfo.gitBranch ?? refs.buildInfo.version;
-                const title = formatWindowTitle(projectName, workspaceName, titleVersion);
-                refs.windowManager.setTitle(title);
-              }
-            }
           },
         },
       },
@@ -2627,13 +2613,13 @@ function wireDispatcher(
     },
   };
 
-  // ShowMainViewModule: activate → tell renderer to show main view.
-  // Must run AFTER dataLifecycleModule (loads projects) and viewLifecycleModule (sets active workspace)
+  // ShowMainViewModule: finalize → tell renderer to show main view.
+  // Must run AFTER project:open dispatches (loads projects, sets active workspace)
   // so the renderer's initial projects.list query returns the full project list.
   const showMainViewModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        activate: {
+        finalize: {
           handler: async () => {
             const webContents = viewManager.getUIWebContents();
             if (!webContents || webContents.isDestroyed()) {

@@ -10,6 +10,8 @@
  * #3: start abort on MCP failure (non-optional)
  * #4: activate hook failure propagates
  * #5: PluginServer graceful degradation
+ * #6: project:open dispatched for each saved project path
+ * #7: finalize hook runs after project dispatches
  */
 
 import { describe, it, expect } from "vitest";
@@ -18,8 +20,11 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
 import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
 import type { AppStartIntent, AppStartHookContext } from "./app-start";
+import { INTENT_OPEN_PROJECT } from "./open-project";
+import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { HookContext } from "../intents/infrastructure/operation";
+import type { HookContext, Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Project } from "../../shared/api/types";
 
 // =============================================================================
 // Test Setup
@@ -32,6 +37,10 @@ interface TestState {
   viewActivated: boolean;
   /** Tracks ordering: modules append their name when they run */
   executionOrder: string[];
+  /** Tracks project paths dispatched via project:open */
+  openedProjectPaths: string[];
+  /** Whether finalize hook ran */
+  finalized: boolean;
 }
 
 function createTestState(): TestState {
@@ -41,6 +50,8 @@ function createTestState(): TestState {
     dataLoaded: false,
     viewActivated: false,
     executionOrder: [],
+    openedProjectPaths: [],
+    finalized: false,
   };
 }
 
@@ -82,7 +93,10 @@ function createMcpModule(state: TestState, options?: { fail?: boolean }): Intent
   };
 }
 
-function createDataModule(state: TestState, options?: { fail?: boolean }): IntentModule {
+function createDataModule(
+  state: TestState,
+  options?: { fail?: boolean; projectPaths?: readonly string[] }
+): IntentModule {
   return {
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -96,6 +110,10 @@ function createDataModule(state: TestState, options?: { fail?: boolean }): Inten
             if (hookCtx.codeServerPort) {
               state.dataLoaded = true;
               state.executionOrder.push("data-activate");
+            }
+            // Populate project paths (simulates DataLifecycleModule)
+            if (options?.projectPaths) {
+              hookCtx.projectPaths = options.projectPaths;
             }
           },
         },
@@ -112,6 +130,21 @@ function createViewModule(state: TestState): IntentModule {
           handler: async () => {
             state.viewActivated = true;
             state.executionOrder.push("view-activate");
+          },
+        },
+      },
+    },
+  };
+}
+
+function createFinalizeModule(state: TestState): IntentModule {
+  return {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        finalize: {
+          handler: async () => {
+            state.finalized = true;
+            state.executionOrder.push("finalize");
           },
         },
       },
@@ -157,11 +190,46 @@ function createCodeServerModuleWithGracefulPluginDegradation(
   };
 }
 
-function createTestSetup(modules: IntentModule[]): { dispatcher: Dispatcher } {
+/**
+ * Stub operation for project:open that records paths dispatched.
+ */
+function createProjectOpenStub(
+  state: TestState,
+  options?: { failForPath?: string }
+): Operation<OpenProjectIntent, Project> {
+  return {
+    id: "open-project",
+    async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
+      const pathStr = ctx.intent.payload.path?.toString() ?? "";
+      if (options?.failForPath === pathStr) {
+        throw new Error(`Project not found: ${pathStr}`);
+      }
+      state.openedProjectPaths.push(pathStr);
+      state.executionOrder.push(`project-open:${pathStr}`);
+      return {
+        id: `id-${pathStr}`,
+        path: pathStr,
+        name: "test",
+        workspaces: [],
+      } as unknown as Project;
+    },
+  };
+}
+
+function createTestSetup(
+  modules: IntentModule[],
+  options?: {
+    state?: TestState;
+    projectOpenStub?: Operation<OpenProjectIntent, Project>;
+  }
+): { dispatcher: Dispatcher } {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+  if (options?.projectOpenStub) {
+    dispatcher.registerOperation(INTENT_OPEN_PROJECT, options.projectOpenStub);
+  }
   wireModules(modules, hookRegistry, dispatcher);
 
   return { dispatcher };
@@ -291,6 +359,99 @@ describe("AppStart Operation", () => {
       expect(state.mcpStarted).toBe(true);
       expect(state.dataLoaded).toBe(true);
       expect(state.viewActivated).toBe(true);
+    });
+  });
+
+  describe("project:open dispatch for saved projects (#6)", () => {
+    it("dispatches project:open for each project path set by activate hook", async () => {
+      const state = createTestState();
+      const stub = createProjectOpenStub(state);
+      const { dispatcher } = createTestSetup(
+        [
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state, { projectPaths: ["/project-a", "/project-b"] }),
+          createViewModule(state),
+          createFinalizeModule(state),
+        ],
+        { projectOpenStub: stub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(state.openedProjectPaths).toEqual(["/project-a", "/project-b"]);
+    });
+
+    it("skips invalid projects without aborting startup", async () => {
+      const state = createTestState();
+      const stub = createProjectOpenStub(state, { failForPath: "/invalid" });
+      const { dispatcher } = createTestSetup(
+        [
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state, { projectPaths: ["/invalid", "/valid"] }),
+          createViewModule(state),
+          createFinalizeModule(state),
+        ],
+        { projectOpenStub: stub }
+      );
+
+      // Should not throw despite /invalid failing
+      await dispatcher.dispatch(appStartIntent());
+
+      // Only /valid was successfully opened
+      expect(state.openedProjectPaths).toEqual(["/valid"]);
+      // Finalize still ran
+      expect(state.finalized).toBe(true);
+    });
+
+    it("skips dispatch when no project paths set", async () => {
+      const state = createTestState();
+      const stub = createProjectOpenStub(state);
+      const { dispatcher } = createTestSetup(
+        [
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+          createFinalizeModule(state),
+        ],
+        { projectOpenStub: stub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(state.openedProjectPaths).toEqual([]);
+      expect(state.finalized).toBe(true);
+    });
+  });
+
+  describe("finalize hook runs after project dispatches (#7)", () => {
+    it("finalize runs after activate and project:open dispatches", async () => {
+      const state = createTestState();
+      const stub = createProjectOpenStub(state);
+      const { dispatcher } = createTestSetup(
+        [
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state, { projectPaths: ["/project-a"] }),
+          createViewModule(state),
+          createFinalizeModule(state),
+        ],
+        { projectOpenStub: stub }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      // Verify ordering: activate → project:open → finalize
+      expect(state.executionOrder).toEqual([
+        "codeserver-start",
+        "mcp-start",
+        "data-activate",
+        "view-activate",
+        "project-open:/project-a",
+        "finalize",
+      ]);
     });
   });
 });
