@@ -40,7 +40,6 @@ function createMockAppState(overrides: Partial<AppState> = {}): AppState {
     getWorkspaceUrl: vi.fn(),
     getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
     setLastBaseBranch: vi.fn(),
-    loadPersistedProjects: vi.fn(),
     setDiscoveryService: vi.fn(),
     getDiscoveryService: vi.fn(),
     setAgentStatusManager: vi.fn(),

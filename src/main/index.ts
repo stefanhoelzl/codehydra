@@ -428,8 +428,7 @@ async function createServicesAndWireDispatcher(): Promise<void> {
     loggingService,
     selectedAgentType,
     workspaceFileService,
-    pathProvider.claudeCodeWrapperPath.toString(),
-    globalWorktreeProvider
+    pathProvider.claudeCodeWrapperPath.toString()
   );
 
   // Create agent services

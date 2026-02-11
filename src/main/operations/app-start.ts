@@ -1,13 +1,17 @@
 /**
  * AppStartOperation - Orchestrates application startup.
  *
- * Runs five hook points in sequence:
+ * Runs six hook points in sequence:
  * 1. "show-ui" - Show starting screen
  * 2. "check" - Check if setup is needed (agent, binaries, extensions)
  * 3. "wire" - Wire services (after setup completes if dispatched)
  * 4. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
  *              Telemetry, AutoUpdater, IpcBridge)
- * 5. "activate" - Load persisted data and activate first workspace (Data, View)
+ * 5. "activate" - Wire callbacks, gather project paths (Data, View)
+ * 6. "finalize" - Post-project-load actions (show main view)
+ *
+ * Between "activate" and "finalize", dispatches project:open for each saved
+ * project path (best-effort, skips invalid projects).
  *
  * If check hooks determine setup is needed, dispatches app:setup as a blocking
  * sub-operation. Setup manages its own UI (shows/hides setup screen).
@@ -24,6 +28,8 @@ import type { Operation, OperationContext, HookContext } from "../intents/infras
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
 import { INTENT_SETUP } from "./setup";
+import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
+import { Path } from "../../services/platform/path";
 
 // =============================================================================
 // Intent Types
@@ -50,12 +56,13 @@ export const APP_START_OPERATION_ID = "app-start";
 /**
  * Extended hook context for app:start.
  *
- * Fields are populated by hook modules across the five hook points:
+ * Fields are populated by hook modules across the six hook points:
  * - "show-ui": (no fields, sends IPC to show starting screen)
  * - "check": needsSetup, needsAgentSelection, needsBinaryDownload, needsExtensions, configuredAgent
  * - "wire": (no fields, wires services)
  * - "start": codeServerPort, mcpPort
- * - "activate": (modules read context set by start hook)
+ * - "activate": projectPaths (modules read context set by start hook)
+ * - "finalize": (post-project-load actions, e.g. show main view)
  */
 export interface AppStartHookContext extends HookContext {
   // Check hook fields
@@ -81,6 +88,10 @@ export interface AppStartHookContext extends HookContext {
   codeServerPort?: number;
   /** Set by McpModule (start hook) -- consumed by activate hook modules. */
   mcpPort?: number;
+
+  // Activate hook fields
+  /** Set by DataLifecycleModule (activate hook): saved project paths to open */
+  projectPaths?: readonly string[];
 
   // Retry support
   /**
@@ -180,8 +191,30 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       throw hookCtx.error;
     }
 
-    // Hook 5: "activate" -- Load data and activate first workspace
+    // Hook 5: "activate" -- Wire callbacks, gather project paths
     await ctx.hooks.run("activate", hookCtx);
+    if (hookCtx.error) {
+      throw hookCtx.error;
+    }
+
+    // Dispatch project:open for each saved project (best-effort).
+    // Each project:open dispatches workspace:create + workspace:switch internally.
+    for (const projectPath of hookCtx.projectPaths ?? []) {
+      try {
+        await ctx.dispatch(
+          {
+            type: INTENT_OPEN_PROJECT,
+            payload: { path: new Path(projectPath) },
+          } as OpenProjectIntent,
+          ctx.causation
+        );
+      } catch {
+        // Skip invalid projects (no longer exist, not git repos, etc.)
+      }
+    }
+
+    // Hook 6: "finalize" -- Post-project-load actions (show main view)
+    await ctx.hooks.run("finalize", hookCtx);
     if (hookCtx.error) {
       throw hookCtx.error;
     }
