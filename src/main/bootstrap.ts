@@ -117,7 +117,11 @@ import {
 } from "./operations/open-project";
 import type {
   OpenProjectIntent,
-  OpenProjectHookContext,
+  ResolveHookResult,
+  DiscoverHookInput,
+  DiscoverHookResult,
+  RegisterHookInput,
+  RegisterHookResult,
   ProjectOpenedEvent,
 } from "./operations/open-project";
 import {
@@ -1824,17 +1828,17 @@ function wireDispatcher(
   // Project:open hook modules
   // ---------------------------------------------------------------------------
 
-  // ProjectResolverModule: "open" hook -- clone if URL, validate git, create provider
+  // ProjectResolverModule: "resolve" hook -- clone if URL, validate git
   const projectResolverModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
-        open: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as OpenProjectHookContext;
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { path, git } = intent.payload;
 
             let projectPath: Path;
+            let remoteUrl: string | undefined;
 
             if (git) {
               const expanded = expandGitUrl(git);
@@ -1870,95 +1874,115 @@ function wireDispatcher(
                 projectPath = gitPath;
               }
 
-              hookCtx.remoteUrl = expanded;
+              remoteUrl = expanded;
             } else {
               projectPath = path!;
             }
 
-            // Validate git repo and create provider
-            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPath);
+            // Validate git repo
             await globalProvider.validateRepository(projectPath);
-            const provider: IWorkspaceProvider = new ProjectScopedWorkspaceProvider(
-              globalProvider,
-              projectPath,
-              workspacesDir
-            );
 
-            hookCtx.projectPath = projectPath.toString();
-            hookCtx.provider = provider;
+            return {
+              projectPath: projectPath.toString(),
+              ...(remoteUrl !== undefined && { remoteUrl }),
+            };
           },
         },
       },
     },
   };
 
-  // ProjectDiscoveryModule: "open" hook -- discover workspaces, orphan cleanup
+  // ProjectDiscoveryModule: "discover" hook -- discover workspaces, orphan cleanup
   const projectDiscoveryModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
-        open: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as OpenProjectHookContext;
-            const provider = hookCtx.provider!;
+        discover: {
+          handler: async (ctx: HookContext): Promise<DiscoverHookResult> => {
+            const { projectPath } = ctx as DiscoverHookInput;
+            const projectPathObj = new Path(projectPath);
+            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
+            const provider: IWorkspaceProvider = new ProjectScopedWorkspaceProvider(
+              globalProvider,
+              projectPathObj,
+              workspacesDir
+            );
 
-            hookCtx.workspaces = await provider.discover();
+            const workspaces = await provider.discover();
 
             // Fire-and-forget cleanup
             if (provider.cleanupOrphanedWorkspaces) {
               void provider.cleanupOrphanedWorkspaces().catch((err: unknown) => {
                 logger.error(
                   "Workspace cleanup failed",
-                  { projectPath: hookCtx.projectPath ?? "unknown" },
+                  { projectPath },
                   err instanceof Error ? err : undefined
                 );
               });
             }
+
+            return { workspaces };
           },
         },
       },
     },
   };
 
-  // ProjectRegistryModule: "open" hook -- generate ID, load config, store state, persist
+  // ProjectRegistryModule: "register" hook -- generate ID, load config, store state, persist
   const projectRegistryModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
-        open: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as OpenProjectHookContext;
-            const projectPathStr = hookCtx.projectPath!;
+        register: {
+          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+            const { projectPath: projectPathStr, remoteUrl: resolvedRemoteUrl } =
+              ctx as RegisterHookInput;
             const projectPath = new Path(projectPathStr);
 
             // Generate project ID
-            hookCtx.projectId = generateProjectId(projectPathStr);
+            const projectId = generateProjectId(projectPathStr);
 
             // Load project config for remoteUrl
             const projectConfig = await projectStore.getProjectConfig(projectPathStr);
+            let remoteUrl = resolvedRemoteUrl;
             if (projectConfig?.remoteUrl) {
-              hookCtx.remoteUrl = projectConfig.remoteUrl;
+              remoteUrl = projectConfig.remoteUrl;
             }
+
+            // Create provider for AppState registration
+            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPath);
+            const provider: IWorkspaceProvider = new ProjectScopedWorkspaceProvider(
+              globalProvider,
+              projectPath,
+              workspacesDir
+            );
 
             // Register in AppState
             appState.registerProject({
-              id: hookCtx.projectId,
+              id: projectId,
               name: projectPath.basename,
               path: projectPath,
               workspaces: [],
-              provider: hookCtx.provider!,
-              ...(hookCtx.remoteUrl !== undefined && { remoteUrl: hookCtx.remoteUrl }),
+              provider,
+              ...(remoteUrl !== undefined && { remoteUrl }),
             });
 
             // Get and cache default base branch
-            const defaultBaseBranch = await appState.getDefaultBaseBranch(projectPathStr);
-            if (defaultBaseBranch) {
-              appState.setLastBaseBranch(projectPathStr, defaultBaseBranch);
-              hookCtx.defaultBaseBranch = defaultBaseBranch;
+            let defaultBaseBranch: string | undefined;
+            const baseBranch = await appState.getDefaultBaseBranch(projectPathStr);
+            if (baseBranch) {
+              appState.setLastBaseBranch(projectPathStr, baseBranch);
+              defaultBaseBranch = baseBranch;
             }
 
             // Persist to store if new
             if (!projectConfig) {
               await projectStore.saveProject(projectPathStr);
             }
+
+            return {
+              projectId,
+              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+              ...(remoteUrl !== undefined && { remoteUrl }),
+            };
           },
         },
       },

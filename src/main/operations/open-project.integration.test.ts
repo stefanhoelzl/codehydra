@@ -2,7 +2,7 @@
  * Integration tests for OpenProjectOperation.
  *
  * Tests the full project:open pipeline through dispatcher.dispatch():
- * - Operation orchestrates "open" hook then dispatches workspace:create per workspace
+ * - Operation orchestrates resolve → discover → register hooks via collect()
  * - Idempotency interceptor prevents duplicate opens
  * - Best-effort handling when individual workspace:create fails
  * - URL detection and clone handling
@@ -31,7 +31,14 @@ import {
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
 } from "./open-project";
-import type { OpenProjectIntent, OpenProjectHookContext, ProjectOpenedEvent } from "./open-project";
+import type {
+  OpenProjectIntent,
+  ResolveHookResult,
+  DiscoverHookResult,
+  RegisterHookInput,
+  RegisterHookResult,
+  ProjectOpenedEvent,
+} from "./open-project";
 import type { Intent } from "../intents/infrastructure/types";
 import {
   CreateWorkspaceOperation,
@@ -242,14 +249,32 @@ function createTestHarness(options?: {
         });
       }
     ),
-    registerWorkspace: vi
-      .fn()
-      .mockImplementation((projectPath: string, workspace: { path: Path }) => {
+    registerWorkspace: vi.fn().mockImplementation(
+      (
+        projectPath: string,
+        workspace: {
+          path: Path;
+          branch: string | null;
+          metadata: Record<string, string>;
+        }
+      ) => {
         projectState.registeredWorkspaces.push({
           projectPath,
           workspacePath: workspace.path.toString(),
         });
-      }),
+        // Also add to the project's workspaces (matches real AppState behavior)
+        const project = projectState.registeredProjects.find(
+          (p) => p.path === new Path(projectPath).toString()
+        );
+        if (project) {
+          project.workspaces.push({
+            path: workspace.path.toString(),
+            branch: workspace.branch,
+            metadata: workspace.metadata,
+          });
+        }
+      }
+    ),
     setLastBaseBranch: vi.fn().mockImplementation((path: string, branch: string) => {
       projectState.lastBaseBranches.set(new Path(path).toString(), branch);
     }),
@@ -353,13 +378,13 @@ function createTestHarness(options?: {
   const projectResolverModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
-        open: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as OpenProjectHookContext;
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { path, git } = intent.payload;
 
             let projectPath: Path;
+            let remoteUrl: string | undefined;
 
             if (git) {
               const expanded = expandGitUrl(git);
@@ -375,15 +400,56 @@ function createTestHarness(options?: {
                 projectStoreState.configs.set(gitPath.toString(), { remoteUrl: expanded });
                 projectPath = gitPath;
               }
-              hookCtx.remoteUrl = expanded;
+              remoteUrl = expanded;
             } else {
               projectPath = path!;
             }
 
             await globalProvider.validateRepository(projectPath);
 
-            hookCtx.projectPath = projectPath.toString();
-            hookCtx.provider = {
+            return {
+              projectPath: projectPath.toString(),
+              ...(remoteUrl !== undefined && { remoteUrl }),
+            };
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectDiscoveryModule
+  const projectDiscoveryModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        discover: {
+          handler: async (): Promise<DiscoverHookResult> => {
+            return { workspaces: discoverResult };
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectRegistryModule
+  const projectRegistryModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        register: {
+          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+            const { projectPath: projectPathStr, remoteUrl: resolvedRemoteUrl } =
+              ctx as RegisterHookInput;
+            const projectPath = new Path(projectPathStr);
+
+            const projectId = generateProjectId(projectPathStr);
+
+            const config = await projectStore.getProjectConfig(projectPathStr);
+            let remoteUrl = resolvedRemoteUrl;
+            if (config?.remoteUrl) {
+              remoteUrl = config.remoteUrl;
+            }
+
+            // Create mock provider for AppState registration
+            const mockProvider = {
               projectRoot: projectPath,
               discover: vi.fn(),
               listBases: vi.fn(),
@@ -396,61 +462,32 @@ function createTestHarness(options?: {
                 .fn()
                 .mockResolvedValue({ removedCount: 0, failedPaths: [] }),
             } as unknown as import("../../services/git/workspace-provider").IWorkspaceProvider;
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectDiscoveryModule
-  const projectDiscoveryModule: IntentModule = {
-    hooks: {
-      [OPEN_PROJECT_OPERATION_ID]: {
-        open: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as OpenProjectHookContext;
-            hookCtx.workspaces = discoverResult;
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectRegistryModule
-  const projectRegistryModule: IntentModule = {
-    hooks: {
-      [OPEN_PROJECT_OPERATION_ID]: {
-        open: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as OpenProjectHookContext;
-            const projectPathStr = hookCtx.projectPath!;
-            const projectPath = new Path(projectPathStr);
-
-            hookCtx.projectId = generateProjectId(projectPathStr);
-
-            const config = await projectStore.getProjectConfig(projectPathStr);
-            if (config?.remoteUrl) {
-              hookCtx.remoteUrl = config.remoteUrl;
-            }
 
             appState.registerProject({
-              id: hookCtx.projectId,
+              id: projectId,
               name: projectPath.basename,
               path: projectPath,
-              workspaces: hookCtx.workspaces ?? [],
-              provider: hookCtx.provider!,
-              ...(hookCtx.remoteUrl !== undefined && { remoteUrl: hookCtx.remoteUrl }),
+              workspaces: [],
+              provider: mockProvider,
+              ...(remoteUrl !== undefined && { remoteUrl }),
             });
 
-            const defaultBaseBranch = await appState.getDefaultBaseBranch(projectPathStr);
-            if (defaultBaseBranch) {
-              appState.setLastBaseBranch(projectPathStr, defaultBaseBranch);
-              hookCtx.defaultBaseBranch = defaultBaseBranch;
+            let defaultBaseBranch: string | undefined;
+            const baseBranch = await appState.getDefaultBaseBranch(projectPathStr);
+            if (baseBranch) {
+              appState.setLastBaseBranch(projectPathStr, baseBranch);
+              defaultBaseBranch = baseBranch;
             }
 
             if (!config) {
               await projectStore.saveProject(projectPathStr);
             }
+
+            return {
+              projectId,
+              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+              ...(remoteUrl !== undefined && { remoteUrl }),
+            };
           },
         },
       },

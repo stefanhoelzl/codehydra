@@ -1,23 +1,23 @@
 /**
  * OpenProjectOperation - Orchestrates project opening.
  *
- * Runs a single "open" hook point that populates the hook context:
- * 1. ProjectResolverModule: clone if URL, validate git, create provider
- * 2. ProjectDiscoveryModule: discover workspaces, orphan cleanup
- * 3. ProjectRegistryModule: generate ID, load config, store state, persist
+ * Runs 3 sequential hook points using collect() for isolated contexts:
+ * 1. "resolve": clone if URL, validate git → ResolveHookResult
+ * 2. "discover": find existing workspaces → DiscoverHookResult
+ * 3. "register": generate ID, store state, persist → RegisterHookResult
  *
- * After the hook, dispatches workspace:create per discovered workspace (best-effort)
+ * The operation mediates data flow between hook points — only pure data
+ * flows through contexts. Providers are module dependencies via closure.
+ *
+ * After hooks, dispatches workspace:create per discovered workspace (best-effort)
  * and emits project:opened. View activation is handled by the projectViewModule
  * event handler (registered in bootstrap).
- *
- * No provider dependencies - hook handlers do the actual work.
  */
 
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ProjectId, Project } from "../../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../../services/git/types";
-import type { IWorkspaceProvider } from "../../services/git/workspace-provider";
 import {
   INTENT_CREATE_WORKSPACE,
   type CreateWorkspaceIntent,
@@ -62,32 +62,38 @@ export interface ProjectOpenedEvent extends DomainEvent {
 export const EVENT_PROJECT_OPENED = "project:opened" as const;
 
 // =============================================================================
-// Hook Context
+// Hook Result & Input Types
 // =============================================================================
 
 export const OPEN_PROJECT_OPERATION_ID = "open-project";
 
-/**
- * Extended hook context for open-project.
- *
- * Fields are populated by hook modules during the "open" hook point:
- * - ProjectResolverModule: projectPath, provider, remoteUrl
- * - ProjectDiscoveryModule: workspaces
- * - ProjectRegistryModule: projectId, defaultBaseBranch
- */
-export interface OpenProjectHookContext extends HookContext {
-  /** Resolved project path after clone/normalize */
-  projectPath?: string;
-  /** Created workspace provider */
-  provider?: IWorkspaceProvider;
-  /** Discovered workspaces */
-  workspaces?: readonly InternalWorkspace[];
-  /** Generated project ID */
-  projectId?: ProjectId;
-  /** Remote URL from clone or config */
-  remoteUrl?: string;
-  /** Default base branch */
-  defaultBaseBranch?: string;
+/** Result returned by handlers on the "resolve" hook point. */
+export interface ResolveHookResult {
+  readonly projectPath: string;
+  readonly remoteUrl?: string;
+}
+
+/** Result returned by handlers on the "discover" hook point. */
+export interface DiscoverHookResult {
+  readonly workspaces: readonly InternalWorkspace[];
+}
+
+/** Result returned by handlers on the "register" hook point. */
+export interface RegisterHookResult {
+  readonly projectId: ProjectId;
+  readonly defaultBaseBranch?: string;
+  readonly remoteUrl?: string;
+}
+
+/** Input context for the "discover" hook point. */
+export interface DiscoverHookInput extends HookContext {
+  readonly projectPath: string;
+}
+
+/** Input context for the "register" hook point. */
+export interface RegisterHookInput extends HookContext {
+  readonly projectPath: string;
+  readonly remoteUrl?: string;
 }
 
 // =============================================================================
@@ -98,29 +104,68 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
   readonly id = OPEN_PROJECT_OPERATION_ID;
 
   async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
-    const hookCtx: OpenProjectHookContext = {
+    // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
+    const resolveCtx: HookContext = { intent: ctx.intent };
+    const { results: resolveResults, errors: resolveErrors } =
+      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+    if (resolveErrors.length === 1) {
+      throw resolveErrors[0]!;
+    }
+    if (resolveErrors.length > 1) {
+      throw new AggregateError(resolveErrors, "project:open resolve hooks failed");
+    }
+    let projectPath: string | undefined;
+    let resolvedRemoteUrl: string | undefined;
+    for (const r of resolveResults) {
+      if (r.projectPath && !projectPath) projectPath = r.projectPath;
+      if (r.remoteUrl !== undefined) resolvedRemoteUrl = r.remoteUrl;
+    }
+    if (!projectPath) {
+      throw new Error("Resolve hook did not provide projectPath");
+    }
+
+    // 2. Discover: find existing workspaces
+    const discoverCtx: DiscoverHookInput = { intent: ctx.intent, projectPath };
+    const { results: discoverResults, errors: discoverErrors } =
+      await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
+    if (discoverErrors.length === 1) {
+      throw discoverErrors[0]!;
+    }
+    if (discoverErrors.length > 1) {
+      throw new AggregateError(discoverErrors, "project:open discover hooks failed");
+    }
+    const workspaces: InternalWorkspace[] = [];
+    for (const r of discoverResults) {
+      if (r.workspaces) workspaces.push(...r.workspaces);
+    }
+
+    // 3. Register: generate ID, store state, persist
+    const registerCtx: RegisterHookInput = {
       intent: ctx.intent,
+      projectPath,
+      ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
     };
-
-    // Run "open" hook -- populates context
-    await ctx.hooks.run("open", hookCtx);
-
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results: registerResults, errors: registerErrors } =
+      await ctx.hooks.collect<RegisterHookResult>("register", registerCtx);
+    if (registerErrors.length === 1) {
+      throw registerErrors[0]!;
+    }
+    if (registerErrors.length > 1) {
+      throw new AggregateError(registerErrors, "project:open register hooks failed");
+    }
+    let projectId: ProjectId | undefined;
+    let defaultBaseBranch: string | undefined;
+    let registeredRemoteUrl: string | undefined;
+    for (const r of registerResults) {
+      if (r.projectId) projectId = r.projectId;
+      if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
+      if (r.remoteUrl !== undefined) registeredRemoteUrl = r.remoteUrl;
+    }
+    if (!projectId) {
+      throw new Error("Register hook did not provide projectId");
     }
 
-    // Validate required fields from hook
-    if (!hookCtx.projectPath) {
-      throw new Error("Open hook did not provide projectPath");
-    }
-    if (!hookCtx.provider) {
-      throw new Error("Open hook did not provide provider");
-    }
-    if (!hookCtx.projectId) {
-      throw new Error("Open hook did not provide projectId");
-    }
-
-    const workspaces = hookCtx.workspaces ?? [];
+    const finalRemoteUrl = registeredRemoteUrl ?? resolvedRemoteUrl;
 
     // Dispatch workspace:create per discovered workspace (best-effort)
     for (const workspace of workspaces) {
@@ -135,11 +180,11 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
         const createIntent: CreateWorkspaceIntent = {
           type: INTENT_CREATE_WORKSPACE,
           payload: {
-            projectId: hookCtx.projectId,
+            projectId,
             name: workspace.name,
             base: workspace.metadata.base ?? "",
             existingWorkspace,
-            projectPath: hookCtx.projectPath,
+            projectPath,
             keepInBackground: true,
           },
         };
@@ -152,14 +197,12 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
 
     // Build Project return value
     const project: Project = {
-      id: hookCtx.projectId,
-      path: hookCtx.projectPath,
-      name: new Path(hookCtx.projectPath).basename,
-      workspaces: toIpcWorkspaces(workspaces as InternalWorkspace[], hookCtx.projectId),
-      ...(hookCtx.defaultBaseBranch !== undefined && {
-        defaultBaseBranch: hookCtx.defaultBaseBranch,
-      }),
-      ...(hookCtx.remoteUrl !== undefined && { remoteUrl: hookCtx.remoteUrl }),
+      id: projectId,
+      path: projectPath,
+      name: new Path(projectPath).basename,
+      workspaces: toIpcWorkspaces(workspaces, projectId),
+      ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+      ...(finalRemoteUrl !== undefined && { remoteUrl: finalRemoteUrl }),
     };
 
     // Emit project:opened event
@@ -175,7 +218,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       const switchIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: hookCtx.projectId,
+          projectId,
           workspaceName: extractWorkspaceName(firstWorkspace.path),
         },
       };
