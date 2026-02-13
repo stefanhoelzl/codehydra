@@ -16,8 +16,9 @@
  * #8: close resolve returns empty for unknown project ID
  * #9: close removes from state and persistent store
  * #10: close skips when remoteUrl is present
- * #11: activate returns all project paths from store
+ * #11: activate returns only local paths (filters out remote configs)
  * #12: activate returns empty when no projects saved
+ * #13: activate populates internal state (close-resolve finds activated projects)
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -46,6 +47,7 @@ import type { AppStartIntent } from "../operations/app-start";
 import { generateProjectId } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import type { ProjectId } from "../../shared/api/types";
+import type { ProjectConfig } from "../../services/project/types";
 import type { ResolvedHooks } from "../intents/infrastructure/operation";
 
 // =============================================================================
@@ -65,7 +67,7 @@ function createMockDeps(): {
   globalProvider: LocalProjectModuleDeps["globalProvider"];
 } {
   const projectStore = {
-    loadAllProjects: vi.fn().mockResolvedValue([] as readonly string[]),
+    loadAllProjectConfigs: vi.fn().mockResolvedValue([]),
     saveProject: vi.fn().mockResolvedValue(undefined),
     removeProject: vi.fn().mockResolvedValue(undefined),
     getProjectConfig: vi.fn().mockResolvedValue(undefined),
@@ -346,12 +348,15 @@ describe("LocalProjectModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("app:start activate", () => {
-    it("returns all project paths from store (#11)", async () => {
+    it("returns only local paths, filters out remote configs (#11)", async () => {
       const { startHooks, projectStore } = createTestSetup();
-      vi.mocked(projectStore.loadAllProjects).mockResolvedValue([
-        "/projects/alpha",
-        "/projects/beta",
-      ]);
+      const localConfig: ProjectConfig = { version: 2, path: "/projects/alpha" };
+      const remoteConfig: ProjectConfig = {
+        version: 2,
+        path: "/remotes/repo",
+        remoteUrl: "https://github.com/org/repo.git",
+      };
+      vi.mocked(projectStore.loadAllProjectConfigs).mockResolvedValue([localConfig, remoteConfig]);
 
       const { results, errors } = await startHooks.collect<ActivateHookResult>("activate", {
         intent: appStartIntent(),
@@ -359,12 +364,12 @@ describe("LocalProjectModule Integration", () => {
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
-      expect(results[0]!.projectPaths).toEqual(["/projects/alpha", "/projects/beta"]);
+      expect(results[0]!.projectPaths).toEqual(["/projects/alpha"]);
     });
 
     it("returns empty when no projects saved (#12)", async () => {
       const { startHooks, projectStore } = createTestSetup();
-      vi.mocked(projectStore.loadAllProjects).mockResolvedValue([]);
+      vi.mocked(projectStore.loadAllProjectConfigs).mockResolvedValue([]);
 
       const { results, errors } = await startHooks.collect<ActivateHookResult>("activate", {
         intent: appStartIntent(),
@@ -373,6 +378,26 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
       expect(results[0]!.projectPaths).toEqual([]);
+    });
+
+    it("populates internal state so close-resolve finds activated projects (#13)", async () => {
+      const setup = createTestSetup();
+      const localConfig: ProjectConfig = { version: 2, path: PROJECT_PATH };
+      vi.mocked(setup.projectStore.loadAllProjectConfigs).mockResolvedValue([localConfig]);
+
+      await setup.startHooks.collect<ActivateHookResult>("activate", {
+        intent: appStartIntent(),
+      });
+
+      // Close resolve should find the project by ID
+      const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
+        "resolve",
+        { intent: closeIntent(PROJECT_ID) }
+      );
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]!.projectPath).toBe(new Path(PROJECT_PATH).toString());
     });
   });
 });

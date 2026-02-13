@@ -103,7 +103,7 @@ export interface ActivateHookInput extends HookContext {
 
 /**
  * Per-handler result for "activate" hook point.
- * DataLifecycleModule returns projectPaths; others return `{}`.
+ * LocalProjectModule and RemoteProjectModule return projectPaths; others return `{}`.
  */
 export interface ActivateHookResult {
   readonly projectPaths?: readonly string[];

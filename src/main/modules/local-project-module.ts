@@ -55,7 +55,7 @@ export interface LocalProject {
 export interface LocalProjectModuleDeps {
   readonly projectStore: Pick<
     ProjectStore,
-    "loadAllProjects" | "saveProject" | "removeProject" | "getProjectConfig"
+    "loadAllProjectConfigs" | "saveProject" | "removeProject" | "getProjectConfig"
   >;
   readonly globalProvider: Pick<GitWorktreeProvider, "validateRepository">;
 }
@@ -173,11 +173,28 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [APP_START_OPERATION_ID]: {
-        // activate: load saved project paths from ProjectStore
+        // activate: load saved local project configs, populate state, return paths
         activate: {
           handler: async (): Promise<ActivateHookResult> => {
-            const projectPaths = await projectStore.loadAllProjects();
-            return { projectPaths };
+            const configs = await projectStore.loadAllProjectConfigs();
+            const localPaths: string[] = [];
+
+            for (const config of configs) {
+              if (config.remoteUrl === undefined) {
+                const path = new Path(config.path);
+                const projectId = generateProjectId(config.path);
+
+                projects.set(path.toString(), {
+                  id: projectId,
+                  name: path.basename,
+                  path,
+                });
+
+                localPaths.push(config.path);
+              }
+            }
+
+            return { projectPaths: localPaths };
           },
         },
       },
