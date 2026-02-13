@@ -63,7 +63,14 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
 } from "./switch-workspace";
-import type { SwitchWorkspaceIntent, SwitchWorkspaceHookResult } from "./switch-workspace";
+import type {
+  SwitchWorkspaceIntent,
+  SwitchWorkspaceHookResult,
+  ResolveProjectHookResult as SwitchResolveProjectHookResult,
+  ResolveWorkspaceHookInput as SwitchResolveWorkspaceHookInput,
+  ResolveWorkspaceHookResult as SwitchResolveWorkspaceHookResult,
+  ActivateHookInput,
+} from "./switch-workspace";
 
 // =============================================================================
 // Test Constants
@@ -566,31 +573,52 @@ function createTestHarness(options?: {
     },
   };
 
-  // SwitchViewModule for workspace:switch (returns resolvedPath/projectPath)
+  // Switch modules: resolve-project, resolve-workspace, activate
+  const switchResolveProjectModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+            const project = projectState.registeredProjects.find(
+              (p) => generateProjectId(p.path) === intent.payload.projectId
+            );
+            return project ? { projectPath: project.path, projectName: project.name } : {};
+          },
+        },
+      },
+    },
+  };
+  const switchResolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<SwitchResolveWorkspaceHookResult> => {
+            const { projectPath, workspaceName } = ctx as SwitchResolveWorkspaceHookInput;
+            const project = projectState.registeredProjects.find((p) => p.path === projectPath);
+            if (!project) return {};
+            const workspace = project.workspaces.find((w) => w.path.endsWith(`/${workspaceName}`));
+            return workspace ? { workspacePath: workspace.path } : {};
+          },
+        },
+      },
+    },
+  };
   const switchViewModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+            const { workspacePath } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            // Simple resolve: find workspace path from registered projects
-            const project = projectState.registeredProjects.find(
-              (p) => generateProjectId(p.path) === intent.payload.projectId
-            );
-            if (!project) return {};
-            const workspace = project.workspaces.find((w) =>
-              w.path.endsWith(`/${intent.payload.workspaceName}`)
-            );
-            if (!workspace) return {};
-
-            if (viewManager.getActiveWorkspacePath() === workspace.path) {
-              return {}; // no-op
+            if (viewManager.getActiveWorkspacePath() === workspacePath) {
+              return {};
             }
 
             const focus = intent.payload.focus ?? true;
-            viewManager.setActiveWorkspace(workspace.path, focus);
-            return { resolvedPath: workspace.path, projectPath: project.path };
+            viewManager.setActiveWorkspace(workspacePath, focus);
+            return { resolvedPath: workspacePath };
           },
         },
       },
@@ -608,6 +636,8 @@ function createTestHarness(options?: {
       stateModule,
       viewModule,
       projectViewModule,
+      switchResolveProjectModule,
+      switchResolveWorkspaceModule,
       switchViewModule,
     ],
     hookRegistry,

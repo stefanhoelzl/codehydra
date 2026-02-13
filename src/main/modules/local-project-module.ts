@@ -10,6 +10,7 @@
  * - project:open  → register: generate ID, persist, add to internal state
  * - project:close → resolve-project:  look up projectId in internal state
  * - project:close → close:    remove from internal state and ProjectStore
+ * - workspace:switch → resolve-project: look up projectId in internal state
  * - app:start     → activate: load saved project paths from ProjectStore
  */
 
@@ -37,9 +38,14 @@ import {
 import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
-  type ResolveProjectHookResult,
+  type ResolveProjectHookResult as GetStatusResolveProjectHookResult,
 } from "../operations/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
+import {
+  SWITCH_WORKSPACE_OPERATION_ID,
+  type SwitchWorkspaceIntent,
+  type ResolveProjectHookResult,
+} from "../operations/switch-workspace";
 
 // =============================================================================
 // Types
@@ -177,6 +183,23 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         },
       },
 
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of projects.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString(), projectName: project.name };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
       [APP_START_OPERATION_ID]: {
         // activate: load saved local project configs, populate state, return paths
         activate: {
@@ -207,7 +230,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         // resolve-project: look up projectId in internal state
         "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+          handler: async (ctx: HookContext): Promise<GetStatusResolveProjectHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const { projectId } = intent.payload;
 

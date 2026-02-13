@@ -61,7 +61,13 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
 } from "./switch-workspace";
-import type { SwitchWorkspaceIntent, SwitchWorkspaceHookResult } from "./switch-workspace";
+import type {
+  SwitchWorkspaceHookResult,
+  ResolveProjectHookResult,
+  ResolveWorkspaceHookInput,
+  ResolveWorkspaceHookResult,
+  ActivateHookInput,
+} from "./switch-workspace";
 
 // =============================================================================
 // Test Constants
@@ -197,18 +203,37 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
-  // No-op SwitchViewModule for workspace:switch (just returns resolvedPath to satisfy operation)
+  // Minimal switch modules for workspace:switch (satisfy 3 hook points)
+  const switchResolveProjectModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (): Promise<ResolveProjectHookResult> => {
+            return { projectPath: PROJECT_ROOT, projectName: "test" };
+          },
+        },
+      },
+    },
+  };
+  const switchResolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { workspaceName } = ctx as ResolveWorkspaceHookInput;
+            return { workspacePath: `/workspaces/${workspaceName}` };
+          },
+        },
+      },
+    },
+  };
   const switchViewModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const intent = ctx.intent as SwitchWorkspaceIntent;
-            // Minimal resolve: just return resolvedPath so the operation emits its event
-            return {
-              resolvedPath: `/workspaces/${intent.payload.workspaceName}`,
-              projectPath: PROJECT_ROOT,
-            };
+            const { workspacePath } = ctx as ActivateHookInput;
+            return { resolvedPath: workspacePath };
           },
         },
       },
@@ -340,6 +365,8 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   };
 
   const modules: IntentModule[] = [
+    switchResolveProjectModule,
+    switchResolveWorkspaceModule,
     switchViewModule,
     worktreeModule,
     keepFilesModule,

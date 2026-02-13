@@ -33,6 +33,10 @@ import {
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
+  ResolveProjectHookResult,
+  ResolveWorkspaceHookInput,
+  ResolveWorkspaceHookResult,
+  ActivateHookInput,
   WorkspaceSwitchedEvent,
 } from "./switch-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -183,38 +187,59 @@ function createTestSetup(opts?: {
 
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
-  // SwitchViewModule: resolves workspace and calls setActiveWorkspace
+  // ResolveProjectModule: "resolve-project" hook -- resolves projectId → projectPath + projectName
+  const resolveProjectModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
+            if (!projectPath) return {};
+            const project = appState.getProject(projectPath);
+            if (!project) return {};
+            return { projectPath, projectName: project.name };
+          },
+        },
+      },
+    },
+  };
+
+  // ResolveWorkspaceModule: "resolve-workspace" hook -- resolves workspaceName → workspacePath
+  const resolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { projectPath, workspaceName } = ctx as ResolveWorkspaceHookInput;
+            const project = appState.getProject(projectPath);
+            if (!project) return {};
+            const workspace = project.workspaces.find(
+              (w) => extractWorkspaceName(w.path) === workspaceName
+            );
+            return workspace ? { workspacePath: workspace.path } : {};
+          },
+        },
+      },
+    },
+  };
+
+  // SwitchViewModule: "activate" hook -- calls setActiveWorkspace
   const switchViewModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+            const { workspacePath } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            // Resolve workspace (simplified -- uses generateProjectId to match)
-            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
-            if (!projectPath) {
-              throw new Error(`Project not found: ${intent.payload.projectId}`);
-            }
-            const project = appState.getProject(projectPath);
-            if (!project) {
-              throw new Error(`Project not found: ${intent.payload.projectId}`);
-            }
-            const workspace = project.workspaces.find(
-              (w) => extractWorkspaceName(w.path) === intent.payload.workspaceName
-            );
-            if (!workspace) {
-              throw new Error(`Workspace not found: ${intent.payload.workspaceName}`);
-            }
-
-            // No-op: already the active workspace -- return empty result
-            if (viewManager.getActiveWorkspacePath() === workspace.path) {
+            if (viewManager.getActiveWorkspacePath() === workspacePath) {
               return {};
             }
 
             const focus = intent.payload.focus ?? true;
-            viewManager.setActiveWorkspace(workspace.path, focus);
-            return { resolvedPath: workspace.path, projectPath, projectName: project.name };
+            viewManager.setActiveWorkspace(workspacePath, focus);
+            return { resolvedPath: workspacePath };
           },
         },
       },
@@ -222,7 +247,7 @@ function createTestSetup(opts?: {
   };
 
   const mockApiRegistry = createMockApiRegistry();
-  const modules: IntentModule[] = [switchViewModule];
+  const modules: IntentModule[] = [resolveProjectModule, resolveWorkspaceModule, switchViewModule];
 
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge(

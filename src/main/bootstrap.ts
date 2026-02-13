@@ -114,6 +114,10 @@ import type {
   ShutdownHookResult,
   ReleaseHookResult,
   DeleteHookResult,
+  ResolveProjectHookResult,
+  ResolveWorkspaceHookResult,
+  ResolveWorkspaceHookInput,
+  DeletePipelineHookInput,
 } from "./operations/delete-workspace";
 import {
   OpenProjectOperation,
@@ -150,6 +154,7 @@ import {
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
+  ActivateHookInput,
   WorkspaceSwitchedEvent,
 } from "./operations/switch-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
@@ -1503,6 +1508,39 @@ function wireDispatcher(
   // Delete-workspace hook modules
   // ---------------------------------------------------------------------------
 
+  const deleteResolveProjectModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+            const projectPath = await resolveProjectPath(payload.projectId, appState);
+            return projectPath ? { projectPath } : {};
+          },
+        },
+      },
+    },
+  };
+
+  const deleteResolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { projectPath } = ctx as ResolveWorkspaceHookInput;
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+            const project = appState.getProject(projectPath);
+            if (!project) return {};
+            const workspace = project.workspaces.find(
+              (w) => extractWorkspaceName(w.path) === payload.workspaceName
+            );
+            return workspace ? { workspacePath: workspace.path } : {};
+          },
+        },
+      },
+    },
+  };
+
   const deleteViewModule: IntentModule = {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
@@ -1681,12 +1719,13 @@ function wireDispatcher(
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+            const { projectPath, workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
               await globalProvider.removeWorkspace(
-                new Path(payload.projectPath),
-                new Path(payload.workspacePath),
+                new Path(projectPath),
+                new Path(workspacePath),
                 !payload.keepBranch
               );
               return {};
@@ -1702,19 +1741,17 @@ function wireDispatcher(
               let reactiveBlockingProcesses: readonly BlockingProcess[] | undefined;
               if (workspaceLockHandler) {
                 try {
-                  const detected = await workspaceLockHandler.detect(
-                    new Path(payload.workspacePath)
-                  );
+                  const detected = await workspaceLockHandler.detect(new Path(workspacePath));
                   if (detected.length > 0) {
                     reactiveBlockingProcesses = detected;
                     logger.info("Detected blocking processes", {
-                      workspacePath: payload.workspacePath,
+                      workspacePath,
                       count: detected.length,
                     });
                   }
                 } catch (detectError) {
                   logger.warn("Failed to detect blocking processes", {
-                    workspacePath: payload.workspacePath,
+                    workspacePath,
                     error: getErrorMessage(detectError),
                   });
                 }
@@ -2121,27 +2158,24 @@ function wireDispatcher(
   // Workspace:switch hook modules
   // ---------------------------------------------------------------------------
 
-  // SwitchViewModule: "activate" hook -- resolves workspace, calls setActiveWorkspace
+  // SwitchViewModule: "activate" hook -- calls setActiveWorkspace
+  // Resolution is handled by resolve-project and resolve-workspace hooks.
   // When the workspace is already active, resolvedPath is left undefined (no-op).
   const switchViewModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+            const { workspacePath } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
-            const { workspace, project, projectPath } = await resolveWorkspace(
-              intent.payload,
-              appState
-            );
 
-            // No-op: already the active workspace -- return empty result
-            if (viewManager.getActiveWorkspacePath() === workspace.path) {
+            if (viewManager.getActiveWorkspacePath() === workspacePath) {
               return {};
             }
 
             const focus = intent.payload.focus ?? true;
-            viewManager.setActiveWorkspace(workspace.path, focus);
-            return { resolvedPath: workspace.path, projectPath, projectName: project.name };
+            viewManager.setActiveWorkspace(workspacePath, focus);
+            return { resolvedPath: workspacePath };
           },
         },
       },
@@ -2671,6 +2705,8 @@ function wireDispatcher(
       viewModule,
       // Delete-workspace modules
       idempotencyModule,
+      deleteResolveProjectModule,
+      deleteResolveWorkspaceModule,
       deleteViewModule,
       deleteAgentModule,
       deleteWindowsLockModule,
