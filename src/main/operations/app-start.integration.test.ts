@@ -28,7 +28,9 @@ import { wireModules } from "../intents/infrastructure/wire";
 import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
 import type {
   AppStartIntent,
-  AppStartHookContext,
+  StartHookResult,
+  ActivateHookInput,
+  ActivateHookResult,
   CheckConfigResult,
   CheckDepsHookContext,
   CheckDepsResult,
@@ -76,13 +78,13 @@ function createCodeServerModule(state: TestState, options?: { fail?: boolean }):
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (ctx: HookContext) => {
+          handler: async (): Promise<StartHookResult> => {
             if (options?.fail) {
               throw new Error("CodeServer failed to start");
             }
             state.codeServerStarted = true;
             state.executionOrder.push("codeserver-start");
-            (ctx as AppStartHookContext).codeServerPort = 8080;
+            return { codeServerPort: 8080 };
           },
         },
       },
@@ -95,13 +97,13 @@ function createMcpModule(state: TestState, options?: { fail?: boolean }): Intent
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (ctx: HookContext) => {
+          handler: async (): Promise<StartHookResult> => {
             if (options?.fail) {
               throw new Error("MCP server failed to start");
             }
             state.mcpStarted = true;
             state.executionOrder.push("mcp-start");
-            (ctx as AppStartHookContext).mcpPort = 9090;
+            return { mcpPort: 9090 };
           },
         },
       },
@@ -117,20 +119,21 @@ function createDataModule(
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext) => {
+          handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
             if (options?.fail) {
               throw new Error("Failed to load persisted projects");
             }
-            // Verify start hook set context
-            const hookCtx = ctx as AppStartHookContext;
+            // Verify start hook set context via ActivateHookInput
+            const hookCtx = ctx as ActivateHookInput;
             if (hookCtx.codeServerPort) {
               state.dataLoaded = true;
               state.executionOrder.push("data-activate");
             }
-            // Populate project paths (simulates DataLifecycleModule)
+            // Return project paths (simulates DataLifecycleModule)
             if (options?.projectPaths) {
-              hookCtx.projectPaths = options.projectPaths;
+              return { projectPaths: options.projectPaths };
             }
+            return {};
           },
         },
       },
@@ -143,9 +146,10 @@ function createViewModule(state: TestState): IntentModule {
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
-          handler: async () => {
+          handler: async (): Promise<ActivateHookResult> => {
             state.viewActivated = true;
             state.executionOrder.push("view-activate");
+            return {};
           },
         },
       },
@@ -181,7 +185,7 @@ function createCodeServerModuleWithGracefulPluginDegradation(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (ctx: HookContext) => {
+          handler: async (): Promise<StartHookResult> => {
             // Simulate PluginServer start attempt (internal try/catch)
             let pluginPort: number | undefined;
             try {
@@ -197,8 +201,8 @@ function createCodeServerModuleWithGracefulPluginDegradation(
             // Code-server starts regardless
             state.codeServerStarted = true;
             state.executionOrder.push("codeserver-start");
-            (ctx as AppStartHookContext).codeServerPort = 8080;
             void pluginPort; // Used for code-server config in real impl
+            return { codeServerPort: 8080 };
           },
         },
       },
@@ -328,8 +332,9 @@ describe("AppStart Operation", () => {
       );
 
       expect(state.codeServerStarted).toBe(false);
-      // MCP is in the same hook but runs after CodeServer -- skipped due to ctx.error
-      expect(state.mcpStarted).toBe(false);
+      // With collect(), MCP still runs even though CodeServer threw (errors collected)
+      expect(state.mcpStarted).toBe(true);
+      // Activate hooks never ran (operation throws after collecting start errors)
       expect(state.dataLoaded).toBe(false);
       expect(state.viewActivated).toBe(false);
     });
@@ -375,9 +380,9 @@ describe("AppStart Operation", () => {
       // Start hooks succeeded
       expect(state.codeServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(true);
-      // DataModule failed, ViewModule skipped by HookRegistry error propagation
+      // DataModule failed, but with collect() ViewModule still runs
       expect(state.dataLoaded).toBe(false);
-      expect(state.viewActivated).toBe(false);
+      expect(state.viewActivated).toBe(true);
     });
   });
 

@@ -20,7 +20,7 @@ import {
   GET_AGENT_SESSION_OPERATION_ID,
   INTENT_GET_AGENT_SESSION,
 } from "./get-agent-session";
-import type { GetAgentSessionIntent, GetAgentSessionHookContext } from "./get-agent-session";
+import type { GetAgentSessionIntent, GetAgentSessionHookResult } from "./get-agent-session";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -106,12 +106,12 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
     hooks: {
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext) => {
+          handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
             const intent = ctx.intent as GetAgentSessionIntent;
             const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
             const manager = opts.agentStatusManager;
-            (ctx as GetAgentSessionHookContext).session =
-              manager?.getSession(workspace.path as WorkspacePath) ?? null;
+            const session = manager?.getSession(workspace.path as WorkspacePath) ?? null;
+            return { session };
           },
         },
       },

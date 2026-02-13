@@ -61,7 +61,7 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
 } from "./switch-workspace";
-import type { SwitchWorkspaceIntent, SwitchWorkspaceHookContext } from "./switch-workspace";
+import type { SwitchWorkspaceIntent, SwitchWorkspaceHookResult } from "./switch-workspace";
 
 // =============================================================================
 // Test Constants
@@ -197,17 +197,18 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
-  // No-op SwitchViewModule for workspace:switch (just sets resolvedPath to satisfy operation)
+  // No-op SwitchViewModule for workspace:switch (just returns resolvedPath to satisfy operation)
   const switchViewModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as SwitchWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const intent = ctx.intent as SwitchWorkspaceIntent;
-            // Minimal resolve: just set resolvedPath so the operation emits its event
-            hookCtx.resolvedPath = `/workspaces/${intent.payload.workspaceName}`;
-            hookCtx.projectPath = PROJECT_ROOT;
+            // Minimal resolve: just return resolvedPath so the operation emits its event
+            return {
+              resolvedPath: `/workspaces/${intent.payload.workspaceName}`,
+              projectPath: PROJECT_ROOT,
+            };
           },
         },
       },

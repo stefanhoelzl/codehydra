@@ -25,7 +25,7 @@ import {
   GET_METADATA_OPERATION_ID,
   INTENT_GET_METADATA,
 } from "./get-metadata";
-import type { GetMetadataIntent, GetMetadataHookContext } from "./get-metadata";
+import type { GetMetadataIntent, GetMetadataHookResult } from "./get-metadata";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
@@ -154,11 +154,11 @@ function createTestSetup(): TestSetup {
   });
 
   hookRegistry.register(GET_METADATA_OPERATION_ID, "get", {
-    handler: async (ctx: HookContext) => {
+    handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
       const intent = ctx.intent as GetMetadataIntent;
       const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
       const metadata = await globalProvider.getMetadata(new Path(workspace.path));
-      (ctx as GetMetadataHookContext).metadata = metadata;
+      return { metadata };
     },
   });
 
@@ -240,8 +240,8 @@ describe("GetMetadata Operation", () => {
   it("hook data flows from hook to operation via extended context (#16)", async () => {
     const { dispatcher, projectId, workspaceName } = setup;
 
-    // The get metadata hook stores result in ctx.metadata (GetMetadataHookContext)
-    // The operation reads it back after hook execution
+    // The get metadata hook returns { metadata } (GetMetadataHookResult)
+    // The operation merges results from all handlers
     const result = await dispatcher.dispatch(getMetadataIntent(projectId, workspaceName));
 
     // If hook data flow is broken, operation throws "Get metadata hook did not provide metadata result"

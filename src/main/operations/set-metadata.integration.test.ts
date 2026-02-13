@@ -30,8 +30,7 @@ import {
   GET_METADATA_OPERATION_ID,
   INTENT_GET_METADATA,
 } from "./get-metadata";
-import type { GetMetadataHookContext } from "./get-metadata";
-import type { GetMetadataIntent } from "./get-metadata";
+import type { GetMetadataIntent, GetMetadataHookResult } from "./get-metadata";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
@@ -162,11 +161,11 @@ function createTestSetup(): TestSetup {
   });
 
   hookRegistry.register(GET_METADATA_OPERATION_ID, "get", {
-    handler: async (ctx: HookContext) => {
+    handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
       const intent = ctx.intent as GetMetadataIntent;
       const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
       const metadata = await globalProvider.getMetadata(new Path(workspace.path));
-      (ctx as GetMetadataHookContext).metadata = metadata;
+      return { metadata };
     },
   });
 

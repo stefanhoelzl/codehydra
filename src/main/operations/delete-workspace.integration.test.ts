@@ -58,7 +58,7 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
 } from "./switch-workspace";
-import type { SwitchWorkspaceIntent, SwitchWorkspaceHookContext } from "./switch-workspace";
+import type { SwitchWorkspaceIntent, SwitchWorkspaceHookResult } from "./switch-workspace";
 import { findNextWorkspace } from "../bootstrap";
 
 // =============================================================================
@@ -622,13 +622,12 @@ function createTestHarness(options?: {
     },
   };
 
-  // SwitchViewModule: "activate" hook -- resolves workspace, calls setActiveWorkspace
+  // SwitchViewModule: "activate" hook -- resolves workspace, returns result
   const switchViewModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext) => {
-            const switchCtx = ctx as SwitchWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
             // Resolve workspace from test state
@@ -639,13 +638,11 @@ function createTestHarness(options?: {
               );
               if (ws) {
                 if (viewManager.getActiveWorkspacePath() === ws.path) {
-                  return; // No-op: already active
+                  return {}; // No-op: already active
                 }
                 const focus = intent.payload.focus ?? true;
                 viewManager.setActiveWorkspace(ws.path, focus);
-                switchCtx.resolvedPath = ws.path;
-                switchCtx.projectPath = project.path;
-                return;
+                return { resolvedPath: ws.path, projectPath: project.path };
               }
             }
             throw new Error(`Workspace not found: ${intent.payload.workspaceName}`);

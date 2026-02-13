@@ -36,13 +36,12 @@ export const INTENT_GET_AGENT_SESSION = "agent:get-session" as const;
 export const GET_AGENT_SESSION_OPERATION_ID = "get-agent-session";
 
 /**
- * Extended hook context for get-agent-session.
- * The "get" hook handler populates `session` with the result.
- * `undefined` means the hook didn't run (error).
+ * Per-handler result contract for the "get" hook point.
+ * Each handler returns its contribution — the operation merges them.
  * `null` is a valid result (no session exists).
  */
-export interface GetAgentSessionHookContext extends HookContext {
-  session?: AgentSession | null;
+export interface GetAgentSessionHookResult {
+  readonly session: AgentSession | null;
 }
 
 export class GetAgentSessionOperation implements Operation<
@@ -52,22 +51,26 @@ export class GetAgentSessionOperation implements Operation<
   readonly id = GET_AGENT_SESSION_OPERATION_ID;
 
   async execute(ctx: OperationContext<GetAgentSessionIntent>): Promise<AgentSession | null> {
-    const hookCtx: GetAgentSessionHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Run "get" hook -- handler retrieves session info
-    await ctx.hooks.run("get", hookCtx);
-
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results, errors } = await ctx.hooks.collect<GetAgentSessionHookResult>("get", hookCtx);
+    if (errors.length > 0) {
+      throw errors[0]!;
     }
 
-    if (hookCtx.session === undefined) {
+    // Merge results — last-write-wins for session
+    let session: AgentSession | null | undefined;
+    for (const result of results) {
+      if (result.session !== undefined) session = result.session;
+    }
+
+    if (session === undefined) {
       throw new Error("Get agent session hook did not provide session result");
     }
 
-    return hookCtx.session;
+    return session;
   }
 }

@@ -35,11 +35,11 @@ export const INTENT_GET_METADATA = "workspace:get-metadata" as const;
 export const GET_METADATA_OPERATION_ID = "get-metadata";
 
 /**
- * Extended hook context for get-metadata.
- * The "get" hook handler populates `metadata` with the result.
+ * Per-handler result contract for the "get" hook point.
+ * Each handler returns its contribution — the operation merges them.
  */
-export interface GetMetadataHookContext extends HookContext {
-  metadata?: Readonly<Record<string, string>>;
+export interface GetMetadataHookResult {
+  readonly metadata: Readonly<Record<string, string>>;
 }
 
 export class GetMetadataOperation implements Operation<
@@ -51,24 +51,26 @@ export class GetMetadataOperation implements Operation<
   async execute(
     ctx: OperationContext<GetMetadataIntent>
   ): Promise<Readonly<Record<string, string>>> {
-    const hookCtx: GetMetadataHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Run "get" hook — handler performs the actual provider read
-    // and stores the result in hookCtx.metadata
-    await ctx.hooks.run("get", hookCtx);
-
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results, errors } = await ctx.hooks.collect<GetMetadataHookResult>("get", hookCtx);
+    if (errors.length > 0) {
+      throw errors[0]!;
     }
 
-    // Read metadata from the extended context
-    if (hookCtx.metadata === undefined) {
+    // Merge results — last-write-wins for metadata
+    let metadata: Readonly<Record<string, string>> | undefined;
+    for (const result of results) {
+      if (result.metadata !== undefined) metadata = result.metadata;
+    }
+
+    if (metadata === undefined) {
       throw new Error("Get metadata hook did not provide metadata result");
     }
 
-    return hookCtx.metadata;
+    return metadata;
   }
 }

@@ -23,10 +23,9 @@ import {
 } from "./get-active-workspace";
 import type {
   GetActiveWorkspaceIntent,
-  GetActiveWorkspaceHookContext,
+  GetActiveWorkspaceHookResult,
 } from "./get-active-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import type { WorkspaceRef } from "../../shared/api/types";
 import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
@@ -95,26 +94,26 @@ function createTestSetup(opts: {
     hooks: {
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext) => {
+          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
             const activeWorkspacePath = opts.viewManager.getActiveWorkspacePath();
             if (!activeWorkspacePath) {
-              (ctx as GetActiveWorkspaceHookContext).workspaceRef = null;
-              return;
+              return { workspaceRef: null };
             }
 
             const project = opts.projectFinder.findProjectForWorkspace(activeWorkspacePath);
             if (!project) {
-              (ctx as GetActiveWorkspaceHookContext).workspaceRef = null;
-              return;
+              return { workspaceRef: null };
             }
 
             const projectId = generateProjectId(project.path);
             const workspaceName = extractWorkspaceName(activeWorkspacePath);
 
-            (ctx as GetActiveWorkspaceHookContext).workspaceRef = {
-              projectId,
-              workspaceName,
-              path: activeWorkspacePath,
+            return {
+              workspaceRef: {
+                projectId,
+                workspaceName,
+                path: activeWorkspacePath,
+              },
             };
           },
         },

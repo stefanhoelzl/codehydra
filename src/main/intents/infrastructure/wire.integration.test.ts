@@ -49,7 +49,7 @@ describe("wireModules", () => {
     // Verify the hook was registered by resolving and running it
     const hooks = hookRegistry.resolve("action-op");
     const ctx: HookContext = { intent: createActionIntent() };
-    await hooks.run("execute", ctx);
+    await hooks.collect("execute", ctx);
 
     expect(hookRan).toHaveBeenCalledOnce();
   });
@@ -123,7 +123,7 @@ describe("wireModules", () => {
 
     const hooks = hookRegistry.resolve("action-op");
     const ctx: HookContext = { intent: createActionIntent() };
-    await hooks.run("execute", ctx);
+    await hooks.collect("execute", ctx);
 
     expect(order).toEqual(["module-a", "module-b"]);
   });

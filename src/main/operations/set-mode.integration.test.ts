@@ -22,7 +22,7 @@ import {
   INTENT_SET_MODE,
   EVENT_MODE_CHANGED,
 } from "./set-mode";
-import type { SetModeIntent, SetModeHookContext, ModeChangedEvent } from "./set-mode";
+import type { SetModeIntent, SetModeHookResult, ModeChangedEvent } from "./set-mode";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
@@ -96,11 +96,11 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
     hooks: {
       [SET_MODE_OPERATION_ID]: {
         set: {
-          handler: async (ctx: HookContext) => {
+          handler: async (ctx: HookContext): Promise<SetModeHookResult> => {
             const intent = ctx.intent as SetModeIntent;
             const previousMode = viewManager.getMode();
             viewManager.setMode(intent.payload.mode);
-            (ctx as SetModeHookContext).previousMode = previousMode;
+            return { previousMode };
           },
         },
       },

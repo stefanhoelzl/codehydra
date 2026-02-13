@@ -26,29 +26,21 @@ export type DispatchFn = <I extends Intent>(
 
 /**
  * Base context passed to hook handlers.
- * Operations extend this interface when they need data to flow
- * between hooks (e.g., query results).
- *
- * @example
- * interface GetMetadataHookContext extends HookContext {
- *   metadata?: Readonly<Record<string, string>>;
- * }
+ * Operations build extended contexts (with `readonly` fields) to pass data
+ * between hook points. Each handler receives a frozen shallow copy.
  */
 export interface HookContext {
   readonly intent: Intent;
-  error?: Error;
 }
 
 /**
  * A handler registered for a hook point.
- * If `onError` is true, the handler runs even after a previous handler errors.
  *
  * Generic parameter `T` is the return type for `collect()` — defaults to `unknown`
  * so that `HookDeclarations` (which uses `HookHandler`) accepts handlers with any return type.
  */
 export interface HookHandler<T = unknown> {
   readonly handler: (ctx: HookContext) => Promise<T>;
-  readonly onError?: boolean;
 }
 
 /**
@@ -63,13 +55,10 @@ export interface HookResult<T = unknown> {
 /**
  * Resolved hooks for a specific operation.
  *
- * - `run()`: Legacy shared-context execution. Sets `ctx.error` on failure, skips
- *   subsequent non-onError handlers. Does NOT throw.
- * - `collect()`: Isolated-context execution. Each handler receives a frozen clone
- *   of the input context. All handlers always run. Returns typed results + errors.
+ * `collect()` provides isolated-context execution: each handler receives a frozen
+ * clone of the input context. All handlers always run. Returns typed results + errors.
  */
 export interface ResolvedHooks {
-  run(hookPointId: string, ctx: HookContext): Promise<void>;
   collect<T = unknown>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>>;
 }
 
