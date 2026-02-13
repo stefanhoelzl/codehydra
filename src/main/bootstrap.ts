@@ -127,9 +127,6 @@ import {
 } from "./operations/open-project";
 import type {
   OpenProjectIntent,
-  ResolveHookResult,
-  DiscoverHookInput,
-  DiscoverHookResult,
   RegisterHookInput,
   RegisterHookResult,
   ProjectOpenedEvent,
@@ -240,11 +237,10 @@ import {
 } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
-import {
-  expandGitUrl,
-  generateProjectIdFromUrl,
-  extractRepoName,
-} from "../services/project/url-utils";
+import { expandGitUrl } from "../services/project/url-utils";
+import { createLocalProjectModule } from "./modules/local-project-module";
+import { createRemoteProjectModule } from "./modules/remote-project-module";
+import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 
 // =============================================================================
 // Constants
@@ -1819,167 +1815,32 @@ function wireDispatcher(
   };
 
   // ---------------------------------------------------------------------------
-  // Project:open idempotency interceptor
+  // Project:open modules (extracted)
   // ---------------------------------------------------------------------------
 
-  const inProgressOpens = new Set<string>();
+  const localProjectModule = createLocalProjectModule({ projectStore, globalProvider });
+  const remoteProjectModule = createRemoteProjectModule({
+    projectStore,
+    gitClient,
+    pathProvider,
+    logger,
+  });
+  const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
+    globalProvider,
+    pathProvider,
+    logger
+  );
 
-  const openIdempotencyModule: IntentModule = {
-    interceptors: [
-      {
-        id: "project-open-idempotency",
-        order: 0,
-        async before(intent: Intent): Promise<Intent | null> {
-          if (intent.type !== INTENT_OPEN_PROJECT) {
-            return intent;
-          }
-          const { path, git } = (intent as OpenProjectIntent).payload;
-
-          // Use expanded URL as key for git (so it matches remoteUrl in cleanup)
-          const key = path ? path.toString() : expandGitUrl(git!);
-
-          if (path && appState.isProjectOpen(path.toString())) {
-            return null;
-          }
-
-          if (inProgressOpens.has(key)) {
-            return null;
-          }
-
-          inProgressOpens.add(key);
-          return intent;
-        },
-      },
-    ],
-    events: {
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const { project } = (event as ProjectOpenedEvent).payload;
-        inProgressOpens.delete(project.path);
-        if (project.remoteUrl) {
-          inProgressOpens.delete(project.remoteUrl);
-        }
-      },
-    },
-  };
-
-  // ---------------------------------------------------------------------------
-  // Project:open hook modules
-  // ---------------------------------------------------------------------------
-
-  // ProjectResolverModule: "resolve" hook -- clone if URL, validate git
-  const projectResolverModule: IntentModule = {
-    hooks: {
-      [OPEN_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const intent = ctx.intent as OpenProjectIntent;
-            const { path, git } = intent.payload;
-
-            let projectPath: Path;
-            let remoteUrl: string | undefined;
-
-            if (git) {
-              const expanded = expandGitUrl(git);
-
-              // Check if we already have a project from this URL
-              const existingPath = await projectStore.findByRemoteUrl(expanded);
-              if (existingPath) {
-                logger.debug("Found existing project for URL", {
-                  url: expanded,
-                  existingPath,
-                });
-                projectPath = new Path(existingPath);
-              } else {
-                // Clone the repository into remotes/ directory
-                const urlProjectId = generateProjectIdFromUrl(expanded);
-                const repoName = extractRepoName(expanded);
-                const remotesDirPath = pathProvider.remotesDir;
-                const projectDir = new Path(remotesDirPath, urlProjectId);
-                const gitPath = new Path(projectDir.toString(), repoName);
-
-                logger.debug("Cloning repository", {
-                  url: expanded,
-                  gitPath: gitPath.toString(),
-                });
-
-                await gitClient.clone(expanded, gitPath);
-
-                // Save to project store with remoteUrl
-                await projectStore.saveProject(gitPath.toString(), {
-                  remoteUrl: expanded,
-                });
-
-                projectPath = gitPath;
-              }
-
-              remoteUrl = expanded;
-            } else {
-              projectPath = path!;
-            }
-
-            // Validate git repo
-            await globalProvider.validateRepository(projectPath);
-
-            return {
-              projectPath: projectPath.toString(),
-              ...(remoteUrl !== undefined && { remoteUrl }),
-            };
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectDiscoveryModule: "discover" hook -- discover workspaces, orphan cleanup
-  const projectDiscoveryModule: IntentModule = {
-    hooks: {
-      [OPEN_PROJECT_OPERATION_ID]: {
-        discover: {
-          handler: async (ctx: HookContext): Promise<DiscoverHookResult> => {
-            const { projectPath } = ctx as DiscoverHookInput;
-            const projectPathObj = new Path(projectPath);
-            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
-            globalProvider.registerProject(projectPathObj, workspacesDir);
-
-            const workspaces = await globalProvider.discover(projectPathObj);
-
-            // Fire-and-forget cleanup
-            void globalProvider.cleanupOrphanedWorkspaces(projectPathObj).catch((err: unknown) => {
-              logger.error(
-                "Workspace cleanup failed",
-                { projectPath },
-                err instanceof Error ? err : undefined
-              );
-            });
-
-            return { workspaces };
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectRegistryModule: "register" hook -- generate ID, load config, store state, persist
-  const projectRegistryModule: IntentModule = {
+  // ProjectAppStateModule: register project in AppState, cache defaultBaseBranch
+  const projectAppStateModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         register: {
           handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
-            const { projectPath: projectPathStr, remoteUrl: resolvedRemoteUrl } =
-              ctx as RegisterHookInput;
+            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
             const projectPath = new Path(projectPathStr);
-
-            // Generate project ID
             const projectId = generateProjectId(projectPathStr);
 
-            // Load project config for remoteUrl
-            const projectConfig = await projectStore.getProjectConfig(projectPathStr);
-            let remoteUrl = resolvedRemoteUrl;
-            if (projectConfig?.remoteUrl) {
-              remoteUrl = projectConfig.remoteUrl;
-            }
-
-            // Register in AppState
             appState.registerProject({
               id: projectId,
               name: projectPath.basename,
@@ -1988,29 +1849,22 @@ function wireDispatcher(
               ...(remoteUrl !== undefined && { remoteUrl }),
             });
 
-            // Get and cache default base branch
-            let defaultBaseBranch: string | undefined;
-            const baseBranch = await appState.getDefaultBaseBranch(projectPathStr);
-            if (baseBranch) {
-              appState.setLastBaseBranch(projectPathStr, baseBranch);
-              defaultBaseBranch = baseBranch;
-            }
-
-            // Persist to store if new
-            if (!projectConfig) {
-              await projectStore.saveProject(projectPathStr);
-            }
-
-            return {
-              projectId,
-              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-              ...(remoteUrl !== undefined && { remoteUrl }),
-            };
+            return {};
           },
         },
       },
     },
+    events: {
+      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
+        const { project } = (event as ProjectOpenedEvent).payload;
+        if (project.defaultBaseBranch) {
+          appState.setLastBaseBranch(project.path, project.defaultBaseBranch);
+        }
+      },
+    },
   };
+
+  const inProgressOpens = new Set<string>();
 
   // ProjectViewModule: subscribes to project:opened, preloads non-first workspaces
   // Note: first workspace activation is now handled by OpenProjectOperation dispatching workspace:switch
@@ -2715,10 +2569,10 @@ function wireDispatcher(
       deleteStateModule,
       deleteIpcBridge,
       // Project:open modules
-      openIdempotencyModule,
-      projectResolverModule,
-      projectDiscoveryModule,
-      projectRegistryModule,
+      localProjectModule,
+      remoteProjectModule,
+      gitWorktreeWorkspaceModule,
+      projectAppStateModule,
       projectViewModule,
       // Project:close modules
       projectResolveModule,
@@ -2944,24 +2798,30 @@ function wireDispatcher(
   registry.register(
     "projects.open",
     async (payload: ProjectOpenPayload) => {
-      const intent: OpenProjectIntent = {
-        type: INTENT_OPEN_PROJECT,
-        payload: { path: new Path(payload.path) },
-      };
-      const handle = dispatcher.dispatch(intent);
-      if (!(await handle.accepted)) {
-        // Idempotency: project already open, return current state
+      if (appState.isProjectOpen(payload.path)) {
         const project = appState.getProject(payload.path);
         if (project) {
           return project as import("../shared/api/types").Project;
         }
-        throw new Error("Project open was cancelled");
       }
-      const result = await handle;
-      if (!result) {
-        throw new Error("Open project dispatch returned no result");
+      const key = new Path(payload.path).toString();
+      if (inProgressOpens.has(key)) {
+        throw new Error("Project open already in progress");
       }
-      return result;
+      inProgressOpens.add(key);
+      try {
+        const intent: OpenProjectIntent = {
+          type: INTENT_OPEN_PROJECT,
+          payload: { path: new Path(payload.path) },
+        };
+        const result = await dispatcher.dispatch(intent);
+        if (!result) {
+          throw new Error("Open project dispatch returned no result");
+        }
+        return result;
+      } finally {
+        inProgressOpens.delete(key);
+      }
     },
     { ipc: ApiIpcChannels.PROJECT_OPEN }
   );
@@ -2969,19 +2829,24 @@ function wireDispatcher(
   registry.register(
     "projects.clone",
     async (payload: ProjectClonePayload) => {
-      const intent: OpenProjectIntent = {
-        type: INTENT_OPEN_PROJECT,
-        payload: { git: payload.url },
-      };
-      const handle = dispatcher.dispatch(intent);
-      if (!(await handle.accepted)) {
-        throw new Error("Clone was cancelled (project may already be open)");
+      const key = expandGitUrl(payload.url);
+      if (inProgressOpens.has(key)) {
+        throw new Error("Clone already in progress");
       }
-      const result = await handle;
-      if (!result) {
-        throw new Error("Clone project dispatch returned no result");
+      inProgressOpens.add(key);
+      try {
+        const intent: OpenProjectIntent = {
+          type: INTENT_OPEN_PROJECT,
+          payload: { git: payload.url },
+        };
+        const result = await dispatcher.dispatch(intent);
+        if (!result) {
+          throw new Error("Clone project dispatch returned no result");
+        }
+        return result;
+      } finally {
+        inProgressOpens.delete(key);
       }
-      return result;
     },
     { ipc: ApiIpcChannels.PROJECT_CLONE }
   );
@@ -3019,11 +2884,11 @@ function wireDispatcher(
       // Emit workspace:switched for the active workspace
       const activePath = viewManager.getActiveWorkspacePath();
       if (activePath) {
-        const resolved = workspaceResolver(activePath);
-        if (resolved) {
+        const project = appState.findProjectForWorkspace(activePath);
+        if (project) {
           registry.emit("workspace:switched", {
-            projectId: resolved.projectId,
-            workspaceName: resolved.workspaceName,
+            projectId: project.id,
+            workspaceName: extractWorkspaceName(activePath),
             path: activePath,
           });
         }

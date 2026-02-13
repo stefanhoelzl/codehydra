@@ -133,7 +133,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               path: projectPath,
             });
 
-            return { projectId };
+            return { projectId, name: projectPath.basename };
           },
         },
       },

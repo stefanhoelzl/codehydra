@@ -153,7 +153,7 @@ export function createRemoteProjectModule(deps: {
               remoteUrl,
             });
 
-            return { projectId, remoteUrl };
+            return { projectId, name: path.basename, remoteUrl };
           },
         },
       },
