@@ -119,10 +119,9 @@ describe("RemoteProjectModule Integration", () => {
 
       const result = results[0]!;
       expect(result).toBeDefined();
-      expect(result!.projectPath).toContain("repo");
-      expect(result!.remoteUrl).toBe("https://github.com/org/repo.git");
-
-      const projectPath = result!.projectPath!;
+      const projectPath = result.projectPath;
+      expect(projectPath).toContain("repo");
+      expect(result.remoteUrl).toBe("https://github.com/org/repo.git");
 
       // Verify clone was called
       expect(gitClient).toHaveClonedRepository(projectPath);
