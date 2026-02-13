@@ -45,6 +45,11 @@ import type {
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
 import type { ActivateHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
+import {
+  GET_WORKSPACE_STATUS_OPERATION_ID,
+  type ResolveProjectHookResult,
+} from "../operations/get-workspace-status";
+import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
 
 // =============================================================================
 // Exported Types
@@ -225,6 +230,26 @@ export function createRemoteProjectModule(deps: {
             }
 
             return { projectPaths: remotePaths };
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------------
+      // get-workspace-status
+      // -----------------------------------------------------------------------
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as GetWorkspaceStatusIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of state.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
           },
         },
       },

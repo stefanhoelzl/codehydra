@@ -35,6 +35,11 @@ import {
   type CloseHookResult,
 } from "../operations/close-project";
 import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
+import {
+  GET_WORKSPACE_STATUS_OPERATION_ID,
+  type ResolveProjectHookResult,
+} from "../operations/get-workspace-status";
+import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
 
 // =============================================================================
 // Types
@@ -195,6 +200,24 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             }
 
             return { projectPaths: localPaths };
+          },
+        },
+      },
+
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        // resolve-project: look up projectId in internal state
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as GetWorkspaceStatusIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of projects.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
           },
         },
       },

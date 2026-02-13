@@ -3,7 +3,7 @@
  * Integration tests for get-workspace-status operation through the Dispatcher.
  *
  * Tests verify the full dispatch pipeline: intent -> operation -> hooks -> result,
- * where multiple hook handlers each contribute a piece of the status.
+ * using the 3-stage hook pipeline: resolve-project → resolve-workspace → get.
  *
  * Test plan items covered:
  * #1: get-workspace-status returns dirty + agent status
@@ -20,12 +20,17 @@ import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   INTENT_GET_WORKSPACE_STATUS,
 } from "./get-workspace-status";
-import type { GetWorkspaceStatusIntent, GetStatusHookResult } from "./get-workspace-status";
+import type {
+  GetWorkspaceStatusIntent,
+  ResolveProjectHookResult,
+  ResolveWorkspaceHookResult,
+  ResolveWorkspaceHookInput,
+  GetStatusHookResult,
+  GetStatusHookInput,
+} from "./get-workspace-status";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
-import { resolveWorkspace } from "../api/id-utils";
-import type { WorkspaceAccessor } from "../api/id-utils";
 import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
@@ -88,59 +93,20 @@ function createTestSetup(opts: {
   const projectId = generateProjectId(PROJECT_ROOT);
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
-  const workspaceAccessor: WorkspaceAccessor = {
-    getAllProjects: async () => [{ path: PROJECT_ROOT }],
-    getProject: (projectPath: string) => {
-      if (new Path(projectPath).equals(new Path(PROJECT_ROOT))) {
-        return {
-          path: PROJECT_ROOT,
-          name: "project",
-          workspaces: [
-            {
-              path: WORKSPACE_PATH,
-              branch: "feature-x",
-              metadata: { base: "main" },
-            },
-          ],
-        };
-      }
-      return undefined;
-    },
-  };
-
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
 
-  // Git dirty status hook handler module
-  const gitStatusModule: IntentModule = {
+  // resolve-project module: resolves projectId → projectPath
+  const resolveProjectModule: IntentModule = {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
-            const provider = opts.workspaceProvider;
-            const isDirty = provider ? await provider.isDirty(new Path(workspace.path)) : false;
-            return { isDirty };
-          },
-        },
-      },
-    },
-  };
-
-  // Agent status hook handler module
-  const agentStatusModule: IntentModule = {
-    hooks: {
-      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
-            const intent = ctx.intent as GetWorkspaceStatusIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
-            const manager = opts.agentStatusManager;
-            if (manager) {
-              return { agentStatus: manager.getStatus(workspace.path as WorkspacePath) };
+            if (intent.payload.projectId === projectId) {
+              return { projectPath: PROJECT_ROOT };
             }
             return {};
           },
@@ -149,7 +115,62 @@ function createTestSetup(opts: {
     },
   };
 
-  wireModules([gitStatusModule, agentStatusModule], hookRegistry, dispatcher);
+  // resolve-workspace module: resolves workspaceName → workspacePath
+  const resolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { workspaceName: name } = ctx as ResolveWorkspaceHookInput;
+            if (name === workspaceName) {
+              return { workspacePath: WORKSPACE_PATH };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // get module: returns isDirty from mock provider (reads workspacePath from enriched context)
+  const getStatusModule: IntentModule = {
+    hooks: {
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        get: {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
+            const { workspacePath } = ctx as GetStatusHookInput;
+            const provider = opts.workspaceProvider;
+            const isDirty = provider ? await provider.isDirty(new Path(workspacePath)) : false;
+            return { isDirty };
+          },
+        },
+      },
+    },
+  };
+
+  // agent status module: returns agentStatus from mock manager (reads workspacePath from enriched context)
+  const agentStatusModule: IntentModule = {
+    hooks: {
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        get: {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
+            const { workspacePath } = ctx as GetStatusHookInput;
+            const manager = opts.agentStatusManager;
+            if (manager) {
+              return { agentStatus: manager.getStatus(workspacePath as WorkspacePath) };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  wireModules(
+    [resolveProjectModule, resolveWorkspaceModule, getStatusModule, agentStatusModule],
+    hookRegistry,
+    dispatcher
+  );
 
   return { dispatcher, projectId, workspaceName };
 }
@@ -282,14 +303,13 @@ describe("GetWorkspaceStatus Operation", () => {
         agentStatusManager: null,
       });
 
-      const error: AggregateError = await setup.dispatcher
+      const error = await setup.dispatcher
         .dispatch(statusIntent(setup.projectId, "nonexistent" as WorkspaceName))
         .then(() => expect.unreachable("should have thrown"))
-        .catch((e: AggregateError) => e);
+        .catch((e: unknown) => e);
 
-      expect(error).toBeInstanceOf(AggregateError);
-      expect(error.errors).toHaveLength(2);
-      expect(error.errors.some((e: Error) => e.message.includes("Workspace not found"))).toBe(true);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("Workspace not found");
     });
 
     it("unknown project throws", async () => {
@@ -298,14 +318,13 @@ describe("GetWorkspaceStatus Operation", () => {
         agentStatusManager: null,
       });
 
-      const error: AggregateError = await setup.dispatcher
+      const error = await setup.dispatcher
         .dispatch(statusIntent("nonexistent-12345678" as ProjectId, setup.workspaceName))
         .then(() => expect.unreachable("should have thrown"))
-        .catch((e: AggregateError) => e);
+        .catch((e: unknown) => e);
 
-      expect(error).toBeInstanceOf(AggregateError);
-      expect(error.errors).toHaveLength(2);
-      expect(error.errors.some((e: Error) => e.message.includes("Project not found"))).toBe(true);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("Project not found");
     });
   });
 
