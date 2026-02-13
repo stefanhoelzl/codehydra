@@ -40,11 +40,11 @@ describe("GitWorktreeProvider integration", () => {
       );
 
       // Create workspace with base branch "main"
-      const created = await provider.createWorkspace("feature-x", "main");
+      const created = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
       expect(created.metadata.base).toBe("main");
 
       // Discover should return same metadata.base
-      const discovered = await provider.discover();
+      const discovered = await provider.discover(PROJECT_ROOT);
       expect(discovered).toHaveLength(1);
       expect(discovered[0]?.metadata.base).toBe("main");
     });
@@ -67,7 +67,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      await provider1.createWorkspace("feature-x", "main");
+      await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       // Create new provider instance and verify metadata.base persists
       // (using same mockClient which retains state)
@@ -78,7 +78,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      const discovered = await provider2.discover();
+      const discovered = await provider2.discover(PROJECT_ROOT);
 
       expect(discovered).toHaveLength(1);
       expect(discovered[0]?.metadata.base).toBe("main");
@@ -107,7 +107,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      const discovered = await provider.discover();
+      const discovered = await provider.discover(PROJECT_ROOT);
 
       expect(discovered).toHaveLength(1);
       expect(discovered[0]?.metadata.base).toBe("legacy-branch");
@@ -150,7 +150,7 @@ describe("GitWorktreeProvider integration", () => {
       );
 
       // Discover should handle both correctly
-      const discovered = await provider.discover();
+      const discovered = await provider.discover(PROJECT_ROOT);
       expect(discovered).toHaveLength(2);
 
       const featureWorkspace = discovered.find((w) => w.name === "feature-with-config");
@@ -176,7 +176,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      await provider.createWorkspace("feature-x", "main");
+      await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       // Verify config was set using behavioral assertion
       expect(mockClient).toHaveBranchConfig(PROJECT_ROOT, "feature-x", "codehydra.base", "main");
@@ -200,7 +200,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      const workspace = await provider.createWorkspace("feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       await provider.setMetadata(workspace.path, "note", "WIP feature");
 
@@ -225,7 +225,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      const workspace = await provider1.createWorkspace("feature-x", "main");
+      const workspace = await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
       await provider1.setMetadata(workspace.path, "note", "test note");
 
       const provider2 = await GitWorktreeProvider.create(
@@ -235,6 +235,8 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
+      // Must discover to populate workspace registry before getMetadata
+      await provider2.discover(PROJECT_ROOT);
       const metadata = await provider2.getMetadata(workspace.path);
 
       expect(metadata.note).toBe("test note");
@@ -263,6 +265,8 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
+      // Must discover to populate workspace registry before getMetadata
+      await provider.discover(PROJECT_ROOT);
       const metadata = await provider.getMetadata(new Path("/workspaces/legacy-branch"));
 
       // Should fall back to branch name
@@ -285,7 +289,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      const workspace = await provider.createWorkspace("feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       const { WorkspaceError } = await import("../errors");
       try {
@@ -313,7 +317,7 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      const workspace = await provider.createWorkspace("feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       await provider.setMetadata(workspace.path, "note", "test note");
       let metadata = await provider.getMetadata(workspace.path);
@@ -358,7 +362,7 @@ describe("GitWorktreeProvider bare repository support", () => {
         worktreeLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       // Branches in bare repos are local refs, so isRemote should be false
       expect(bases.every((b) => !b.isRemote)).toBe(true);
@@ -390,7 +394,7 @@ describe("GitWorktreeProvider bare repository support", () => {
         worktreeLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const localBranches = bases.filter((b) => !b.isRemote);
       const remoteBranches = bases.filter((b) => b.isRemote);

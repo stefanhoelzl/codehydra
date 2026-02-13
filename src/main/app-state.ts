@@ -1,6 +1,6 @@
 /**
  * Application state management.
- * Manages open projects, workspace providers, and coordinates with ViewManager.
+ * Manages open projects and coordinates with ViewManager.
  *
  * Path Handling:
  * - All internal path handling uses the `Path` class for normalized, cross-platform handling
@@ -11,7 +11,6 @@
 
 import {
   Path,
-  type IWorkspaceProvider,
   type PathProvider,
   type ProjectStore,
   type Workspace as InternalWorkspace,
@@ -22,6 +21,7 @@ import {
   urlForFolder,
   urlForWorkspace,
 } from "../services";
+import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspacePath } from "../shared/ipc";
 import type { Project, ProjectId } from "../shared/api/types";
@@ -47,8 +47,6 @@ interface OpenProject {
   readonly path: Path;
   /** Internal workspaces (with Path-based paths) */
   readonly workspaces: readonly InternalWorkspace[];
-  /** Workspace provider for git operations */
-  readonly provider: IWorkspaceProvider;
   /** Original git remote URL if project was cloned from URL */
   readonly remoteUrl?: string;
 }
@@ -58,6 +56,7 @@ interface OpenProject {
  */
 export class AppState {
   private readonly projectStore: ProjectStore;
+  private readonly globalProvider: GitWorktreeProvider;
   private codeServerPort: number;
   private readonly logger: Logger;
   private readonly agentType: AgentType;
@@ -90,9 +89,11 @@ export class AppState {
     loggingService: LoggingService,
     agentType: AgentType,
     workspaceFileService: IWorkspaceFileService,
-    wrapperPath: string
+    wrapperPath: string,
+    globalProvider: GitWorktreeProvider
   ) {
     this.projectStore = projectStore;
+    this.globalProvider = globalProvider;
     this.codeServerPort = codeServerPort;
     this.logger = loggingService.createLogger("app");
     this.agentType = agentType;
@@ -334,14 +335,13 @@ export class AppState {
       return lastBranch;
     }
 
-    // Fall back to provider's default
-    const provider = this.getWorkspaceProvider(projectPath);
-    if (!provider) {
+    // Fall back to provider's default (only if project is open/registered)
+    if (!this.isProjectOpen(projectPath)) {
       return undefined;
     }
 
     try {
-      return await provider.defaultBase();
+      return await this.globalProvider.defaultBase(new Path(projectPath));
     } catch (error: unknown) {
       this.logger.warn("Failed to get default base branch", {
         projectPath,
@@ -394,17 +394,6 @@ export class AppState {
       });
     }
     return result;
-  }
-
-  /**
-   * Gets the workspace provider for a project.
-   *
-   * @param projectPathInput - Path to the project
-   * @returns The IWorkspaceProvider or undefined if project not open
-   */
-  getWorkspaceProvider(projectPathInput: string): IWorkspaceProvider | undefined {
-    const normalizedKey = new Path(projectPathInput).toString();
-    return this.openProjects.get(normalizedKey)?.provider;
   }
 
   /**
@@ -511,7 +500,6 @@ export class AppState {
     name: string;
     path: Path;
     workspaces: readonly InternalWorkspace[];
-    provider: IWorkspaceProvider;
     remoteUrl?: string;
   }): void {
     const projectPathStr = project.path.toString();
@@ -520,7 +508,6 @@ export class AppState {
       name: project.name,
       path: project.path,
       workspaces: project.workspaces,
-      provider: project.provider,
       ...(project.remoteUrl !== undefined && { remoteUrl: project.remoteUrl }),
     });
   }

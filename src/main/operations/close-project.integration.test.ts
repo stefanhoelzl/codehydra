@@ -5,7 +5,7 @@
  * - Operation dispatches workspace:delete per workspace, then runs "close" hook
  * - workspace:delete uses removeWorktree=false (runtime teardown only)
  * - skipSwitch prevents intermediate workspace switches during sequential teardown
- * - Hook modules dispose provider, remove state + store
+ * - Hook modules unregister from global provider, remove state + store
  *
  * Test plan items covered:
  * #9: Closes project and tears down workspaces
@@ -53,6 +53,7 @@ import type { IViewManager } from "../managers/view-manager.interface";
 import type { AppState } from "../app-state";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { generateProjectId } from "../../shared/api/id-utils";
+import { Path } from "../../services/platform/path";
 
 // =============================================================================
 // Test Constants
@@ -75,7 +76,7 @@ interface TestState {
   deregisteredProjects: string[];
   removedProjectsFromStore: string[];
   deletedProjectDirectories: string[];
-  disposedProviders: string[];
+  unregisteredProjects: string[];
   setActiveWorkspaceCalls: Array<{ path: string | null; focus?: boolean }>;
 }
 
@@ -100,7 +101,7 @@ function createTestHarness(options?: {
     deregisteredProjects: [],
     removedProjectsFromStore: [],
     deletedProjectDirectories: [],
-    disposedProviders: [],
+    unregisteredProjects: [],
     setActiveWorkspaceCalls: [],
   };
 
@@ -164,14 +165,15 @@ function createTestHarness(options?: {
       ? undefined
       : undefined;
 
+  const globalProvider = {
+    unregisterProject: (projectPath: Path) => {
+      state.unregisteredProjects.push(projectPath.toString());
+    },
+  };
+
   const appState = {
     getAllProjects: vi.fn().mockImplementation(async () => (project ? [project] : [])),
     getProject: vi.fn().mockReturnValue(project),
-    getWorkspaceProvider: vi.fn().mockReturnValue({
-      dispose: vi.fn().mockImplementation(() => {
-        state.disposedProviders.push(PROJECT_PATH);
-      }),
-    }),
     isProjectOpen: vi.fn().mockReturnValue(!options?.projectNotFound),
     deregisterProject: vi.fn().mockImplementation((path: string) => {
       state.deregisteredProjects.push(path);
@@ -314,12 +316,8 @@ function createTestHarness(options?: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
             const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
-            const provider = appState.getWorkspaceProvider(projectPath) as
-              | { dispose?: () => void }
-              | undefined;
-            if (provider && typeof provider.dispose === "function") {
-              provider.dispose();
-            }
+            // Unregister project from global provider
+            globalProvider.unregisterProject(new Path(projectPath));
 
             if (removeLocalRepo && remoteUrl) {
               const store = appState.getProjectStore();

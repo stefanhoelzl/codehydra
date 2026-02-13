@@ -36,6 +36,8 @@ import {
   type InternalResolvedWorkspace,
 } from "../../api/id-utils";
 import type { IGitClient, PathProvider, ProjectStore } from "../../../services";
+import type { GitWorktreeProvider } from "../../../services/git/git-worktree-provider";
+import { Path } from "../../../services/platform/path";
 
 // =============================================================================
 // Types
@@ -77,6 +79,8 @@ export interface CoreModuleDeps {
   readonly pathProvider: PathProvider;
   /** Project store for finding existing cloned projects */
   readonly projectStore: ProjectStore;
+  /** Global worktree provider for git operations */
+  readonly globalProvider: GitWorktreeProvider;
   /** Plugin server for executing VS Code commands in workspaces */
   readonly pluginServer?: IPluginServer;
   /** Electron dialog for folder selection */
@@ -179,16 +183,13 @@ export class CoreModule implements IApiModule {
       throw new Error(`Project not found: ${payload.projectId}`);
     }
 
-    const provider = this.deps.appState.getWorkspaceProvider(projectPath);
-    if (!provider) {
-      throw new Error(`No workspace provider for project: ${payload.projectId}`);
-    }
+    const projectRoot = new Path(projectPath);
 
     // Get current bases (cached)
-    const bases = await provider.listBases();
+    const bases = await this.deps.globalProvider.listBases(projectRoot);
 
     // Trigger background fetch - don't await
-    void this.fetchBasesInBackground(payload.projectId, provider);
+    void this.fetchBasesInBackground(payload.projectId, projectRoot);
 
     return { bases };
   }
@@ -308,13 +309,10 @@ export class CoreModule implements IApiModule {
     return tryResolveWorkspaceShared(payload, this.deps.appState);
   }
 
-  private async fetchBasesInBackground(
-    projectId: ProjectId,
-    provider: { updateBases(): Promise<unknown>; listBases(): Promise<readonly BaseInfo[]> }
-  ): Promise<void> {
+  private async fetchBasesInBackground(projectId: ProjectId, projectRoot: Path): Promise<void> {
     try {
-      await provider.updateBases();
-      const updatedBases = await provider.listBases();
+      await this.deps.globalProvider.updateBases(projectRoot);
+      const updatedBases = await this.deps.globalProvider.listBases(projectRoot);
       this.api.emit("project:bases-updated", { projectId, bases: updatedBases });
     } catch (error) {
       this.logger.error(

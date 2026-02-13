@@ -34,19 +34,6 @@ function createMockAppState(): AppState {
       workspaces: [],
     }),
     getAllProjects: vi.fn().mockResolvedValue([]),
-    getWorkspaceProvider: vi.fn().mockReturnValue({
-      createWorkspace: vi.fn().mockResolvedValue({
-        path: "/test/project/workspaces/feature",
-        branch: "feature",
-        metadata: { base: "main" },
-      }),
-      unregisterWorkspace: vi.fn(),
-      listBases: vi.fn().mockResolvedValue([]),
-      updateBases: vi.fn().mockResolvedValue(undefined),
-      isDirty: vi.fn().mockResolvedValue(false),
-      setMetadata: vi.fn().mockResolvedValue(undefined),
-      getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
-    }),
     findProjectForWorkspace: vi.fn(),
     registerWorkspace: vi.fn(),
     unregisterWorkspace: vi.fn(),
@@ -100,6 +87,7 @@ function createMockCoreDeps(): CoreModuleDeps {
       getProjectConfig: vi.fn().mockResolvedValue(undefined),
       deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
     } as unknown as import("../services").ProjectStore,
+    globalProvider: createMockGlobalWorktreeProvider(),
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
