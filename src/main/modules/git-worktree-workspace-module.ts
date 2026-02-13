@@ -20,19 +20,20 @@ import type { GitWorktreeProvider } from "../../services/git/git-worktree-provid
 import type { Workspace } from "../../services/git/types";
 import type { PathProvider } from "../../services/platform/path-provider";
 import type { Logger } from "../../services/logging/types";
-import type { CreateWorkspaceIntent } from "../operations/create-workspace";
-import type { CreateHookResult } from "../operations/create-workspace";
+import type {
+  OpenWorkspaceIntent,
+  CreateHookInput,
+  CreateHookResult,
+} from "../operations/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult } from "../operations/delete-workspace";
 import type { DiscoverHookResult, DiscoverHookInput } from "../operations/open-project";
 import type { CloseHookInput } from "../operations/close-project";
-import type { GetStatusHookResult } from "../operations/get-workspace-status";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
-import { CREATE_WORKSPACE_OPERATION_ID } from "../operations/create-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
-import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
 import { extractWorkspaceName } from "../api/id-utils";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
@@ -44,10 +45,6 @@ import { getErrorMessage } from "../../services/errors";
 interface ResolveWorkspaceInput extends HookContext {
   readonly projectPath: string;
   readonly workspaceName: string;
-}
-
-interface GetStatusInput extends HookContext {
-  readonly workspacePath: string;
 }
 
 interface FetchBasesInput extends HookContext {
@@ -74,12 +71,6 @@ export interface FetchBasesHookResult {
   readonly bases: readonly { name: string; isRemote: boolean }[];
   readonly defaultBaseBranch?: string;
 }
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
 
 // =============================================================================
 // Module Factory
@@ -185,12 +176,13 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // create-workspace -> create
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      // open-workspace -> create
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
           handler: async (ctx: HookContext): Promise<CreateHookResult> => {
-            const intent = ctx.intent as CreateWorkspaceIntent;
+            const intent = ctx.intent as OpenWorkspaceIntent;
             const { payload } = intent;
+            const { projectPath } = ctx as CreateHookInput;
 
             // Existing workspace path: populate from existing data, skip worktree creation
             if (payload.existingWorkspace) {
@@ -198,7 +190,6 @@ export function createGitWorktreeWorkspaceModule(
               const workspacePath = existing.path;
               const branch = existing.branch ?? existing.name;
               const metadata = existing.metadata;
-              const projectPath = payload.projectPath!;
 
               const key = new Path(projectPath).toString();
               const projectWorkspaces = workspaces.get(key) ?? [];
@@ -220,21 +211,16 @@ export function createGitWorktreeWorkspaceModule(
                 workspaces.set(key, projectWorkspaces);
               }
 
-              return { workspacePath, branch, metadata, projectPath };
+              return { workspacePath, branch, metadata };
             }
 
             // New workspace: create via provider
-            if (!payload.projectPath) {
-              throw new Error("projectPath is required for new workspace creation");
-            }
-
-            const projectPath = payload.projectPath;
             const projectPathObj = new Path(projectPath);
 
             const internalWorkspace = await globalProvider.createWorkspace(
               projectPathObj,
-              payload.name,
-              payload.base
+              payload.workspaceName!,
+              payload.base!
             );
 
             // Update state
@@ -255,7 +241,21 @@ export function createGitWorktreeWorkspaceModule(
               workspacePath: internalWorkspace.path.toString(),
               branch: internalWorkspace.branch ?? internalWorkspace.name,
               metadata: internalWorkspace.metadata,
-              projectPath,
+            };
+          },
+        },
+
+        "fetch-bases": {
+          handler: async (ctx: HookContext): Promise<FetchBasesHookResult> => {
+            const { projectPath } = ctx as FetchBasesInput;
+            const projectPathObj = new Path(projectPath);
+
+            const bases = await globalProvider.listBases(projectPathObj);
+            const defaultBaseBranch = await globalProvider.defaultBase(projectPathObj);
+
+            return {
+              bases,
+              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
             };
           },
         },
@@ -312,41 +312,8 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // get-workspace-status -> resolve-workspace + get
-      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
-            const { projectPath, workspaceName } = ctx as ResolveWorkspaceInput;
-            const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
-            return workspacePath ? { workspacePath } : {};
-          },
-        },
-        get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
-            const { workspacePath } = ctx as GetStatusInput;
-            const isDirty = await globalProvider.isDirty(new Path(workspacePath));
-            return { isDirty };
-          },
-        },
-      },
-
-      // open-workspace -> fetch-bases
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        "fetch-bases": {
-          handler: async (ctx: HookContext): Promise<FetchBasesHookResult> => {
-            const { projectPath } = ctx as FetchBasesInput;
-            const projectPathObj = new Path(projectPath);
-
-            const bases = await globalProvider.listBases(projectPathObj);
-            const defaultBaseBranch = await globalProvider.defaultBase(projectPathObj);
-
-            return {
-              bases,
-              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-            };
-          },
-        },
-      },
+      // Note: get-workspace-status hooks removed — the current operation doesn't use
+      // enriched contexts. Inline hooks in bootstrap.ts handle this for now.
     },
   };
 }

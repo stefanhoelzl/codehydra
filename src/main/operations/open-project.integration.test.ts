@@ -4,7 +4,7 @@
  * Tests the full project:open pipeline through dispatcher.dispatch():
  * - Operation orchestrates resolve → register → discover hooks via collect()
  * - Self-selecting modules (local vs remote) respond to their respective scenarios
- * - Best-effort handling when individual workspace:create fails
+ * - Best-effort handling when individual workspace:open fails
  * - URL detection and clone handling
  *
  * Test plan items covered:
@@ -40,18 +40,19 @@ import type {
   ProjectOpenedEvent,
 } from "./open-project";
 import {
-  CreateWorkspaceOperation,
-  CREATE_WORKSPACE_OPERATION_ID,
-  INTENT_CREATE_WORKSPACE,
+  OpenWorkspaceOperation,
+  OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
-} from "./create-workspace";
+} from "./open-workspace";
 import type {
   CreateHookResult,
   FinalizeHookInput,
   FinalizeHookResult,
-  CreateWorkspaceIntent,
+  OpenWorkspaceIntent,
   WorkspaceCreatedEvent,
-} from "./create-workspace";
+  ResolveProjectHookResult,
+} from "./open-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { Project, ProjectId } from "../../shared/api/types";
 import { generateProjectId } from "../../shared/api/id-utils";
@@ -313,7 +314,7 @@ function createTestHarness(options?: {
 
   // Register operations
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
-  dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // ---------------------------------------------------------------------------
@@ -481,16 +482,33 @@ function createTestHarness(options?: {
   };
 
   // ---------------------------------------------------------------------------
-  // Workspace:create modules
+  // Workspace:open modules
   // ---------------------------------------------------------------------------
 
-  // WorktreeModule for workspace:create (handles existingWorkspace)
+  // ResolveProjectModule for workspace:open (resolves projectPath from payload)
+  const resolveProjectModule: IntentModule = {
+    hooks: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as OpenWorkspaceIntent;
+            if (intent.payload.projectPath) {
+              return { projectPath: intent.payload.projectPath };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // WorktreeModule for workspace:open (handles existingWorkspace)
   const worktreeModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
           handler: async (ctx: HookContext): Promise<CreateHookResult> => {
-            const intent = ctx.intent as CreateWorkspaceIntent;
+            const intent = ctx.intent as OpenWorkspaceIntent;
 
             if (intent.payload.existingWorkspace) {
               const existing = intent.payload.existingWorkspace;
@@ -504,7 +522,6 @@ function createTestHarness(options?: {
                 workspacePath: existing.path,
                 branch: existing.branch ?? existing.name,
                 metadata: existing.metadata,
-                projectPath: intent.payload.projectPath!,
               };
             }
 
@@ -515,10 +532,10 @@ function createTestHarness(options?: {
     },
   };
 
-  // CodeServerModule for workspace:create
+  // CodeServerModule for workspace:open
   const codeServerModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
           handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
             void (ctx as FinalizeHookInput).envVars;
@@ -633,6 +650,7 @@ function createTestHarness(options?: {
       remoteRegisterModule,
       appStateRegisterModule,
       discoverModule,
+      resolveProjectModule,
       worktreeModule,
       codeServerModule,
       stateModule,

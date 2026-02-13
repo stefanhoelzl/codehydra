@@ -2,7 +2,7 @@
  * CoreModule - Handles read-only project queries, workspace queries, and UI operations.
  *
  * Responsibilities:
- * - Project queries: list, get, fetchBases
+ * - Project queries: list, get
  * - Workspace operations: get, executeCommand
  * - UI operations: selectFolder
  *
@@ -21,12 +21,11 @@ import type {
   EmptyPayload,
 } from "../../api/registry-types";
 import type { PluginResult } from "../../../shared/plugin-protocol";
-import type { ProjectId, Project, Workspace, BaseInfo } from "../../../shared/api/types";
+import type { ProjectId, Project, Workspace } from "../../../shared/api/types";
 import type { AppState } from "../../app-state";
 import type { IViewManager } from "../../managers/view-manager.interface";
 import type { Logger } from "../../../services/logging/index";
 import { ApiIpcChannels } from "../../../shared/ipc";
-import { SILENT_LOGGER } from "../../../services/logging";
 import {
   generateProjectId,
   extractWorkspaceName,
@@ -37,7 +36,6 @@ import {
 } from "../../api/id-utils";
 import type { IGitClient, PathProvider, ProjectStore } from "../../../services";
 import type { GitWorktreeProvider } from "../../../services/git/git-worktree-provider";
-import { Path } from "../../../services/platform/path";
 
 // =============================================================================
 // Types
@@ -97,7 +95,7 @@ export interface CoreModuleDeps {
  * CoreModule handles read-only project queries, workspace queries, and UI operations.
  *
  * Registered methods:
- * - projects.*: list, get, fetchBases
+ * - projects.*: list, get
  * - workspaces.*: get, executeCommand
  * - ui.selectFolder
  *
@@ -108,8 +106,6 @@ export interface CoreModuleDeps {
  * - project:bases-updated
  */
 export class CoreModule implements IApiModule {
-  private readonly logger: Logger;
-
   /**
    * Create a new CoreModule.
    *
@@ -120,7 +116,6 @@ export class CoreModule implements IApiModule {
     private readonly api: IApiRegistry,
     private readonly deps: CoreModuleDeps
   ) {
-    this.logger = deps.logger ?? SILENT_LOGGER;
     this.registerMethods();
   }
 
@@ -136,9 +131,7 @@ export class CoreModule implements IApiModule {
     this.api.register("projects.get", this.projectGet.bind(this), {
       ipc: ApiIpcChannels.PROJECT_GET,
     });
-    this.api.register("projects.fetchBases", this.projectFetchBases.bind(this), {
-      ipc: ApiIpcChannels.PROJECT_FETCH_BASES,
-    });
+    // Note: projects.fetchBases moved to bootstrap.ts (dispatches workspace:open with incomplete payload)
 
     // Workspace methods (workspaces.create and workspaces.remove handled by intent dispatcher in bootstrap.ts)
     this.api.register("workspaces.get", this.workspaceGet.bind(this), {
@@ -173,25 +166,6 @@ export class CoreModule implements IApiModule {
 
     const defaultBaseBranch = await this.deps.appState.getDefaultBaseBranch(projectPath);
     return this.toApiProject(internalProject, defaultBaseBranch);
-  }
-
-  private async projectFetchBases(
-    payload: ProjectIdPayload
-  ): Promise<{ readonly bases: readonly BaseInfo[] }> {
-    const projectPath = await resolveProjectPath(payload.projectId, this.deps.appState);
-    if (!projectPath) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    const projectRoot = new Path(projectPath);
-
-    // Get current bases (cached)
-    const bases = await this.deps.globalProvider.listBases(projectRoot);
-
-    // Trigger background fetch - don't await
-    void this.fetchBasesInBackground(payload.projectId, projectRoot);
-
-    return { bases };
   }
 
   // ===========================================================================
@@ -307,20 +281,6 @@ export class CoreModule implements IApiModule {
     payload: WorkspaceRefPayload
   ): Promise<InternalResolvedWorkspace | undefined> {
     return tryResolveWorkspaceShared(payload, this.deps.appState);
-  }
-
-  private async fetchBasesInBackground(projectId: ProjectId, projectRoot: Path): Promise<void> {
-    try {
-      await this.deps.globalProvider.updateBases(projectRoot);
-      const updatedBases = await this.deps.globalProvider.listBases(projectRoot);
-      this.api.emit("project:bases-updated", { projectId, bases: updatedBases });
-    } catch (error) {
-      this.logger.error(
-        "Failed to fetch bases for project",
-        { projectId },
-        error instanceof Error ? error : undefined
-      );
-    }
   }
 
   // ===========================================================================
