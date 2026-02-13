@@ -115,6 +115,8 @@ function updateStatusIntent(
     type: INTENT_UPDATE_AGENT_STATUS,
     payload: {
       workspacePath: workspacePath as WorkspacePath,
+      projectId: "test-project" as ProjectId,
+      workspaceName: workspacePath.split("/").pop() as WorkspaceName,
       status,
     },
   };

@@ -155,7 +155,6 @@ function createMockDeps(): BootstrapDeps {
     hasUpdateAvailableFn: () => () => false,
     badgeManagerFn: () =>
       ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
-    workspaceResolverFn: () => () => undefined,
     lifecycleRefsFn: () =>
       ({
         loggingService: { createLogger: () => createMockLogger() },

@@ -9,7 +9,6 @@
  * #2b: Renderer receives workspace status (busy)
  * #2c: Renderer receives workspace status (mixed)
  * #2d: Renderer receives workspace status (none)
- * #3:  Unknown workspace produces no IPC event
  */
 
 import { describe, it, expect } from "vitest";
@@ -21,7 +20,7 @@ import {
   INTENT_UPDATE_AGENT_STATUS,
 } from "../operations/update-agent-status";
 import type { UpdateAgentStatusIntent } from "../operations/update-agent-status";
-import { createIpcEventBridge, type WorkspaceResolver } from "./ipc-event-bridge";
+import { createIpcEventBridge } from "./ipc-event-bridge";
 import type { IApiRegistry } from "../api/registry-types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
@@ -72,46 +71,38 @@ interface TestSetup {
   mockApiRegistry: MockApiRegistry;
 }
 
-function createTestSetup(opts?: { workspaceResolver?: WorkspaceResolver }): TestSetup {
+function createTestSetup(): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 
   const mockApiRegistry = createMockApiRegistry();
-  const ipcEventBridge = createIpcEventBridge(
-    mockApiRegistry as unknown as IApiRegistry,
-    opts?.workspaceResolver
-  );
+  const ipcEventBridge = createIpcEventBridge(mockApiRegistry as unknown as IApiRegistry);
 
   wireModules([ipcEventBridge], hookRegistry, dispatcher);
 
   return { dispatcher, mockApiRegistry };
 }
 
+const TEST_PROJECT_ID = "test-project-12345678" as ProjectId;
+const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
+const TEST_WORKSPACE_PATH = "/projects/test/workspaces/feature-branch";
+
 function updateStatusIntent(
   workspacePath: string,
-  status: AggregatedAgentStatus
+  status: AggregatedAgentStatus,
+  projectId: ProjectId = TEST_PROJECT_ID,
+  workspaceName: WorkspaceName = TEST_WORKSPACE_NAME
 ): UpdateAgentStatusIntent {
   return {
     type: INTENT_UPDATE_AGENT_STATUS,
     payload: {
       workspacePath: workspacePath as WorkspacePath,
+      projectId,
+      workspaceName,
       status,
     },
-  };
-}
-
-const TEST_PROJECT_ID = "test-project-12345678" as ProjectId;
-const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
-const TEST_WORKSPACE_PATH = "/projects/test/workspaces/feature-branch";
-
-function createKnownWorkspaceResolver(): WorkspaceResolver {
-  return (workspacePath: string) => {
-    if (workspacePath === TEST_WORKSPACE_PATH) {
-      return { projectId: TEST_PROJECT_ID, workspaceName: TEST_WORKSPACE_NAME };
-    }
-    return undefined;
   };
 }
 
@@ -122,9 +113,7 @@ function createKnownWorkspaceResolver(): WorkspaceResolver {
 describe("IpcEventBridge - agent:status-updated", () => {
   describe("renderer receives workspace status (idle) (#2a)", () => {
     it("emits workspace:status-changed with idle agent status", async () => {
-      const { dispatcher, mockApiRegistry } = createTestSetup({
-        workspaceResolver: createKnownWorkspaceResolver(),
-      });
+      const { dispatcher, mockApiRegistry } = createTestSetup();
 
       const status: AggregatedAgentStatus = { status: "idle", counts: { idle: 2, busy: 0 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
@@ -148,9 +137,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
 
   describe("renderer receives workspace status (busy) (#2b)", () => {
     it("emits workspace:status-changed with busy agent status", async () => {
-      const { dispatcher, mockApiRegistry } = createTestSetup({
-        workspaceResolver: createKnownWorkspaceResolver(),
-      });
+      const { dispatcher, mockApiRegistry } = createTestSetup();
 
       const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 3 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
@@ -174,9 +161,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
 
   describe("renderer receives workspace status (mixed) (#2c)", () => {
     it("emits workspace:status-changed with mixed agent status", async () => {
-      const { dispatcher, mockApiRegistry } = createTestSetup({
-        workspaceResolver: createKnownWorkspaceResolver(),
-      });
+      const { dispatcher, mockApiRegistry } = createTestSetup();
 
       const status: AggregatedAgentStatus = { status: "mixed", counts: { idle: 1, busy: 2 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
@@ -200,9 +185,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
 
   describe("renderer receives workspace status (none) (#2d)", () => {
     it("emits workspace:status-changed with none agent status (no counts field)", async () => {
-      const { dispatcher, mockApiRegistry } = createTestSetup({
-        workspaceResolver: createKnownWorkspaceResolver(),
-      });
+      const { dispatcher, mockApiRegistry } = createTestSetup();
 
       const status: AggregatedAgentStatus = { status: "none", counts: { idle: 0, busy: 0 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
@@ -221,30 +204,6 @@ describe("IpcEventBridge - agent:status-updated", () => {
           },
         },
       ]);
-    });
-  });
-
-  describe("unknown workspace produces no IPC event (#3)", () => {
-    it("does not emit when workspace resolver returns undefined", async () => {
-      const { dispatcher, mockApiRegistry } = createTestSetup({
-        workspaceResolver: createKnownWorkspaceResolver(),
-      });
-
-      const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 1 } };
-      await dispatcher.dispatch(updateStatusIntent("/unknown/workspace", status));
-
-      expect(mockApiRegistry.events).toEqual([]);
-    });
-  });
-
-  describe("no workspace resolver", () => {
-    it("does not emit when no workspace resolver is provided", async () => {
-      const { dispatcher, mockApiRegistry } = createTestSetup();
-
-      const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 1 } };
-      await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
-
-      expect(mockApiRegistry.events).toEqual([]);
     });
   });
 });

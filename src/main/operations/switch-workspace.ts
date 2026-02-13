@@ -38,6 +38,8 @@ export const INTENT_SWITCH_WORKSPACE = "workspace:switch" as const;
 
 export interface WorkspaceSwitchedPayload {
   readonly projectId: ProjectId;
+  readonly projectName: string;
+  readonly projectPath: string;
   readonly workspaceName: WorkspaceName;
   readonly path: string;
 }
@@ -63,6 +65,7 @@ export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
 export interface SwitchWorkspaceHookResult {
   readonly resolvedPath?: string;
   readonly projectPath?: string;
+  readonly projectName?: string;
 }
 
 // =============================================================================
@@ -86,10 +89,14 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       throw errors[0]!;
     }
 
-    // Merge results — last-write-wins for resolvedPath and projectPath
+    // Merge results — last-write-wins for resolvedPath, projectPath, projectName
     let resolvedPath: string | undefined;
+    let projectPath: string | undefined;
+    let projectName: string | undefined;
     for (const result of results) {
       if (result.resolvedPath !== undefined) resolvedPath = result.resolvedPath;
+      if (result.projectPath !== undefined) projectPath = result.projectPath;
+      if (result.projectName !== undefined) projectName = result.projectName;
     }
 
     // No-op: hook resolved workspace but it was already active
@@ -103,6 +110,8 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       type: EVENT_WORKSPACE_SWITCHED,
       payload: {
         projectId: ctx.intent.payload.projectId,
+        projectName: projectName ?? "",
+        projectPath: projectPath ?? "",
         workspaceName: ctx.intent.payload.workspaceName,
         path: resolvedPath,
       },

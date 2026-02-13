@@ -111,7 +111,6 @@ interface MockAppState {
   getProject(
     projectPath: string
   ): { path: string; name: string; workspaces: ReadonlyArray<WorkspaceEntry> } | undefined;
-  findProjectForWorkspace(workspacePath: string): { name: string; path: string } | undefined;
 }
 
 function createMockAppState(projects: ProjectEntry[]): MockAppState {
@@ -124,9 +123,6 @@ function createMockAppState(projects: ProjectEntry[]): MockAppState {
       projectPath: string
     ): { path: string; name: string; workspaces: ReadonlyArray<WorkspaceEntry> } | undefined {
       return this.projects.find((p) => p.path === projectPath);
-    },
-    findProjectForWorkspace(workspacePath: string): { name: string; path: string } | undefined {
-      return this.projects.find((p) => p.workspaces.some((w) => w.path === workspacePath));
     },
   };
 }
@@ -218,7 +214,7 @@ function createTestSetup(opts?: {
 
             const focus = intent.payload.focus ?? true;
             viewManager.setActiveWorkspace(workspace.path, focus);
-            return { resolvedPath: workspace.path, projectPath };
+            return { resolvedPath: workspace.path, projectPath, projectName: project.name };
           },
         },
       },
@@ -248,9 +244,8 @@ function createTestSetup(opts?: {
             return;
           }
 
-          const project = appState.findProjectForWorkspace(payload.path);
           const title = formatWindowTitle(
-            project?.name,
+            payload.projectName,
             payload.workspaceName,
             titleVersion,
             hasUpdate
@@ -349,6 +344,8 @@ describe("SwitchWorkspace Operation", () => {
       expect(event.type).toBe(EVENT_WORKSPACE_SWITCHED);
       expect(event.payload).toEqual({
         projectId: generateProjectId(TEST_PROJECT_PATH),
+        projectName: TEST_PROJECT_NAME,
+        projectPath: TEST_PROJECT_PATH,
         workspaceName: TEST_WORKSPACE_NAME,
         path: TEST_WORKSPACE_PATH,
       });
