@@ -268,7 +268,7 @@ describe("LocalProjectModule Integration", () => {
 
       // Now resolve by projectId
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve",
+        "resolve-project",
         { intent: closeIntent(PROJECT_ID) }
       );
 
@@ -280,9 +280,12 @@ describe("LocalProjectModule Integration", () => {
     it("returns empty for unknown project ID (#8)", async () => {
       const { closeHooks } = createTestSetup();
 
-      const { results, errors } = await closeHooks.collect<CloseResolveHookResult>("resolve", {
-        intent: closeIntent("unknown-00000000" as ProjectId),
-      });
+      const { results, errors } = await closeHooks.collect<CloseResolveHookResult>(
+        "resolve-project",
+        {
+          intent: closeIntent("unknown-00000000" as ProjectId),
+        }
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -320,7 +323,7 @@ describe("LocalProjectModule Integration", () => {
 
       // Verify it's gone from internal state (close resolve should return empty)
       const { results: resolveResults } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve",
+        "resolve-project",
         { intent: closeIntent(PROJECT_ID) }
       );
       expect(resolveResults[0]).toEqual({});

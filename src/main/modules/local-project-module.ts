@@ -8,7 +8,7 @@
  * Hook registrations:
  * - project:open  → resolve:  validate .git exists for local paths
  * - project:open  → register: generate ID, persist, add to internal state
- * - project:close → resolve:  look up projectId in internal state
+ * - project:close → resolve-project:  look up projectId in internal state
  * - project:close → close:    remove from internal state and ProjectStore
  * - app:start     → activate: load saved project paths from ProjectStore
  */
@@ -133,8 +133,8 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [CLOSE_PROJECT_OPERATION_ID]: {
-        // resolve: look up projectId in internal state
-        resolve: {
+        // resolve-project: look up projectId in internal state
+        "resolve-project": {
           handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
             const { projectId } = intent.payload;
