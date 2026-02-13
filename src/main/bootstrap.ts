@@ -150,6 +150,8 @@ import type {
 } from "./operations/switch-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createBadgeModule } from "./modules/badge-module";
+import { createLocalProjectModule } from "./modules/local-project-module";
+import { createRemoteProjectModule } from "./modules/remote-project-module";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
@@ -2507,20 +2509,18 @@ function wireDispatcher(
     },
   };
 
-  // DataLifecycleModule: activate → gather saved project paths and return them.
-  // The AppStartOperation dispatches project:open for each path after the activate hook.
-  const dataLifecycleModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
-            const projectPaths = await projectStore.loadAllProjects();
-            return { projectPaths };
-          },
-        },
-      },
-    },
-  };
+  // Project modules: activate → load saved project configs, populate state, return paths.
+  // LocalProjectModule handles local paths; RemoteProjectModule handles URL-cloned projects.
+  const localProjectModule = createLocalProjectModule({
+    projectStore,
+    globalProvider,
+  });
+  const remoteProjectModule = createRemoteProjectModule({
+    projectStore,
+    gitClient,
+    pathProvider,
+    logger: lifecycleLogger,
+  });
 
   // ViewLifecycleModule: activate → wire loading-state→IPC callback.
   // stop → destroy views, cleanup loading-state callback, dispose layers.
@@ -2656,7 +2656,8 @@ function wireDispatcher(
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
       ipcBridgeLifecycleModule,
-      dataLifecycleModule,
+      localProjectModule,
+      remoteProjectModule,
       viewLifecycleModule,
       showMainViewModule,
     ],
