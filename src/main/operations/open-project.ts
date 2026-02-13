@@ -69,7 +69,8 @@ export const OPEN_PROJECT_OPERATION_ID = "open-project";
 
 /** Result returned by handlers on the "resolve" hook point. */
 export interface ResolveHookResult {
-  readonly projectPath: string;
+  /** Optional when using collect() — handler may skip via self-selection. */
+  readonly projectPath?: string;
   readonly remoteUrl?: string;
 }
 
@@ -80,7 +81,8 @@ export interface DiscoverHookResult {
 
 /** Result returned by handlers on the "register" hook point. */
 export interface RegisterHookResult {
-  readonly projectId: ProjectId;
+  /** Optional when using collect() — handler may skip via self-selection. */
+  readonly projectId?: ProjectId;
   readonly defaultBaseBranch?: string;
   readonly remoteUrl?: string;
 }
