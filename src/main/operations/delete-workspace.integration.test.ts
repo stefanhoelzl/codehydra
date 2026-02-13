@@ -112,6 +112,32 @@ interface TestAppState {
   worktreeRemoved: boolean;
 }
 
+function createMockGlobalProvider(opts?: { removeError?: string }): {
+  globalProvider: {
+    removeWorkspace: (
+      projectPath: Path,
+      workspacePath: Path,
+      deleteBranch: boolean
+    ) => Promise<void>;
+  };
+  removed: boolean;
+} {
+  const result = { removed: false };
+  return {
+    globalProvider: {
+      removeWorkspace: async () => {
+        if (opts?.removeError) {
+          throw new Error(opts.removeError);
+        }
+        result.removed = true;
+      },
+    },
+    get removed() {
+      return result.removed;
+    },
+  };
+}
+
 function createTestAppState(initial?: Partial<TestAppState>): {
   appState: AppState;
   state: TestAppState;
@@ -154,11 +180,6 @@ function createTestAppState(initial?: Partial<TestAppState>): {
       }
       return undefined;
     }),
-    getWorkspaceProvider: vi.fn().mockImplementation(() => ({
-      removeWorkspace: vi.fn().mockImplementation(async () => {
-        state.worktreeRemoved = true;
-      }),
-    })),
     getServerManager: vi.fn().mockReturnValue({
       stopServer: vi.fn().mockImplementation(async () => {
         state.serverStopped = true;
@@ -262,6 +283,7 @@ interface TestHarness {
   destroyedViews: string[];
   emittedEvents: Array<{ event: string; payload: unknown }>;
   inProgressDeletions: Set<string>;
+  globalProviderState: { removed: boolean };
 }
 
 function createTestHarness(options?: {
@@ -294,12 +316,10 @@ function createTestHarness(options?: {
     });
   }
 
-  // Override worktree provider if error requested
-  if (options?.worktreeRemoveError) {
-    (appState.getWorkspaceProvider as ReturnType<typeof vi.fn>).mockReturnValue({
-      removeWorkspace: vi.fn().mockRejectedValue(new Error(options.worktreeRemoveError)),
-    });
-  }
+  // Create global provider (with optional remove error)
+  const globalProviderMock = createMockGlobalProvider(
+    options?.worktreeRemoveError ? { removeError: options.worktreeRemoveError } : undefined
+  );
 
   const { viewManager, activeWorkspace, destroyedViews } = createTestViewManager(
     options?.activeWorkspacePath ?? WORKSPACE_PATH
@@ -524,13 +544,12 @@ function createTestHarness(options?: {
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
-              const provider = appState.getWorkspaceProvider(payload.projectPath);
-              if (provider) {
-                await provider.removeWorkspace(
-                  new Path(payload.workspacePath),
-                  !payload.keepBranch
-                );
-              }
+              await globalProviderMock.globalProvider.removeWorkspace(
+                new Path(payload.projectPath),
+                new Path(payload.workspacePath),
+                !payload.keepBranch
+              );
+              testState.worktreeRemoved = true;
               return {};
             } catch (error) {
               if (payload.force) {
@@ -678,6 +697,7 @@ function createTestHarness(options?: {
     destroyedViews,
     emittedEvents,
     inProgressDeletions,
+    globalProviderState: globalProviderMock,
   };
 }
 

@@ -26,11 +26,8 @@ import { SimpleGitClient } from "./git/simple-git-client";
 export { SimpleGitClient };
 
 // Workspace provider
-export type { IWorkspaceProvider } from "./git/workspace-provider";
 import { GitWorktreeProvider } from "./git/git-worktree-provider";
 export { GitWorktreeProvider };
-import { ProjectScopedWorkspaceProvider } from "./git/project-scoped-provider";
-export { ProjectScopedWorkspaceProvider };
 
 // Code server
 export type { InstanceState, CodeServerConfig } from "./code-server/types";
@@ -166,11 +163,8 @@ export type {
 } from "./logging";
 
 /**
- * Factory function to create a ProjectScopedWorkspaceProvider with a SimpleGitClient.
- * Creates a standalone global GitWorktreeProvider internally.
- *
- * For production use where a shared global provider is needed, use
- * `new GitWorktreeProvider(gitClient, fs, logger)` + `new ProjectScopedWorkspaceProvider(...)` directly.
+ * Factory function to create a GitWorktreeProvider with a SimpleGitClient.
+ * Validates the repository and registers the project.
  *
  * @param projectRoot Absolute path to the git repository (Path)
  * @param workspacesDir Directory where worktrees will be created. Callers must obtain this
@@ -178,7 +172,7 @@ export type {
  * @param fileSystemLayer FileSystemLayer for cleanup operations
  * @param gitLogger Logger for git client operations (typically "git")
  * @param worktreeLogger Logger for worktree provider operations (typically "worktree")
- * @returns Promise resolving to an IWorkspaceProvider
+ * @returns Promise resolving to a GitWorktreeProvider with the project registered
  * @throws WorkspaceError if path is invalid or not a git repository
  */
 export async function createGitWorktreeProvider(
@@ -187,12 +181,13 @@ export async function createGitWorktreeProvider(
   fileSystemLayer: import("./platform/filesystem").FileSystemLayer,
   gitLogger: import("./logging").Logger,
   worktreeLogger: import("./logging").Logger
-): Promise<ProjectScopedWorkspaceProvider> {
+): Promise<GitWorktreeProvider> {
   const gitClient = new SimpleGitClient(gitLogger);
-  const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, worktreeLogger);
+  const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, worktreeLogger);
 
   // Validate it's a git repository root
-  await globalProvider.validateRepository(projectRoot);
+  await provider.validateRepository(projectRoot);
+  provider.registerProject(projectRoot, workspacesDir);
 
-  return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir);
+  return provider;
 }

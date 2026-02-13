@@ -27,13 +27,6 @@ function createMockAppState(overrides: Partial<AppState> = {}): AppState {
   return {
     getProject: vi.fn(),
     getAllProjects: vi.fn().mockResolvedValue([]),
-    getWorkspaceProvider: vi.fn().mockReturnValue({
-      listBases: vi.fn().mockResolvedValue([]),
-      updateBases: vi.fn().mockResolvedValue(undefined),
-      isDirty: vi.fn().mockResolvedValue(false),
-      setMetadata: vi.fn().mockResolvedValue(undefined),
-      getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
-    }),
     findProjectForWorkspace: vi.fn(),
     registerWorkspace: vi.fn(),
     unregisterWorkspace: vi.fn(),
@@ -88,6 +81,10 @@ function createMockDeps(overrides: Partial<CoreModuleDeps> = {}): CoreModuleDeps
       getProjectConfig: vi.fn().mockResolvedValue(undefined),
       deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
     } as unknown as import("../../../services").ProjectStore,
+    globalProvider: {
+      listBases: vi.fn().mockResolvedValue([]),
+      updateBases: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../../../services/git/git-worktree-provider").GitWorktreeProvider,
     logger: createMockLogger(),
   };
   return { ...defaults, ...overrides };

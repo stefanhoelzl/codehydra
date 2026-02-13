@@ -427,7 +427,8 @@ async function createServicesAndWireDispatcher(): Promise<void> {
     loggingService,
     selectedAgentType,
     workspaceFileService,
-    pathProvider.claudeCodeWrapperPath.toString()
+    pathProvider.claudeCodeWrapperPath.toString(),
+    globalWorktreeProvider
   );
 
   // Create agent services
@@ -727,12 +728,17 @@ async function bootstrap(): Promise<void> {
           }
         : undefined;
 
+      if (!globalWorktreeProvider) {
+        throw new Error("Global worktree provider not initialized");
+      }
+
       return {
         appState,
         viewManager,
         gitClient,
         pathProvider,
         projectStore,
+        globalProvider: globalWorktreeProvider,
         ...(dialog ? { dialog } : {}),
         ...(pluginServer ? { pluginServer } : {}),
         logger: loggingService.createLogger("api"),

@@ -27,36 +27,7 @@ import { generateProjectId } from "../shared/api/id-utils";
 
 const WORKSPACES_DIR = "/test/workspaces";
 
-// Mock workspace provider
-const { mockProjectStore, mockWorkspaceProvider } = vi.hoisted(() => {
-  const mockProvider = {
-    projectRoot: "/project",
-    discover: vi.fn(() =>
-      Promise.resolve([
-        { name: "feature-1", path: "/project/.worktrees/feature-1", branch: "feature-1" },
-      ])
-    ),
-    isMainWorkspace: vi.fn(() => false),
-    createWorkspace: vi.fn((name: string) =>
-      Promise.resolve({
-        name,
-        path: `/project/.worktrees/${name}`,
-        branch: name,
-      })
-    ),
-    removeWorkspace: vi.fn(() => Promise.resolve({ workspaceRemoved: true, baseDeleted: false })),
-    listBases: vi.fn(() =>
-      Promise.resolve([
-        { name: "main", isRemote: false },
-        { name: "origin/main", isRemote: true },
-      ])
-    ),
-    updateBases: vi.fn(() => Promise.resolve({ fetchedRemotes: ["origin"], failedRemotes: [] })),
-    isDirty: vi.fn(() => Promise.resolve(false)),
-    cleanupOrphanedWorkspaces: vi.fn(() => Promise.resolve({ removedCount: 0, failedPaths: [] })),
-    defaultBase: vi.fn(() => Promise.resolve("main")),
-  };
-
+const { mockProjectStore, mockGlobalProvider } = vi.hoisted(() => {
   const mockStore = {
     saveProject: vi.fn(() => Promise.resolve()),
     removeProject: vi.fn(() => Promise.resolve()),
@@ -64,9 +35,13 @@ const { mockProjectStore, mockWorkspaceProvider } = vi.hoisted(() => {
     getProjectConfig: vi.fn(() => Promise.resolve(undefined)),
   };
 
+  const mockProvider = {
+    defaultBase: vi.fn(() => Promise.resolve("main")),
+  };
+
   return {
     mockProjectStore: mockStore,
-    mockWorkspaceProvider: mockProvider,
+    mockGlobalProvider: mockProvider,
   };
 });
 
@@ -123,7 +98,6 @@ function registerTestProject(
       branch: w.branch,
       metadata: {},
     })),
-    provider: mockWorkspaceProvider as never,
   });
 }
 
@@ -159,7 +133,8 @@ describe("AppState Integration", () => {
       mockLoggingService,
       "claude",
       mockWorkspaceFileService,
-      MOCK_WRAPPER_PATH
+      MOCK_WRAPPER_PATH,
+      mockGlobalProvider as never
     );
   });
 

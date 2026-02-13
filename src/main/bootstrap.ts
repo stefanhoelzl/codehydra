@@ -216,7 +216,7 @@ import type { Intent, DomainEvent } from "./intents/infrastructure/types";
 import type { AppState } from "./app-state";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
-import type { IWorkspaceFileService, IWorkspaceProvider } from "../services";
+import type { IWorkspaceFileService } from "../services";
 import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-handler";
 import type { DeletionProgressCallback } from "./operations/delete-workspace";
 import { getErrorMessage } from "../shared/error-utils";
@@ -234,7 +234,6 @@ import {
   generateProjectIdFromUrl,
   extractRepoName,
 } from "../services/project/url-utils";
-import { ProjectScopedWorkspaceProvider } from "../services/git/project-scoped-provider";
 
 // =============================================================================
 // Constants
@@ -1212,9 +1211,8 @@ function wireDispatcher(
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
-            const { projectPath, workspace } = await resolveWorkspace(intent.payload, appState);
-            const provider = appState.getWorkspaceProvider(projectPath);
-            const isDirty = provider ? await provider.isDirty(new Path(workspace.path)) : false;
+            const { workspace } = await resolveWorkspace(intent.payload, appState);
+            const isDirty = await globalProvider.isDirty(new Path(workspace.path));
             return { isDirty };
           },
         },
@@ -1340,12 +1338,8 @@ function wireDispatcher(
               throw new Error(`Project not found: ${intent.payload.projectId}`);
             }
 
-            const provider = appState.getWorkspaceProvider(projectPath);
-            if (!provider) {
-              throw new Error(`No workspace provider for project: ${intent.payload.projectId}`);
-            }
-
-            const internalWorkspace: InternalWorkspace = await provider.createWorkspace(
+            const internalWorkspace: InternalWorkspace = await globalProvider.createWorkspace(
+              new Path(projectPath),
               intent.payload.name,
               intent.payload.base
             );
@@ -1667,13 +1661,11 @@ function wireDispatcher(
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
-              const provider = appState.getWorkspaceProvider(payload.projectPath);
-              if (provider) {
-                await provider.removeWorkspace(
-                  new Path(payload.workspacePath),
-                  !payload.keepBranch
-                );
-              }
+              await globalProvider.removeWorkspace(
+                new Path(payload.projectPath),
+                new Path(payload.workspacePath),
+                !payload.keepBranch
+              );
               return {};
             } catch (error) {
               if (payload.force) {
@@ -1887,24 +1879,18 @@ function wireDispatcher(
             const { projectPath } = ctx as DiscoverHookInput;
             const projectPathObj = new Path(projectPath);
             const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
-            const provider: IWorkspaceProvider = new ProjectScopedWorkspaceProvider(
-              globalProvider,
-              projectPathObj,
-              workspacesDir
-            );
+            globalProvider.registerProject(projectPathObj, workspacesDir);
 
-            const workspaces = await provider.discover();
+            const workspaces = await globalProvider.discover(projectPathObj);
 
             // Fire-and-forget cleanup
-            if (provider.cleanupOrphanedWorkspaces) {
-              void provider.cleanupOrphanedWorkspaces().catch((err: unknown) => {
-                logger.error(
-                  "Workspace cleanup failed",
-                  { projectPath },
-                  err instanceof Error ? err : undefined
-                );
-              });
-            }
+            void globalProvider.cleanupOrphanedWorkspaces(projectPathObj).catch((err: unknown) => {
+              logger.error(
+                "Workspace cleanup failed",
+                { projectPath },
+                err instanceof Error ? err : undefined
+              );
+            });
 
             return { workspaces };
           },
@@ -1933,21 +1919,12 @@ function wireDispatcher(
               remoteUrl = projectConfig.remoteUrl;
             }
 
-            // Create provider for AppState registration
-            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPath);
-            const provider: IWorkspaceProvider = new ProjectScopedWorkspaceProvider(
-              globalProvider,
-              projectPath,
-              workspacesDir
-            );
-
             // Register in AppState
             appState.registerProject({
               id: projectId,
               name: projectPath.basename,
               path: projectPath,
               workspaces: [],
-              provider,
               ...(remoteUrl !== undefined && { remoteUrl }),
             });
 
@@ -2049,11 +2026,8 @@ function wireDispatcher(
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
             const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
-            // Dispose workspace provider
-            const provider = appState.getWorkspaceProvider(projectPath);
-            if (provider instanceof ProjectScopedWorkspaceProvider) {
-              provider.dispose();
-            }
+            // Unregister project from global provider
+            globalProvider.unregisterProject(new Path(projectPath));
 
             // If removeLocalRepo + remoteUrl: delete project directory
             if (removeLocalRepo && remoteUrl) {

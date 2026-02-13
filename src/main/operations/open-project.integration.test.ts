@@ -232,7 +232,6 @@ function createTestHarness(options?: {
           branch: string | null;
           metadata: Record<string, string>;
         }[];
-        provider: unknown;
         remoteUrl?: string;
       }) => {
         projectState.openProjectPaths.add(project.path.toString());
@@ -448,27 +447,11 @@ function createTestHarness(options?: {
               remoteUrl = config.remoteUrl;
             }
 
-            // Create mock provider for AppState registration
-            const mockProvider = {
-              projectRoot: projectPath,
-              discover: vi.fn(),
-              listBases: vi.fn(),
-              updateBases: vi.fn(),
-              createWorkspace: vi.fn(),
-              removeWorkspace: vi.fn(),
-              isDirty: vi.fn(),
-              defaultBase: vi.fn(),
-              cleanupOrphanedWorkspaces: vi
-                .fn()
-                .mockResolvedValue({ removedCount: 0, failedPaths: [] }),
-            } as unknown as import("../../services/git/workspace-provider").IWorkspaceProvider;
-
             appState.registerProject({
               id: projectId,
               name: projectPath.basename,
               path: projectPath,
               workspaces: [],
-              provider: mockProvider,
               ...(remoteUrl !== undefined && { remoteUrl }),
             });
 

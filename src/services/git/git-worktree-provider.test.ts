@@ -6,7 +6,6 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
-import { ProjectScopedWorkspaceProvider } from "./project-scoped-provider";
 import { WorkspaceError } from "../errors";
 import {
   createFileSystemMock,
@@ -46,8 +45,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      expect(provider).toBeInstanceOf(ProjectScopedWorkspaceProvider);
-      expect(provider.projectRoot.toString()).toBe(PROJECT_ROOT.toString());
+      expect(provider).toBeInstanceOf(GitWorktreeProvider);
     });
 
     it("throws error for relative project path (Path constructor rejects)", () => {
@@ -104,7 +102,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(0);
     });
@@ -133,7 +131,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.name).toBe("feature-branch");
@@ -163,7 +161,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.branch).toBeNull();
@@ -190,7 +188,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(2);
     });
@@ -221,7 +219,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should not throw and should handle gracefully
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       // Should include valid worktrees
       expect(Array.isArray(workspaces)).toBe(true);
@@ -251,7 +249,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.metadata.base).toBe("develop");
@@ -278,7 +276,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.metadata.base).toBe("feature-x");
@@ -308,7 +306,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.metadata.base).toBe("detached-workspace");
@@ -339,7 +337,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       // Should fall back to branch name
@@ -374,7 +372,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(3);
 
@@ -407,7 +405,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       expect(bases).toHaveLength(3);
       expect(bases.find((b) => b.name === "main" && !b.isRemote)).toBeDefined();
@@ -432,7 +430,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const featureX = bases.find((b) => b.name === "feature-x");
       expect(featureX?.derives).toBe("feature-x");
@@ -458,7 +456,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const featureX = bases.find((b) => b.name === "feature-x");
       expect(featureX?.derives).toBeUndefined();
@@ -482,7 +480,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const remote = bases.find((b) => b.name === "origin/feature-payments");
       expect(remote?.derives).toBe("feature-payments");
@@ -506,7 +504,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const remote = bases.find((b) => b.name === "origin/feature-payments");
       expect(remote?.derives).toBeUndefined();
@@ -530,7 +528,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const originBranch = bases.find((b) => b.name === "origin/feature-x");
       const upstreamBranch = bases.find((b) => b.name === "upstream/feature-x");
@@ -560,7 +558,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const featureX = bases.find((b) => b.name === "feature-x");
       expect(featureX?.base).toBe("develop");
@@ -585,7 +583,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const featureX = bases.find((b) => b.name === "feature-x" && !b.isRemote);
       expect(featureX?.base).toBe("origin/feature-x");
@@ -609,7 +607,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const featureX = bases.find((b) => b.name === "feature-x");
       expect(featureX?.base).toBeUndefined();
@@ -633,7 +631,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const remote = bases.find((b) => b.name === "origin/feature-x");
       expect(remote?.base).toBe("origin/feature-x");
@@ -657,7 +655,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
 
       const remote = bases.find((b) => b.name === "origin/feature/login");
       expect(remote?.derives).toBe("feature/login");
@@ -683,7 +681,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.updateBases();
+      const result = await provider.updateBases(PROJECT_ROOT);
 
       expect(result.fetchedRemotes).toContain("origin");
       expect(result.failedRemotes).toHaveLength(0);
@@ -716,7 +714,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.updateBases();
+      const result = await provider.updateBases(PROJECT_ROOT);
 
       expect(result.fetchedRemotes).toContain("origin");
       expect(result.failedRemotes).toHaveLength(1);
@@ -742,7 +740,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.updateBases();
+      const result = await provider.updateBases(PROJECT_ROOT);
 
       expect(result.fetchedRemotes).toHaveLength(0);
       expect(result.failedRemotes).toHaveLength(0);
@@ -787,10 +785,10 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Act: Call updateBases which triggers fetch with prune
-      await provider.updateBases();
+      await provider.updateBases(PROJECT_ROOT);
 
       // Assert: listBases should no longer return the stale branch
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(PROJECT_ROOT);
       expect(bases.find((b) => b.name === "origin/stale-feature")).toBeUndefined();
       // origin/main should still exist
       expect(bases.find((b) => b.name === "origin/main")).toBeDefined();
@@ -815,7 +813,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspace = await provider.createWorkspace("feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       expect(workspace.name).toBe("feature-x");
       expect(workspace.branch).toBe("feature-x");
@@ -840,7 +838,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspace = await provider.createWorkspace("user/feature", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "user/feature", "main");
 
       // The directory name should have sanitized slashes
       expect(workspace.name).toBe("user/feature");
@@ -868,7 +866,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      await expect(provider.createWorkspace("feature-x", "main")).rejects.toThrow();
+      await expect(provider.createWorkspace(PROJECT_ROOT, "feature-x", "main")).rejects.toThrow();
 
       // Branch should have been rolled back (deleted)
       expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
@@ -894,7 +892,9 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      await expect(provider.createWorkspace("feature-x", "main")).rejects.toThrow(WorkspaceError);
+      await expect(provider.createWorkspace(PROJECT_ROOT, "feature-x", "main")).rejects.toThrow(
+        WorkspaceError
+      );
     });
 
     it("creates workspace using existing branch when baseBranch matches branch name", async () => {
@@ -914,7 +914,11 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspace = await provider.createWorkspace("existing-branch", "existing-branch");
+      const workspace = await provider.createWorkspace(
+        PROJECT_ROOT,
+        "existing-branch",
+        "existing-branch"
+      );
 
       expect(workspace.name).toBe("existing-branch");
       expect(workspace.branch).toBe("existing-branch");
@@ -942,7 +946,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should succeed even though baseBranch differs from branch name
-      const workspace = await provider.createWorkspace("existing-branch", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "existing-branch", "main");
 
       expect(workspace.name).toBe("existing-branch");
       expect(workspace.branch).toBe("existing-branch");
@@ -975,10 +979,10 @@ describe("GitWorktreeProvider", () => {
       );
 
       await expect(
-        provider.createWorkspace("checked-out-branch", "checked-out-branch")
+        provider.createWorkspace(PROJECT_ROOT, "checked-out-branch", "checked-out-branch")
       ).rejects.toThrow(WorkspaceError);
       await expect(
-        provider.createWorkspace("checked-out-branch", "checked-out-branch")
+        provider.createWorkspace(PROJECT_ROOT, "checked-out-branch", "checked-out-branch")
       ).rejects.toThrow(/already checked out.*\/data\/workspaces\/existing-workspace/);
     });
 
@@ -999,8 +1003,10 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      await expect(provider.createWorkspace("main", "main")).rejects.toThrow(WorkspaceError);
-      await expect(provider.createWorkspace("main", "main")).rejects.toThrow(
+      await expect(provider.createWorkspace(PROJECT_ROOT, "main", "main")).rejects.toThrow(
+        WorkspaceError
+      );
+      await expect(provider.createWorkspace(PROJECT_ROOT, "main", "main")).rejects.toThrow(
         /already checked out.*\/home\/user\/projects\/my-repo/
       );
     });
@@ -1026,7 +1032,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       await expect(
-        provider.createWorkspace("existing-branch", "existing-branch")
+        provider.createWorkspace(PROJECT_ROOT, "existing-branch", "existing-branch")
       ).rejects.toThrow();
 
       // Branch should NOT be deleted (it was pre-existing)
@@ -1052,7 +1058,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should create new local branch even though remote exists
-      const workspace = await provider.createWorkspace("origin/feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "origin/feature-x", "main");
 
       expect(workspace.name).toBe("origin/feature-x");
       expect(mockClient).toHaveBranch(PROJECT_ROOT, "origin/feature-x");
@@ -1075,7 +1081,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      await provider.createWorkspace("feature-x", "main");
+      await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       // Behavioral assertion: config should be set
       expect(mockClient).toHaveBranchConfig(PROJECT_ROOT, "feature-x", "codehydra.base", "main");
@@ -1102,7 +1108,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should NOT throw - workspace is created successfully
-      const workspace = await provider.createWorkspace("feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       expect(workspace.name).toBe("feature-x");
     });
@@ -1124,7 +1130,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspace = await provider.createWorkspace("feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       expect(workspace.metadata.base).toBe("main");
     });
@@ -1150,7 +1156,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.removeWorkspace(worktreePath, false);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(false);
@@ -1189,7 +1195,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should throw because worktree removal failed
-      await expect(provider.removeWorkspace(worktreePath, true)).rejects.toThrow(
+      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
         "Permission denied: files locked"
       );
 
@@ -1225,7 +1231,9 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should throw worktree error after branch is deleted
-      await expect(provider.removeWorkspace(worktreePath, true)).rejects.toThrow("Removal failed");
+      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
+        "Removal failed"
+      );
       // Branch should still be deleted
       expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
@@ -1253,7 +1261,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should throw branch error since worktree succeeded
-      await expect(provider.removeWorkspace(worktreePath, true)).rejects.toThrow(
+      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
         "Branch deletion failed"
       );
     });
@@ -1282,7 +1290,9 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should throw worktree error (takes precedence)
-      await expect(provider.removeWorkspace(worktreePath, true)).rejects.toThrow("Worktree error");
+      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
+        "Worktree error"
+      );
     });
 
     it("removes workspace and deletes branch when requested", async () => {
@@ -1304,7 +1314,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.removeWorkspace(worktreePath, true);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(true);
@@ -1328,7 +1338,9 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      await expect(provider.removeWorkspace(PROJECT_ROOT, false)).rejects.toThrow(WorkspaceError);
+      await expect(provider.removeWorkspace(PROJECT_ROOT, PROJECT_ROOT, false)).rejects.toThrow(
+        WorkspaceError
+      );
     });
 
     it("handles detached HEAD workspace (no branch to delete)", async () => {
@@ -1350,7 +1362,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.removeWorkspace(worktreePath, true);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(false);
@@ -1378,7 +1390,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should NOT throw - returns success (worktree already gone)
-      const result = await provider.removeWorkspace(worktreePath, false);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
 
       expect(result.workspaceRemoved).toBe(true);
     });
@@ -1405,7 +1417,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.removeWorkspace(worktreePath, true);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(true);
@@ -1434,12 +1446,12 @@ describe("GitWorktreeProvider", () => {
       );
 
       // First call - actually removes
-      const result1 = await provider.removeWorkspace(worktreePath, true);
+      const result1 = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
       expect(result1.workspaceRemoved).toBe(true);
       expect(result1.baseDeleted).toBe(true);
 
       // Second call - idempotent, returns success without operations
-      const result2 = await provider.removeWorkspace(worktreePath, true);
+      const result2 = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
       expect(result2.workspaceRemoved).toBe(true);
       expect(result2.baseDeleted).toBe(true); // Branch already deleted, treat as success
     });
@@ -1548,7 +1560,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const isMain = provider.isMainWorkspace(PROJECT_ROOT);
+      const isMain = provider.isMainWorkspace(PROJECT_ROOT, PROJECT_ROOT);
 
       expect(isMain).toBe(true);
     });
@@ -1570,7 +1582,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const isMain = provider.isMainWorkspace(new Path("/data/workspaces/feature-x"));
+      const isMain = provider.isMainWorkspace(PROJECT_ROOT, new Path("/data/workspaces/feature-x"));
 
       expect(isMain).toBe(false);
     });
@@ -1594,7 +1606,7 @@ describe("GitWorktreeProvider", () => {
 
       // Path with trailing slash normalizes to same value - Path handles this automatically
       const pathWithTrailingSlash = new Path(PROJECT_ROOT.toString() + "/");
-      const isMain = provider.isMainWorkspace(pathWithTrailingSlash);
+      const isMain = provider.isMainWorkspace(PROJECT_ROOT, pathWithTrailingSlash);
 
       expect(isMain).toBe(true);
     });
@@ -1623,7 +1635,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should match despite trailing slash in input
-      const result = await provider.removeWorkspace(worktreePath, false);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
 
       expect(result.workspaceRemoved).toBe(true);
     });
@@ -1651,7 +1663,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should match despite ./ in path
-      const result = await provider.removeWorkspace(worktreePath, false);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
 
       expect(result.workspaceRemoved).toBe(true);
     });
@@ -1679,7 +1691,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should find the branch name even though stored path has trailing slash
-      const result = await provider.removeWorkspace(worktreePath, true);
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
       expect(result.workspaceRemoved).toBe(true);
       // Should have found the branch to delete
@@ -1706,7 +1718,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.defaultBase();
+      const result = await provider.defaultBase(PROJECT_ROOT);
 
       expect(result).toBe("origin/main");
     });
@@ -1728,7 +1740,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.defaultBase();
+      const result = await provider.defaultBase(PROJECT_ROOT);
 
       expect(result).toBe("main");
     });
@@ -1751,7 +1763,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.defaultBase();
+      const result = await provider.defaultBase(PROJECT_ROOT);
 
       expect(result).toBe("origin/master");
     });
@@ -1773,7 +1785,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.defaultBase();
+      const result = await provider.defaultBase(PROJECT_ROOT);
 
       expect(result).toBe("master");
     });
@@ -1796,7 +1808,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.defaultBase();
+      const result = await provider.defaultBase(PROJECT_ROOT);
 
       expect(result).toBe("origin/main");
     });
@@ -1818,7 +1830,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.defaultBase();
+      const result = await provider.defaultBase(PROJECT_ROOT);
 
       expect(result).toBeUndefined();
     });
@@ -1843,7 +1855,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.defaultBase();
+      const result = await provider.defaultBase(PROJECT_ROOT);
 
       expect(result).toBeUndefined();
     });
@@ -1882,7 +1894,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(1);
       expect(result.failedPaths).toHaveLength(0);
@@ -1922,7 +1934,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(spyFs.rm).not.toHaveBeenCalled();
@@ -1951,7 +1963,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(spyFs.rm).not.toHaveBeenCalled();
@@ -1980,7 +1992,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(spyFs.rm).not.toHaveBeenCalled();
@@ -2011,7 +2023,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(spyFs.rm).not.toHaveBeenCalled();
@@ -2060,7 +2072,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       // Should not delete because it's now registered
       expect(result.removedCount).toBe(0);
@@ -2091,7 +2103,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(2);
       expect(result.failedPaths).toHaveLength(0);
@@ -2127,7 +2139,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should NOT throw
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(result.failedPaths).toHaveLength(1);
@@ -2155,7 +2167,7 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Should NOT throw
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(result.failedPaths).toHaveLength(0);
@@ -2180,7 +2192,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(result.failedPaths).toHaveLength(0);
@@ -2209,7 +2221,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       expect(result.removedCount).toBe(0);
       expect(result.failedPaths).toHaveLength(0);
@@ -2246,7 +2258,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const result = await provider.cleanupOrphanedWorkspaces();
+      const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       // Should NOT delete because it matches registered worktree
       expect(result.removedCount).toBe(0);
@@ -2298,13 +2310,13 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Start first cleanup (will hang on listWorktrees)
-      const firstCleanup = provider.cleanupOrphanedWorkspaces();
+      const firstCleanup = provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
       // Give a moment for the first cleanup to start
       await delay(10);
 
       // Start second cleanup while first is in progress
-      const secondCleanup = provider.cleanupOrphanedWorkspaces();
+      const secondCleanup = provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
       const secondResult = await secondCleanup;
 
       // Second cleanup should return immediately with empty result
@@ -2341,7 +2353,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.metadata.base).toBe("develop");
@@ -2368,7 +2380,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.metadata.base).toBe("feature-x"); // Falls back to branch
@@ -2398,7 +2410,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.metadata.base).toBe("detached-workspace"); // Falls back to name
@@ -2431,7 +2443,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]!.metadata).toEqual({
@@ -2460,7 +2472,7 @@ describe("GitWorktreeProvider", () => {
         mockLogger
       );
 
-      const workspace = await provider.createWorkspace("feature-x", "main");
+      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       expect(workspace.metadata).toEqual({ base: "main" });
     });
@@ -2517,6 +2529,7 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         mockLogger
       );
+      await provider.discover(PROJECT_ROOT);
 
       await provider.setMetadata(worktreePath, "note", "WIP feature");
 
@@ -2550,6 +2563,7 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         mockLogger
       );
+      await provider.discover(PROJECT_ROOT);
 
       await provider.setMetadata(worktreePath, "note", null);
 
@@ -2584,6 +2598,7 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         mockLogger
       );
+      await provider.discover(PROJECT_ROOT);
 
       const metadata = await provider.getMetadata(worktreePath);
 
@@ -2616,6 +2631,7 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         mockLogger
       );
+      await provider.discover(PROJECT_ROOT);
 
       const metadata = await provider.getMetadata(worktreePath);
 

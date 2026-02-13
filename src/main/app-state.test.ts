@@ -25,37 +25,8 @@ let mockLoggingService: MockLoggingService;
 const MOCK_WRAPPER_PATH = "/mock/bin/claude";
 
 // Mock services
-const { mockProjectStore, mockWorkspaceProvider, mockViewManager, mockWorkspaceFileService } =
+const { mockProjectStore, mockViewManager, mockWorkspaceFileService, mockGlobalProvider } =
   vi.hoisted(() => {
-    const mockProvider: {
-      discover: ReturnType<typeof vi.fn>;
-      createWorkspace: ReturnType<typeof vi.fn>;
-      removeWorkspace: ReturnType<typeof vi.fn>;
-      listBases: ReturnType<typeof vi.fn>;
-      updateBases: ReturnType<typeof vi.fn>;
-      isDirty: ReturnType<typeof vi.fn>;
-      projectRoot: string;
-      isMainWorkspace: ReturnType<typeof vi.fn>;
-      cleanupOrphanedWorkspaces: ReturnType<typeof vi.fn>;
-      defaultBase: ReturnType<typeof vi.fn>;
-    } = {
-      projectRoot: "/project",
-      discover: vi.fn(),
-      isMainWorkspace: vi.fn(() => false),
-      createWorkspace: vi.fn(),
-      removeWorkspace: vi.fn(() => Promise.resolve({ workspaceRemoved: true, baseDeleted: false })),
-      listBases: vi.fn(() =>
-        Promise.resolve([
-          { name: "main", isRemote: false },
-          { name: "origin/main", isRemote: true },
-        ])
-      ),
-      updateBases: vi.fn(() => Promise.resolve({ fetchedRemotes: ["origin"], failedRemotes: [] })),
-      isDirty: vi.fn(() => Promise.resolve(false)),
-      cleanupOrphanedWorkspaces: vi.fn(() => Promise.resolve({ removedCount: 0, failedPaths: [] })),
-      defaultBase: vi.fn(() => Promise.resolve("main")),
-    };
-
     const mockStore = {
       saveProject: vi.fn(() => Promise.resolve()),
       removeProject: vi.fn(() => Promise.resolve()),
@@ -95,11 +66,16 @@ const { mockProjectStore, mockWorkspaceProvider, mockViewManager, mockWorkspaceF
       deleteWorkspaceFile: vi.fn(),
     };
 
+    // Mock GitWorktreeProvider (global provider)
+    const mockProvider = {
+      defaultBase: vi.fn(() => Promise.resolve("main")),
+    };
+
     return {
       mockProjectStore: mockStore,
-      mockWorkspaceProvider: mockProvider,
       mockViewManager: mockView,
       mockWorkspaceFileService: mockWsFileService,
+      mockGlobalProvider: mockProvider,
     };
   });
 
@@ -129,7 +105,6 @@ function registerTestProject(
       branch: w.branch,
       metadata: {},
     })),
-    provider: mockWorkspaceProvider as never,
   });
 }
 
@@ -156,7 +131,8 @@ describe("AppState", () => {
       mockLoggingService,
       "claude",
       mockWorkspaceFileService,
-      MOCK_WRAPPER_PATH
+      MOCK_WRAPPER_PATH,
+      mockGlobalProvider as never
     );
   });
 
@@ -190,19 +166,6 @@ describe("AppState", () => {
 
       expect(projects).toHaveLength(1);
       expect(projects[0]?.path).toBe("/project");
-    });
-  });
-
-  describe("getWorkspaceProvider", () => {
-    it("returns cached provider for registered project", () => {
-      registerTestProject(appState, "/project");
-      const provider = appState.getWorkspaceProvider("/project");
-
-      expect(provider).toBe(mockWorkspaceProvider);
-    });
-
-    it("returns undefined for non-existent project", () => {
-      expect(appState.getWorkspaceProvider("/nonexistent")).toBeUndefined();
     });
   });
 
@@ -297,13 +260,13 @@ describe("AppState", () => {
       expect(result).toBe("develop");
     });
 
-    it("falls back to provider.defaultBase() when not set", async () => {
-      mockWorkspaceProvider.defaultBase.mockResolvedValueOnce("main");
+    it("falls back to globalProvider.defaultBase() when not set", async () => {
+      mockGlobalProvider.defaultBase.mockResolvedValueOnce("main");
       registerTestProject(appState, "/project");
 
       const result = await appState.getDefaultBaseBranch("/project");
       expect(result).toBe("main");
-      expect(mockWorkspaceProvider.defaultBase).toHaveBeenCalled();
+      expect(mockGlobalProvider.defaultBase).toHaveBeenCalledWith(new Path("/project"));
     });
 
     it("returns undefined when provider not found", async () => {
@@ -317,7 +280,7 @@ describe("AppState", () => {
       appState.setLastBaseBranch("/project", "main");
 
       // Now make defaultBase throw - but it won't be called because cache hit
-      mockWorkspaceProvider.defaultBase.mockRejectedValueOnce(new Error("Git error"));
+      mockGlobalProvider.defaultBase.mockRejectedValueOnce(new Error("Git error"));
 
       const result = await appState.getDefaultBaseBranch("/project");
       // Returns cached value, provider is not called
@@ -327,7 +290,7 @@ describe("AppState", () => {
 
   describe("getAllProjects with defaultBaseBranch", () => {
     it("includes current defaultBaseBranch for each project", async () => {
-      mockWorkspaceProvider.defaultBase.mockResolvedValue("main");
+      mockGlobalProvider.defaultBase.mockResolvedValue("main");
       registerTestProject(appState, "/project");
       appState.setLastBaseBranch("/project", "feature-x");
 
@@ -370,7 +333,8 @@ describe("AppState", () => {
         mockLoggingService,
         "opencode",
         mockWorkspaceFileService,
-        MOCK_WRAPPER_PATH
+        MOCK_WRAPPER_PATH,
+        mockGlobalProvider as never
       );
 
       expect(opcAppState.getAgentType()).toBe("opencode");

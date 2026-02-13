@@ -5,12 +5,10 @@
  * registries. Methods that previously used a bound projectRoot now accept it as a parameter.
  * Metadata methods resolve projectRoot from the workspace registry automatically.
  *
- * Use ProjectScopedWorkspaceProvider as an adapter to get back the IWorkspaceProvider interface
- * for backwards compatibility with existing call sites.
+ * All consumers call methods on this provider directly, passing projectRoot per call.
  */
 
 import type { IGitClient } from "./git-client";
-import { ProjectScopedWorkspaceProvider } from "./project-scoped-provider";
 import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspace } from "./types";
 import { WorkspaceError, getErrorMessage } from "../errors";
 import { sanitizeWorkspaceName } from "../platform/paths";
@@ -34,8 +32,6 @@ interface ProjectRegistration {
  * - Project registry: Maps projectRoot -> { workspacesDir }
  * - Workspace registry: Maps workspacePath -> projectRoot (for metadata resolution)
  *
- * Does NOT implement IWorkspaceProvider directly. Use ProjectScopedWorkspaceProvider
- * as an adapter for backwards compatibility.
  *
  * All paths are handled using the Path class for normalized, cross-platform handling.
  */
@@ -88,19 +84,15 @@ export class GitWorktreeProvider {
   }
 
   /**
-   * Factory method for backwards compatibility with existing tests and call sites.
-   * Creates a standalone global provider, validates the repository, registers the project,
-   * and returns a ProjectScopedWorkspaceProvider adapter implementing IWorkspaceProvider.
-   *
-   * For production use where a shared global provider is needed, construct
-   * GitWorktreeProvider + ProjectScopedWorkspaceProvider directly.
+   * Factory method that creates a standalone provider, validates the repository,
+   * and registers the project.
    *
    * @param projectRoot Absolute path to the git repository
    * @param gitClient Git client to use for operations
    * @param workspacesDir Directory where worktrees will be created
    * @param fileSystemLayer FileSystemLayer for cleanup operations
    * @param logger Logger for worktree operations
-   * @returns Promise resolving to a ProjectScopedWorkspaceProvider (implements IWorkspaceProvider)
+   * @returns Promise resolving to a GitWorktreeProvider with the project registered
    * @throws WorkspaceError if path is invalid or not a git repository
    */
   static async create(
@@ -109,11 +101,12 @@ export class GitWorktreeProvider {
     workspacesDir: Path,
     fileSystemLayer: FileSystemLayer,
     logger: Logger
-  ): Promise<ProjectScopedWorkspaceProvider> {
-    const globalProvider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
-    await globalProvider.validateRepository(projectRoot);
+  ): Promise<GitWorktreeProvider> {
+    const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
+    await provider.validateRepository(projectRoot);
+    provider.registerProject(projectRoot, workspacesDir);
 
-    return new ProjectScopedWorkspaceProvider(globalProvider, projectRoot, workspacesDir);
+    return provider;
   }
 
   /**
@@ -179,9 +172,7 @@ export class GitWorktreeProvider {
 
   /**
    * Register a workspace in the workspace registry.
-   * Called internally when workspaces are discovered or created, and by
-   * ProjectScopedWorkspaceProvider to ensure workspace paths are registered
-   * before metadata operations.
+   * Called internally when workspaces are discovered or created.
    *
    * @param workspacePath Absolute path to the workspace
    * @param projectRoot Project root that owns this workspace

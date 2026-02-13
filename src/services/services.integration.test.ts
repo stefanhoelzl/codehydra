@@ -66,17 +66,19 @@ describe("Services Integration", () => {
         SILENT_LOGGER
       );
 
+      const projectRoot = new Path(repoPath);
+
       // 3. Discover workspaces (empty initially)
-      const initialWorkspaces = await provider.discover();
+      const initialWorkspaces = await provider.discover(projectRoot);
       expect(initialWorkspaces).toHaveLength(0);
 
       // 4. Create workspace from main branch
-      const workspace = await provider.createWorkspace("feature-test", "main");
+      const workspace = await provider.createWorkspace(projectRoot, "feature-test", "main");
       expect(workspace.name).toBe("feature-test");
       expect(workspace.branch).toBe("feature-test");
 
       // 5. Discover again (finds new workspace)
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(projectRoot);
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]?.name).toBe("feature-test");
 
@@ -85,11 +87,11 @@ describe("Services Integration", () => {
       expect(isDirty).toBe(false);
 
       // 7. Remove workspace
-      const result = await provider.removeWorkspace(workspace.path, true);
+      const result = await provider.removeWorkspace(projectRoot, workspace.path, true);
       expect(result.workspaceRemoved).toBe(true);
 
       // 8. Verify workspace is gone
-      const finalWorkspaces = await provider.discover();
+      const finalWorkspaces = await provider.discover(projectRoot);
       expect(finalWorkspaces).toHaveLength(0);
     }, 15000);
 
@@ -105,24 +107,26 @@ describe("Services Integration", () => {
         SILENT_LOGGER
       );
 
+      const projectRoot = new Path(repoPath);
+
       // Create multiple workspaces
-      const ws1 = await provider.createWorkspace("feature-1", "main");
-      const ws2 = await provider.createWorkspace("feature-2", "main");
+      const ws1 = await provider.createWorkspace(projectRoot, "feature-1", "main");
+      const ws2 = await provider.createWorkspace(projectRoot, "feature-2", "main");
 
       // Should find both
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(projectRoot);
       expect(workspaces).toHaveLength(2);
 
       // Remove one
-      await provider.removeWorkspace(ws1.path, true);
+      await provider.removeWorkspace(projectRoot, ws1.path, true);
 
       // Should find only one
-      const remaining = await provider.discover();
+      const remaining = await provider.discover(projectRoot);
       expect(remaining).toHaveLength(1);
       expect(remaining[0]?.name).toBe("feature-2");
 
       // Cleanup
-      await provider.removeWorkspace(ws2.path, true);
+      await provider.removeWorkspace(projectRoot, ws2.path, true);
     }, 15000);
   });
 
@@ -163,10 +167,10 @@ describe("Services Integration", () => {
         SILENT_LOGGER
       );
 
-      expect(provider.projectRoot.equals(repoPath)).toBe(true);
+      expect(provider).toBeInstanceOf(GitWorktreeProvider);
 
       // Should be able to discover workspaces
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(new Path(repoPath));
       expect(workspaces).toHaveLength(0);
     }, 10000);
 
@@ -191,7 +195,7 @@ describe("Services Integration", () => {
   });
 
   describe("Abstraction layer", () => {
-    it("IWorkspaceProvider works with mocked IGitClient", async () => {
+    it("GitWorktreeProvider works with mocked IGitClient", async () => {
       // This test verifies the abstraction by using a behavioral mock git client
       const mockGitClient = createMockGitClient({
         repositories: {
@@ -224,12 +228,14 @@ describe("Services Integration", () => {
         SILENT_LOGGER
       );
 
+      const projectRoot = new Path("/mock/repo");
+
       // Should work with the mock
-      const workspaces = await provider.discover();
+      const workspaces = await provider.discover(projectRoot);
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0]?.name).toBe("feature");
 
-      const bases = await provider.listBases();
+      const bases = await provider.listBases(projectRoot);
       expect(bases).toHaveLength(3); // main, feature (local), origin/main (remote)
     });
   });
@@ -256,19 +262,21 @@ describe("Services Integration", () => {
           SILENT_LOGGER
         );
 
+        const projectRoot = new Path(repo.path);
+
         // Create a workspace
-        const workspace = await provider.createWorkspace("dirty-feature", "main");
+        const workspace = await provider.createWorkspace(projectRoot, "dirty-feature", "main");
 
         // Initial workspace should be clean
         const isDirty = await provider.isDirty(workspace.path);
         expect(isDirty).toBe(false);
 
         // Main repo is dirty
-        const mainDirty = await provider.isDirty(new Path(repo.path));
+        const mainDirty = await provider.isDirty(projectRoot);
         expect(mainDirty).toBe(true);
 
         // Cleanup
-        await provider.removeWorkspace(workspace.path, true);
+        await provider.removeWorkspace(projectRoot, workspace.path, true);
       } finally {
         await repo.cleanup();
         await tempDir.cleanup();
