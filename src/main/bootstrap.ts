@@ -56,6 +56,10 @@ import {
 import type {
   GetWorkspaceStatusIntent,
   GetStatusHookResult,
+  ResolveProjectHookResult,
+  ResolveWorkspaceHookResult,
+  ResolveWorkspaceHookInput,
+  GetStatusHookInput,
 } from "./operations/get-workspace-status";
 import {
   GetAgentSessionOperation,
@@ -1206,15 +1210,33 @@ function wireDispatcher(
     },
   };
 
-  // Workspace status hook handler modules (each service contributes its piece)
-  const gitStatusModule: IntentModule = {
+  // Workspace status hook handler module (orchestrates resolve-project → resolve-workspace → get)
+  const workspaceStatusModule: IntentModule = {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as GetWorkspaceStatusIntent;
+            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
+            if (!projectPath) return {};
+            return { projectPath };
+          },
+        },
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { projectPath, workspaceName } = ctx as ResolveWorkspaceHookInput;
+            const project = appState.getProject(projectPath);
+            if (!project) return {};
+            const ws = project.workspaces.find(
+              (w) => extractWorkspaceName(w.path) === workspaceName
+            );
+            return ws ? { workspacePath: ws.path } : {};
+          },
+        },
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
-            const intent = ctx.intent as GetWorkspaceStatusIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, appState);
-            const isDirty = await globalProvider.isDirty(new Path(workspace.path));
+            const { workspacePath } = ctx as GetStatusHookInput;
+            const isDirty = await globalProvider.isDirty(new Path(workspacePath));
             return { isDirty };
           },
         },
@@ -1227,11 +1249,10 @@ function wireDispatcher(
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
-            const intent = ctx.intent as GetWorkspaceStatusIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, appState);
+            const { workspacePath } = ctx as GetStatusHookInput;
             const agentStatusManager = appState.getAgentStatusManager();
             if (agentStatusManager) {
-              return { agentStatus: agentStatusManager.getStatus(workspace.path as WorkspacePath) };
+              return { agentStatus: agentStatusManager.getStatus(workspacePath as WorkspacePath) };
             }
             return {};
           },
@@ -2616,7 +2637,7 @@ function wireDispatcher(
       ipcEventBridge,
       badgeModule,
       metadataModule,
-      gitStatusModule,
+      workspaceStatusModule,
       agentStatusModule,
       uiHookModule,
       worktreeModule,
