@@ -3,8 +3,8 @@
  *
  * Runs 3 sequential hook points using collect() for isolated contexts:
  * 1. "resolve": clone if URL, validate git → ResolveHookResult
- * 2. "discover": find existing workspaces → DiscoverHookResult
- * 3. "register": generate ID, store state, persist → RegisterHookResult
+ * 2. "register": generate ID, store state, persist → RegisterHookResult
+ * 3. "discover": find existing workspaces → DiscoverHookResult
  *
  * The operation mediates data flow between hook points — only pure data
  * flows through contexts. Providers are module dependencies via closure.
@@ -77,13 +77,14 @@ export interface ResolveHookResult {
 /** Result returned by handlers on the "discover" hook point. */
 export interface DiscoverHookResult {
   readonly workspaces: readonly InternalWorkspace[];
+  readonly defaultBaseBranch?: string;
 }
 
 /** Result returned by handlers on the "register" hook point. */
 export interface RegisterHookResult {
   /** Optional when using collect() — handler may skip via self-selection. */
   readonly projectId?: ProjectId;
-  readonly defaultBaseBranch?: string;
+  readonly name?: string;
   readonly remoteUrl?: string;
 }
 
@@ -126,22 +127,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       throw new Error("Resolve hook did not provide projectPath");
     }
 
-    // 2. Discover: find existing workspaces
-    const discoverCtx: DiscoverHookInput = { intent: ctx.intent, projectPath };
-    const { results: discoverResults, errors: discoverErrors } =
-      await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
-    if (discoverErrors.length === 1) {
-      throw discoverErrors[0]!;
-    }
-    if (discoverErrors.length > 1) {
-      throw new AggregateError(discoverErrors, "project:open discover hooks failed");
-    }
-    const workspaces: InternalWorkspace[] = [];
-    for (const r of discoverResults) {
-      if (r.workspaces) workspaces.push(...r.workspaces);
-    }
-
-    // 3. Register: generate ID, store state, persist
+    // 2. Register: generate ID, store state, persist
     const registerCtx: RegisterHookInput = {
       intent: ctx.intent,
       projectPath,
@@ -156,11 +142,11 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       throw new AggregateError(registerErrors, "project:open register hooks failed");
     }
     let projectId: ProjectId | undefined;
-    let defaultBaseBranch: string | undefined;
+    let name: string | undefined;
     let registeredRemoteUrl: string | undefined;
     for (const r of registerResults) {
       if (r.projectId) projectId = r.projectId;
-      if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
+      if (r.name !== undefined) name = r.name;
       if (r.remoteUrl !== undefined) registeredRemoteUrl = r.remoteUrl;
     }
     if (!projectId) {
@@ -168,6 +154,23 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
     }
 
     const finalRemoteUrl = registeredRemoteUrl ?? resolvedRemoteUrl;
+
+    // 3. Discover: find existing workspaces
+    const discoverCtx: DiscoverHookInput = { intent: ctx.intent, projectPath };
+    const { results: discoverResults, errors: discoverErrors } =
+      await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
+    if (discoverErrors.length === 1) {
+      throw discoverErrors[0]!;
+    }
+    if (discoverErrors.length > 1) {
+      throw new AggregateError(discoverErrors, "project:open discover hooks failed");
+    }
+    const workspaces: InternalWorkspace[] = [];
+    let defaultBaseBranch: string | undefined;
+    for (const r of discoverResults) {
+      if (r.workspaces) workspaces.push(...r.workspaces);
+      if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
+    }
 
     // Dispatch workspace:create per discovered workspace (best-effort)
     for (const workspace of workspaces) {
@@ -201,7 +204,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
     const project: Project = {
       id: projectId,
       path: projectPath,
-      name: new Path(projectPath).basename,
+      name: name ?? new Path(projectPath).basename,
       workspaces: toIpcWorkspaces(workspaces, projectId),
       ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
       ...(finalRemoteUrl !== undefined && { remoteUrl: finalRemoteUrl }),

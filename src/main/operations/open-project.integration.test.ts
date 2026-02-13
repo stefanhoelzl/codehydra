@@ -2,15 +2,15 @@
  * Integration tests for OpenProjectOperation.
  *
  * Tests the full project:open pipeline through dispatcher.dispatch():
- * - Operation orchestrates resolve → discover → register hooks via collect()
- * - Idempotency interceptor prevents duplicate opens
+ * - Operation orchestrates resolve → register → discover hooks via collect()
+ * - Self-selecting modules (local vs remote) respond to their respective scenarios
  * - Best-effort handling when individual workspace:create fails
  * - URL detection and clone handling
  *
  * Test plan items covered:
  * #1: Opens local project and activates workspaces
  * #2: Clones remote project then opens
- * #3: Returns existing project if already open (interceptor cancels)
+ * #3: Runs fully even if called for already-open project (idempotency at API level)
  * #4: Returns existing project if URL already cloned
  * #5: project:opened event emitted after open
  * #6: Continues best-effort when workspace:create fails
@@ -39,7 +39,6 @@ import type {
   RegisterHookResult,
   ProjectOpenedEvent,
 } from "./open-project";
-import type { Intent } from "../intents/infrastructure/types";
 import {
   CreateWorkspaceOperation,
   CREATE_WORKSPACE_OPERATION_ID,
@@ -147,7 +146,6 @@ interface TestHarness {
   createdViews: Array<{ path: string; url: string }>;
   preloadedPaths: string[];
   projectState: TestProjectState;
-  inProgressOpens: Set<string>;
   /** Mock for provider.discover() */
   discoverResult: Array<{
     name: string;
@@ -221,13 +219,6 @@ function createTestHarness(options?: {
 
   // Mock AppState methods used by hooks
   const appState = {
-    isProjectOpen: vi.fn().mockImplementation((path: string) => {
-      try {
-        return projectState.openProjectPaths.has(new Path(path).toString());
-      } catch {
-        return false;
-      }
-    }),
     registerProject: vi.fn().mockImplementation(
       (project: {
         id: ProjectId;
@@ -284,18 +275,6 @@ function createTestHarness(options?: {
     setLastBaseBranch: vi.fn().mockImplementation((path: string, branch: string) => {
       projectState.lastBaseBranches.set(new Path(path).toString(), branch);
     }),
-    getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
-    getWorkspaceUrl: vi.fn().mockResolvedValue(WORKSPACE_URL),
-    getServerManager: vi.fn().mockReturnValue({
-      startServer: vi.fn().mockResolvedValue(9090),
-    }),
-    getAgentStatusManager: vi.fn().mockReturnValue({
-      getProvider: vi.fn().mockReturnValue({
-        getEnvironmentVariables: () => ({}),
-      }),
-    }),
-    getAllProjects: vi.fn().mockImplementation(async () => []),
-    getProject: vi.fn().mockReturnValue(undefined),
   };
 
   // Mock projectStore
@@ -309,8 +288,6 @@ function createTestHarness(options?: {
     findByRemoteUrl: vi
       .fn()
       .mockImplementation(async () => projectStoreState.findByRemoteUrlResult),
-    removeProject: vi.fn().mockResolvedValue(undefined),
-    deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
   };
 
   const cloneThrows = options?.cloneThrows ?? false;
@@ -339,49 +316,12 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
-  // Interceptor (inline, matching bootstrap pattern)
-  const inProgressOpens = new Set<string>();
+  // ---------------------------------------------------------------------------
+  // Self-selecting resolve modules (local vs remote)
+  // ---------------------------------------------------------------------------
 
-  const openIdempotencyModule: IntentModule = {
-    interceptors: [
-      {
-        id: "project-open-idempotency",
-        order: 0,
-        async before(intent: Intent): Promise<Intent | null> {
-          if (intent.type !== INTENT_OPEN_PROJECT) {
-            return intent;
-          }
-          const { path, git } = (intent as OpenProjectIntent).payload;
-
-          // Use expanded URL as key for git (so it matches remoteUrl in cleanup)
-          const key = path ? path.toString() : expandGitUrl(git!);
-
-          if (path && projectState.openProjectPaths.has(path.toString())) {
-            return null;
-          }
-
-          if (inProgressOpens.has(key)) {
-            return null;
-          }
-
-          inProgressOpens.add(key);
-          return intent;
-        },
-      },
-    ],
-    events: {
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const { project } = (event as ProjectOpenedEvent).payload;
-        inProgressOpens.delete(project.path);
-        if (project.remoteUrl) {
-          inProgressOpens.delete(project.remoteUrl);
-        }
-      },
-    },
-  };
-
-  // ProjectResolverModule (simplified for tests)
-  const projectResolverModule: IntentModule = {
+  // LocalResolveModule: validates path for local projects (no git URL)
+  const localResolveModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -389,70 +329,117 @@ function createTestHarness(options?: {
             const intent = ctx.intent as OpenProjectIntent;
             const { path, git } = intent.payload;
 
-            let projectPath: Path;
-            let remoteUrl: string | undefined;
-
-            if (git) {
-              const expanded = expandGitUrl(git);
-              const existing = await projectStore.findByRemoteUrl(expanded);
-              if (existing) {
-                projectPath = new Path(existing);
-              } else {
-                const gitPath = new Path("/test/cloned", "repo");
-                await gitClient.clone(expanded, gitPath);
-                await projectStore.saveProject(gitPath.toString(), {
-                  remoteUrl: expanded,
-                });
-                projectStoreState.configs.set(gitPath.toString(), { remoteUrl: expanded });
-                projectPath = gitPath;
-              }
-              remoteUrl = expanded;
-            } else {
-              projectPath = path!;
+            // Self-select: only handle local paths
+            if (git || !path) {
+              return {};
             }
 
-            await globalProvider.validateRepository(projectPath);
-
-            return {
-              projectPath: projectPath.toString(),
-              ...(remoteUrl !== undefined && { remoteUrl }),
-            };
+            await globalProvider.validateRepository(path);
+            return { projectPath: path.toString() };
           },
         },
       },
     },
   };
 
-  // ProjectDiscoveryModule
-  const projectDiscoveryModule: IntentModule = {
+  // RemoteResolveModule: handles git URL cloning
+  const remoteResolveModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
-        discover: {
-          handler: async (): Promise<DiscoverHookResult> => {
-            return { workspaces: discoverResult };
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const intent = ctx.intent as OpenProjectIntent;
+            const { git } = intent.payload;
+
+            // Self-select: only handle git URLs
+            if (!git) {
+              return {};
+            }
+
+            const expanded = expandGitUrl(git);
+            const existing = await projectStore.findByRemoteUrl(expanded);
+            if (existing) {
+              return { projectPath: existing, remoteUrl: expanded };
+            }
+
+            const gitPath = new Path("/test/cloned", "repo");
+            await gitClient.clone(expanded, gitPath);
+            await projectStore.saveProject(gitPath.toString(), {
+              remoteUrl: expanded,
+            });
+            projectStoreState.configs.set(gitPath.toString(), { remoteUrl: expanded });
+
+            return { projectPath: gitPath.toString(), remoteUrl: expanded };
           },
         },
       },
     },
   };
 
-  // ProjectRegistryModule
-  const projectRegistryModule: IntentModule = {
+  // ---------------------------------------------------------------------------
+  // Self-selecting register modules (local vs remote)
+  // ---------------------------------------------------------------------------
+
+  // LocalRegisterModule: generates ID for local projects (no remoteUrl)
+  const localRegisterModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         register: {
           handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
-            const { projectPath: projectPathStr, remoteUrl: resolvedRemoteUrl } =
-              ctx as RegisterHookInput;
-            const projectPath = new Path(projectPathStr);
+            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
 
+            // Self-select: only handle local projects
+            if (remoteUrl !== undefined) {
+              return {};
+            }
+
+            const projectPath = new Path(projectPathStr);
             const projectId = generateProjectId(projectPathStr);
 
             const config = await projectStore.getProjectConfig(projectPathStr);
-            let remoteUrl = resolvedRemoteUrl;
-            if (config?.remoteUrl) {
-              remoteUrl = config.remoteUrl;
+            if (!config) {
+              await projectStore.saveProject(projectPathStr);
             }
+
+            return { projectId, name: projectPath.basename };
+          },
+        },
+      },
+    },
+  };
+
+  // RemoteRegisterModule: generates ID for remote projects (has remoteUrl)
+  const remoteRegisterModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        register: {
+          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
+
+            // Self-select: only handle remote projects
+            if (!remoteUrl) {
+              return {};
+            }
+
+            const projectId = generateProjectId(projectPathStr);
+            const projectPath = new Path(projectPathStr);
+
+            return { projectId, name: projectPath.basename, remoteUrl };
+          },
+        },
+      },
+    },
+  };
+
+  // AppStateRegisterModule: registers project in AppState, caches defaultBaseBranch
+  const appStateRegisterModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        register: {
+          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
+            const projectPath = new Path(projectPathStr);
+            const projectId = generateProjectId(projectPathStr);
 
             appState.registerProject({
               id: projectId,
@@ -462,27 +449,40 @@ function createTestHarness(options?: {
               ...(remoteUrl !== undefined && { remoteUrl }),
             });
 
-            let defaultBaseBranch: string | undefined;
-            const baseBranch = await appState.getDefaultBaseBranch(projectPathStr);
-            if (baseBranch) {
-              appState.setLastBaseBranch(projectPathStr, baseBranch);
-              defaultBaseBranch = baseBranch;
-            }
+            return {};
+          },
+        },
+      },
+    },
+    events: {
+      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
+        const { project } = (event as ProjectOpenedEvent).payload;
+        if (project.defaultBaseBranch) {
+          appState.setLastBaseBranch(project.path, project.defaultBaseBranch);
+        }
+      },
+    },
+  };
 
-            if (!config) {
-              await projectStore.saveProject(projectPathStr);
-            }
+  // ---------------------------------------------------------------------------
+  // Discover module
+  // ---------------------------------------------------------------------------
 
-            return {
-              projectId,
-              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-              ...(remoteUrl !== undefined && { remoteUrl }),
-            };
+  const discoverModule: IntentModule = {
+    hooks: {
+      [OPEN_PROJECT_OPERATION_ID]: {
+        discover: {
+          handler: async (): Promise<DiscoverHookResult> => {
+            return { workspaces: discoverResult, defaultBaseBranch: "main" };
           },
         },
       },
     },
   };
+
+  // ---------------------------------------------------------------------------
+  // Workspace:create modules
+  // ---------------------------------------------------------------------------
 
   // WorktreeModule for workspace:create (handles existingWorkspace)
   const worktreeModule: IntentModule = {
@@ -627,10 +627,12 @@ function createTestHarness(options?: {
 
   wireModules(
     [
-      openIdempotencyModule,
-      projectResolverModule,
-      projectDiscoveryModule,
-      projectRegistryModule,
+      localResolveModule,
+      remoteResolveModule,
+      localRegisterModule,
+      remoteRegisterModule,
+      appStateRegisterModule,
+      discoverModule,
       worktreeModule,
       codeServerModule,
       stateModule,
@@ -651,7 +653,6 @@ function createTestHarness(options?: {
     createdViews,
     preloadedPaths,
     projectState,
-    inProgressOpens,
     discoverResult,
     validateThrows,
     projectStoreState,
@@ -682,6 +683,8 @@ describe("OpenProjectOperation", () => {
     const project = result as Project;
     expect(project.id).toBe(PROJECT_ID);
     expect(project.path).toBe(PROJECT_PATH);
+    expect(project.name).toBe("project");
+    expect(project.defaultBaseBranch).toBe("main");
     expect(project.workspaces).toHaveLength(2);
 
     // Project registered in state
@@ -707,32 +710,36 @@ describe("OpenProjectOperation", () => {
     expect(result).toBeDefined();
     const project = result as Project;
     expect(project).toBeDefined();
+    expect(project.name).toBe("repo");
 
     // Clone was called
     expect(harness.cloneCalls).toHaveLength(1);
     expect(harness.cloneCalls[0]!.url).toBe("https://github.com/org/repo.git");
 
-    // Project registered
+    // Project registered with remoteUrl
     expect(harness.projectState.registeredProjects).toHaveLength(1);
     expect(harness.projectState.registeredProjects[0]!.remoteUrl).toBe(
       "https://github.com/org/repo.git"
     );
   });
 
-  it("test 3: returns undefined if project already open (interceptor cancels)", async () => {
+  it("test 3: runs fully even if called for already-open project", async () => {
     const harness = createTestHarness();
 
-    // Pre-populate project as open
+    // Pre-populate project as open (idempotency is at API handler level, not operation level)
     harness.projectState.openProjectPaths.add(new Path(PROJECT_PATH).toString());
 
     const intent = buildOpenIntent({ path: new Path(PROJECT_PATH) });
     const result = await harness.dispatcher.dispatch(intent);
 
-    // Interceptor cancelled
-    expect(result).toBeUndefined();
+    // Operation runs fully — no interceptor cancels it
+    expect(result).toBeDefined();
+    const project = result as Project;
+    expect(project.id).toBe(PROJECT_ID);
+    expect(project.path).toBe(PROJECT_PATH);
 
-    // No project registered (state unchanged)
-    expect(harness.projectState.registeredProjects).toHaveLength(0);
+    // Project re-registered in state
+    expect(harness.projectState.registeredProjects).toHaveLength(1);
   });
 
   it("test 4: returns existing project if URL already cloned", async () => {
@@ -768,6 +775,11 @@ describe("OpenProjectOperation", () => {
     expect(event.type).toBe(EVENT_PROJECT_OPENED);
     expect(event.payload.project.id).toBe(PROJECT_ID);
     expect(event.payload.project.path).toBe(PROJECT_PATH);
+
+    // defaultBaseBranch cached via event handler
+    expect(harness.projectState.lastBaseBranches.get(new Path(PROJECT_PATH).toString())).toBe(
+      "main"
+    );
   });
 
   it("test 6: continues best-effort when workspace:create fails", async () => {

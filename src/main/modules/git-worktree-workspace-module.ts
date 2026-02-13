@@ -158,7 +158,12 @@ export function createGitWorktreeWorkspaceModule(
               });
             });
 
-            return { workspaces: discovered };
+            const defaultBaseBranch = await globalProvider.defaultBase(projectPathObj);
+
+            return {
+              workspaces: discovered,
+              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+            };
           },
         },
       },

@@ -16,7 +16,7 @@ import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import type { AppState } from "./app-state";
 import type { IViewManager } from "./managers/view-manager.interface";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import type { WorkspaceName } from "../shared/api/types";
 import { generateProjectId } from "./api/id-utils";
 
 // =============================================================================
@@ -53,6 +53,7 @@ function createMockAppState(overrides?: Partial<AppState>): AppState {
       },
     ]),
     findProjectForWorkspace: vi.fn().mockReturnValue({
+      id: TEST_PROJECT_ID,
       path: TEST_PROJECT_PATH,
       name: "test-project",
       workspaces: [],
@@ -1122,15 +1123,6 @@ describe("bootstrap.lifecycle.ready", () => {
     const deps: BootstrapDeps = {
       ...baseDeps,
       ipcLayer,
-      workspaceResolverFn: () => (workspacePath: string) => {
-        if (workspacePath === TEST_WORKSPACE_PATH) {
-          return {
-            projectId: TEST_PROJECT_ID as ProjectId,
-            workspaceName: TEST_WORKSPACE_NAME,
-          };
-        }
-        return undefined;
-      },
     };
 
     const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
