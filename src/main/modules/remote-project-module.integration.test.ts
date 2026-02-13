@@ -124,7 +124,7 @@ describe("RemoteProjectModule Integration", () => {
       expect(result.remoteUrl).toBe("https://github.com/org/repo.git");
 
       // Verify clone was called
-      expect(gitClient).toHaveClonedRepository(projectPath);
+      expect(gitClient).toHaveClonedRepository(projectPath!);
 
       // Verify project was saved with remoteUrl
       expect(projectStore.saveProject).toHaveBeenCalledWith(projectPath, {

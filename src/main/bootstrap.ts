@@ -17,6 +17,7 @@ import type {
   ProjectOpenPayload,
   ProjectClosePayload,
   ProjectClonePayload,
+  ProjectIdPayload,
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
@@ -56,9 +57,9 @@ import {
 import type {
   GetWorkspaceStatusIntent,
   GetStatusHookResult,
-  ResolveProjectHookResult,
-  ResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput,
+  ResolveProjectHookResult as GetStatusResolveProjectHookResult,
+  ResolveWorkspaceHookResult as GetStatusResolveWorkspaceHookResult,
+  ResolveWorkspaceHookInput as GetStatusResolveWorkspaceHookInput,
   GetStatusHookInput,
 } from "./operations/get-workspace-status";
 import {
@@ -88,20 +89,19 @@ import type {
   GetActiveWorkspaceHookResult,
 } from "./operations/get-active-workspace";
 import {
-  CreateWorkspaceOperation,
-  CREATE_WORKSPACE_OPERATION_ID,
-  INTENT_CREATE_WORKSPACE,
+  OpenWorkspaceOperation,
+  OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
-} from "./operations/create-workspace";
+} from "./operations/open-workspace";
 import type {
-  CreateWorkspaceIntent,
-  CreateHookResult,
+  OpenWorkspaceIntent,
   SetupHookInput,
   SetupHookResult,
   FinalizeHookInput,
   FinalizeHookResult,
   WorkspaceCreatedEvent,
-} from "./operations/create-workspace";
+} from "./operations/open-workspace";
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
@@ -138,9 +138,9 @@ import {
 } from "./operations/close-project";
 import type {
   CloseProjectIntent,
-  CloseResolveHookResult,
   CloseHookInput,
   CloseHookResult,
+  CloseResolveHookResult,
 } from "./operations/close-project";
 import {
   SwitchWorkspaceOperation,
@@ -156,8 +156,6 @@ import type {
 } from "./operations/switch-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createBadgeModule } from "./modules/badge-module";
-import { createLocalProjectModule } from "./modules/local-project-module";
-import { createRemoteProjectModule } from "./modules/remote-project-module";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
@@ -230,10 +228,11 @@ import type { DeletionProgressCallback } from "./operations/delete-workspace";
 import { getErrorMessage } from "../shared/error-utils";
 import {
   normalizeInitialPrompt,
-  type BlockingProcess,
   type SetupRowId,
   type SetupRowProgress,
   type SetupRowStatus,
+  type Workspace,
+  type BlockingProcess,
 } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
@@ -1133,7 +1132,7 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
   dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(
     INTENT_DELETE_WORKSPACE,
     new DeleteWorkspaceOperation(emitDeletionProgress)
@@ -1216,7 +1215,7 @@ function wireDispatcher(
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+          handler: async (ctx: HookContext): Promise<GetStatusResolveProjectHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
             if (!projectPath) return {};
@@ -1224,8 +1223,8 @@ function wireDispatcher(
           },
         },
         "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { projectPath, workspaceName } = ctx as ResolveWorkspaceHookInput;
+          handler: async (ctx: HookContext): Promise<GetStatusResolveWorkspaceHookResult> => {
+            const { projectPath, workspaceName } = ctx as GetStatusResolveWorkspaceHookInput;
             const project = appState.getProject(projectPath);
             if (!project) return {};
             const ws = project.workspaces.find(
@@ -1334,56 +1333,13 @@ function wireDispatcher(
   };
 
   // ---------------------------------------------------------------------------
-  // Create-workspace hook modules
+  // Open-workspace hook modules
   // ---------------------------------------------------------------------------
-
-  // WorktreeModule: "create" hook -- creates git worktree, returns CreateHookResult
-  // When existingWorkspace is set, returns context from existing data (skips worktree creation)
-  const worktreeModule: IntentModule = {
-    hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
-        create: {
-          handler: async (ctx: HookContext): Promise<CreateHookResult> => {
-            const intent = ctx.intent as CreateWorkspaceIntent;
-
-            // Existing workspace path: return context from existing data
-            if (intent.payload.existingWorkspace) {
-              const existing = intent.payload.existingWorkspace;
-              return {
-                workspacePath: existing.path,
-                branch: existing.branch ?? existing.name,
-                metadata: existing.metadata,
-                projectPath: intent.payload.projectPath!,
-              };
-            }
-
-            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
-            if (!projectPath) {
-              throw new Error(`Project not found: ${intent.payload.projectId}`);
-            }
-
-            const internalWorkspace: InternalWorkspace = await globalProvider.createWorkspace(
-              new Path(projectPath),
-              intent.payload.name,
-              intent.payload.base
-            );
-
-            return {
-              workspacePath: internalWorkspace.path.toString(),
-              branch: internalWorkspace.branch ?? internalWorkspace.name,
-              metadata: internalWorkspace.metadata,
-              projectPath,
-            };
-          },
-        },
-      },
-    },
-  };
 
   // KeepFilesModule: "setup" hook -- copies .keepfiles to workspace (best-effort)
   const keepFilesModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
           handler: async (ctx: HookContext): Promise<SetupHookResult> => {
             const setupCtx = ctx as SetupHookInput;
@@ -1412,11 +1368,11 @@ function wireDispatcher(
   // AgentModule: "setup" hook -- starts agent server, sets initial prompt, gets env vars (fatal)
   const agentModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
           handler: async (ctx: HookContext): Promise<SetupHookResult> => {
             const setupCtx = ctx as SetupHookInput;
-            const intent = ctx.intent as CreateWorkspaceIntent;
+            const intent = ctx.intent as OpenWorkspaceIntent;
             const workspacePath = setupCtx.workspacePath;
 
             // 1. Start agent server
@@ -1447,7 +1403,7 @@ function wireDispatcher(
   // CodeServerModule: "finalize" hook -- creates .code-workspace file, returns workspaceUrl
   const codeServerModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
           handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
             const finalizeCtx = ctx as FinalizeHookInput;
@@ -1484,7 +1440,7 @@ function wireDispatcher(
   };
 
   // ViewModule: subscribes to workspace:created, creates workspace view
-  // Note: workspace activation is now handled by CreateWorkspaceOperation dispatching workspace:switch
+  // Note: workspace activation is now handled by OpenWorkspaceOperation dispatching workspace:switch
   const viewModule: IntentModule = {
     events: {
       [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
@@ -1815,21 +1771,8 @@ function wireDispatcher(
   };
 
   // ---------------------------------------------------------------------------
-  // Project:open modules (extracted)
+  // Project:open modules
   // ---------------------------------------------------------------------------
-
-  const localProjectModule = createLocalProjectModule({ projectStore, globalProvider });
-  const remoteProjectModule = createRemoteProjectModule({
-    projectStore,
-    gitClient,
-    pathProvider,
-    logger,
-  });
-  const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
-    globalProvider,
-    pathProvider,
-    logger
-  );
 
   // ProjectAppStateModule: register project in AppState, cache defaultBaseBranch
   const projectAppStateModule: IntentModule = {
@@ -2441,6 +2384,23 @@ function wireDispatcher(
     },
   };
 
+  // Project modules: activate → load saved project configs, populate state, return paths.
+  // LocalProjectModule handles local paths; RemoteProjectModule handles URL-cloned projects.
+  const localProjectModule = createLocalProjectModule({
+    projectStore,
+    globalProvider,
+  });
+  const remoteProjectModule = createRemoteProjectModule({
+    projectStore,
+    gitClient,
+    pathProvider,
+    logger: lifecycleLogger,
+  });
+  const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
+    globalProvider,
+    pathProvider,
+    logger
+  );
   // ViewLifecycleModule: activate → wire loading-state→IPC callback.
   // stop → destroy views, cleanup loading-state callback, dispose layers.
   // Note: first workspace activation + window title are now handled by
@@ -2538,7 +2498,7 @@ function wireDispatcher(
       workspaceStatusModule,
       agentStatusModule,
       uiHookModule,
-      worktreeModule,
+      // Open-workspace hook modules (kept inline)
       keepFilesModule,
       agentModule,
       codeServerModule,
@@ -2591,11 +2551,11 @@ function wireDispatcher(
   registry.register(
     "workspaces.create",
     async (payload: WorkspaceCreatePayload) => {
-      const intent: CreateWorkspaceIntent = {
-        type: INTENT_CREATE_WORKSPACE,
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
         payload: {
           projectId: payload.projectId,
-          name: payload.name,
+          workspaceName: payload.name,
           base: payload.base,
           ...(payload.initialPrompt !== undefined && { initialPrompt: payload.initialPrompt }),
           ...(payload.keepInBackground !== undefined && {
@@ -2607,7 +2567,7 @@ function wireDispatcher(
       if (!result) {
         throw new Error("Create workspace dispatch returned no result");
       }
-      return result;
+      return result as Workspace;
     },
     { ipc: ApiIpcChannels.WORKSPACE_CREATE }
   );
@@ -2853,6 +2813,52 @@ function wireDispatcher(
       await dispatcher.dispatch(intent);
     },
     { ipc: ApiIpcChannels.PROJECT_CLOSE }
+  );
+
+  registry.register(
+    "projects.fetchBases",
+    async (payload: ProjectIdPayload) => {
+      // Dispatch workspace:open with incomplete payload (missing workspaceName/base)
+      // This triggers the resolve-project + fetch-bases path
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          projectId: payload.projectId,
+        },
+      };
+      const result = await dispatcher.dispatch(intent);
+      if (!result) {
+        throw new Error("Fetch bases dispatch returned no result");
+      }
+      const basesResult = result as {
+        bases: readonly { name: string; isRemote: boolean }[];
+        defaultBaseBranch?: string;
+      };
+
+      // Fire-and-forget background update (same as old CoreModule pattern)
+      void (async () => {
+        try {
+          const projectPath = await resolveProjectPath(payload.projectId, appState);
+          if (!projectPath) return;
+          const projectRoot = new Path(projectPath);
+          await globalProvider.updateBases(projectRoot);
+          const updatedBases = await globalProvider.listBases(projectRoot);
+          registry.emit("project:bases-updated", {
+            projectId: payload.projectId,
+            bases: updatedBases,
+          });
+        } catch (error) {
+          logger.error(
+            "Failed to fetch bases for project",
+            { projectId: payload.projectId },
+            error instanceof Error ? error : undefined
+          );
+        }
+      })();
+
+      return { bases: basesResult.bases };
+    },
+    { ipc: ApiIpcChannels.PROJECT_FETCH_BASES }
   );
 
   // ---------------------------------------------------------------------------

@@ -135,7 +135,9 @@ describe("core.registration", () => {
     const registeredPaths = registry.getRegisteredPaths();
     expect(registeredPaths).toContain("projects.list");
     expect(registeredPaths).toContain("projects.get");
-    expect(registeredPaths).toContain("projects.fetchBases");
+
+    // Verify fetchBases NOT registered (handled by intent dispatcher in bootstrap.ts)
+    expect(registeredPaths).not.toContain("projects.fetchBases");
 
     // Verify open/close/clone NOT registered (handled by intent dispatcher)
     expect(registeredPaths).not.toContain("projects.open");

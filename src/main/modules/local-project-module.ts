@@ -46,6 +46,11 @@ import {
   type SwitchWorkspaceIntent,
   type ResolveProjectHookResult,
 } from "../operations/switch-workspace";
+import {
+  OPEN_WORKSPACE_OPERATION_ID,
+  type OpenWorkspaceIntent,
+  type ResolveProjectHookResult as OpenWorkspaceResolveProjectHookResult,
+} from "../operations/open-workspace";
 
 // =============================================================================
 // Types
@@ -234,6 +239,29 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const { projectId } = intent.payload;
 
+            for (const project of projects.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      [OPEN_WORKSPACE_OPERATION_ID]: {
+        // resolve-project: resolve projectId to path from local project state
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<OpenWorkspaceResolveProjectHookResult> => {
+            const intent = ctx.intent as OpenWorkspaceIntent;
+            const { projectId, projectPath: payloadPath } = intent.payload;
+
+            // Short-circuit: authoritative path already provided
+            if (payloadPath) return { projectPath: payloadPath };
+
+            // Look up projectId in local project state
+            if (!projectId) return {};
             for (const project of projects.values()) {
               if (project.id === projectId) {
                 return { projectPath: project.path.toString() };

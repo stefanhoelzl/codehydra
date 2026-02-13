@@ -9,7 +9,7 @@
  * The operation mediates data flow between hook points — only pure data
  * flows through contexts. Providers are module dependencies via closure.
  *
- * After hooks, dispatches workspace:create per discovered workspace (best-effort)
+ * After hooks, dispatches workspace:open per discovered workspace (best-effort)
  * and emits project:opened. View activation is handled by the projectViewModule
  * event handler (registered in bootstrap).
  */
@@ -19,10 +19,10 @@ import type { Operation, OperationContext, HookContext } from "../intents/infras
 import type { ProjectId, Project } from "../../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../../services/git/types";
 import {
-  INTENT_CREATE_WORKSPACE,
-  type CreateWorkspaceIntent,
+  INTENT_OPEN_WORKSPACE,
+  type OpenWorkspaceIntent,
   type ExistingWorkspaceData,
-} from "./create-workspace";
+} from "./open-workspace";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { toIpcWorkspaces } from "../api/workspace-conversion";
 import { Path } from "../../services/platform/path";
@@ -172,7 +172,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
     }
 
-    // Dispatch workspace:create per discovered workspace (best-effort)
+    // Dispatch workspace:open per discovered workspace (best-effort)
     for (const workspace of workspaces) {
       try {
         const existingWorkspace: ExistingWorkspaceData = {
@@ -182,11 +182,11 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
           metadata: workspace.metadata,
         };
 
-        const createIntent: CreateWorkspaceIntent = {
-          type: INTENT_CREATE_WORKSPACE,
+        const openWsIntent: OpenWorkspaceIntent = {
+          type: INTENT_OPEN_WORKSPACE,
           payload: {
             projectId,
-            name: workspace.name,
+            workspaceName: workspace.name,
             base: workspace.metadata.base ?? "",
             existingWorkspace,
             projectPath,
@@ -194,9 +194,9 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
           },
         };
 
-        await ctx.dispatch(createIntent);
+        await ctx.dispatch(openWsIntent);
       } catch {
-        // Best-effort: individual workspace:create failures don't fail the project open
+        // Best-effort: individual workspace:open failures don't fail the project open
       }
     }
 

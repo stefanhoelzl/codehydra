@@ -109,7 +109,6 @@ describe("core.registration", () => {
     const registeredPaths = registry.getRegisteredPaths();
     expect(registeredPaths).toContain("projects.list");
     expect(registeredPaths).toContain("projects.get");
-    expect(registeredPaths).toContain("projects.fetchBases");
     expect(registeredPaths).toContain("workspaces.get");
     expect(registeredPaths).toContain("workspaces.executeCommand");
     expect(registeredPaths).toContain("ui.selectFolder");
@@ -120,6 +119,9 @@ describe("core.registration", () => {
     // Verify workspace create/remove NOT registered (handled by intent dispatcher)
     expect(registeredPaths).not.toContain("workspaces.create");
     expect(registeredPaths).not.toContain("workspaces.remove");
+
+    // Verify projects.fetchBases NOT registered (handled by intent dispatcher in bootstrap.ts)
+    expect(registeredPaths).not.toContain("projects.fetchBases");
 
     // Verify project open/close/clone NOT registered (handled by intent dispatcher)
     expect(registeredPaths).not.toContain("projects.open");

@@ -15,8 +15,8 @@ import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations
 import { EVENT_METADATA_CHANGED } from "../operations/set-metadata";
 import type { ModeChangedPayload, ModeChangedEvent } from "../operations/set-mode";
 import { EVENT_MODE_CHANGED } from "../operations/set-mode";
-import type { WorkspaceCreatedEvent } from "../operations/create-workspace";
-import { EVENT_WORKSPACE_CREATED } from "../operations/create-workspace";
+import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
+import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import type { ProjectOpenedEvent } from "../operations/open-project";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
 import type { ProjectClosedEvent } from "../operations/close-project";

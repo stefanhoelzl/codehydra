@@ -1,14 +1,21 @@
 /**
- * CreateWorkspaceOperation - Orchestrates workspace creation.
+ * OpenWorkspaceOperation - Orchestrates workspace opening.
+ *
+ * Replaces CreateWorkspaceOperation with an expanded pipeline that includes
+ * project resolution and a fetch-bases path for incomplete payloads.
  *
  * Uses isolated hook contexts with collect() — each hook point returns typed
  * results that are merged field-by-field with conflict detection.
  *
  * Hook points:
- * 1. "create" → CreateHookResult — worktree creation (fatal)
- * 2. "setup" → SetupHookResult — keepfiles (best-effort, internal try/catch),
- *    agent server (fatal)
- * 3. "finalize" → FinalizeHookResult — workspace URL (fatal)
+ * 1. "resolve-project" → ResolveProjectHookResult — resolves projectId to path (fatal)
+ * 2. If incomplete (missing workspaceName or base):
+ *    "fetch-bases" → FetchBasesHookResult — returns bases for dialog (fatal, early return)
+ * 3. If complete:
+ *    "create" → CreateHookResult — worktree creation (fatal)
+ *    "setup" → SetupHookResult — keepfiles (best-effort, internal try/catch),
+ *     agent server (fatal)
+ *    "finalize" → FinalizeHookResult — workspace URL (fatal)
  *
  * On success, builds a Workspace return value and emits a
  * workspace:created domain event.
@@ -33,7 +40,7 @@ import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-wo
 // Intent Types
 // =============================================================================
 
-/** Data for activating an existing (discovered) workspace via workspace:create */
+/** Data for activating an existing (discovered) workspace via workspace:open */
 export interface ExistingWorkspaceData {
   readonly path: string;
   readonly name: string;
@@ -41,10 +48,10 @@ export interface ExistingWorkspaceData {
   readonly metadata: Readonly<Record<string, string>>;
 }
 
-export interface CreateWorkspacePayload {
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly base: string;
+export interface OpenWorkspacePayload {
+  readonly projectId?: ProjectId;
+  readonly workspaceName?: string;
+  readonly base?: string;
   readonly initialPrompt?: InitialPrompt;
   readonly keepInBackground?: boolean;
   /** When set, skip worktree creation and populate context from existing workspace data. */
@@ -53,12 +60,16 @@ export interface CreateWorkspacePayload {
   readonly projectPath?: string;
 }
 
-export interface CreateWorkspaceIntent extends Intent<Workspace> {
-  readonly type: "workspace:create";
-  readonly payload: CreateWorkspacePayload;
+export type OpenWorkspaceResult =
+  | Workspace
+  | { bases: readonly { name: string; isRemote: boolean }[]; defaultBaseBranch?: string };
+
+export interface OpenWorkspaceIntent extends Intent<OpenWorkspaceResult> {
+  readonly type: "workspace:open";
+  readonly payload: OpenWorkspacePayload;
 }
 
-export const INTENT_CREATE_WORKSPACE = "workspace:create" as const;
+export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
 
 // =============================================================================
 // Event Types
@@ -88,18 +99,32 @@ export const EVENT_WORKSPACE_CREATED = "workspace:created" as const;
 // Operation
 // =============================================================================
 
-export const CREATE_WORKSPACE_OPERATION_ID = "create-workspace";
+export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
 
 // =============================================================================
 // Per-hook-point types
 // =============================================================================
+
+/** Result from the "resolve-project" hook point. */
+export interface ResolveProjectHookResult {
+  readonly projectPath?: string;
+}
+
+/** Input context for the "fetch-bases" hook point (enriched with resolved project path). */
+export interface FetchBasesHookInput extends HookContext {
+  readonly projectPath: string;
+}
+
+/** Input context for the "create" hook point (enriched with resolved project path). */
+export interface CreateHookInput extends HookContext {
+  readonly projectPath: string;
+}
 
 /** Result from the "create" hook point. Fields are optional — multiple handlers may each contribute a subset. */
 export interface CreateHookResult {
   readonly workspacePath?: string;
   readonly branch?: string;
   readonly metadata?: Readonly<Record<string, string>>;
-  readonly projectPath?: string;
 }
 
 /** Input context for the "setup" hook point (enriched with merged create results). */
@@ -140,29 +165,61 @@ function mergeHookResults<T extends object>(results: readonly T[], hookPoint: st
   return merged as Partial<T>;
 }
 
-export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent, Workspace> {
-  readonly id = CREATE_WORKSPACE_OPERATION_ID;
+export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, OpenWorkspaceResult> {
+  readonly id = OPEN_WORKSPACE_OPERATION_ID;
 
-  async execute(ctx: OperationContext<CreateWorkspaceIntent>): Promise<Workspace> {
-    // Hook 1: "create" — worktree creation (fatal on error)
-    const createCtx: HookContext = { intent: ctx.intent };
+  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
+    // Hook 1: "resolve-project" — resolve projectId to projectPath (fatal on error)
+    const resolveCtx: HookContext = { intent: ctx.intent };
+    const { results: resolveResults, errors: resolveErrors } =
+      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveCtx);
+
+    if (resolveErrors.length > 0) throw resolveErrors[0]!;
+
+    const resolve = mergeHookResults(resolveResults, "resolve-project");
+    const { projectPath } = resolve;
+    if (projectPath === undefined) {
+      throw new Error("resolve-project hook did not provide projectPath");
+    }
+
+    // Check if payload is incomplete (missing workspaceName or base)
+    const { workspaceName, base } = ctx.intent.payload;
+    if (workspaceName === undefined || base === undefined) {
+      // Hook 2: "fetch-bases" — return bases for dialog (fatal, early return)
+      const fetchBasesCtx: FetchBasesHookInput = {
+        intent: ctx.intent,
+        projectPath,
+      };
+      const { results: fetchBasesResults, errors: fetchBasesErrors } = await ctx.hooks.collect<{
+        bases?: readonly { name: string; isRemote: boolean }[];
+        defaultBaseBranch?: string;
+      }>("fetch-bases", fetchBasesCtx);
+
+      if (fetchBasesErrors.length > 0) throw fetchBasesErrors[0]!;
+
+      const fetchBases = mergeHookResults(fetchBasesResults, "fetch-bases");
+      return {
+        bases: fetchBases.bases ?? [],
+        ...(fetchBases.defaultBaseBranch !== undefined && {
+          defaultBaseBranch: fetchBases.defaultBaseBranch,
+        }),
+      };
+    }
+
+    // Hook 3a: "create" — worktree creation (fatal on error)
+    const createCtx: CreateHookInput = { intent: ctx.intent, projectPath };
     const { results: createResults, errors: createErrors } =
       await ctx.hooks.collect<CreateHookResult>("create", createCtx);
 
     if (createErrors.length > 0) throw createErrors[0]!;
 
     const create = mergeHookResults(createResults, "create");
-    const { workspacePath, branch, metadata, projectPath } = create;
-    if (
-      workspacePath === undefined ||
-      branch === undefined ||
-      metadata === undefined ||
-      projectPath === undefined
-    ) {
+    const { workspacePath, branch, metadata } = create;
+    if (workspacePath === undefined || branch === undefined || metadata === undefined) {
       throw new Error("Create hook did not provide all required fields");
     }
 
-    // Hook 2: "setup" — keepfiles is best-effort (internal try/catch), agent is fatal
+    // Hook 3b: "setup" — keepfiles is best-effort (internal try/catch), agent is fatal
     const setupCtx: SetupHookInput = {
       intent: ctx.intent,
       workspacePath,
@@ -178,7 +235,7 @@ export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent
     const setup = mergeHookResults(setupResults, "setup");
     const envVars = setup.envVars ?? {};
 
-    // Hook 3: "finalize" — workspace URL (fatal on error)
+    // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
       intent: ctx.intent,
       workspacePath,
@@ -195,10 +252,15 @@ export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent
     }
 
     // Build Workspace return value
-    const workspaceName = extractWorkspaceName(workspacePath);
+    const resolvedWorkspaceName = extractWorkspaceName(workspacePath);
+    const projectId = ctx.intent.payload.projectId;
+    if (!projectId) {
+      throw new Error("projectId is required for complete workspace creation");
+    }
+
     const workspace: Workspace = {
-      projectId: ctx.intent.payload.projectId,
-      name: workspaceName,
+      projectId,
+      name: resolvedWorkspaceName,
       branch,
       metadata,
       path: workspacePath,
@@ -206,12 +268,12 @@ export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent
 
     // Build and emit domain event
     const eventPayload: WorkspaceCreatedPayload = {
-      projectId: ctx.intent.payload.projectId,
-      workspaceName,
+      projectId,
+      workspaceName: resolvedWorkspaceName,
       workspacePath,
       projectPath,
       branch,
-      base: ctx.intent.payload.base,
+      base,
       metadata,
       workspaceUrl: finalize.workspaceUrl,
       ...(ctx.intent.payload.initialPrompt !== undefined && {
@@ -233,8 +295,8 @@ export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent
       const switchIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: ctx.intent.payload.projectId,
-          workspaceName,
+          projectId,
+          workspaceName: resolvedWorkspaceName,
           focus: true,
         },
       };
@@ -244,3 +306,12 @@ export class CreateWorkspaceOperation implements Operation<CreateWorkspaceIntent
     return workspace;
   }
 }
+
+// =============================================================================
+// Backward-compat re-exports (from create-workspace.ts)
+// =============================================================================
+
+export { INTENT_OPEN_WORKSPACE as INTENT_CREATE_WORKSPACE };
+export { OPEN_WORKSPACE_OPERATION_ID as CREATE_WORKSPACE_OPERATION_ID };
+export type { OpenWorkspacePayload as CreateWorkspacePayload };
+export type { OpenWorkspaceIntent as CreateWorkspaceIntent };

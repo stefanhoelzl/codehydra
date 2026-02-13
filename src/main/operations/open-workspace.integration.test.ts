@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Integration tests for create-workspace operation through the Dispatcher.
+ * Integration tests for open-workspace operation through the Dispatcher.
  *
  * Tests verify the full dispatch pipeline: intent -> hooks -> event -> result,
  * including event emission on success, error propagation on failure,
@@ -19,13 +19,17 @@
  * #10: Keepfiles copies files after worktree creation
  * #11: Keepfiles failure does not fail workspace creation
  * #12: No keepfiles side effects when worktree creation fails
+ * #15: existingWorkspace skips worktree creation
+ * #16: existingWorkspace uses projectPath directly
+ * #17: Incomplete payload returns bases
+ * #18: Resolve-project failure propagates error
  *
  * Regression coverage (APP_LIFECYCLE_INTENTS #10):
  * The agentModule's setup hook behavior (starting per-workspace server) is tested
  * in test #4 ("agent server failure fails workspace creation"). This verifies that
  * the extended agentModule (which now also has app:start/stop hooks in the production
  * bootstrap) still correctly handles per-workspace server startup via its
- * workspace:create setup hook.
+ * workspace:open setup hook.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -34,22 +38,24 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
 import {
-  CreateWorkspaceOperation,
-  CREATE_WORKSPACE_OPERATION_ID,
-  INTENT_CREATE_WORKSPACE,
+  OpenWorkspaceOperation,
+  OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
-} from "./create-workspace";
+} from "./open-workspace";
 import type {
-  CreateWorkspaceIntent,
+  OpenWorkspaceIntent,
+  OpenWorkspacePayload,
+  CreateHookInput,
   CreateHookResult,
   SetupHookInput,
   SetupHookResult,
   FinalizeHookInput,
   FinalizeHookResult,
-  CreateWorkspacePayload,
   WorkspaceCreatedEvent,
   ExistingWorkspaceData,
-} from "./create-workspace";
+  ResolveProjectHookResult,
+} from "./open-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
@@ -63,7 +69,7 @@ import {
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceHookResult,
-  ResolveProjectHookResult,
+  ResolveProjectHookResult as SwitchResolveProjectHookResult,
   ResolveWorkspaceHookInput,
   ResolveWorkspaceHookResult,
   ActivateHookInput,
@@ -177,6 +183,7 @@ interface TestSetupOptions {
   serverManager?: MockServerManager;
   agentStatusManager?: MockAgentStatusManager;
   keepFilesService?: MockKeepFilesService;
+  fetchBasesModule?: IntentModule;
   throwOnCreate?: boolean;
   setupThrows?: boolean;
   workspaceUrl?: string;
@@ -200,7 +207,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  dispatcher.registerOperation(INTENT_CREATE_WORKSPACE, new CreateWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // Minimal switch modules for workspace:switch (satisfy 3 hook points)
@@ -208,7 +215,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "resolve-project": {
-          handler: async (): Promise<ResolveProjectHookResult> => {
+          handler: async (): Promise<SwitchResolveProjectHookResult> => {
             return { projectPath: PROJECT_ROOT, projectName: "test" };
           },
         },
@@ -240,13 +247,60 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     },
   };
 
+  // ResolveProjectModule: "resolve-project" hook — resolves projectId to project path
+  const resolveProjectModule: IntentModule = {
+    hooks: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as OpenWorkspaceIntent;
+            // Short-circuit: if projectPath is in payload, use it
+            if (intent.payload.projectPath) {
+              return { projectPath: intent.payload.projectPath };
+            }
+            // Check projectId
+            if (intent.payload.projectId === projectId) {
+              return { projectPath: PROJECT_ROOT };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // Default FetchBasesModule: "fetch-bases" hook — returns bases for dialog
+  const defaultFetchBasesModule: IntentModule = {
+    hooks: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
+        "fetch-bases": {
+          handler: async (): Promise<{
+            bases: readonly { name: string; isRemote: boolean }[];
+            defaultBaseBranch?: string;
+          }> => {
+            return {
+              bases: [
+                { name: "main", isRemote: false },
+                { name: "origin/main", isRemote: true },
+              ],
+              defaultBaseBranch: "main",
+            };
+          },
+        },
+      },
+    },
+  };
+
+  const fetchBasesModule = opts?.fetchBasesModule ?? defaultFetchBasesModule;
+
   // WorktreeModule: "create" hook — returns CreateHookResult
   const worktreeModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
           handler: async (ctx: HookContext): Promise<CreateHookResult> => {
-            const intent = ctx.intent as CreateWorkspaceIntent;
+            const intent = ctx.intent as OpenWorkspaceIntent;
+            const { projectPath } = ctx as CreateHookInput;
 
             // Existing workspace path: return context from existing data
             if (intent.payload.existingWorkspace) {
@@ -255,7 +309,6 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
                 workspacePath: existing.path,
                 branch: existing.branch ?? existing.name,
                 metadata: existing.metadata,
-                projectPath: intent.payload.projectPath!,
               };
             }
 
@@ -268,15 +321,17 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             }
 
             const workspace = await provider.createWorkspace(
-              intent.payload.name,
-              intent.payload.base
+              intent.payload.workspaceName!,
+              intent.payload.base!
             );
+
+            // Suppress unused variable warning for projectPath verification
+            void projectPath;
 
             return {
               workspacePath: workspace.path.toString(),
               branch: workspace.branch,
               metadata: workspace.metadata,
-              projectPath: PROJECT_ROOT,
             };
           },
         },
@@ -287,7 +342,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   // KeepFilesModule: "setup" hook (best-effort, try/catch internal)
   const keepFilesModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
           handler: async (ctx: HookContext): Promise<SetupHookResult> => {
             const setupCtx = ctx as SetupHookInput;
@@ -309,11 +364,11 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   // AgentModule: "setup" hook (fatal — no try/catch)
   const agentModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
           handler: async (ctx: HookContext): Promise<SetupHookResult> => {
             const setupCtx = ctx as SetupHookInput;
-            const intent = ctx.intent as CreateWorkspaceIntent;
+            const intent = ctx.intent as OpenWorkspaceIntent;
 
             await serverManager.startServer(setupCtx.workspacePath);
 
@@ -339,7 +394,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const failingSetupModule: IntentModule | null = opts?.setupThrows
     ? {
         hooks: {
-          [CREATE_WORKSPACE_OPERATION_ID]: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
             setup: {
               handler: async () => {
                 throw new Error("Setup handler failed");
@@ -353,7 +408,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   // CodeServerModule: "finalize" hook — returns FinalizeHookResult
   const codeServerModule: IntentModule = {
     hooks: {
-      [CREATE_WORKSPACE_OPERATION_ID]: {
+      [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
           handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
             void (ctx as FinalizeHookInput).envVars;
@@ -368,6 +423,8 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     switchResolveProjectModule,
     switchResolveWorkspaceModule,
     switchViewModule,
+    resolveProjectModule,
+    fetchBasesModule,
     worktreeModule,
     keepFilesModule,
     agentModule,
@@ -375,7 +432,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   ];
   if (failingSetupModule) {
     // Insert before keepFilesModule so the failing handler runs first on the "setup" hook
-    modules.splice(1, 0, failingSetupModule);
+    modules.splice(modules.indexOf(worktreeModule) + 1, 0, failingSetupModule);
   }
   wireModules(modules, hookRegistry, dispatcher);
 
@@ -388,13 +445,13 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
 function createIntent(
   projectId: ProjectId,
-  overrides?: Partial<CreateWorkspacePayload>
-): CreateWorkspaceIntent {
+  overrides?: Partial<OpenWorkspacePayload>
+): OpenWorkspaceIntent {
   return {
-    type: INTENT_CREATE_WORKSPACE,
+    type: INTENT_OPEN_WORKSPACE,
     payload: {
       projectId,
-      name: "feature-x",
+      workspaceName: "feature-x",
       base: "main",
       ...overrides,
     },
@@ -405,7 +462,7 @@ function createIntent(
 // Tests
 // =============================================================================
 
-describe("CreateWorkspace Operation", () => {
+describe("OpenWorkspace Operation", () => {
   describe("creates workspace with correct return value (#1)", () => {
     let setup: TestSetup;
 
@@ -515,7 +572,7 @@ describe("CreateWorkspace Operation", () => {
 
       await expect(
         setup.dispatcher.dispatch(createIntent("nonexistent-12345678" as ProjectId))
-      ).rejects.toThrow("Project not found");
+      ).rejects.toThrow("resolve-project hook did not provide projectPath");
     });
   });
 
@@ -689,11 +746,11 @@ describe("CreateWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      const intent: CreateWorkspaceIntent = {
-        type: INTENT_CREATE_WORKSPACE,
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
         payload: {
           projectId: setup.projectId,
-          name: "feature-y",
+          workspaceName: "feature-y",
           base: "main",
           existingWorkspace,
           projectPath: PROJECT_ROOT,
@@ -733,11 +790,11 @@ describe("CreateWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      const intent: CreateWorkspaceIntent = {
-        type: INTENT_CREATE_WORKSPACE,
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
         payload: {
           projectId: setup.projectId,
-          name: "my-ws",
+          workspaceName: "my-ws",
           base: "develop",
           existingWorkspace,
           projectPath: customProjectPath,
@@ -755,6 +812,73 @@ describe("CreateWorkspace Operation", () => {
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
       expect(event.payload.projectPath).toBe(customProjectPath);
+    });
+  });
+
+  describe("incomplete payload returns bases (#17)", () => {
+    it("returns bases when workspaceName is missing", async () => {
+      const setup = createTestSetup();
+
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          projectId: setup.projectId,
+          // No workspaceName or base
+        },
+      };
+
+      const result = await setup.dispatcher.dispatch(intent);
+
+      expect(result).toBeDefined();
+      // Result should be the bases object, not a Workspace
+      expect(result).toHaveProperty("bases");
+      const basesResult = result as {
+        bases: readonly { name: string; isRemote: boolean }[];
+        defaultBaseBranch?: string;
+      };
+      expect(basesResult.bases).toHaveLength(2);
+      expect(basesResult.bases[0]).toEqual({ name: "main", isRemote: false });
+      expect(basesResult.bases[1]).toEqual({ name: "origin/main", isRemote: true });
+      expect(basesResult.defaultBaseBranch).toBe("main");
+    });
+
+    it("returns bases when base is missing", async () => {
+      const setup = createTestSetup();
+
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          projectId: setup.projectId,
+          workspaceName: "feature-x",
+          // No base
+        },
+      };
+
+      const result = await setup.dispatcher.dispatch(intent);
+
+      expect(result).toBeDefined();
+      expect(result).toHaveProperty("bases");
+      const basesResult = result as { bases: readonly { name: string; isRemote: boolean }[] };
+      expect(basesResult.bases).toHaveLength(2);
+    });
+  });
+
+  describe("resolve-project failure propagates error (#18)", () => {
+    it("throws when resolve-project provides no projectPath", async () => {
+      const setup = createTestSetup();
+
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          projectId: "nonexistent-12345678" as ProjectId,
+          workspaceName: "feature-x",
+          base: "main",
+        },
+      };
+
+      await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
+        "resolve-project hook did not provide projectPath"
+      );
     });
   });
 });
