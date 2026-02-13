@@ -119,6 +119,7 @@ export interface UiSetModePayload {
  */
 export interface MethodRegistry {
   // Lifecycle
+  "lifecycle.ready": (payload: EmptyPayload) => Promise<void>;
   "lifecycle.quit": (payload: EmptyPayload) => Promise<void>;
 
   // Projects
@@ -165,7 +166,7 @@ export type MethodPath = keyof MethodRegistry;
  * Grouped method paths for better organization.
  * @internal Exported for testing only - used for type-level verification
  */
-export type LifecyclePath = "lifecycle.quit";
+export type LifecyclePath = "lifecycle.ready" | "lifecycle.quit";
 /** @internal Exported for testing only */
 export type ProjectPath =
   | "projects.open"
@@ -212,6 +213,7 @@ export type MethodResult<P extends MethodPath> = Awaited<ReturnType<MethodRegist
  * This array must contain all keys from MethodRegistry.
  */
 export const ALL_METHOD_PATHS = [
+  "lifecycle.ready",
   "lifecycle.quit",
   "projects.open",
   "projects.close",

@@ -59,6 +59,7 @@ const mockApi = vi.hoisted(() => ({
   // have been removed - setup is now handled via app:setup intent in main process.
   // Renderer is passive and waits for lifecycle:show-main-view IPC event.
   lifecycle: {
+    ready: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn().mockResolvedValue(undefined),
   },
   sendAgentSelected: vi.fn(),
@@ -219,6 +220,16 @@ describe("Integration tests", () => {
     mockApi.workspaces.getStatus.mockResolvedValue({
       isDirty: false,
       agent: { type: "none" },
+    });
+    // Configure lifecycle.ready to simulate event-driven store population:
+    // reads from projects.list and ui.getActiveWorkspace mocks (set per-test)
+    mockApi.lifecycle.ready.mockImplementation(async () => {
+      const projectList = await mockApi.projects.list();
+      for (const p of projectList) {
+        projectsStore.addProject(p);
+      }
+      const activeRef = await mockApi.ui.getActiveWorkspace();
+      projectsStore.setActiveWorkspace(activeRef?.path ?? null);
     });
     // Legacy mocks that may still be used in some places
     mockApi.listBases.mockResolvedValue([

@@ -199,15 +199,17 @@ describe("IUiApi Interface", () => {
 
 describe("ILifecycleApi Interface", () => {
   it("should have correct method signatures", () => {
-    // Note: getState, setup, startServices, setAgent have been migrated to app:setup intent.
-    // Only quit() remains in the ILifecycleApi.
     const api: ILifecycleApi = {
+      async ready(): Promise<void> {
+        // no-op
+      },
       async quit(): Promise<void> {
         // no-op
       },
     };
 
     expect(api).toBeDefined();
+    expect(typeof api.ready).toBe("function");
     expect(typeof api.quit).toBe("function");
   });
 });

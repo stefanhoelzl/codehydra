@@ -89,6 +89,11 @@ export interface Api {
   };
   lifecycle: {
     /**
+     * Signal that the renderer is ready to receive state.
+     * The main process emits domain events for all current state before resolving.
+     */
+    ready(): Promise<void>;
+    /**
      * Quit the application.
      */
     quit(): Promise<void>;

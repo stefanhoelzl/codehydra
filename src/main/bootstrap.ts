@@ -2920,4 +2920,35 @@ function wireDispatcher(
     },
     { ipc: ApiIpcChannels.PROJECT_CLOSE }
   );
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle: ready signal (renderer calls after subscribing to domain events)
+  // ---------------------------------------------------------------------------
+
+  registry.register(
+    "lifecycle.ready",
+    async () => {
+      // Emit project:opened for each currently open project
+      const allProjects = await appState.getAllProjects();
+      for (const project of allProjects) {
+        registry.emit("project:opened", { project });
+      }
+
+      // Emit workspace:switched for the active workspace
+      const activePath = viewManager.getActiveWorkspacePath();
+      if (activePath) {
+        const resolved = workspaceResolver(activePath);
+        if (resolved) {
+          registry.emit("workspace:switched", {
+            projectId: resolved.projectId,
+            workspaceName: resolved.workspaceName,
+            path: activePath,
+          });
+        }
+      } else {
+        registry.emit("workspace:switched", null);
+      }
+    },
+    { ipc: ApiIpcChannels.LIFECYCLE_READY }
+  );
 }

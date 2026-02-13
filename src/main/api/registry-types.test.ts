@@ -47,7 +47,7 @@ describe("registry-types.paths", () => {
     // This test is compile-time verified by the `satisfies` constraint in registry-types.ts
     // At runtime, we verify the count matches
     // Note: lifecycle methods (getState, setAgent, setup, startServices) were removed in app:setup migration
-    const registryKeyCount = 20; // Count of all methods in MethodRegistry
+    const registryKeyCount = 21; // Count of all methods in MethodRegistry
     expect(ALL_METHOD_PATHS.length).toBe(registryKeyCount);
   });
 
@@ -67,7 +67,8 @@ describe("registry-types.paths", () => {
   });
 
   it("grouped paths match their expected values", () => {
-    // Lifecycle paths - only quit remains after app:setup migration
+    // Lifecycle paths
+    expectTypeOf<"lifecycle.ready">().toExtend<LifecyclePath>();
     expectTypeOf<"lifecycle.quit">().toExtend<LifecyclePath>();
 
     // Project paths

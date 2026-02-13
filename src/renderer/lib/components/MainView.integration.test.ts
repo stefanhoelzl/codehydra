@@ -41,10 +41,7 @@ const mockApi = vi.hoisted(() => ({
   },
   // Flat API structure - lifecycle namespace
   lifecycle: {
-    getState: vi.fn().mockResolvedValue({ state: "ready", agent: "opencode" }),
-    setup: vi.fn().mockResolvedValue({ success: true }),
-    startServices: vi.fn().mockResolvedValue({ success: true }),
-    setAgent: vi.fn().mockResolvedValue(undefined),
+    ready: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn().mockResolvedValue(undefined),
   },
   // on() for event subscriptions
@@ -119,6 +116,15 @@ describe("MainView close project integration", () => {
     mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
     mockApi.projects.close.mockResolvedValue(undefined);
     mockApi.workspaces.remove.mockResolvedValue({ branchDeleted: true });
+    // Configure lifecycle.ready to simulate event-driven store population
+    mockApi.lifecycle.ready.mockImplementation(async () => {
+      const projectList = await mockApi.projects.list();
+      for (const p of projectList) {
+        projectsStore.addProject(p);
+      }
+      const activeRef = await mockApi.ui.getActiveWorkspace();
+      projectsStore.setActiveWorkspace(activeRef?.path ?? null);
+    });
   });
 
   afterEach(() => {

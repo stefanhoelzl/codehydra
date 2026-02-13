@@ -217,6 +217,7 @@ export class ApiRegistry implements IApiRegistry {
         setMode: (mode) => get("ui.setMode")({ mode }),
       },
       lifecycle: {
+        ready: () => get("lifecycle.ready")({}),
         quit: () => get("lifecycle.quit")({}),
       },
       on: this.on.bind(this),

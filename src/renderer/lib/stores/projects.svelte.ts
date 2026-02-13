@@ -126,6 +126,7 @@ export function setProjects(newProjects: Project[]): void {
 }
 
 export function addProject(project: Project): void {
+  if (_projects.some((p) => p.path === project.path)) return;
   _projects = [..._projects, project];
 }
 

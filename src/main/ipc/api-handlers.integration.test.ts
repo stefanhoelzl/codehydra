@@ -94,6 +94,7 @@ function createMockApiWithEvents(): {
       setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
+      ready: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn().mockResolvedValue(undefined),
     },
     on: vi.fn().mockImplementation(<E extends keyof ApiEvents>(event: E, handler: ApiEvents[E]) => {
