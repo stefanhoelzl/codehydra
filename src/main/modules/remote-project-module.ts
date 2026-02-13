@@ -9,6 +9,7 @@
  * - open-project / register: track remote project in internal state
  * - close-project / resolve-project: look up tracked remote project by projectId
  * - close-project / close: remove from state and store, optionally delete directory
+ * - switch-workspace / resolve-project: look up tracked remote project by projectId
  * - app-start / activate: load saved remote project configs into state
  *
  * Self-selects per hook: returns undefined when the project is not remote,
@@ -47,9 +48,14 @@ import type { ActivateHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
-  type ResolveProjectHookResult,
+  type ResolveProjectHookResult as GetStatusResolveProjectHookResult,
 } from "../operations/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
+import {
+  SWITCH_WORKSPACE_OPERATION_ID,
+  type SwitchWorkspaceIntent,
+  type ResolveProjectHookResult,
+} from "../operations/switch-workspace";
 
 // =============================================================================
 // Exported Types
@@ -205,6 +211,26 @@ export function createRemoteProjectModule(deps: {
       },
 
       // -----------------------------------------------------------------------
+      // switch-workspace
+      // -----------------------------------------------------------------------
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as SwitchWorkspaceIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of state.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString(), projectName: project.name };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------------
       // app-start
       // -----------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
@@ -239,7 +265,7 @@ export function createRemoteProjectModule(deps: {
       // -----------------------------------------------------------------------
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+          handler: async (ctx: HookContext): Promise<GetStatusResolveProjectHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
             const { projectId } = intent.payload;
 
