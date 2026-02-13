@@ -50,31 +50,34 @@ export const EVENT_MODE_CHANGED = "ui:mode-changed" as const;
 export const SET_MODE_OPERATION_ID = "set-mode";
 
 /**
- * Extended hook context for set-mode.
- * The "set" hook handler captures previousMode before applying the new mode.
- * `undefined` means the hook didn't run (error).
+ * Per-handler result contract for the "set" hook point.
+ * Each handler returns its contribution — the operation merges them.
  */
-export interface SetModeHookContext extends HookContext {
-  previousMode?: UIMode;
+export interface SetModeHookResult {
+  readonly previousMode?: UIMode;
 }
 
 export class SetModeOperation implements Operation<SetModeIntent, void> {
   readonly id = SET_MODE_OPERATION_ID;
 
   async execute(ctx: OperationContext<SetModeIntent>): Promise<void> {
-    const hookCtx: SetModeHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Run "set" hook -- handler captures previousMode and applies new mode
-    await ctx.hooks.run("set", hookCtx);
-
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results, errors } = await ctx.hooks.collect<SetModeHookResult>("set", hookCtx);
+    if (errors.length > 0) {
+      throw errors[0]!;
     }
 
-    if (hookCtx.previousMode === undefined) {
+    // Merge results — last-write-wins for previousMode
+    let previousMode: UIMode | undefined;
+    for (const result of results) {
+      if (result.previousMode !== undefined) previousMode = result.previousMode;
+    }
+
+    if (previousMode === undefined) {
       throw new Error("Set mode hook did not provide previousMode result");
     }
 
@@ -83,7 +86,7 @@ export class SetModeOperation implements Operation<SetModeIntent, void> {
       type: EVENT_MODE_CHANGED,
       payload: {
         mode: ctx.intent.payload.mode,
-        previousMode: hookCtx.previousMode,
+        previousMode,
       },
     };
     ctx.emit(event);

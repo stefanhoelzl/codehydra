@@ -76,36 +76,37 @@ export interface CheckDepsResult {
 }
 
 /**
- * Extended hook context for app:start.
- *
- * Fields are populated by hook modules across the shared-context hook points:
- * - "show-ui": (no fields, sends IPC to show starting screen)
- * - "wire": (no fields, wires services)
- * - "start": codeServerPort, mcpPort
- * - "activate": projectPaths (modules read context set by start hook)
- * - "finalize": (post-project-load actions, e.g. show main view)
- *
- * Check fields (configuredAgent, missingBinaries, etc.) are NOT on this context.
- * They flow through isolated collect() hook points (check-config, check-deps)
- * and are merged by the operation into a CheckResult.
+ * Per-handler result for "show-ui" hook point.
+ * Only the retry module returns a value; UI module returns void.
  */
-export interface AppStartHookContext extends HookContext {
-  // Start hook fields
-  /** Set by CodeServerModule (start hook) -- consumed by activate hook modules. */
-  codeServerPort?: number;
-  /** Set by McpModule (start hook) -- consumed by activate hook modules. */
-  mcpPort?: number;
+export interface ShowUIHookResult {
+  readonly waitForRetry?: () => Promise<void>;
+}
 
-  // Activate hook fields
-  /** Set by DataLifecycleModule (activate hook): saved project paths to open */
-  projectPaths?: readonly string[];
+/**
+ * Per-handler result for "start" hook point.
+ * CodeServerModule returns codeServerPort; McpModule returns mcpPort.
+ * Side-effect handlers return `{}`.
+ */
+export interface StartHookResult {
+  readonly codeServerPort?: number;
+  readonly mcpPort?: number;
+}
 
-  // Retry support
-  /**
-   * Set by RetryModule: returns a promise that resolves when the user clicks retry.
-   * Used by the operation to wait for user action before re-dispatching app:setup.
-   */
-  waitForRetry?: () => Promise<void>;
+/**
+ * Input context for "activate" hook -- carries ports from start results.
+ */
+export interface ActivateHookInput extends HookContext {
+  readonly codeServerPort?: number;
+  readonly mcpPort?: number;
+}
+
+/**
+ * Per-handler result for "activate" hook point.
+ * DataLifecycleModule returns projectPaths; others return `{}`.
+ */
+export interface ActivateHookResult {
+  readonly projectPaths?: readonly string[];
 }
 
 /** Merged check results produced by runChecks(). */
@@ -128,14 +129,19 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
-    const hookCtx: AppStartHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
-    // Hook 1: "show-ui" -- Show starting screen
-    await ctx.hooks.run("show-ui", hookCtx);
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    // Hook 1: "show-ui" -- Show starting screen, capture waitForRetry
+    const { results: showUiResults, errors: showUiErrors } =
+      await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
+    if (showUiErrors.length > 0) {
+      throw showUiErrors[0]!;
+    }
+    let waitForRetry: (() => Promise<void>) | undefined;
+    for (const result of showUiResults) {
+      if (result.waitForRetry !== undefined) waitForRetry = result.waitForRetry;
     }
 
     // Hooks 2-3: "check-config" + "check-deps" (collect, isolated contexts)
@@ -167,8 +173,8 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
         } catch (error) {
           // Setup failed -- error event already emitted by SetupOperation
           // If retry is supported, wait for user to click retry
-          if (hookCtx.waitForRetry) {
-            await hookCtx.waitForRetry();
+          if (waitForRetry) {
+            await waitForRetry();
             // Re-run check hooks to get fresh preflight state for retry
             checkResult = await this.runChecks(ctx);
             if (!checkResult.needsSetup) {
@@ -184,26 +190,45 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     }
 
     // Hook 4: "wire" -- Wire services (after setup completes)
-    await ctx.hooks.run("wire", hookCtx);
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { errors: wireErrors } = await ctx.hooks.collect<void>("wire", hookCtx);
+    if (wireErrors.length > 0) {
+      throw wireErrors[0]!;
     }
 
     // Hook 5: "start" -- Start servers and wire services
-    await ctx.hooks.run("start", hookCtx);
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
+      "start",
+      hookCtx
+    );
+    if (startErrors.length > 0) {
+      throw startErrors[0]!;
+    }
+    let codeServerPort: number | undefined;
+    let mcpPort: number | undefined;
+    for (const result of startResults) {
+      if (result.codeServerPort !== undefined) codeServerPort = result.codeServerPort;
+      if (result.mcpPort !== undefined) mcpPort = result.mcpPort;
     }
 
     // Hook 6: "activate" -- Wire callbacks, gather project paths
-    await ctx.hooks.run("activate", hookCtx);
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const activateInput: ActivateHookInput = {
+      intent: ctx.intent,
+      ...(codeServerPort !== undefined && { codeServerPort }),
+      ...(mcpPort !== undefined && { mcpPort }),
+    };
+    const { results: activateResults, errors: activateErrors } =
+      await ctx.hooks.collect<ActivateHookResult>("activate", activateInput);
+    if (activateErrors.length > 0) {
+      throw activateErrors[0]!;
+    }
+    const projectPaths: string[] = [];
+    for (const result of activateResults) {
+      if (result.projectPaths) projectPaths.push(...result.projectPaths);
     }
 
     // Dispatch project:open for each saved project (best-effort).
     // Each project:open dispatches workspace:create + workspace:switch internally.
-    for (const projectPath of hookCtx.projectPaths ?? []) {
+    for (const projectPath of projectPaths) {
       try {
         await ctx.dispatch(
           {
@@ -218,9 +243,9 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     }
 
     // Hook 7: "finalize" -- Post-project-load actions (show main view)
-    await ctx.hooks.run("finalize", hookCtx);
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { errors: finalizeErrors } = await ctx.hooks.collect<void>("finalize", hookCtx);
+    if (finalizeErrors.length > 0) {
+      throw finalizeErrors[0]!;
     }
   }
 
@@ -236,7 +261,10 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       throw new AggregateError(configErrors, "check-config hooks failed");
     }
 
-    const configuredAgent = configResults[0]?.configuredAgent ?? null;
+    let configuredAgent: ConfigAgentType | null = null;
+    for (const result of configResults) {
+      if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
+    }
 
     // 2. check-deps: binary + extension checks (collect, isolated contexts)
     const depsCtx: CheckDepsHookContext = { intent: ctx.intent, configuredAgent };

@@ -57,11 +57,9 @@ export class SetMetadataOperation implements Operation<SetMetadataIntent, void> 
     };
 
     // Run "set" hook — handler performs the actual provider write
-    await ctx.hooks.run("set", hookCtx);
-
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { errors } = await ctx.hooks.collect<void>("set", hookCtx);
+    if (errors.length > 0) {
+      throw errors[0]!;
     }
 
     // Emit domain event for subscribers (e.g., IpcEventBridge)

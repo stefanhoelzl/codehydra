@@ -24,7 +24,7 @@ import {
 } from "./restart-agent";
 import type {
   RestartAgentIntent,
-  RestartAgentHookContext,
+  RestartAgentHookResult,
   AgentRestartedEvent,
 } from "./restart-agent";
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -107,13 +107,12 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
     hooks: {
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
-          handler: async (ctx: HookContext) => {
+          handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
             const intent = ctx.intent as RestartAgentIntent;
             const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
             const result = await opts.serverManager.restartServer(workspace.path);
             if (result.success) {
-              (ctx as RestartAgentHookContext).port = result.port;
-              (ctx as RestartAgentHookContext).workspacePath = workspace.path;
+              return { port: result.port, workspacePath: workspace.path };
             } else {
               throw new Error(result.error);
             }

@@ -30,13 +30,12 @@ export const INTENT_GET_ACTIVE_WORKSPACE = "ui:get-active-workspace" as const;
 export const GET_ACTIVE_WORKSPACE_OPERATION_ID = "get-active-workspace";
 
 /**
- * Extended hook context for get-active-workspace.
- * The "get" hook handler populates `workspaceRef` with the result.
- * `undefined` means the hook didn't run (error).
+ * Per-handler result contract for the "get" hook point.
+ * Each handler returns its contribution — the operation merges them.
  * `null` is a valid result (no active workspace).
  */
-export interface GetActiveWorkspaceHookContext extends HookContext {
-  workspaceRef?: WorkspaceRef | null;
+export interface GetActiveWorkspaceHookResult {
+  readonly workspaceRef: WorkspaceRef | null;
 }
 
 export class GetActiveWorkspaceOperation implements Operation<
@@ -46,22 +45,29 @@ export class GetActiveWorkspaceOperation implements Operation<
   readonly id = GET_ACTIVE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<GetActiveWorkspaceIntent>): Promise<WorkspaceRef | null> {
-    const hookCtx: GetActiveWorkspaceHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Run "get" hook -- handler retrieves active workspace ref
-    await ctx.hooks.run("get", hookCtx);
-
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results, errors } = await ctx.hooks.collect<GetActiveWorkspaceHookResult>(
+      "get",
+      hookCtx
+    );
+    if (errors.length > 0) {
+      throw errors[0]!;
     }
 
-    if (hookCtx.workspaceRef === undefined) {
+    // Merge results — last-write-wins for workspaceRef
+    let workspaceRef: WorkspaceRef | null | undefined;
+    for (const result of results) {
+      if (result.workspaceRef !== undefined) workspaceRef = result.workspaceRef;
+    }
+
+    if (workspaceRef === undefined) {
       throw new Error("Get active workspace hook did not provide workspaceRef result");
     }
 
-    return hookCtx.workspaceRef;
+    return workspaceRef;
   }
 }

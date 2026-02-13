@@ -53,33 +53,37 @@ export const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
 export const RESTART_AGENT_OPERATION_ID = "restart-agent";
 
 /**
- * Extended hook context for restart-agent.
- * The "restart" hook handler populates `port` with the new port on success.
- * `undefined` means the hook didn't run (error).
+ * Per-handler result contract for the "restart" hook point.
+ * Each handler returns its contribution — the operation merges them.
  */
-export interface RestartAgentHookContext extends HookContext {
-  port?: number;
-  /** Workspace path, set by hook handler for event emission */
-  workspacePath?: string;
+export interface RestartAgentHookResult {
+  readonly port?: number;
+  readonly workspacePath?: string;
 }
 
 export class RestartAgentOperation implements Operation<RestartAgentIntent, number> {
   readonly id = RESTART_AGENT_OPERATION_ID;
 
   async execute(ctx: OperationContext<RestartAgentIntent>): Promise<number> {
-    const hookCtx: RestartAgentHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Run "restart" hook -- handler restarts the server
-    await ctx.hooks.run("restart", hookCtx);
-
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    const { results, errors } = await ctx.hooks.collect<RestartAgentHookResult>("restart", hookCtx);
+    if (errors.length > 0) {
+      throw errors[0]!;
     }
 
-    if (hookCtx.port === undefined) {
+    // Merge results — last-write-wins for port and workspacePath
+    let port: number | undefined;
+    let workspacePath: string | undefined;
+    for (const result of results) {
+      if (result.port !== undefined) port = result.port;
+      if (result.workspacePath !== undefined) workspacePath = result.workspacePath;
+    }
+
+    if (port === undefined) {
       throw new Error("Restart agent hook did not provide port result");
     }
 
@@ -89,12 +93,12 @@ export class RestartAgentOperation implements Operation<RestartAgentIntent, numb
       payload: {
         projectId: ctx.intent.payload.projectId,
         workspaceName: ctx.intent.payload.workspaceName,
-        path: hookCtx.workspacePath ?? "",
-        port: hookCtx.port,
+        path: workspacePath ?? "",
+        port,
       },
     };
     ctx.emit(event);
 
-    return hookCtx.port;
+    return port;
   }
 }

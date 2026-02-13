@@ -50,21 +50,19 @@ export interface WorkspaceSwitchedEvent extends DomainEvent {
 export const EVENT_WORKSPACE_SWITCHED = "workspace:switched" as const;
 
 // =============================================================================
-// Hook Context
+// Hook Result
 // =============================================================================
 
 export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
 
 /**
- * Extended hook context for switch-workspace.
- *
- * Fields are populated by the "activate" hook handler:
- * - resolvedPath: resolved workspace path
- * - projectPath: resolved project path
+ * Per-handler result contract for the "activate" hook point.
+ * Each handler returns its contribution — the operation merges them.
+ * Empty `{}` for no-op case (workspace already active).
  */
-export interface SwitchWorkspaceHookContext extends HookContext {
-  resolvedPath?: string;
-  projectPath?: string;
+export interface SwitchWorkspaceHookResult {
+  readonly resolvedPath?: string;
+  readonly projectPath?: string;
 }
 
 // =============================================================================
@@ -75,21 +73,28 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
-    const hookCtx: SwitchWorkspaceHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Run "activate" hook -- handler resolves workspace and calls setActiveWorkspace
-    await ctx.hooks.run("activate", hookCtx);
+    const { results, errors } = await ctx.hooks.collect<SwitchWorkspaceHookResult>(
+      "activate",
+      hookCtx
+    );
+    if (errors.length > 0) {
+      throw errors[0]!;
+    }
 
-    // Check for errors from hook handlers
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    // Merge results — last-write-wins for resolvedPath and projectPath
+    let resolvedPath: string | undefined;
+    for (const result of results) {
+      if (result.resolvedPath !== undefined) resolvedPath = result.resolvedPath;
     }
 
     // No-op: hook resolved workspace but it was already active
     // (resolvedPath left unset intentionally)
-    if (!hookCtx.resolvedPath) {
+    if (!resolvedPath) {
       return;
     }
 
@@ -99,7 +104,7 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       payload: {
         projectId: ctx.intent.payload.projectId,
         workspaceName: ctx.intent.payload.workspaceName,
-        path: hookCtx.resolvedPath,
+        path: resolvedPath,
       },
     };
     ctx.emit(event);

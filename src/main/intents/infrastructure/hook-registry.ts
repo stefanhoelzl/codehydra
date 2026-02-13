@@ -2,8 +2,8 @@
  * HookRegistry — stores and resolves module hook contributions.
  *
  * Hooks are organized by operation ID and hook point ID.
- * When resolved, handlers run in registration order. Errors set `ctx.error`
- * and skip subsequent non-onError handlers. `run()` never throws.
+ * When resolved, `collect()` runs all handlers in registration order with
+ * frozen context clones, collecting typed results and errors.
  */
 
 import type { HookContext, HookHandler, HookResult, ResolvedHooks } from "./operation";
@@ -25,7 +25,7 @@ export interface IHookRegistry {
 
   /**
    * Resolve all hook handlers for an operation into a ResolvedHooks object.
-   * The returned object's `run()` method executes handlers for a given hook point.
+   * The returned object's `collect()` method executes handlers for a given hook point.
    */
   resolve(operationId: string): ResolvedHooks;
 }
@@ -54,23 +54,6 @@ export class HookRegistry implements IHookRegistry {
   resolve(operationId: string): ResolvedHooks {
     const opMap = this.handlers.get(operationId);
     return {
-      async run(hookPointId: string, ctx: HookContext): Promise<void> {
-        const handlers = opMap?.get(hookPointId);
-        if (!handlers) {
-          return;
-        }
-        for (const entry of handlers) {
-          if (ctx.error && !entry.onError) {
-            continue;
-          }
-          try {
-            await entry.handler(ctx);
-          } catch (err) {
-            ctx.error = err instanceof Error ? err : new Error(String(err));
-          }
-        }
-      },
-
       async collect<T = unknown>(
         hookPointId: string,
         inputCtx: HookContext

@@ -294,7 +294,7 @@ describe("Dispatcher", () => {
       id: "query-op",
       execute: async (ctx) => {
         const hookCtx: HookContext = { intent: ctx.intent };
-        await ctx.hooks.run("get", hookCtx);
+        await ctx.hooks.collect("get", hookCtx);
         return { answer: 42 };
       },
     });

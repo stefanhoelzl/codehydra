@@ -31,7 +31,9 @@ import {
 } from "./close-project";
 import type {
   CloseProjectIntent,
-  CloseProjectHookContext,
+  CloseResolveHookResult,
+  CloseHookInput,
+  CloseHookResult,
   ProjectClosedEvent,
 } from "./close-project";
 import {
@@ -259,8 +261,7 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
+          handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
 
             // Resolve using appState (mirrors bootstrap pattern)
@@ -273,32 +274,32 @@ function createTestHarness(options?: {
             const store = appState.getProjectStore();
             const config = await store.getProjectConfig(found.path);
 
-            hookCtx.projectPath = found.path;
-            hookCtx.removeLocalRepo = intent.payload.removeLocalRepo ?? false;
-            hookCtx.workspaces = found.workspaces ?? [];
-            if (config?.remoteUrl) {
-              hookCtx.remoteUrl = config.remoteUrl;
-            }
+            return {
+              projectPath: found.path,
+              removeLocalRepo: intent.payload.removeLocalRepo ?? false,
+              workspaces: found.workspaces ?? [],
+              ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
+            };
           },
         },
       },
     },
   };
 
-  // ProjectCloseViewModule: "close" hook -- sets otherProjectsExist, clears active workspace if no other projects
+  // ProjectCloseViewModule: "close" hook -- returns otherProjectsExist, clears active workspace if no other projects
   // Note: workspace:switched(null) is emitted by CloseProjectOperation, not here
   const projectCloseViewModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath } = ctx as CloseHookInput;
             const allProjects = await appState.getAllProjects();
-            const otherProjectsExist = allProjects.some((p) => p.path !== hookCtx.projectPath);
-            hookCtx.otherProjectsExist = otherProjectsExist;
+            const otherProjectsExist = allProjects.some((p) => p.path !== projectPath);
             if (!otherProjectsExist) {
               viewManager.setActiveWorkspace(null, false);
             }
+            return { otherProjectsExist };
           },
         },
       },
@@ -310,9 +311,8 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
-            const projectPath = hookCtx.projectPath!;
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
             const provider = appState.getWorkspaceProvider(projectPath) as
               | { dispose?: () => void }
@@ -321,12 +321,14 @@ function createTestHarness(options?: {
               provider.dispose();
             }
 
-            if (hookCtx.removeLocalRepo && hookCtx.remoteUrl) {
+            if (removeLocalRepo && remoteUrl) {
               const store = appState.getProjectStore();
               await store.deleteProjectDirectory(projectPath, {
                 isClonedProject: true,
               });
             }
+
+            return {};
           },
         },
       },
@@ -337,9 +339,8 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
-            const projectPath = hookCtx.projectPath!;
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath } = ctx as CloseHookInput;
             appState.deregisterProject(projectPath);
             const store = appState.getProjectStore();
             try {
@@ -347,6 +348,7 @@ function createTestHarness(options?: {
             } catch {
               // Fail silently
             }
+            return {};
           },
         },
       },

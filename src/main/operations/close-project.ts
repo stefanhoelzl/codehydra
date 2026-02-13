@@ -57,23 +57,30 @@ export const EVENT_PROJECT_CLOSED = "project:closed" as const;
 export const CLOSE_PROJECT_OPERATION_ID = "close-project";
 
 /**
- * Extended hook context for close-project.
- *
- * Fields are populated across hook points:
- * - "resolve" hook: projectPath, remoteUrl, removeLocalRepo, workspaces
- * - "close" hook: consumed by manager and registry modules
+ * Per-handler result contract for the "resolve" hook point.
  */
-export interface CloseProjectHookContext extends HookContext {
-  /** Resolved project path (set by resolve hook) */
-  projectPath?: string;
-  /** Remote URL if this is a cloned project (set by resolve hook) */
-  remoteUrl?: string;
-  /** Whether to delete the local repo (set by resolve hook) */
-  removeLocalRepo?: boolean;
-  /** Workspaces to tear down (set by resolve hook) */
-  workspaces?: ReadonlyArray<{ path: string }>;
-  /** Set by close hook: whether other projects still exist after this one is closed */
-  otherProjectsExist?: boolean;
+export interface CloseResolveHookResult {
+  readonly projectPath?: string;
+  readonly remoteUrl?: string;
+  readonly removeLocalRepo?: boolean;
+  readonly workspaces?: ReadonlyArray<{ path: string }>;
+}
+
+/**
+ * Input context for "close" hook handlers — built by the operation from resolve results.
+ */
+export interface CloseHookInput extends HookContext {
+  readonly projectPath: string;
+  readonly remoteUrl?: string;
+  readonly removeLocalRepo: boolean;
+}
+
+/**
+ * Per-handler result contract for the "close" hook point.
+ * Side-effect handlers return `{}`.
+ */
+export interface CloseHookResult {
+  readonly otherProjectsExist?: boolean;
 }
 
 // =============================================================================
@@ -86,23 +93,32 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
   async execute(ctx: OperationContext<CloseProjectIntent>): Promise<void> {
     const { payload } = ctx.intent;
 
-    const hookCtx: CloseProjectHookContext = {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
-    // 1. Run "resolve" hook -- populates projectPath, remoteUrl, workspaces
-    await ctx.hooks.run("resolve", hookCtx);
-
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    // 1. Run "resolve" hook -- returns projectPath, remoteUrl, workspaces
+    const { results: resolveResults, errors: resolveErrors } =
+      await ctx.hooks.collect<CloseResolveHookResult>("resolve", hookCtx);
+    if (resolveErrors.length > 0) {
+      throw resolveErrors[0]!;
     }
 
-    // Validate required fields from resolve hook
-    if (!hookCtx.projectPath) {
+    // Merge resolve results — last-write-wins
+    let projectPath: string | undefined;
+    let remoteUrl: string | undefined;
+    let removeLocalRepo = false;
+    let workspaces: ReadonlyArray<{ path: string }> = [];
+    for (const result of resolveResults) {
+      if (result.projectPath !== undefined) projectPath = result.projectPath;
+      if (result.remoteUrl !== undefined) remoteUrl = result.remoteUrl;
+      if (result.removeLocalRepo !== undefined) removeLocalRepo = result.removeLocalRepo;
+      if (result.workspaces !== undefined) workspaces = result.workspaces;
+    }
+
+    if (!projectPath) {
       throw new Error("Resolve hook did not provide projectPath");
     }
-
-    const workspaces = hookCtx.workspaces ?? [];
 
     // 2. Dispatch workspace:delete per workspace (removeWorktree=false, skipSwitch=true)
     for (const workspace of workspaces) {
@@ -113,7 +129,7 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
             projectId: payload.projectId,
             workspaceName: extractWorkspaceName(workspace.path) as WorkspaceName,
             workspacePath: workspace.path,
-            projectPath: hookCtx.projectPath,
+            projectPath,
             keepBranch: true,
             force: true,
             removeWorktree: false,
@@ -127,14 +143,28 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
     }
 
     // 3. Run "close" hook (dispose provider, remove state + store, clear active workspace)
-    await ctx.hooks.run("close", hookCtx);
+    const closeHookInput: CloseHookInput = {
+      intent: ctx.intent,
+      projectPath,
+      removeLocalRepo,
+      ...(remoteUrl !== undefined && { remoteUrl }),
+    };
+    const { results: closeResults, errors: closeErrors } = await ctx.hooks.collect<CloseHookResult>(
+      "close",
+      closeHookInput
+    );
+    if (closeErrors.length > 0) {
+      throw new AggregateError(closeErrors, "close-project close hooks failed");
+    }
 
-    if (hookCtx.error) {
-      throw hookCtx.error;
+    // Merge close results — last-write-wins for otherProjectsExist
+    let otherProjectsExist: boolean | undefined;
+    for (const result of closeResults) {
+      if (result.otherProjectsExist !== undefined) otherProjectsExist = result.otherProjectsExist;
     }
 
     // 4. Emit workspace:switched(null) if no other projects remain
-    if (hookCtx.otherProjectsExist === false) {
+    if (otherProjectsExist === false) {
       const nullEvent: WorkspaceSwitchedEvent = {
         type: EVENT_WORKSPACE_SWITCHED,
         payload: null,

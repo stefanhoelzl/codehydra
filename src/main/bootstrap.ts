@@ -47,7 +47,7 @@ import {
   GET_METADATA_OPERATION_ID,
   INTENT_GET_METADATA,
 } from "./operations/get-metadata";
-import type { GetMetadataIntent, GetMetadataHookContext } from "./operations/get-metadata";
+import type { GetMetadataIntent, GetMetadataHookResult } from "./operations/get-metadata";
 import {
   GetWorkspaceStatusOperation,
   GET_WORKSPACE_STATUS_OPERATION_ID,
@@ -64,16 +64,16 @@ import {
 } from "./operations/get-agent-session";
 import type {
   GetAgentSessionIntent,
-  GetAgentSessionHookContext,
+  GetAgentSessionHookResult,
 } from "./operations/get-agent-session";
 import {
   RestartAgentOperation,
   RESTART_AGENT_OPERATION_ID,
   INTENT_RESTART_AGENT,
 } from "./operations/restart-agent";
-import type { RestartAgentIntent, RestartAgentHookContext } from "./operations/restart-agent";
+import type { RestartAgentIntent, RestartAgentHookResult } from "./operations/restart-agent";
 import { SetModeOperation, SET_MODE_OPERATION_ID, INTENT_SET_MODE } from "./operations/set-mode";
-import type { SetModeIntent, SetModeHookContext } from "./operations/set-mode";
+import type { SetModeIntent, SetModeHookResult } from "./operations/set-mode";
 import {
   GetActiveWorkspaceOperation,
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
@@ -81,7 +81,7 @@ import {
 } from "./operations/get-active-workspace";
 import type {
   GetActiveWorkspaceIntent,
-  GetActiveWorkspaceHookContext,
+  GetActiveWorkspaceHookResult,
 } from "./operations/get-active-workspace";
 import {
   CreateWorkspaceOperation,
@@ -131,7 +131,12 @@ import {
   CLOSE_PROJECT_OPERATION_ID,
   INTENT_CLOSE_PROJECT,
 } from "./operations/close-project";
-import type { CloseProjectIntent, CloseProjectHookContext } from "./operations/close-project";
+import type {
+  CloseProjectIntent,
+  CloseResolveHookResult,
+  CloseHookInput,
+  CloseHookResult,
+} from "./operations/close-project";
 import {
   SwitchWorkspaceOperation,
   SWITCH_WORKSPACE_OPERATION_ID,
@@ -140,7 +145,7 @@ import {
 } from "./operations/switch-workspace";
 import type {
   SwitchWorkspaceIntent,
-  SwitchWorkspaceHookContext,
+  SwitchWorkspaceHookResult,
   WorkspaceSwitchedEvent,
 } from "./operations/switch-workspace";
 import { createIpcEventBridge, type WorkspaceResolver } from "./modules/ipc-event-bridge";
@@ -155,7 +160,9 @@ import {
   APP_START_OPERATION_ID,
 } from "./operations/app-start";
 import type {
-  AppStartHookContext,
+  ShowUIHookResult,
+  StartHookResult,
+  ActivateHookResult,
   CheckConfigResult,
   CheckDepsHookContext,
   CheckDepsResult,
@@ -172,7 +179,13 @@ import {
   SETUP_OPERATION_ID,
   EVENT_SETUP_ERROR,
 } from "./operations/setup";
-import type { SetupHookContext, SetupErrorEvent } from "./operations/setup";
+import type {
+  AgentSelectionHookResult,
+  SaveAgentHookInput,
+  BinaryHookInput,
+  ExtensionsHookInput,
+  SetupErrorEvent,
+} from "./operations/setup";
 import type { BadgeManager } from "./managers/badge-manager";
 import type { IpcEventHandler } from "../services/platform/ipc";
 import { SetupError } from "../services/errors";
@@ -509,11 +522,12 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     hooks: {
       [APP_START_OPERATION_ID]: {
         "show-ui": {
-          handler: async () => {
+          handler: async (): Promise<ShowUIHookResult> => {
             const webContents = deps.getUIWebContentsFn();
             if (webContents && !webContents.isDestroyed()) {
               webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
             }
+            return {};
           },
         },
       },
@@ -544,22 +558,23 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  // RetryModule: "show-ui" hook on app-start -- sets waitForRetry on context
+  // RetryModule: "show-ui" hook on app-start -- returns waitForRetry
   // waitForRetry returns a promise that resolves when the renderer sends lifecycle:retry IPC
   const retryModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
         "show-ui": {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
-            hookCtx.waitForRetry = () =>
-              new Promise<void>((resolve) => {
-                const handleRetry: IpcEventHandler = () => {
-                  deps.ipcLayer.removeListener(SetupIpcChannels.LIFECYCLE_RETRY, handleRetry);
-                  resolve();
-                };
-                deps.ipcLayer.on(SetupIpcChannels.LIFECYCLE_RETRY, handleRetry);
-              });
+          handler: async (): Promise<ShowUIHookResult> => {
+            return {
+              waitForRetry: () =>
+                new Promise<void>((resolve) => {
+                  const handleRetry: IpcEventHandler = () => {
+                    deps.ipcLayer.removeListener(SetupIpcChannels.LIFECYCLE_RETRY, handleRetry);
+                    resolve();
+                  };
+                  deps.ipcLayer.on(SetupIpcChannels.LIFECYCLE_RETRY, handleRetry);
+                }),
+            };
           },
         },
       },
@@ -656,8 +671,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     hooks: {
       [SETUP_OPERATION_ID]: {
         "agent-selection": {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as SetupHookContext;
+          handler: async (): Promise<AgentSelectionHookResult> => {
             const webContents = deps.getUIWebContentsFn();
 
             if (!webContents || webContents.isDestroyed()) {
@@ -690,7 +704,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
             const selectedAgent = await agentPromise;
             setupLogger.info("Agent selected", { agent: selectedAgent });
 
-            hookCtx.selectedAgent = selectedAgent;
+            return { selectedAgent };
           },
         },
       },
@@ -703,9 +717,9 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       [SETUP_OPERATION_ID]: {
         "save-agent": {
           handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as SetupHookContext;
+            const { selectedAgent } = ctx as SaveAgentHookInput;
 
-            if (!hookCtx.selectedAgent) {
+            if (!selectedAgent) {
               throw new SetupError(
                 "No agent selected in save-agent hook",
                 "AGENT_SELECTION_REQUIRED"
@@ -713,7 +727,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
             }
 
             try {
-              await configService.setAgent(hookCtx.selectedAgent);
+              await configService.setAgent(selectedAgent);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               throw new SetupError(
@@ -769,7 +783,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       [SETUP_OPERATION_ID]: {
         binary: {
           handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as SetupHookContext;
+            const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
 
             // Download code-server if missing
@@ -840,7 +854,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       [SETUP_OPERATION_ID]: {
         extensions: {
           handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as SetupHookContext;
+            const hookCtx = ctx as ExtensionsHookInput;
             const missingExtensions = hookCtx.missingExtensions ?? [];
             const outdatedExtensions = hookCtx.outdatedExtensions ?? [];
 
@@ -1184,11 +1198,11 @@ function wireDispatcher(
       },
       [GET_METADATA_OPERATION_ID]: {
         get: {
-          handler: async (ctx: GetMetadataHookContext) => {
+          handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
             const intent = ctx.intent as GetMetadataIntent;
             const { workspace } = await resolveWorkspace(intent.payload, appState);
             const metadata = await globalProvider.getMetadata(new Path(workspace.path));
-            ctx.metadata = metadata;
+            return { metadata };
           },
         },
       },
@@ -1229,17 +1243,18 @@ function wireDispatcher(
       },
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
-          handler: async (ctx: GetAgentSessionHookContext) => {
+          handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
             const intent = ctx.intent as GetAgentSessionIntent;
             const { workspace } = await resolveWorkspace(intent.payload, appState);
             const agentStatusManager = appState.getAgentStatusManager();
-            ctx.session = agentStatusManager?.getSession(workspace.path as WorkspacePath) ?? null;
+            const session = agentStatusManager?.getSession(workspace.path as WorkspacePath) ?? null;
+            return { session };
           },
         },
       },
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
-          handler: async (ctx: RestartAgentHookContext) => {
+          handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
             const intent = ctx.intent as RestartAgentIntent;
             const { workspace } = await resolveWorkspace(intent.payload, appState);
             const serverManager = appState.getServerManager();
@@ -1248,8 +1263,7 @@ function wireDispatcher(
             }
             const result = await serverManager.restartServer(workspace.path);
             if (result.success) {
-              ctx.port = result.port;
-              ctx.workspacePath = workspace.path;
+              return { port: result.port, workspacePath: workspace.path };
             } else {
               throw new Error(result.error);
             }
@@ -1264,36 +1278,36 @@ function wireDispatcher(
     hooks: {
       [SET_MODE_OPERATION_ID]: {
         set: {
-          handler: async (ctx: SetModeHookContext) => {
+          handler: async (ctx: HookContext): Promise<SetModeHookResult> => {
             const intent = ctx.intent as SetModeIntent;
             const previousMode = viewManager.getMode();
             viewManager.setMode(intent.payload.mode);
-            ctx.previousMode = previousMode;
+            return { previousMode };
           },
         },
       },
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
-          handler: async (ctx: GetActiveWorkspaceHookContext) => {
+          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
             const activeWorkspacePath = viewManager.getActiveWorkspacePath();
             if (!activeWorkspacePath) {
-              ctx.workspaceRef = null;
-              return;
+              return { workspaceRef: null };
             }
 
             const project = appState.findProjectForWorkspace(activeWorkspacePath);
             if (!project) {
-              ctx.workspaceRef = null;
-              return;
+              return { workspaceRef: null };
             }
 
             const projectId = generateProjectId(project.path);
             const workspaceName = extractWorkspaceName(activeWorkspacePath);
 
-            ctx.workspaceRef = {
-              projectId,
-              workspaceName,
-              path: activeWorkspacePath,
+            return {
+              workspaceRef: {
+                projectId,
+                workspaceName,
+                path: activeWorkspacePath,
+              },
             };
           },
         },
@@ -1988,8 +2002,7 @@ function wireDispatcher(
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
+          handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
 
             const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
@@ -2000,12 +2013,12 @@ function wireDispatcher(
             const projectConfig = await projectStore.getProjectConfig(projectPath);
             const project = appState.getProject(projectPath);
 
-            hookCtx.projectPath = projectPath;
-            hookCtx.removeLocalRepo = intent.payload.removeLocalRepo ?? false;
-            hookCtx.workspaces = project?.workspaces ?? [];
-            if (projectConfig?.remoteUrl) {
-              hookCtx.remoteUrl = projectConfig.remoteUrl;
-            }
+            return {
+              projectPath,
+              removeLocalRepo: intent.payload.removeLocalRepo ?? false,
+              workspaces: project?.workspaces ?? [],
+              ...(projectConfig?.remoteUrl !== undefined && { remoteUrl: projectConfig.remoteUrl }),
+            };
           },
         },
       },
@@ -2018,14 +2031,14 @@ function wireDispatcher(
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath } = ctx as CloseHookInput;
             const allProjects = await appState.getAllProjects();
-            const otherProjectsExist = allProjects.some((p) => p.path !== hookCtx.projectPath);
-            hookCtx.otherProjectsExist = otherProjectsExist;
+            const otherProjectsExist = allProjects.some((p) => p.path !== projectPath);
             if (!otherProjectsExist) {
               viewManager.setActiveWorkspace(null, false);
             }
+            return { otherProjectsExist };
           },
         },
       },
@@ -2037,9 +2050,8 @@ function wireDispatcher(
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
-            const projectPath = hookCtx.projectPath!;
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
             // Dispose workspace provider
             const provider = appState.getWorkspaceProvider(projectPath);
@@ -2048,7 +2060,7 @@ function wireDispatcher(
             }
 
             // If removeLocalRepo + remoteUrl: delete project directory
-            if (hookCtx.removeLocalRepo && hookCtx.remoteUrl) {
+            if (removeLocalRepo && remoteUrl) {
               logger.debug("Deleting cloned project directory", {
                 projectPath,
               });
@@ -2056,6 +2068,8 @@ function wireDispatcher(
                 isClonedProject: true,
               });
             }
+
+            return {};
           },
         },
       },
@@ -2067,9 +2081,8 @@ function wireDispatcher(
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as CloseProjectHookContext;
-            const projectPath = hookCtx.projectPath!;
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath } = ctx as CloseHookInput;
 
             // Remove from AppState
             appState.deregisterProject(projectPath);
@@ -2080,6 +2093,8 @@ function wireDispatcher(
             } catch {
               // Fail silently as per requirements
             }
+
+            return {};
           },
         },
       },
@@ -2096,20 +2111,18 @@ function wireDispatcher(
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as SwitchWorkspaceHookContext;
+          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const intent = ctx.intent as SwitchWorkspaceIntent;
             const { workspace, projectPath } = await resolveWorkspace(intent.payload, appState);
 
-            // No-op: already the active workspace -- leave resolvedPath unset
+            // No-op: already the active workspace -- return empty result
             if (viewManager.getActiveWorkspacePath() === workspace.path) {
-              return;
+              return {};
             }
 
             const focus = intent.payload.focus ?? true;
             viewManager.setActiveWorkspace(workspace.path, focus);
-            hookCtx.resolvedPath = workspace.path;
-            hookCtx.projectPath = projectPath;
+            return { resolvedPath: workspace.path, projectPath };
           },
         },
       },
@@ -2153,8 +2166,7 @@ function wireDispatcher(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
+          handler: async (): Promise<StartHookResult> => {
             const refs = lifecycleRefs;
 
             // Start PluginServer BEFORE code-server (graceful degradation)
@@ -2201,7 +2213,7 @@ function wireDispatcher(
             viewManager.updateCodeServerPort(port);
             appState.updateCodeServerPort(port);
 
-            hookCtx.codeServerPort = port;
+            return { codeServerPort: port };
           },
         },
       },
@@ -2236,7 +2248,7 @@ function wireDispatcher(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async () => {
+          handler: async (): Promise<StartHookResult> => {
             // Wire agent status changes through the intent dispatcher
             agentStatusUnsubscribeFn = lifecycleRefs.agentStatusManager.onStatusChanged(
               (workspacePath, status) => {
@@ -2246,6 +2258,7 @@ function wireDispatcher(
                 } as UpdateAgentStatusIntent);
               }
             );
+            return {};
           },
         },
       },
@@ -2307,8 +2320,7 @@ function wireDispatcher(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
+          handler: async (): Promise<StartHookResult> => {
             const refs = lifecycleRefs;
 
             const mcpPort = await refs.mcpServerManager.start();
@@ -2352,7 +2364,7 @@ function wireDispatcher(
             // Inject MCP server manager into AppState
             appState.setMcpServerManager(refs.mcpServerManager);
 
-            hookCtx.mcpPort = mcpPort;
+            return { mcpPort };
           },
         },
       },
@@ -2390,13 +2402,14 @@ function wireDispatcher(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async () => {
+          handler: async (): Promise<StartHookResult> => {
             lifecycleRefs.telemetryService?.capture("app_launched", {
               platform: lifecycleRefs.platformInfo.platform,
               arch: lifecycleRefs.platformInfo.arch,
               isDevelopment: lifecycleRefs.buildInfo.isDevelopment,
               agent: lifecycleRefs.selectedAgentType,
             });
+            return {};
           },
         },
       },
@@ -2426,7 +2439,7 @@ function wireDispatcher(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async () => {
+          handler: async (): Promise<StartHookResult> => {
             const refs = lifecycleRefs;
             refs.autoUpdater.start();
 
@@ -2446,6 +2459,7 @@ function wireDispatcher(
                 refs.windowManager.setTitle(title);
               }
             });
+            return {};
           },
         },
       },
@@ -2474,7 +2488,7 @@ function wireDispatcher(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async () => {
+          handler: async (): Promise<StartHookResult> => {
             const api = lifecycleRefs.getApi();
 
             // Wire API events to IPC emission
@@ -2489,6 +2503,7 @@ function wireDispatcher(
                 lifecycleRefs.loggingService.createLogger("plugin")
               );
             }
+            return {};
           },
         },
       },
@@ -2513,15 +2528,15 @@ function wireDispatcher(
     },
   };
 
-  // DataLifecycleModule: activate → gather saved project paths into hook context.
+  // DataLifecycleModule: activate → gather saved project paths and return them.
   // The AppStartOperation dispatches project:open for each path after the activate hook.
   const dataLifecycleModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as AppStartHookContext;
-            hookCtx.projectPaths = await projectStore.loadAllProjects();
+          handler: async (): Promise<ActivateHookResult> => {
+            const projectPaths = await projectStore.loadAllProjects();
+            return { projectPaths };
           },
         },
       },
@@ -2537,7 +2552,7 @@ function wireDispatcher(
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
-          handler: async () => {
+          handler: async (): Promise<ActivateHookResult> => {
             // Wire loading state changes to IPC
             loadingChangeCleanupFn = viewManager.onLoadingChange((path, loading) => {
               try {
@@ -2553,6 +2568,7 @@ function wireDispatcher(
                 // Ignore errors - UI might be disconnected during shutdown
               }
             });
+            return {};
           },
         },
       },
