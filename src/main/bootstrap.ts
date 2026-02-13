@@ -2441,19 +2441,6 @@ function wireDispatcher(
     },
   };
 
-  // Project modules: activate → load saved project configs, populate state, return paths.
-  // LocalProjectModule handles local paths; RemoteProjectModule handles URL-cloned projects.
-  const localProjectModule = createLocalProjectModule({
-    projectStore,
-    globalProvider,
-  });
-  const remoteProjectModule = createRemoteProjectModule({
-    projectStore,
-    gitClient,
-    pathProvider,
-    logger: lifecycleLogger,
-  });
-
   // ViewLifecycleModule: activate → wire loading-state→IPC callback.
   // stop → destroy views, cleanup loading-state callback, dispose layers.
   // Note: first workspace activation + window title are now handled by

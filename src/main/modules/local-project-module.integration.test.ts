@@ -394,7 +394,7 @@ describe("LocalProjectModule Integration", () => {
 
       // Close resolve should find the project by ID
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve",
+        "resolve-project",
         { intent: closeIntent(PROJECT_ID) }
       );
 

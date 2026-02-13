@@ -1,10 +1,12 @@
 /**
  * DeleteWorkspaceOperation - Orchestrates workspace deletion.
  *
- * Runs three hook points in sequence using collect():
- * 1. "shutdown" - ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
- * 2. "release" - WindowsLockModule (detect + kill/close blockers) [Windows-only]
- * 3. "delete" - WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
+ * Runs five hook points in sequence using collect():
+ * 1. "resolve-project" - Resolves projectId to projectPath
+ * 2. "resolve-workspace" - Resolves workspaceName to workspacePath (with enriched projectPath)
+ * 3. "shutdown" - ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
+ * 4. "release" - WindowsLockModule (detect + kill/close blockers) [Windows-only]
+ * 5. "delete" - WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
  *
  * Each handler returns a typed result; the operation merges results and tracks errors.
  * On success (or force=true), emits a workspace:deleted domain event for state cleanup.
