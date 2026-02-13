@@ -2,7 +2,7 @@
  * CloseProjectOperation - Orchestrates project closing.
  *
  * Runs two hook points in sequence:
- * 1. "resolve" - Resolves projectId to projectPath, loads config, gets workspace list
+ * 1. "resolve-project" - Resolves projectId to projectPath, loads config, gets workspace list
  * 2. Dispatches workspace:delete per workspace (removeWorktree=false, skipSwitch=true)
  * 3. "close" - Disposes provider, removes state + store, clears active workspace
  *
@@ -57,12 +57,11 @@ export const EVENT_PROJECT_CLOSED = "project:closed" as const;
 export const CLOSE_PROJECT_OPERATION_ID = "close-project";
 
 /**
- * Per-handler result contract for the "resolve" hook point.
+ * Per-handler result contract for the "resolve-project" hook point.
  */
 export interface CloseResolveHookResult {
   readonly projectPath?: string;
   readonly remoteUrl?: string;
-  readonly removeLocalRepo?: boolean;
   readonly workspaces?: ReadonlyArray<{ path: string }>;
 }
 
@@ -97,9 +96,9 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
       intent: ctx.intent,
     };
 
-    // 1. Run "resolve" hook -- returns projectPath, remoteUrl, workspaces
+    // 1. Run "resolve-project" hook -- returns projectPath, remoteUrl, workspaces
     const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<CloseResolveHookResult>("resolve", hookCtx);
+      await ctx.hooks.collect<CloseResolveHookResult>("resolve-project", hookCtx);
     if (resolveErrors.length > 0) {
       throw resolveErrors[0]!;
     }
@@ -107,12 +106,11 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
     // Merge resolve results — last-write-wins
     let projectPath: string | undefined;
     let remoteUrl: string | undefined;
-    let removeLocalRepo = false;
+    const removeLocalRepo = payload.removeLocalRepo ?? false;
     let workspaces: ReadonlyArray<{ path: string }> = [];
     for (const result of resolveResults) {
       if (result.projectPath !== undefined) projectPath = result.projectPath;
       if (result.remoteUrl !== undefined) remoteUrl = result.remoteUrl;
-      if (result.removeLocalRepo !== undefined) removeLocalRepo = result.removeLocalRepo;
       if (result.workspaces !== undefined) workspaces = result.workspaces;
     }
 

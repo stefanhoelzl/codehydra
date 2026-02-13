@@ -279,7 +279,7 @@ describe("RemoteProjectModule Integration", () => {
       const closeIntent = closeProjectIntent({ projectId });
 
       const { results, errors } = await closeHooks.collect<CloseResolveHookResult | undefined>(
-        "resolve",
+        "resolve-project",
         { intent: closeIntent }
       );
 
@@ -299,7 +299,7 @@ describe("RemoteProjectModule Integration", () => {
       const closeIntent = closeProjectIntent({ projectId: "unknown-12345678" });
 
       const { results, errors } = await closeHooks.collect<CloseResolveHookResult | undefined>(
-        "resolve",
+        "resolve-project",
         { intent: closeIntent }
       );
 
@@ -350,7 +350,7 @@ describe("RemoteProjectModule Integration", () => {
 
       // Verify state is empty — resolve should return undefined now
       const resolveResult = await closeHooks.collect<CloseResolveHookResult | undefined>(
-        "resolve",
+        "resolve-project",
         { intent: closeIntent }
       );
       expect(resolveResult.results[0]).toBeUndefined();
@@ -447,7 +447,7 @@ describe("RemoteProjectModule Integration", () => {
 
       const { results: resolveResults } = await closeHooks.collect<
         CloseResolveHookResult | undefined
-      >("resolve", { intent: closeIntent });
+      >("resolve-project", { intent: closeIntent });
 
       expect(resolveResults[0]).toBeDefined();
       expect(resolveResults[0]!.remoteUrl).toBe("https://github.com/org/repo.git");
@@ -531,13 +531,13 @@ describe("RemoteProjectModule Integration", () => {
       const existingId = generateProjectId(existingConfig.path);
       const { results: existingResolve } = await closeHooks.collect<
         CloseResolveHookResult | undefined
-      >("resolve", { intent: closeProjectIntent({ projectId: existingId }) });
+      >("resolve-project", { intent: closeProjectIntent({ projectId: existingId }) });
       expect(existingResolve[0]).toBeDefined();
       expect(existingResolve[0]!.remoteUrl).toBe("https://github.com/org/existing.git");
 
       const newId = generateProjectId(newProjectPath);
       const { results: newResolve } = await closeHooks.collect<CloseResolveHookResult | undefined>(
-        "resolve",
+        "resolve-project",
         { intent: closeProjectIntent({ projectId: newId }) }
       );
       expect(newResolve[0]).toBeDefined();
@@ -554,7 +554,7 @@ describe("RemoteProjectModule Integration", () => {
 
       // New project no longer resolvable
       const { results: afterClose } = await closeHooks.collect<CloseResolveHookResult | undefined>(
-        "resolve",
+        "resolve-project",
         { intent: closeProjectIntent({ projectId: newId }) }
       );
       expect(afterClose[0]).toBeUndefined();
@@ -562,7 +562,7 @@ describe("RemoteProjectModule Integration", () => {
       // Existing project still resolvable
       const { results: existingStillThere } = await closeHooks.collect<
         CloseResolveHookResult | undefined
-      >("resolve", { intent: closeProjectIntent({ projectId: existingId }) });
+      >("resolve-project", { intent: closeProjectIntent({ projectId: existingId }) });
       expect(existingStillThere[0]).toBeDefined();
     });
   });

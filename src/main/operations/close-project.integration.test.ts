@@ -258,11 +258,11 @@ function createTestHarness(options?: {
     },
   };
 
-  // ProjectResolveModule: "resolve" hook -- resolves projectId to path/config/workspaces
+  // ProjectResolveModule: "resolve-project" hook -- resolves projectId to path/config/workspaces
   const projectResolveModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
-        resolve: {
+        "resolve-project": {
           handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
 
@@ -278,7 +278,6 @@ function createTestHarness(options?: {
 
             return {
               projectPath: found.path,
-              removeLocalRepo: intent.payload.removeLocalRepo ?? false,
               workspaces: found.workspaces ?? [],
               ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
             };
@@ -308,19 +307,58 @@ function createTestHarness(options?: {
     },
   };
 
-  // Close-project hook modules
-  const projectCloseManagerModule: IntentModule = {
+  // ProjectLocalCloseModule: "close" hook -- deregister + remove store for local projects
+  const projectLocalCloseModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
+            const { projectPath, remoteUrl } = ctx as CloseHookInput;
 
-            // Unregister project from global provider
-            globalProvider.unregisterProject(new Path(projectPath));
+            // Self-select: only handle local projects (no remoteUrl)
+            if (remoteUrl !== undefined) {
+              return {};
+            }
 
-            if (removeLocalRepo && remoteUrl) {
-              const store = appState.getProjectStore();
+            appState.deregisterProject(projectPath);
+
+            const store = appState.getProjectStore();
+            try {
+              await store.removeProject(projectPath);
+            } catch {
+              // Fail silently
+            }
+
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectRemoteCloseModule: "close" hook -- deregister + remove store for remote projects, optionally delete dir
+  const projectRemoteCloseModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath, remoteUrl, removeLocalRepo } = ctx as CloseHookInput;
+
+            // Self-select: only handle remote projects (has remoteUrl)
+            if (!remoteUrl) {
+              return {};
+            }
+
+            appState.deregisterProject(projectPath);
+
+            const store = appState.getProjectStore();
+            try {
+              await store.removeProject(projectPath);
+            } catch {
+              // Fail silently
+            }
+
+            if (removeLocalRepo) {
               await store.deleteProjectDirectory(projectPath, {
                 isClonedProject: true,
               });
@@ -333,19 +371,14 @@ function createTestHarness(options?: {
     },
   };
 
-  const projectCloseRegistryModule: IntentModule = {
+  // ProjectWorktreeCloseModule: "close" hook -- unregister project from global git provider
+  const projectWorktreeCloseModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
             const { projectPath } = ctx as CloseHookInput;
-            appState.deregisterProject(projectPath);
-            const store = appState.getProjectStore();
-            try {
-              await store.removeProject(projectPath);
-            } catch {
-              // Fail silently
-            }
+            globalProvider.unregisterProject(new Path(projectPath));
             return {};
           },
         },
@@ -360,8 +393,9 @@ function createTestHarness(options?: {
       deleteStateModule,
       projectResolveModule,
       projectCloseViewModule,
-      projectCloseManagerModule,
-      projectCloseRegistryModule,
+      projectLocalCloseModule,
+      projectRemoteCloseModule,
+      projectWorktreeCloseModule,
     ],
     hookRegistry,
     dispatcher
@@ -404,6 +438,9 @@ describe("CloseProjectOperation", () => {
 
     // Project removed from store
     expect(harness.state.removedProjectsFromStore).toContain(PROJECT_PATH);
+
+    // Project unregistered from global git provider
+    expect(harness.state.unregisteredProjects).toContain(PROJECT_PATH);
   });
 
   it("test 10: close with removeLocalRepo deletes cloned dir", async () => {

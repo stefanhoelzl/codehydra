@@ -1993,11 +1993,11 @@ function wireDispatcher(
   // Project:close hook modules
   // ---------------------------------------------------------------------------
 
-  // ProjectResolveModule: "resolve" hook -- resolves projectId to path, loads config, gets workspaces
+  // ProjectResolveModule: "resolve-project" hook -- resolves projectId to path, loads config, gets workspaces
   const projectResolveModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
-        resolve: {
+        "resolve-project": {
           handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
 
@@ -2011,7 +2011,6 @@ function wireDispatcher(
 
             return {
               projectPath,
-              removeLocalRepo: intent.payload.removeLocalRepo ?? false,
               workspaces: project?.workspaces ?? [],
               ...(projectConfig?.remoteUrl !== undefined && { remoteUrl: projectConfig.remoteUrl }),
             };
@@ -2041,22 +2040,56 @@ function wireDispatcher(
     },
   };
 
-  // ProjectCloseManagerModule: "close" hook -- dispose provider, delete dir
-  const projectCloseManagerModule: IntentModule = {
+  // ProjectLocalCloseModule: "close" hook -- deregister + remove store for local projects
+  const projectLocalCloseModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
+            const { projectPath, remoteUrl } = ctx as CloseHookInput;
 
-            // Unregister project from global provider
-            globalProvider.unregisterProject(new Path(projectPath));
+            // Self-select: only handle local projects (no remoteUrl)
+            if (remoteUrl !== undefined) {
+              return {};
+            }
 
-            // If removeLocalRepo + remoteUrl: delete project directory
-            if (removeLocalRepo && remoteUrl) {
-              logger.debug("Deleting cloned project directory", {
-                projectPath,
-              });
+            appState.deregisterProject(projectPath);
+
+            try {
+              await projectStore.removeProject(projectPath);
+            } catch {
+              // Fail silently
+            }
+
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // ProjectRemoteCloseModule: "close" hook -- deregister + remove store for remote projects, optionally delete dir
+  const projectRemoteCloseModule: IntentModule = {
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+            const { projectPath, remoteUrl, removeLocalRepo } = ctx as CloseHookInput;
+
+            // Self-select: only handle remote projects (has remoteUrl)
+            if (!remoteUrl) {
+              return {};
+            }
+
+            appState.deregisterProject(projectPath);
+
+            try {
+              await projectStore.removeProject(projectPath);
+            } catch {
+              // Fail silently
+            }
+
+            if (removeLocalRepo) {
               await projectStore.deleteProjectDirectory(projectPath, {
                 isClonedProject: true,
               });
@@ -2069,24 +2102,14 @@ function wireDispatcher(
     },
   };
 
-  // ProjectCloseRegistryModule: "close" hook -- remove from state + store
-  const projectCloseRegistryModule: IntentModule = {
+  // ProjectWorktreeCloseModule: "close" hook -- unregister project from global git provider
+  const projectWorktreeCloseModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
             const { projectPath } = ctx as CloseHookInput;
-
-            // Remove from AppState
-            appState.deregisterProject(projectPath);
-
-            // Remove from persistent storage
-            try {
-              await projectStore.removeProject(projectPath);
-            } catch {
-              // Fail silently as per requirements
-            }
-
+            globalProvider.unregisterProject(new Path(projectPath));
             return {};
           },
         },
@@ -2664,8 +2687,9 @@ function wireDispatcher(
       // Project:close modules
       projectResolveModule,
       projectCloseViewModule,
-      projectCloseManagerModule,
-      projectCloseRegistryModule,
+      projectLocalCloseModule,
+      projectRemoteCloseModule,
+      projectWorktreeCloseModule,
       // Workspace:switch modules
       switchViewModule,
       switchTitleModule,

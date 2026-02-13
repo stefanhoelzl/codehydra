@@ -7,7 +7,7 @@
  * Hook contributions:
  * - open-project / resolve: clone URL or return existing clone path
  * - open-project / register: track remote project in internal state
- * - close-project / resolve: look up tracked remote project by projectId
+ * - close-project / resolve-project: look up tracked remote project by projectId
  * - close-project / close: remove from state and store, optionally delete directory
  * - app-start / activate: load saved remote project configs into state
  *
@@ -156,7 +156,7 @@ export function createRemoteProjectModule(deps: {
       // close-project
       // -----------------------------------------------------------------------
       [CLOSE_PROJECT_OPERATION_ID]: {
-        resolve: {
+        "resolve-project": {
           handler: async (ctx: HookContext): Promise<CloseResolveHookResult | undefined> => {
             const intent = ctx.intent as CloseProjectIntent;
             const { projectId } = intent.payload;
