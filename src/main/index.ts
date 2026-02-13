@@ -74,9 +74,8 @@ import type { AppShutdownIntent } from "./operations/app-shutdown";
 import { INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import type { CoreModuleDeps } from "./modules/core";
-import { generateProjectId } from "./api/id-utils";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
-import type { WorkspaceName, ConfigAgentType } from "../shared/api/types";
+import type { ConfigAgentType } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
@@ -799,21 +798,6 @@ async function bootstrap(): Promise<void> {
         throw new Error("BadgeManager not initialized - startServices called before bootstrap");
       }
       return badgeManager;
-    },
-    // Workspace resolver for IPC event bridge (resolves workspace path to project/name)
-    workspaceResolverFn: () => {
-      if (!appState) {
-        throw new Error("AppState not initialized");
-      }
-      const appStateRef = appState;
-      return (workspacePath: string) => {
-        const project = appStateRef.findProjectForWorkspace(workspacePath);
-        if (!project) return undefined;
-        return {
-          projectId: generateProjectId(project.path),
-          workspaceName: nodePath.basename(workspacePath) as WorkspaceName,
-        };
-      };
     },
     // Lifecycle service references for app:start/shutdown modules
     // Uses getters for references that are set after wireDispatcher() runs

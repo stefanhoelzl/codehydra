@@ -25,28 +25,15 @@ import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
-import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
-
-/**
- * Narrow workspace resolver interface for the IPC event bridge.
- * Resolves a workspace path to its project ID and workspace name.
- * Returns undefined if the workspace is not found in any known project.
- */
-export type WorkspaceResolver = (
-  workspacePath: string
-) => { projectId: ProjectId; workspaceName: WorkspaceName } | undefined;
+import type { WorkspaceStatus } from "../../shared/api/types";
 
 /**
  * Create an IpcEventBridge module that forwards domain events to the API registry.
  *
  * @param apiRegistry - The API registry to emit events on
- * @param workspaceResolver - Optional resolver for workspace path to project/name mapping
  * @returns IntentModule with event subscriptions
  */
-export function createIpcEventBridge(
-  apiRegistry: IApiRegistry,
-  workspaceResolver?: WorkspaceResolver
-): IntentModule {
+export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
   const events: EventDeclarations = {
     [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
       const payload = (event as MetadataChangedEvent).payload as MetadataChangedPayload;
@@ -100,13 +87,12 @@ export function createIpcEventBridge(
       }
     },
     [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
-      if (!workspaceResolver) return;
-
-      const { workspacePath, status: aggregatedStatus } = (event as AgentStatusUpdatedEvent)
-        .payload;
-
-      const resolved = workspaceResolver(workspacePath);
-      if (!resolved) return;
+      const {
+        workspacePath,
+        projectId,
+        workspaceName,
+        status: aggregatedStatus,
+      } = (event as AgentStatusUpdatedEvent).payload;
 
       const status: WorkspaceStatus =
         aggregatedStatus.status === "none"
@@ -124,8 +110,8 @@ export function createIpcEventBridge(
             };
 
       apiRegistry.emit("workspace:status-changed", {
-        projectId: resolved.projectId,
-        workspaceName: resolved.workspaceName,
+        projectId,
+        workspaceName,
         path: workspacePath,
         status,
       });

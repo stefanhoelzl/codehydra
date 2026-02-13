@@ -19,6 +19,7 @@ import {
 import type { UpdateAgentStatusIntent, AgentStatusUpdatedEvent } from "./update-agent-status";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
+import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 // =============================================================================
 // Test Setup
@@ -33,6 +34,9 @@ function createTestSetup(): { dispatcher: Dispatcher } {
   return { dispatcher };
 }
 
+const TEST_PROJECT_ID = "test-project-id" as ProjectId;
+const TEST_WORKSPACE_NAME = "test-workspace" as WorkspaceName;
+
 function updateStatusIntent(
   workspacePath: string,
   status: AggregatedAgentStatus
@@ -41,6 +45,8 @@ function updateStatusIntent(
     type: INTENT_UPDATE_AGENT_STATUS,
     payload: {
       workspacePath: workspacePath as WorkspacePath,
+      projectId: TEST_PROJECT_ID,
+      workspaceName: TEST_WORKSPACE_NAME,
       status,
     },
   };
@@ -66,6 +72,8 @@ describe("UpdateAgentStatus Operation", () => {
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
       expect(event.type).toBe(EVENT_AGENT_STATUS_UPDATED);
       expect(event.payload.workspacePath).toBe("/workspace/test");
+      expect(event.payload.projectId).toBe(TEST_PROJECT_ID);
+      expect(event.payload.workspaceName).toBe(TEST_WORKSPACE_NAME);
       expect(event.payload.status).toEqual(status);
     });
 

@@ -9,6 +9,7 @@
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
+import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 // =============================================================================
 // Intent Types
@@ -16,6 +17,8 @@ import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 
 export interface UpdateAgentStatusPayload {
   readonly workspacePath: WorkspacePath;
+  readonly projectId: ProjectId;
+  readonly workspaceName: WorkspaceName;
   readonly status: AggregatedAgentStatus;
 }
 
@@ -32,6 +35,8 @@ export const INTENT_UPDATE_AGENT_STATUS = "agent:update-status" as const;
 
 export interface AgentStatusUpdatedPayload {
   readonly workspacePath: WorkspacePath;
+  readonly projectId: ProjectId;
+  readonly workspaceName: WorkspaceName;
   readonly status: AggregatedAgentStatus;
 }
 
@@ -58,6 +63,8 @@ export class UpdateAgentStatusOperation implements Operation<UpdateAgentStatusIn
       type: EVENT_AGENT_STATUS_UPDATED,
       payload: {
         workspacePath: payload.workspacePath,
+        projectId: payload.projectId,
+        workspaceName: payload.workspaceName,
         status: payload.status,
       },
     };

@@ -148,7 +148,7 @@ import type {
   SwitchWorkspaceHookResult,
   WorkspaceSwitchedEvent,
 } from "./operations/switch-workspace";
-import { createIpcEventBridge, type WorkspaceResolver } from "./modules/ipc-event-bridge";
+import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createBadgeModule } from "./modules/badge-module";
 import {
   UpdateAgentStatusOperation,
@@ -337,8 +337,6 @@ export interface BootstrapDeps {
   readonly hasUpdateAvailableFn: () => () => boolean;
   /** BadgeManager factory (created in index.ts, passed down) */
   readonly badgeManagerFn: () => import("./managers/badge-manager").BadgeManager;
-  /** Workspace resolver for IPC event bridge (resolves workspace path to project/name) */
-  readonly workspaceResolverFn: () => import("./modules/ipc-event-bridge").WorkspaceResolver;
   /** Lifecycle service references for app:start/shutdown modules */
   readonly lifecycleRefsFn: () => LifecycleServiceRefs;
   /** Function to get UI webContents for setup error IPC events */
@@ -948,7 +946,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.titleVersionFn(),
       deps.hasUpdateAvailableFn(),
       deps.badgeManagerFn(),
-      deps.workspaceResolverFn(),
       deps.lifecycleRefsFn()
     );
   }
@@ -1119,7 +1116,6 @@ function wireDispatcher(
   titleVersion: string | undefined,
   hasUpdateAvailable: () => boolean,
   badgeManager: BadgeManager,
-  workspaceResolver: WorkspaceResolver,
   lifecycleRefs: LifecycleServiceRefs
 ): void {
   const { appState, viewManager, gitClient, pathProvider, projectStore } = coreDeps;
@@ -2113,7 +2109,10 @@ function wireDispatcher(
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const intent = ctx.intent as SwitchWorkspaceIntent;
-            const { workspace, projectPath } = await resolveWorkspace(intent.payload, appState);
+            const { workspace, project, projectPath } = await resolveWorkspace(
+              intent.payload,
+              appState
+            );
 
             // No-op: already the active workspace -- return empty result
             if (viewManager.getActiveWorkspacePath() === workspace.path) {
@@ -2122,7 +2121,7 @@ function wireDispatcher(
 
             const focus = intent.payload.focus ?? true;
             viewManager.setActiveWorkspace(workspace.path, focus);
-            return { resolvedPath: workspace.path, projectPath };
+            return { resolvedPath: workspace.path, projectPath, projectName: project.name };
           },
         },
       },
@@ -2142,9 +2141,8 @@ function wireDispatcher(
           return;
         }
 
-        const project = appState.findProjectForWorkspace(payload.path);
         const title = formatWindowTitle(
-          project?.name,
+          payload.projectName,
           payload.workspaceName,
           titleVersion,
           hasUpdate
@@ -2252,9 +2250,16 @@ function wireDispatcher(
             // Wire agent status changes through the intent dispatcher
             agentStatusUnsubscribeFn = lifecycleRefs.agentStatusManager.onStatusChanged(
               (workspacePath, status) => {
+                // Resolve project for this workspace path to enrich the intent payload
+                const project = appState.findProjectForWorkspace(workspacePath);
+                if (!project) return; // Unknown workspace — skip dispatch
+
+                const projectId = generateProjectId(project.path);
+                const workspaceName = extractWorkspaceName(workspacePath);
+
                 void lifecycleRefs.dispatcher.dispatch({
                   type: INTENT_UPDATE_AGENT_STATUS,
-                  payload: { workspacePath, status },
+                  payload: { workspacePath, projectId, workspaceName, status },
                 } as UpdateAgentStatusIntent);
               }
             );
@@ -2630,7 +2635,7 @@ function wireDispatcher(
 
   // Wire IpcEventBridge, BadgeModule, and hook handler modules
   // Note: shutdownIdempotencyModule and quitModule are wired early in initializeBootstrap()
-  const ipcEventBridge = createIpcEventBridge(registry, workspaceResolver);
+  const ipcEventBridge = createIpcEventBridge(registry);
   const badgeModule = createBadgeModule(badgeManager);
   wireModules(
     [
