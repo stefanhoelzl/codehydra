@@ -359,17 +359,20 @@ async function main(): Promise<never> {
     ...getUserArgs(), // Auto-detect user args for both terminal and panel modes
   ];
 
-  // 5. Notify wrapper start (clears loading screen before Claude shows dialogs)
+  // 5. Clear CLAUDECODE to allow nested Claude Code sessions inside CodeHydra
+  delete process.env.CLAUDECODE;
+
+  // 6. Notify wrapper start (clears loading screen before Claude shows dialogs)
   await notifyHook("WrapperStart");
 
-  // 6. Spawn Claude with automatic session resume
+  // 7. Spawn Claude with automatic session resume
   // Use shell on Windows to resolve binary name via PATH (handles .cmd shims)
   const result = runClaude(claudeBinary, args, { shell: isWindows });
 
-  // 7. Notify wrapper end (Claude has exited)
+  // 8. Notify wrapper end (Claude has exited)
   await notifyHook("WrapperEnd");
 
-  // 8. Handle result
+  // 9. Handle result
   if (result.error) {
     console.error(`Error: Failed to start Claude: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
