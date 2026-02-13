@@ -16,7 +16,7 @@ import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import type { AppState } from "./app-state";
 import type { IViewManager } from "./managers/view-manager.interface";
-import type { WorkspaceName } from "../shared/api/types";
+import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { generateProjectId } from "./api/id-utils";
 
 // =============================================================================
@@ -243,6 +243,7 @@ describe("bootstrap.startup", () => {
     // Verify all API groups are available
     // Note: lifecycle.getState, lifecycle.setup removed in app:setup migration
     expect(api.lifecycle).toBeDefined();
+    expect(api.lifecycle.ready).toBeTypeOf("function");
     expect(api.lifecycle.quit).toBeTypeOf("function");
 
     expect(api.projects).toBeDefined();
@@ -1056,5 +1057,159 @@ describe("bootstrap.setup.progress", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// =============================================================================
+// Lifecycle Ready Tests
+// =============================================================================
+
+describe("bootstrap.lifecycle.ready", () => {
+  it("emits project:opened for each open project", async () => {
+    const secondProjectPath = "/test/project2";
+    const secondWorkspacePath = `${secondProjectPath}/workspaces/main`;
+
+    const baseDeps = createMockDeps();
+    const coreDeps = createMockCoreDeps();
+
+    // Configure appState to return two projects
+    (coreDeps.appState.getAllProjects as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        path: TEST_PROJECT_PATH,
+        name: "test-project",
+        workspaces: [{ path: TEST_WORKSPACE_PATH, branch: "feature", metadata: { base: "main" } }],
+      },
+      {
+        path: secondProjectPath,
+        name: "test-project2",
+        workspaces: [{ path: secondWorkspacePath, branch: "main", metadata: { base: "main" } }],
+      },
+    ]);
+
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps: BootstrapDeps = {
+      ...baseDeps,
+      coreDepsFn: () => coreDeps,
+      ipcLayer,
+    };
+
+    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
+      startServices: () => void;
+    };
+    result.startServices();
+
+    // Subscribe to project:opened events
+    const projectOpenedEvents: Array<{ project: { path: string } }> = [];
+    result.registry.on("project:opened", (event) => {
+      projectOpenedEvents.push(event as { project: { path: string } });
+    });
+
+    // Invoke lifecycle.ready via IPC
+    await ipcLayer._invoke("api:lifecycle:ready", {});
+
+    // Should have emitted project:opened for both projects
+    expect(projectOpenedEvents).toHaveLength(2);
+    expect(projectOpenedEvents[0]?.project.path).toBe(TEST_PROJECT_PATH);
+    expect(projectOpenedEvents[1]?.project.path).toBe(secondProjectPath);
+
+    await result.dispose();
+  });
+
+  it("emits workspace:switched for active workspace", async () => {
+    const baseDeps = createMockDeps();
+    const ipcLayer = createBehavioralIpcLayer();
+
+    const deps: BootstrapDeps = {
+      ...baseDeps,
+      ipcLayer,
+      workspaceResolverFn: () => (workspacePath: string) => {
+        if (workspacePath === TEST_WORKSPACE_PATH) {
+          return {
+            projectId: TEST_PROJECT_ID as ProjectId,
+            workspaceName: TEST_WORKSPACE_NAME,
+          };
+        }
+        return undefined;
+      },
+    };
+
+    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
+      startServices: () => void;
+    };
+    result.startServices();
+
+    // Subscribe to workspace:switched events
+    const switchedEvents: unknown[] = [];
+    result.registry.on("workspace:switched", (event) => {
+      switchedEvents.push(event);
+    });
+
+    await ipcLayer._invoke("api:lifecycle:ready", {});
+
+    expect(switchedEvents).toHaveLength(1);
+    expect(switchedEvents[0]).toEqual({
+      projectId: TEST_PROJECT_ID,
+      workspaceName: TEST_WORKSPACE_NAME,
+      path: TEST_WORKSPACE_PATH,
+    });
+
+    await result.dispose();
+  });
+
+  it("emits workspace:switched(null) when no active workspace", async () => {
+    const baseDeps = createMockDeps();
+    const coreDeps = createMockCoreDeps();
+
+    // Configure viewManager to return null for active workspace
+    (coreDeps.viewManager.getActiveWorkspacePath as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps: BootstrapDeps = {
+      ...baseDeps,
+      coreDepsFn: () => coreDeps,
+      ipcLayer,
+    };
+
+    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
+      startServices: () => void;
+    };
+    result.startServices();
+
+    const switchedEvents: unknown[] = [];
+    result.registry.on("workspace:switched", (event) => {
+      switchedEvents.push(event);
+    });
+
+    await ipcLayer._invoke("api:lifecycle:ready", {});
+
+    expect(switchedEvents).toHaveLength(1);
+    expect(switchedEvents[0]).toBeNull();
+
+    await result.dispose();
+  });
+
+  it("is idempotent (can be called multiple times safely)", async () => {
+    const baseDeps = createMockDeps();
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps: BootstrapDeps = { ...baseDeps, ipcLayer };
+
+    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
+      startServices: () => void;
+    };
+    result.startServices();
+
+    const projectOpenedEvents: unknown[] = [];
+    result.registry.on("project:opened", (event) => {
+      projectOpenedEvents.push(event);
+    });
+
+    // Call twice
+    await ipcLayer._invoke("api:lifecycle:ready", {});
+    await ipcLayer._invoke("api:lifecycle:ready", {});
+
+    // Should emit for each call (no deduplication — each call re-emits current state)
+    expect(projectOpenedEvents).toHaveLength(2);
+
+    await result.dispose();
   });
 });

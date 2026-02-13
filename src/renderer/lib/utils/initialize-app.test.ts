@@ -14,9 +14,8 @@ import type {
 
 // Mock the API module before importing the setup function
 vi.mock("$lib/api", () => ({
-  projects: { list: vi.fn() },
+  lifecycle: { ready: vi.fn() },
   workspaces: { getStatus: vi.fn() },
-  ui: { getActiveWorkspace: vi.fn() },
 }));
 
 import { initializeApp, type InitializeAppApi, type InitializeAppOptions } from "./initialize-app";
@@ -64,17 +63,20 @@ function createMockApi(config?: {
   projectsError?: Error;
 }): InitializeAppApi {
   const projectList = config?.projects ?? [TEST_PROJECT];
-  // Use "in" check because ?? treats explicit null as needing fallback
   const activeWorkspace =
     config && "activeWorkspace" in config ? config.activeWorkspace : { path: TEST_WORKSPACE_PATH };
 
   return {
-    projects: {
-      list: vi.fn(async () => {
+    lifecycle: {
+      ready: vi.fn(async () => {
         if (config?.projectsError) {
           throw config.projectsError;
         }
-        return projectList;
+        // Simulate event-driven store population (what event handlers do)
+        for (const p of projectList) {
+          projectsStore.addProject(p);
+        }
+        projectsStore.setActiveWorkspace(activeWorkspace?.path ?? null);
       }),
     },
     workspaces: {
@@ -84,9 +86,6 @@ function createMockApi(config?: {
         }
         return TEST_STATUS;
       }),
-    },
-    ui: {
-      getActiveWorkspace: vi.fn(async () => activeWorkspace),
     },
   };
 }
@@ -136,7 +135,7 @@ describe("initializeApp", () => {
   });
 
   describe("project loading", () => {
-    it("loads projects into store", async () => {
+    it("loads projects into store via lifecycle.ready()", async () => {
       const api = createMockApi({ projects: [TEST_PROJECT] });
       const options: InitializeAppOptions = {
         containerRef: undefined,
@@ -149,7 +148,7 @@ describe("initializeApp", () => {
       expect(projectsStore.loadingState.value).toBe("loaded");
     });
 
-    it("sets active workspace from API response", async () => {
+    it("sets active workspace from events", async () => {
       const api = createMockApi({
         projects: [TEST_PROJECT],
         activeWorkspace: { path: TEST_WORKSPACE_PATH },
@@ -182,7 +181,7 @@ describe("initializeApp", () => {
       expect(projectsStore.activeWorkspacePath.value).toBeNull();
     });
 
-    it("sets error state when project loading fails", async () => {
+    it("sets error state when lifecycle.ready() fails", async () => {
       const api = createMockApi({
         projectsError: new Error("Network error"),
       });

@@ -1,20 +1,16 @@
 /**
- * Initialize the application: load projects, agent statuses, set focus.
+ * Initialize the application: signal ready, fetch agent statuses, set focus.
  *
- * This is an async setup function that returns a cleanup callback for consistent
- * composition, even though the cleanup is a no-op (initialization is one-time).
+ * Calls lifecycle.ready() which causes the main process to emit domain events
+ * (project:opened, workspace:switched) for all current state. The renderer's
+ * event bindings (set up before this function is called) populate the stores.
  *
  * @param options - Initialization options
  * @param apiImpl - API for data fetching (injectable for testing)
  * @returns Cleanup function (no-op for consistent composition pattern)
  */
 import { tick } from "svelte";
-import {
-  setProjects,
-  setActiveWorkspace,
-  setLoaded,
-  setError,
-} from "$lib/stores/projects.svelte.js";
+import { projects, setLoaded, setError } from "$lib/stores/projects.svelte.js";
 import { setAllStatuses } from "$lib/stores/agent-status.svelte.js";
 import { setWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
 import type { Project, WorkspaceStatus, AgentStatus } from "@shared/api/types";
@@ -29,9 +25,8 @@ export interface InitializeAppOptions {
 }
 
 export interface InitializeAppApi {
-  projects: { list(): Promise<readonly Project[]> };
+  lifecycle: { ready(): Promise<void> };
   workspaces: { getStatus(projectId: string, name: string): Promise<WorkspaceStatus> };
-  ui: { getActiveWorkspace(): Promise<{ path: string } | null> };
 }
 
 /**
@@ -79,17 +74,16 @@ async function fetchAllAgentStatuses(
 
 // Default API implementation
 const defaultApi: InitializeAppApi = {
-  projects: api.projects,
+  lifecycle: api.lifecycle,
   workspaces: api.workspaces,
-  ui: api.ui,
 };
 
 /**
  * Initialize the application.
  *
  * Performs the following steps:
- * 1. Load projects from API
- * 2. Get initial active workspace
+ * 1. Call lifecycle.ready() — main process emits domain events for current state
+ * 2. Mark all workspaces as loading
  * 3. Focus first focusable element (including VSCode Elements)
  * 4. Fetch agent statuses for all workspaces
  * 5. Seed notification service with initial counts
@@ -105,25 +99,17 @@ export async function initializeApp(
   const { containerRef, notificationService } = options;
 
   try {
-    // Load projects
-    const projectList = await apiImpl.projects.list();
-    setProjects([...projectList]);
+    // Signal ready — main process emits initial state events.
+    // Events are processed synchronously via IPC before this resolves.
+    await apiImpl.lifecycle.ready();
 
-    // Mark all workspaces as loading on startup.
-    // This handles the race condition where main process may have sent workspace:loading-changed
-    // events before the renderer subscribed. New workspaces will receive loading-changed(false)
-    // when they're ready. Existing workspaces (loaded with isNew=false) don't emit loading events,
-    // so this is a no-op for them - they'll never show the overlay since they're not in loading state
-    // on the main process side.
-    for (const project of projectList) {
+    // Mark all existing workspaces as loading (handles race with workspace:loading-changed)
+    for (const project of projects.value) {
       for (const workspace of project.workspaces) {
         setWorkspaceLoading(workspace.path, true);
       }
     }
 
-    // Get initial active workspace (always set, even if null)
-    const activeRef = await apiImpl.ui.getActiveWorkspace();
-    setActiveWorkspace(activeRef?.path ?? null);
     setLoaded();
 
     // Focus first focusable element (including VSCode Elements)
@@ -131,9 +117,9 @@ export async function initializeApp(
     const firstFocusable = containerRef?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
     firstFocusable?.focus();
 
-    // Fetch agent statuses (optional, don't fail on error)
+    // Fetch agent statuses using store data (populated by events above)
     try {
-      const statuses = await fetchAllAgentStatuses(projectList, apiImpl);
+      const statuses = await fetchAllAgentStatuses(projects.value, apiImpl);
       setAllStatuses(statuses);
 
       // Seed notification service with initial counts for chime detection

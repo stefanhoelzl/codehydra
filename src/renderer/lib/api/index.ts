@@ -4,7 +4,7 @@
  *
  * Setup is driven by the main process (app:setup intent).
  * Renderer subscribes to lifecycle events and responds to agent selection.
- * lifecycle.quit() is the only method the renderer can call.
+ * lifecycle.ready() signals readiness, lifecycle.quit() exits the app.
  */
 
 // Check that window.api is available

@@ -243,6 +243,7 @@ function createMockCodeHydraApi(
       setMode: (mode) => get("ui.setMode")({ mode }),
     },
     lifecycle: {
+      ready: () => get("lifecycle.ready")({}),
       quit: () => get("lifecycle.quit")({}),
     },
     on: vi.fn().mockReturnValue(() => {}),
@@ -259,6 +260,7 @@ export function registerAllMethodsWithStubs(
   overrides: Partial<{ [P in MethodPath]: MethodHandler<P> }> = {}
 ): void {
   const defaultHandlers: { [P in MethodPath]: MethodHandler<P> } = {
+    "lifecycle.ready": async () => {},
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},

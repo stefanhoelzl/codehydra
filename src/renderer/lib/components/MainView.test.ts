@@ -47,10 +47,7 @@ const mockApi = vi.hoisted(() => ({
   },
   // Flat API structure - lifecycle namespace
   lifecycle: {
-    getState: vi.fn().mockResolvedValue({ state: "ready", agent: "opencode" }),
-    setup: vi.fn().mockResolvedValue({ success: true }),
-    startServices: vi.fn().mockResolvedValue({ success: true }),
-    setAgent: vi.fn().mockResolvedValue(undefined),
+    ready: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn().mockResolvedValue(undefined),
   },
   // on() captures callbacks by event name for tests to fire events
@@ -119,6 +116,16 @@ describe("MainView component", () => {
     // Default to returning empty projects
     mockApi.projects.list.mockResolvedValue([]);
     mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
+    // Configure lifecycle.ready to simulate event-driven store population:
+    // reads from projects.list and ui.getActiveWorkspace mocks (set per-test)
+    mockApi.lifecycle.ready.mockImplementation(async () => {
+      const projectList = await mockApi.projects.list();
+      for (const p of projectList) {
+        projectsStore.addProject(p);
+      }
+      const activeRef = await mockApi.ui.getActiveWorkspace();
+      projectsStore.setActiveWorkspace(activeRef?.path ?? null);
+    });
     // Agent statuses are fetched per-workspace via workspaces.getStatus (already mocked in mockApi)
     // Reset notification service mocks
     mockSeedInitialCounts.mockReset();
@@ -429,16 +436,21 @@ describe("MainView component", () => {
       ];
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
-      // Mock getStatus to return different statuses for each workspace
-      mockApi.workspaces.getStatus
-        .mockResolvedValueOnce({
-          isDirty: false,
-          agent: { type: "busy", counts: { idle: 0, busy: 2, total: 2 } },
-        })
-        .mockResolvedValueOnce({
-          isDirty: false,
-          agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
-        });
+      // Mock getStatus to return different statuses per workspace
+      mockApi.workspaces.getStatus.mockImplementation(
+        async (_projectId: string, workspaceName: string) => {
+          if (workspaceName === "feature") {
+            return {
+              isDirty: false,
+              agent: { type: "busy", counts: { idle: 0, busy: 2, total: 2 } },
+            };
+          }
+          return {
+            isDirty: false,
+            agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
+          };
+        }
+      );
 
       render(MainView);
 

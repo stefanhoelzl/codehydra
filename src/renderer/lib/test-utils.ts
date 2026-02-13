@@ -55,6 +55,7 @@ export function createMockApi(): Api {
       setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
+      ready: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn().mockResolvedValue(undefined),
     },
     log: {

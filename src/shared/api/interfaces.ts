@@ -186,6 +186,12 @@ export interface IUiApi {
 
 export interface ILifecycleApi {
   /**
+   * Signal that the renderer is ready to receive state.
+   * The main process emits domain events for all current state
+   * (project:opened, workspace:switched) before the promise resolves.
+   */
+  ready(): Promise<void>;
+  /**
    * Quit the application.
    */
   quit(): Promise<void>;

@@ -53,6 +53,7 @@ function createMockApi(): ICodeHydraApi {
       setMode: vi.fn(),
     },
     lifecycle: {
+      ready: vi.fn(),
       quit: vi.fn(),
     },
     on: vi.fn().mockReturnValue(() => {}),

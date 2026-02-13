@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld("api", {
     setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),
   },
   lifecycle: {
+    ready: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_READY),
     quit: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_QUIT),
   },
   /**

@@ -489,6 +489,7 @@ function registerAllMethodsWithStubs(
   // Note: lifecycle.getState, lifecycle.setAgent, lifecycle.setup, lifecycle.startServices
   // were removed in the app:setup migration
   const defaultHandlers: { [P in MethodPath]: MethodHandler<P> } = {
+    "lifecycle.ready": async () => {},
     "lifecycle.quit": async () => {},
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},
