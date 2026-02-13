@@ -12,7 +12,7 @@ export { OPENCODE_VERSION, CLAUDE_VERSION };
 /**
  * Current version of code-server to download.
  */
-export const CODE_SERVER_VERSION = "4.108.2";
+export const CODE_SERVER_VERSION = "4.109.2";
 
 /**
  * GitHub repository for Windows code-server builds.

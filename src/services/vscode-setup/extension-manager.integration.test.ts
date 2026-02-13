@@ -200,7 +200,7 @@ describe("ExtensionManager", () => {
       await manager.install(["codehydra.sidekick"]);
 
       expect(processRunner.run).toHaveBeenCalledWith(
-        path.normalize("/app/binaries/code-server-4.108.2"),
+        path.normalize("/app/binaries/code-server-4.109.2"),
         expect.arrayContaining([
           "--install-extension",
           expect.stringContaining("codehydra-sidekick-0.0.1.vsix"),
