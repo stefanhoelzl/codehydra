@@ -72,6 +72,11 @@ import {
   type RestartAgentIntent,
   type ResolveProjectHookResult as RestartAgentResolveProjectHookResult,
 } from "../operations/restart-agent";
+import {
+  DELETE_WORKSPACE_OPERATION_ID,
+  type DeleteWorkspaceIntent,
+  type ResolveProjectHookResult as DeleteWorkspaceResolveProjectHookResult,
+} from "../operations/delete-workspace";
 
 // =============================================================================
 // Types
@@ -355,6 +360,23 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<RestartAgentResolveProjectHookResult> => {
             const intent = ctx.intent as RestartAgentIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of projects.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<DeleteWorkspaceResolveProjectHookResult> => {
+            const intent = ctx.intent as DeleteWorkspaceIntent;
             const { projectId } = intent.payload;
 
             for (const project of projects.values()) {

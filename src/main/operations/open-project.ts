@@ -26,7 +26,7 @@ import {
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { toIpcWorkspaces } from "../api/workspace-conversion";
 import { Path } from "../../services/platform/path";
-import { extractWorkspaceName } from "../api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 
 // =============================================================================
 // Intent Types

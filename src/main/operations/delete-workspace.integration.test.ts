@@ -54,7 +54,7 @@ import type { WorkspacePath } from "../../shared/ipc";
 import type { BlockingProcess, DeletionProgress, WorkspaceName } from "../../shared/api/types";
 import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
 import { generateProjectId } from "../../shared/api/id-utils";
-import { extractWorkspaceName, resolveProjectPath } from "../api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../services/platform/path";
 import {
@@ -113,17 +113,32 @@ function buildDeleteIntent(
 // Mock Factories
 // =============================================================================
 
+interface TestProject {
+  path: string;
+  name: string;
+  workspaces: Array<{ path: string; branch: string; metadata: Record<string, string> }>;
+}
+
 interface TestAppState {
-  projects: Array<{
-    path: string;
-    name: string;
-    workspaces: Array<{ path: string; branch: string; metadata: Record<string, string> }>;
-  }>;
+  projects: TestProject[];
   serverStopped: boolean;
   mcpCleared: boolean;
   tuiCleared: boolean;
   removedWorkspaces: Array<{ projectPath: string; workspacePath: string }>;
   worktreeRemoved: boolean;
+}
+
+/**
+ * Mock AppState interface used in tests. Extends real AppState methods with
+ * test-only methods that simulate removed production methods (getAllProjects,
+ * getProject, unregisterWorkspace, findProjectForWorkspace). These are used
+ * by inline hook modules that simulate the behavior of extracted production modules.
+ */
+interface MockAppState extends AppState {
+  getAllProjects: () => Promise<TestProject[]>;
+  getProject: (path: string) => TestProject | undefined;
+  unregisterWorkspace: (projectPath: string, workspacePath: string) => void;
+  findProjectForWorkspace: (wsPath: string) => TestProject | undefined;
 }
 
 function createMockGlobalProvider(opts?: { removeError?: string }): {
@@ -153,7 +168,7 @@ function createMockGlobalProvider(opts?: { removeError?: string }): {
 }
 
 function createTestAppState(initial?: Partial<TestAppState>): {
-  appState: AppState;
+  appState: MockAppState;
   state: TestAppState;
 } {
   const state: TestAppState = {
@@ -224,7 +239,7 @@ function createTestAppState(initial?: Partial<TestAppState>): {
           }
         }
       }),
-  } as unknown as AppState;
+  } as unknown as MockAppState;
 
   return { appState, state };
 }
@@ -290,7 +305,7 @@ function createTestWorkspaceFileService(): IWorkspaceFileService {
 interface TestHarness {
   dispatcher: Dispatcher;
   progressCaptures: DeletionProgress[];
-  appState: AppState;
+  appState: MockAppState;
   testState: TestAppState;
   viewManager: IViewManager;
   activeWorkspace: { path: string | null };
@@ -406,8 +421,11 @@ function createTestHarness(options?: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const projectPath = await resolveProjectPath(payload.projectId, appState);
-            return projectPath ? { projectPath } : {};
+            const projects = await appState.getAllProjects();
+            const match = projects.find(
+              (p: { path: string }) => generateProjectId(p.path) === payload.projectId
+            );
+            return match ? { projectPath: match.path } : {};
           },
         },
       },

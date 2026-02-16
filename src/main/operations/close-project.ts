@@ -17,7 +17,7 @@ import type { ProjectId } from "../../shared/api/types";
 import type { WorkspaceName } from "../../shared/api/types";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
-import { extractWorkspaceName } from "../api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 
 // =============================================================================
 // Intent Types

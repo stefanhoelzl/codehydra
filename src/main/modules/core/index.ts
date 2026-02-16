@@ -19,13 +19,8 @@ import type {
   EmptyPayload,
 } from "../../api/registry-types";
 import type { PluginResult } from "../../../shared/plugin-protocol";
-import type { AppState } from "../../app-state";
 import { ApiIpcChannels } from "../../../shared/ipc";
-import {
-  resolveWorkspace as resolveWorkspaceShared,
-  type InternalResolvedWorkspace,
-} from "../../api/id-utils";
-import type { WorkspaceRefPayload } from "../../api/registry-types";
+import type { ProjectId, WorkspaceName } from "../../../shared/api/types";
 
 // =============================================================================
 // Types
@@ -57,7 +52,12 @@ export interface MinimalDialog {
  * Dependencies for CoreModule.
  */
 export interface CoreModuleDeps {
-  readonly appState: AppState;
+  /** Resolves (projectId, workspaceName) → workspacePath. Throws if not found. */
+  readonly resolveWorkspace: (projectId: ProjectId, workspaceName: WorkspaceName) => string;
+  /** Code-server port for URL generation (updated by CodeServerLifecycleModule) */
+  readonly codeServerPort: number;
+  /** Wrapper path for Claude Code wrapper script */
+  readonly wrapperPath: string;
   /** Plugin server for executing VS Code commands in workspaces */
   readonly pluginServer?: IPluginServer;
   /** Electron dialog for folder selection */
@@ -111,14 +111,14 @@ export class CoreModule implements IApiModule {
   // ===========================================================================
 
   private async workspaceExecuteCommand(payload: WorkspaceExecuteCommandPayload): Promise<unknown> {
-    const { workspace } = await this.resolveWorkspace(payload);
+    const workspacePath = this.deps.resolveWorkspace(payload.projectId, payload.workspaceName);
 
     if (!this.deps.pluginServer) {
       throw new Error("Plugin server not available");
     }
 
     const result = await this.deps.pluginServer.sendCommand(
-      workspace.path,
+      workspacePath,
       payload.command,
       payload.args
     );
@@ -148,18 +148,6 @@ export class CoreModule implements IApiModule {
     }
 
     return result.filePaths[0] ?? null;
-  }
-
-  // ===========================================================================
-  // Helper Methods
-  // ===========================================================================
-
-  /**
-   * Resolve a workspace from payload, throwing on not found.
-   * Uses shared utility from id-utils.
-   */
-  private resolveWorkspace(payload: WorkspaceRefPayload): Promise<InternalResolvedWorkspace> {
-    return resolveWorkspaceShared(payload, this.deps.appState);
   }
 
   // ===========================================================================

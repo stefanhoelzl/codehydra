@@ -61,9 +61,6 @@ import {
 import type {
   GetWorkspaceStatusIntent,
   GetStatusHookResult,
-  ResolveProjectHookResult as GetStatusResolveProjectHookResult,
-  ResolveWorkspaceHookResult as GetStatusResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput as GetStatusResolveWorkspaceHookInput,
   GetStatusHookInput,
 } from "./operations/get-workspace-status";
 import {
@@ -123,33 +120,24 @@ import type {
   ShutdownHookResult,
   ReleaseHookResult,
   DeleteHookResult,
-  ResolveProjectHookResult,
-  ResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput,
-  DeletePipelineHookInput,
 } from "./operations/delete-workspace";
 import {
   OpenProjectOperation,
-  OPEN_PROJECT_OPERATION_ID,
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
 } from "./operations/open-project";
-import type {
-  OpenProjectIntent,
-  RegisterHookInput,
-  RegisterHookResult,
-  ProjectOpenedEvent,
-} from "./operations/open-project";
+import type { OpenProjectIntent, ProjectOpenedEvent } from "./operations/open-project";
 import {
   CloseProjectOperation,
   CLOSE_PROJECT_OPERATION_ID,
   INTENT_CLOSE_PROJECT,
+  EVENT_PROJECT_CLOSED,
 } from "./operations/close-project";
 import type {
   CloseProjectIntent,
   CloseHookInput,
   CloseHookResult,
-  CloseResolveHookResult,
+  ProjectClosedEvent,
 } from "./operations/close-project";
 import {
   SwitchWorkspaceOperation,
@@ -219,31 +207,25 @@ import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import { wireModules } from "./intents/infrastructure/wire";
-import {
-  resolveWorkspace,
-  resolveProjectPath,
-  generateProjectId,
-  extractWorkspaceName,
-} from "./api/id-utils";
+import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
 import type { Intent, DomainEvent } from "./intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
-import type { IWorkspaceFileService } from "../services";
+import { urlForWorkspace, urlForFolder, type IWorkspaceFileService } from "../services";
 import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-handler";
 import type { DeletionProgressCallback } from "./operations/delete-workspace";
 import { getErrorMessage } from "../shared/error-utils";
 import {
   normalizeInitialPrompt,
+  type ProjectId,
   type SetupRowId,
   type SetupRowProgress,
   type SetupRowStatus,
   type Workspace,
-  type BlockingProcess,
   type WorkspaceRef,
 } from "../shared/api/types";
-import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
 import { expandGitUrl } from "../services/project/url-utils";
 import { createLocalProjectModule } from "./modules/local-project-module";
@@ -315,6 +297,14 @@ export interface LifecycleServiceRefs {
   readonly getApi: () => ICodeHydraApi;
   /** Window manager for title updates */
   readonly windowManager: import("./managers/window-manager").WindowManager;
+  /** Wait for agent provider registration after server start */
+  readonly waitForProvider: (workspacePath: string) => Promise<void>;
+  /** Update code-server port in AppState */
+  readonly updateCodeServerPort: (port: number) => void;
+  /** Inject MCP server manager into AppState for onServerStopped cleanup */
+  readonly setMcpServerManager: (
+    manager: import("../services/mcp-server").McpServerManager
+  ) => void;
 }
 
 /**
@@ -945,19 +935,15 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     if (servicesStarted) return;
     servicesStarted = true;
 
-    const coreDeps = deps.coreDepsFn();
+    const baseDeps = deps.coreDepsFn();
 
-    // Create remaining modules
-    const coreModule = new CoreModule(registry, coreDeps);
-    modules.push(coreModule);
-
-    // Wire remaining operations (hookRegistry and dispatcher already available)
-    wireDispatcher(
+    // Wire remaining operations first to get the workspace index resolver
+    const workspaceResolver = wireDispatcher(
       registry,
       hookRegistry,
       dispatcher,
       deps.globalWorktreeProviderFn(),
-      coreDeps,
+      baseDeps,
       deps.viewManagerFn(),
       deps.gitClientFn(),
       deps.pathProviderFn(),
@@ -974,6 +960,14 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.badgeManagerFn(),
       deps.lifecycleRefsFn()
     );
+
+    // Create CoreModule with workspace index resolver wired in
+    const coreDeps: CoreModuleDeps = {
+      ...baseDeps,
+      resolveWorkspace: workspaceResolver,
+    };
+    const coreModule = new CoreModule(registry, coreDeps);
+    modules.push(coreModule);
   }
 
   /**
@@ -1060,8 +1054,61 @@ function wireDispatcher(
   hasUpdateAvailable: () => boolean,
   badgeManager: BadgeManager,
   lifecycleRefs: LifecycleServiceRefs
-): void {
-  const { appState } = coreDeps;
+): (projectId: ProjectId, workspaceName: import("../shared/api/types").WorkspaceName) => string {
+  // --- Workspace Index (replaces AppState project/workspace Maps for API boundary) ---
+  const projectsById = new Map<string, { path: string; name: string }>();
+  const workspaceToProject = new Map<
+    string,
+    { projectId: ProjectId; projectName: string; projectPath: string }
+  >();
+  const workspacesByKey = new Map<string, string>();
+
+  function wsKey(projectId: string, workspaceName: string): string {
+    return `${projectId}/${workspaceName}`;
+  }
+
+  const indexModule: IntentModule = {
+    events: {
+      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
+        const { project } = (event as ProjectOpenedEvent).payload;
+        projectsById.set(project.id, { path: project.path, name: project.name });
+      },
+      [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
+        const { projectId } = (event as ProjectClosedEvent).payload;
+        projectsById.delete(projectId);
+        for (const [wsPath, info] of workspaceToProject) {
+          if (info.projectId === projectId) {
+            workspaceToProject.delete(wsPath);
+          }
+        }
+        for (const key of workspacesByKey.keys()) {
+          if (key.startsWith(projectId + "/")) {
+            workspacesByKey.delete(key);
+          }
+        }
+      },
+      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+        const p = (event as WorkspaceCreatedEvent).payload;
+        const proj = projectsById.get(p.projectId);
+        const normalized = new Path(p.workspacePath).toString();
+        workspaceToProject.set(normalized, {
+          projectId: p.projectId,
+          projectName: proj?.name ?? "",
+          projectPath: p.projectPath,
+        });
+        workspacesByKey.set(wsKey(p.projectId, p.workspaceName), normalized);
+      },
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const p = (event as WorkspaceDeletedEvent).payload;
+        workspaceToProject.delete(new Path(p.workspacePath).toString());
+        workspacesByKey.delete(wsKey(p.projectId, p.workspaceName));
+      },
+    },
+  };
+
+  // Mutable code-server port (initially 0, updated by codeServerLifecycleModule after start)
+  let codeServerPort = coreDeps.codeServerPort;
+
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
@@ -1080,9 +1127,8 @@ function wireDispatcher(
   // SwitchWorkspaceOperation: needs extractWorkspaceName, generateProjectId, and agent status scorer
   // for the auto-select algorithm (used when the active workspace is deleted).
   const agentStatusScorer = (workspacePath: WorkspacePath): number => {
-    const agentStatusManager = appState.getAgentStatusManager();
-    const status = agentStatusManager?.getStatus(workspacePath);
-    if (!status || status.status === "none") return 2;
+    const status = lifecycleRefs.agentStatusManager.getStatus(workspacePath);
+    if (status === undefined || status.status === "none") return 2;
     if (status.status === "busy") return 1;
     return 0; // idle or mixed
   };
@@ -1159,29 +1205,10 @@ function wireDispatcher(
     },
   };
 
-  // Workspace status hook handler module (orchestrates resolve-project → resolve-workspace → get)
+  // Workspace status hook handler module (get hook only — resolve handled by extracted modules)
   const workspaceStatusModule: IntentModule = {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<GetStatusResolveProjectHookResult> => {
-            const intent = ctx.intent as GetWorkspaceStatusIntent;
-            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
-            if (!projectPath) return {};
-            return { projectPath };
-          },
-        },
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<GetStatusResolveWorkspaceHookResult> => {
-            const { projectPath, workspaceName } = ctx as GetStatusResolveWorkspaceHookInput;
-            const project = appState.getProject(projectPath);
-            if (!project) return {};
-            const ws = project.workspaces.find(
-              (w) => extractWorkspaceName(w.path) === workspaceName
-            );
-            return ws ? { workspacePath: ws.path } : {};
-          },
-        },
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const { workspacePath } = ctx as GetStatusHookInput;
@@ -1199,11 +1226,11 @@ function wireDispatcher(
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const { workspacePath } = ctx as GetStatusHookInput;
-            const agentStatusManager = appState.getAgentStatusManager();
-            if (agentStatusManager) {
-              return { agentStatus: agentStatusManager.getStatus(workspacePath as WorkspacePath) };
-            }
-            return {};
+            return {
+              agentStatus: lifecycleRefs.agentStatusManager.getStatus(
+                workspacePath as WorkspacePath
+              ),
+            };
           },
         },
       },
@@ -1211,8 +1238,8 @@ function wireDispatcher(
         get: {
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
             const { workspacePath } = ctx as GetAgentSessionHookInput;
-            const agentStatusManager = appState.getAgentStatusManager();
-            const session = agentStatusManager?.getSession(workspacePath as WorkspacePath) ?? null;
+            const session =
+              lifecycleRefs.agentStatusManager.getSession(workspacePath as WorkspacePath) ?? null;
             return { session };
           },
         },
@@ -1221,11 +1248,7 @@ function wireDispatcher(
         restart: {
           handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
             const { workspacePath } = ctx as RestartAgentHookInput;
-            const serverManager = appState.getServerManager();
-            if (!serverManager) {
-              throw new Error("Agent server manager not available");
-            }
-            const result = await serverManager.restartServer(workspacePath);
+            const result = await lifecycleRefs.serverManager.restartServer(workspacePath);
             if (result.success) {
               return { port: result.port };
             } else {
@@ -1320,23 +1343,21 @@ function wireDispatcher(
             const workspacePath = setupCtx.workspacePath;
 
             // 1. Start agent server
-            const serverManager = appState.getServerManager();
-            if (serverManager) {
-              await serverManager.startServer(workspacePath);
+            await lifecycleRefs.serverManager.startServer(workspacePath);
 
-              // 2. Wait for provider registration (handleServerStarted runs async)
-              await appState.waitForProvider(workspacePath);
+            // 2. Wait for provider registration (handleServerStarted runs async)
+            await lifecycleRefs.waitForProvider(workspacePath);
 
-              // 3. Set initial prompt if provided (must happen after startServer)
-              if (intent.payload.initialPrompt && serverManager.setInitialPrompt) {
-                const normalizedPrompt = normalizeInitialPrompt(intent.payload.initialPrompt);
-                await serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
-              }
+            // 3. Set initial prompt if provided (must happen after startServer)
+            if (intent.payload.initialPrompt && lifecycleRefs.serverManager.setInitialPrompt) {
+              const normalizedPrompt = normalizeInitialPrompt(intent.payload.initialPrompt);
+              await lifecycleRefs.serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
             }
 
             // 4. Get environment variables from agent provider
-            const agentStatusManager = appState.getAgentStatusManager();
-            const agentProvider = agentStatusManager?.getProvider(workspacePath as WorkspacePath);
+            const agentProvider = lifecycleRefs.agentStatusManager.getProvider(
+              workspacePath as WorkspacePath
+            );
             return { envVars: agentProvider?.getEnvironmentVariables() ?? {} };
           },
         },
@@ -1351,11 +1372,35 @@ function wireDispatcher(
         finalize: {
           handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
             const finalizeCtx = ctx as FinalizeHookInput;
-            const workspaceUrl = await appState.getWorkspaceUrl(
-              finalizeCtx.workspacePath,
-              finalizeCtx.envVars
-            );
-            return { workspaceUrl };
+            try {
+              const workspacePathObj = new Path(finalizeCtx.workspacePath);
+              const projectWorkspacesDir = workspacePathObj.dirname;
+              const envVarsArray = Object.entries(finalizeCtx.envVars).map(([name, value]) => ({
+                name,
+                value,
+              }));
+              const agentSettings: Record<string, unknown> = {
+                "claudeCode.useTerminal": true,
+                "claudeCode.claudeProcessWrapper": coreDeps.wrapperPath,
+                "claudeCode.environmentVariables": envVarsArray,
+              };
+              const workspaceFilePath = await workspaceFileService.ensureWorkspaceFile(
+                workspacePathObj,
+                projectWorkspacesDir,
+                agentSettings
+              );
+              return {
+                workspaceUrl: urlForWorkspace(codeServerPort, workspaceFilePath.toString()),
+              };
+            } catch (error) {
+              logger.warn("Failed to ensure workspace file, using folder URL", {
+                workspacePath: finalizeCtx.workspacePath,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return {
+                workspaceUrl: urlForFolder(codeServerPort, finalizeCtx.workspacePath),
+              };
+            }
           },
         },
       },
@@ -1365,23 +1410,6 @@ function wireDispatcher(
   // ---------------------------------------------------------------------------
   // Create-workspace event subscriber modules
   // ---------------------------------------------------------------------------
-
-  // StateModule: subscribes to workspace:created, registers workspace in app state
-  const stateModule: IntentModule = {
-    events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        const internalWorkspace: InternalWorkspace = {
-          name: payload.workspaceName,
-          path: new Path(payload.workspacePath),
-          branch: payload.branch,
-          metadata: payload.metadata,
-        };
-        appState.registerWorkspace(payload.projectPath, internalWorkspace);
-        appState.setLastBaseBranch(payload.projectPath, payload.base);
-      },
-    },
-  };
 
   // ViewModule: subscribes to workspace:created, creates workspace view
   // Note: workspace activation is now handled by OpenWorkspaceOperation dispatching workspace:switch
@@ -1403,39 +1431,6 @@ function wireDispatcher(
   // ---------------------------------------------------------------------------
   // Delete-workspace hook modules
   // ---------------------------------------------------------------------------
-
-  const deleteResolveProjectModule: IntentModule = {
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const projectPath = await resolveProjectPath(payload.projectId, appState);
-            return projectPath ? { projectPath } : {};
-          },
-        },
-      },
-    },
-  };
-
-  const deleteResolveWorkspaceModule: IntentModule = {
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { projectPath } = ctx as ResolveWorkspaceHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const project = appState.getProject(projectPath);
-            if (!project) return {};
-            const workspace = project.workspaces.find(
-              (w) => extractWorkspaceName(w.path) === payload.workspaceName
-            );
-            return workspace ? { workspacePath: workspace.path } : {};
-          },
-        },
-      },
-    },
-  };
 
   const deleteViewModule: IntentModule = {
     hooks: {
@@ -1489,22 +1484,20 @@ function wireDispatcher(
 
               // Stop server
               let serverError: string | undefined;
-              const serverManager = appState.getServerManager();
-              if (serverManager) {
-                const stopResult = await serverManager.stopServer(payload.workspacePath);
-                if (!stopResult.success) {
-                  serverError = stopResult.error ?? "Failed to stop server";
-                  if (!payload.force) {
-                    throw new Error(serverError);
-                  }
+              const stopResult = await lifecycleRefs.serverManager.stopServer(
+                payload.workspacePath
+              );
+              if (!stopResult.success) {
+                serverError = stopResult.error ?? "Failed to stop server";
+                if (!payload.force) {
+                  throw new Error(serverError);
                 }
               }
 
               // Clear TUI tracking
-              const agentStatusManager = appState.getAgentStatusManager();
-              if (agentStatusManager) {
-                agentStatusManager.clearTuiTracking(payload.workspacePath as WorkspacePath);
-              }
+              lifecycleRefs.agentStatusManager.clearTuiTracking(
+                payload.workspacePath as WorkspacePath
+              );
 
               return serverError ? { error: serverError } : {};
             } catch (error) {
@@ -1588,60 +1581,6 @@ function wireDispatcher(
     },
   };
 
-  const deleteWorktreeModule: IntentModule = {
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
-            const { projectPath, workspacePath } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            try {
-              await globalProvider.removeWorkspace(
-                new Path(projectPath),
-                new Path(workspacePath),
-                !payload.keepBranch
-              );
-              return {};
-            } catch (error) {
-              if (payload.force) {
-                logger.warn("WorktreeModule: error in force mode (ignored)", {
-                  error: getErrorMessage(error),
-                });
-                return { error: getErrorMessage(error) };
-              }
-
-              // Reactive blocker detection on Windows for ANY cleanup error
-              let reactiveBlockingProcesses: readonly BlockingProcess[] | undefined;
-              if (workspaceLockHandler) {
-                try {
-                  const detected = await workspaceLockHandler.detect(new Path(workspacePath));
-                  if (detected.length > 0) {
-                    reactiveBlockingProcesses = detected;
-                    logger.info("Detected blocking processes", {
-                      workspacePath,
-                      count: detected.length,
-                    });
-                  }
-                } catch (detectError) {
-                  logger.warn("Failed to detect blocking processes", {
-                    workspacePath,
-                    error: getErrorMessage(detectError),
-                  });
-                }
-              }
-
-              return {
-                ...(reactiveBlockingProcesses && { reactiveBlockingProcesses }),
-                error: getErrorMessage(error),
-              };
-            }
-          },
-        },
-      },
-    },
-  };
-
   const deleteCodeServerModule: IntentModule = {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
@@ -1670,15 +1609,6 @@ function wireDispatcher(
     },
   };
 
-  const deleteStateModule: IntentModule = {
-    events: {
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
-      },
-    },
-  };
-
   const deleteIpcBridge: IntentModule = {
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
@@ -1695,39 +1625,6 @@ function wireDispatcher(
   // ---------------------------------------------------------------------------
   // Project:open modules
   // ---------------------------------------------------------------------------
-
-  // ProjectAppStateModule: register project in AppState, cache defaultBaseBranch
-  const projectAppStateModule: IntentModule = {
-    hooks: {
-      [OPEN_PROJECT_OPERATION_ID]: {
-        register: {
-          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
-            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
-            const projectPath = new Path(projectPathStr);
-            const projectId = generateProjectId(projectPathStr);
-
-            appState.registerProject({
-              id: projectId,
-              name: projectPath.basename,
-              path: projectPath,
-              workspaces: [],
-              ...(remoteUrl !== undefined && { remoteUrl }),
-            });
-
-            return {};
-          },
-        },
-      },
-    },
-    events: {
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const { project } = (event as ProjectOpenedEvent).payload;
-        if (project.defaultBaseBranch) {
-          appState.setLastBaseBranch(project.path, project.defaultBaseBranch);
-        }
-      },
-    },
-  };
 
   const inProgressOpens = new Set<string>();
 
@@ -1749,109 +1646,21 @@ function wireDispatcher(
   // Project:close hook modules
   // ---------------------------------------------------------------------------
 
-  // ProjectResolveModule: "resolve-project" hook -- resolves projectId to path, loads config, gets workspaces
-  const projectResolveModule: IntentModule = {
-    hooks: {
-      [CLOSE_PROJECT_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
-            const intent = ctx.intent as CloseProjectIntent;
-
-            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
-            if (!projectPath) {
-              throw new Error(`Project not found: ${intent.payload.projectId}`);
-            }
-
-            const projectConfig = await projectStore.getProjectConfig(projectPath);
-            const project = appState.getProject(projectPath);
-
-            return {
-              projectPath,
-              workspaces: project?.workspaces ?? [],
-              ...(projectConfig?.remoteUrl !== undefined && { remoteUrl: projectConfig.remoteUrl }),
-            };
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectCloseViewModule: "close" hook -- clears active workspace if no other projects
-  // Note: workspace:switched(null) is emitted by CloseProjectOperation, not here
-  const projectCloseViewModule: IntentModule = {
+  // ProjectCloseIndexModule: "close" hook -- checks if other projects exist via workspace index
+  const projectCloseIndexModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath } = ctx as CloseHookInput;
-            const allProjects = await appState.getAllProjects();
-            const otherProjectsExist = allProjects.some((p) => p.path !== projectPath);
-            if (!otherProjectsExist) {
-              viewManager.setActiveWorkspace(null, false);
+            const currentProjectId = (ctx.intent as CloseProjectIntent).payload.projectId;
+            let otherExists = false;
+            for (const id of projectsById.keys()) {
+              if (id !== currentProjectId) {
+                otherExists = true;
+                break;
+              }
             }
-            return { otherProjectsExist };
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectLocalCloseModule: "close" hook -- deregister + remove store for local projects
-  const projectLocalCloseModule: IntentModule = {
-    hooks: {
-      [CLOSE_PROJECT_OPERATION_ID]: {
-        close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath, remoteUrl } = ctx as CloseHookInput;
-
-            // Self-select: only handle local projects (no remoteUrl)
-            if (remoteUrl !== undefined) {
-              return {};
-            }
-
-            appState.deregisterProject(projectPath);
-
-            try {
-              await projectStore.removeProject(projectPath);
-            } catch {
-              // Fail silently
-            }
-
-            return {};
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectRemoteCloseModule: "close" hook -- deregister + remove store for remote projects, optionally delete dir
-  const projectRemoteCloseModule: IntentModule = {
-    hooks: {
-      [CLOSE_PROJECT_OPERATION_ID]: {
-        close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath, remoteUrl, removeLocalRepo } = ctx as CloseHookInput;
-
-            // Self-select: only handle remote projects (has remoteUrl)
-            if (!remoteUrl) {
-              return {};
-            }
-
-            appState.deregisterProject(projectPath);
-
-            try {
-              await projectStore.removeProject(projectPath);
-            } catch {
-              // Fail silently
-            }
-
-            if (removeLocalRepo) {
-              await projectStore.deleteProjectDirectory(projectPath, {
-                isClonedProject: true,
-              });
-            }
-
-            return {};
+            return { otherProjectsExist: otherExists };
           },
         },
       },
@@ -1958,12 +1767,10 @@ function wireDispatcher(
                 // Wire config data provider
                 refs.pluginServer.onConfigData((workspacePath) => {
                   const env =
-                    appState
-                      .getAgentStatusManager()
-                      ?.getEnvironmentVariables(
-                        workspacePath as import("../shared/ipc").WorkspacePath
-                      ) ?? null;
-                  const agentType = appState.getAgentType() ?? null;
+                    lifecycleRefs.agentStatusManager.getEnvironmentVariables(
+                      workspacePath as import("../shared/ipc").WorkspacePath
+                    ) ?? null;
+                  const agentType = lifecycleRefs.selectedAgentType;
                   return { env, agentType };
                 });
 
@@ -1988,9 +1795,10 @@ function wireDispatcher(
             await refs.codeServerManager.ensureRunning();
             const port = refs.codeServerManager.port()!;
 
-            // Update ViewManager and AppState with code-server port
+            // Update code-server port everywhere
             viewManager.updateCodeServerPort(port);
-            appState.updateCodeServerPort(port);
+            codeServerPort = port;
+            lifecycleRefs.updateCodeServerPort(port);
 
             return { codeServerPort: port };
           },
@@ -2031,11 +1839,11 @@ function wireDispatcher(
             // Wire agent status changes through the intent dispatcher
             agentStatusUnsubscribeFn = lifecycleRefs.agentStatusManager.onStatusChanged(
               (workspacePath, status) => {
-                // Resolve project for this workspace path to enrich the intent payload
-                const project = appState.findProjectForWorkspace(workspacePath);
-                if (!project) return; // Unknown workspace — skip dispatch
+                // Resolve project for this workspace path via workspace index
+                const info = workspaceToProject.get(new Path(workspacePath).toString());
+                if (!info) return; // Unknown workspace — skip dispatch
 
-                const projectId = generateProjectId(project.path);
+                const projectId = info.projectId;
                 const workspaceName = extractWorkspaceName(workspacePath);
 
                 void lifecycleRefs.dispatcher.dispatch({
@@ -2161,8 +1969,8 @@ function wireDispatcher(
               });
             }
 
-            // Inject MCP server manager into AppState
-            appState.setMcpServerManager(refs.mcpServerManager);
+            // Inject MCP server manager into AppState for onServerStopped cleanup
+            lifecycleRefs.setMcpServerManager(refs.mcpServerManager);
 
             return { mcpPort };
           },
@@ -2250,9 +2058,14 @@ function wireDispatcher(
               const activeWorkspace = viewManager.getActiveWorkspacePath();
               const titleVersion = refs.buildInfo.gitBranch ?? refs.buildInfo.version;
               if (activeWorkspace) {
-                const project = appState.findProjectForWorkspace(activeWorkspace);
+                const info = workspaceToProject.get(new Path(activeWorkspace).toString());
                 const workspaceName = nodePath.basename(activeWorkspace);
-                const title = formatWindowTitle(project?.name, workspaceName, titleVersion, true);
+                const title = formatWindowTitle(
+                  info?.projectName,
+                  workspaceName,
+                  titleVersion,
+                  true
+                );
                 refs.windowManager.setTitle(title);
               } else {
                 const title = formatWindowTitle(undefined, undefined, titleVersion, true);
@@ -2459,6 +2272,8 @@ function wireDispatcher(
   const badgeModule = createBadgeModule(badgeManager);
   wireModules(
     [
+      // Workspace index (must be first to receive events before other modules)
+      indexModule,
       ipcEventBridge,
       badgeModule,
       metadataModule,
@@ -2469,30 +2284,21 @@ function wireDispatcher(
       keepFilesModule,
       agentModule,
       codeServerModule,
-      stateModule,
       viewModule,
       // Delete-workspace modules
       idempotencyModule,
-      deleteResolveProjectModule,
-      deleteResolveWorkspaceModule,
       deleteViewModule,
       deleteAgentModule,
       deleteWindowsLockModule,
-      deleteWorktreeModule,
       deleteCodeServerModule,
-      deleteStateModule,
       deleteIpcBridge,
       // Project:open modules
       localProjectModule,
       remoteProjectModule,
       gitWorktreeWorkspaceModule,
-      projectAppStateModule,
       projectViewModule,
       // Project:close modules
-      projectResolveModule,
-      projectCloseViewModule,
-      projectLocalCloseModule,
-      projectRemoteCloseModule,
+      projectCloseIndexModule,
       projectWorktreeCloseModule,
       // Workspace:switch modules
       switchViewModule,
@@ -2542,15 +2348,22 @@ function wireDispatcher(
   registry.register(
     "workspaces.remove",
     async (payload: WorkspaceRemovePayload) => {
-      // Resolve workspace to get paths needed for intent payload
-      const { projectPath, workspace } = await resolveWorkspace(payload, appState);
+      // Resolve workspace to get paths needed for intent payload via workspace index
+      const projectPath = projectsById.get(payload.projectId)?.path;
+      if (!projectPath) {
+        throw new Error(`Project not found: ${payload.projectId}`);
+      }
+      const workspacePath = workspacesByKey.get(wsKey(payload.projectId, payload.workspaceName));
+      if (!workspacePath) {
+        throw new Error(`Workspace not found: ${payload.workspaceName}`);
+      }
 
       const intent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
           projectId: payload.projectId,
           workspaceName: payload.workspaceName,
-          workspacePath: workspace.path,
+          workspacePath,
           projectPath,
           keepBranch: payload.keepBranch ?? true,
           force: payload.force ?? false,
@@ -2799,7 +2612,7 @@ function wireDispatcher(
       // Fire-and-forget background update (same as old CoreModule pattern)
       void (async () => {
         try {
-          const projectPath = await resolveProjectPath(payload.projectId, appState);
+          const projectPath = projectsById.get(payload.projectId)?.path;
           if (!projectPath) return;
           const projectRoot = new Path(projectPath);
           await globalProvider.updateBases(projectRoot);
@@ -2838,4 +2651,16 @@ function wireDispatcher(
     },
     { ipc: ApiIpcChannels.LIFECYCLE_READY }
   );
+
+  // Return workspace resolver function for CoreModule
+  return (
+    projectId: ProjectId,
+    workspaceName: import("../shared/api/types").WorkspaceName
+  ): string => {
+    const path = workspacesByKey.get(wsKey(projectId, workspaceName));
+    if (!path) {
+      throw new Error(`Workspace not found: ${workspaceName} in project ${projectId}`);
+    }
+    return path;
+  };
 }

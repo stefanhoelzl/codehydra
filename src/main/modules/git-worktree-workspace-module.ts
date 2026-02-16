@@ -45,7 +45,11 @@ import {
   GET_METADATA_OPERATION_ID,
   type ResolveWorkspaceHookInput as GetMetadataResolveWorkspaceInput,
 } from "../operations/get-metadata";
-import { extractWorkspaceName } from "../api/id-utils";
+import {
+  GET_WORKSPACE_STATUS_OPERATION_ID,
+  type ResolveWorkspaceHookInput as GetStatusResolveWorkspaceInput,
+} from "../operations/get-workspace-status";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
 
@@ -370,6 +374,17 @@ export function createGitWorktreeWorkspaceModule(
         "resolve-workspace": {
           handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
             const { projectPath, workspaceName } = ctx as SetMetadataResolveWorkspaceInput;
+            const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
+            return workspacePath ? { workspacePath } : {};
+          },
+        },
+      },
+
+      // get-workspace-status -> resolve-workspace
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
+            const { projectPath, workspaceName } = ctx as GetStatusResolveWorkspaceInput;
             const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
             return workspacePath ? { workspacePath } : {};
           },

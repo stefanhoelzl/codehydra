@@ -13,43 +13,11 @@ import type { IKeepFilesService } from "../services/keepfiles";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
-import type { AppState } from "./app-state";
 import type { IViewManager } from "./managers/view-manager.interface";
 
 // =============================================================================
 // Mock Factories
 // =============================================================================
-
-function createMockAppState(): AppState {
-  return {
-    openProject: vi.fn().mockResolvedValue({
-      path: "/test/project",
-      name: "test-project",
-      workspaces: [],
-    }),
-    closeProject: vi.fn().mockResolvedValue(undefined),
-    getProject: vi.fn().mockReturnValue({
-      path: "/test/project",
-      name: "test-project",
-      workspaces: [],
-    }),
-    getAllProjects: vi.fn().mockResolvedValue([]),
-    findProjectForWorkspace: vi.fn(),
-    registerWorkspace: vi.fn(),
-    unregisterWorkspace: vi.fn(),
-    getWorkspaceUrl: vi.fn(),
-    getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
-    setLastBaseBranch: vi.fn(),
-    setDiscoveryService: vi.fn(),
-    getDiscoveryService: vi.fn(),
-    setAgentStatusManager: vi.fn(),
-    getAgentStatusManager: vi.fn().mockReturnValue(null),
-    getServerManager: vi.fn().mockReturnValue({
-      stopServer: vi.fn().mockResolvedValue({ success: true }),
-      getPort: vi.fn().mockReturnValue(null),
-    }),
-  } as unknown as AppState;
-}
 
 function createMockViewManager(): IViewManager {
   return {
@@ -72,7 +40,9 @@ function createMockViewManager(): IViewManager {
 
 function createMockCoreDeps(): CoreModuleDeps {
   return {
-    appState: createMockAppState(),
+    resolveWorkspace: vi.fn().mockReturnValue("/mock/workspace"),
+    codeServerPort: 0,
+    wrapperPath: "/mock/bin/claude",
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
