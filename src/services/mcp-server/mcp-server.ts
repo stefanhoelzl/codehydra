@@ -22,7 +22,7 @@ import type { ICoreApi } from "../../shared/api/interfaces";
 import type { Logger, LogContext } from "../logging";
 import { SILENT_LOGGER, logAtLevel } from "../logging";
 import type { LogLevel } from "../logging/types";
-import { resolveWorkspace, type WorkspaceLookup } from "./workspace-resolver";
+import { Path } from "../platform/path";
 import { getErrorMessage } from "../errors";
 import {
   initialPromptSchema,
@@ -64,10 +64,10 @@ export function createDefaultMcpServer(): McpServerSdk {
  */
 export class McpServer implements IMcpServer {
   private readonly api: ICoreApi;
-  private readonly appState: WorkspaceLookup;
   private readonly serverFactory: McpServerFactory;
   private readonly logger: Logger;
   private readonly onRequest: McpRequestCallback | undefined;
+  private readonly workspaces = new Map<string, McpResolvedWorkspace>();
 
   private mcpServer: McpServerSdk | null = null;
   private httpServer: HttpServer | null = null;
@@ -79,16 +79,28 @@ export class McpServer implements IMcpServer {
 
   constructor(
     api: ICoreApi,
-    appState: WorkspaceLookup,
     serverFactory: McpServerFactory = createDefaultMcpServer,
     logger?: Logger,
     onRequest?: McpRequestCallback
   ) {
     this.api = api;
-    this.appState = appState;
     this.serverFactory = serverFactory;
     this.logger = logger ?? SILENT_LOGGER;
     this.onRequest = onRequest;
+  }
+
+  /**
+   * Register a workspace for tool resolution.
+   */
+  registerWorkspace(identity: McpResolvedWorkspace): void {
+    this.workspaces.set(new Path(identity.workspacePath).toString(), identity);
+  }
+
+  /**
+   * Unregister a workspace from tool resolution.
+   */
+  unregisterWorkspace(workspacePath: string): void {
+    this.workspaces.delete(new Path(workspacePath).toString());
   }
 
   /**
@@ -557,8 +569,16 @@ export class McpServer implements IMcpServer {
       }
     }
 
-    // Resolve workspace
-    const resolved = workspacePath ? resolveWorkspace(workspacePath, this.appState) : null;
+    // Resolve workspace from internal registry
+    let resolved: McpResolvedWorkspace | null = null;
+    if (workspacePath) {
+      try {
+        const key = new Path(workspacePath).toString();
+        resolved = this.workspaces.get(key) ?? null;
+      } catch {
+        resolved = null;
+      }
+    }
 
     return {
       workspacePath,

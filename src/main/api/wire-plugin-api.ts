@@ -6,8 +6,6 @@
  * connection, which is resolved to projectId/workspaceName.
  */
 
-import nodePath from "node:path";
-import { generateProjectId } from "./id-utils";
 import type { PluginServer, ApiCallHandlers } from "../../services/plugin-server";
 import type {
   SetMetadataRequest,
@@ -19,19 +17,20 @@ import type {
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { Logger } from "../../services/logging";
+import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../shared/error-utils";
 
 /**
- * Interface for resolving workspace paths to project information.
- * Abstracted to allow testing without full AppState.
+ * Return type from wirePluginApi — allows callers to register/unregister
+ * workspace identities used by Plugin API handlers.
  */
-export interface WorkspaceResolver {
-  /**
-   * Find the project that contains a workspace.
-   * @param workspacePath - Absolute path to the workspace
-   * @returns The project containing the workspace, or undefined if not found
-   */
-  findProjectForWorkspace(workspacePath: string): { path: string } | undefined;
+export interface PluginApiRegistry {
+  registerWorkspace(
+    workspacePath: string,
+    projectId: ProjectId,
+    workspaceName: WorkspaceName
+  ): void;
+  unregisterWorkspace(workspacePath: string): void;
 }
 
 /**
@@ -43,15 +42,31 @@ export interface WorkspaceResolver {
  *
  * @param pluginServer - The PluginServer instance
  * @param api - The CodeHydra API implementation
- * @param workspaceResolver - Resolver for workspace paths to projects
  * @param logger - Logger for API call logging
+ * @returns Registry for managing workspace identities
  */
 export function wirePluginApi(
   pluginServer: PluginServer,
   api: ICodeHydraApi,
-  workspaceResolver: WorkspaceResolver,
   logger: Logger
-): void {
+): PluginApiRegistry {
+  const workspaceIdentities = new Map<
+    string,
+    { projectId: ProjectId; workspaceName: WorkspaceName }
+  >();
+
+  function registerWorkspace(
+    workspacePath: string,
+    projectId: ProjectId,
+    workspaceName: WorkspaceName
+  ): void {
+    workspaceIdentities.set(new Path(workspacePath).toString(), { projectId, workspaceName });
+  }
+
+  function unregisterWorkspace(workspacePath: string): void {
+    workspaceIdentities.delete(new Path(workspacePath).toString());
+  }
+
   /**
    * Resolve a workspace path to projectId and workspaceName.
    * Returns error result if workspace not found.
@@ -59,13 +74,16 @@ export function wirePluginApi(
   function resolveWorkspace(
     workspacePath: string
   ): { projectId: ProjectId; workspaceName: WorkspaceName } | PluginResult<never> {
-    const project = workspaceResolver.findProjectForWorkspace(workspacePath);
-    if (!project) {
-      return { success: false, error: "Workspace not found" };
+    try {
+      const key = new Path(workspacePath).toString();
+      const identity = workspaceIdentities.get(key);
+      if (identity) {
+        return identity;
+      }
+    } catch {
+      // Path constructor throws on invalid paths
     }
-    const projectId = generateProjectId(project.path);
-    const workspaceName = nodePath.basename(workspacePath) as WorkspaceName;
-    return { projectId, workspaceName };
+    return { success: false, error: "Workspace not found" };
   }
 
   /**
@@ -165,11 +183,11 @@ export function wirePluginApi(
     async create(workspacePath: string, request: WorkspaceCreateRequest) {
       // For create, we only need the projectId from the caller's workspace
       // The new workspace will be created in the same project
-      const project = workspaceResolver.findProjectForWorkspace(workspacePath);
-      if (!project) {
-        return { success: false, error: "Workspace not found" };
+      const resolved = resolveWorkspace(workspacePath);
+      if ("success" in resolved && resolved.success === false) {
+        return resolved;
       }
-      const projectId = generateProjectId(project.path);
+      const { projectId } = resolved as { projectId: ProjectId };
 
       try {
         // Build options object conditionally to satisfy exactOptionalPropertyTypes
@@ -207,4 +225,6 @@ export function wirePluginApi(
 
   pluginServer.onApiCall(handlers);
   logger.info("Plugin API handlers registered");
+
+  return { registerWorkspace, unregisterWorkspace };
 }

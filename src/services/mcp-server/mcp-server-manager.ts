@@ -11,8 +11,7 @@ import type { ICoreApi, Unsubscribe } from "../../shared/api/interfaces";
 import type { Logger } from "../logging";
 import { SILENT_LOGGER } from "../logging";
 import type { IDisposable } from "../../shared/types";
-import type { WorkspaceLookup } from "./workspace-resolver";
-import type { McpRequestCallback } from "./types";
+import type { McpResolvedWorkspace, McpRequestCallback } from "./types";
 import { McpServer, createDefaultMcpServer, type McpServerFactory } from "./mcp-server";
 import { Path } from "../platform/path";
 import { getErrorMessage } from "../../shared/error-utils";
@@ -37,7 +36,6 @@ export class McpServerManager implements IDisposable {
   private readonly portManager: PortManager;
   private readonly pathProvider: PathProvider;
   private readonly api: ICoreApi;
-  private readonly appState: WorkspaceLookup;
   private readonly logger: Logger;
   private readonly serverFactory: McpServerFactory;
 
@@ -48,18 +46,19 @@ export class McpServerManager implements IDisposable {
   private seenWorkspaces = new Set<string>();
   private firstRequestCallbacks = new Set<McpRequestCallback>();
 
+  // Workspace identity registry (queued until server starts)
+  private pendingRegistrations = new Map<string, McpResolvedWorkspace>();
+
   constructor(
     portManager: PortManager,
     pathProvider: PathProvider,
     api: ICoreApi,
-    appState: WorkspaceLookup,
     logger?: Logger,
     config?: McpServerManagerConfig
   ) {
     this.portManager = portManager;
     this.pathProvider = pathProvider;
     this.api = api;
-    this.appState = appState;
     this.logger = logger ?? SILENT_LOGGER;
     this.serverFactory = config?.serverFactory ?? createDefaultMcpServer;
   }
@@ -85,13 +84,16 @@ export class McpServerManager implements IDisposable {
       this.logger.info("Allocated port", { port: this.port });
 
       // Create and start the MCP server
-      this.mcpServer = new McpServer(
-        this.api,
-        this.appState,
-        this.serverFactory,
-        this.logger,
-        (workspacePath) => this.notifyFirstRequest(workspacePath)
+      this.mcpServer = new McpServer(this.api, this.serverFactory, this.logger, (workspacePath) =>
+        this.notifyFirstRequest(workspacePath)
       );
+
+      // Replay any registrations that arrived before the server started
+      for (const identity of this.pendingRegistrations.values()) {
+        this.mcpServer.registerWorkspace(identity);
+      }
+      this.pendingRegistrations.clear();
+
       await this.mcpServer.start(this.port);
 
       this.logger.info("Manager started", {
@@ -119,6 +121,7 @@ export class McpServerManager implements IDisposable {
     this.port = null;
     this.seenWorkspaces.clear();
     this.firstRequestCallbacks.clear();
+    this.pendingRegistrations.clear();
     this.logger.info("Manager stopped");
   }
 
@@ -153,10 +156,36 @@ export class McpServerManager implements IDisposable {
   }
 
   /**
-   * Clear a workspace from the seen set.
-   * Call this when a workspace is deleted so onFirstRequest fires if it's recreated.
+   * Register a workspace for MCP tool resolution.
+   * If the server is running, delegates immediately; otherwise queues for replay on start.
    */
-  clearWorkspace(workspacePath: string): void {
+  registerWorkspace(identity: McpResolvedWorkspace): void {
+    if (this.mcpServer) {
+      this.mcpServer.registerWorkspace(identity);
+    } else {
+      this.pendingRegistrations.set(new Path(identity.workspacePath).toString(), identity);
+    }
+  }
+
+  /**
+   * Unregister a workspace from MCP tool resolution.
+   * Also clears first-request tracking so onFirstRequest fires if the workspace is recreated.
+   */
+  unregisterWorkspace(workspacePath: string): void {
+    const normalizedPath = new Path(workspacePath).toString();
+    if (this.mcpServer) {
+      this.mcpServer.unregisterWorkspace(workspacePath);
+    } else {
+      this.pendingRegistrations.delete(normalizedPath);
+    }
+    this.seenWorkspaces.delete(normalizedPath);
+  }
+
+  /**
+   * Clear first-request tracking for a workspace.
+   * Call this when an agent server restarts so onFirstRequest fires again.
+   */
+  clearFirstRequestTracking(workspacePath: string): void {
     const normalizedPath = new Path(workspacePath).toString();
     this.seenWorkspaces.delete(normalizedPath);
   }

@@ -213,7 +213,7 @@ import {
 } from "../shared/ipc";
 import nodePath from "node:path";
 import { wireApiEvents, formatWindowTitle } from "./ipc/api-handlers";
-import { wirePluginApi } from "./api/wire-plugin-api";
+import { wirePluginApi, type PluginApiRegistry } from "./api/wire-plugin-api";
 import type { UpdateAgentStatusIntent } from "./operations/update-agent-status";
 import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
@@ -1592,12 +1592,6 @@ function wireDispatcher(
                 }
               }
 
-              // Clear MCP tracking
-              const mcpServerManager = appState.getMcpServerManager();
-              if (mcpServerManager) {
-                mcpServerManager.clearWorkspace(payload.workspacePath);
-              }
-
               // Clear TUI tracking
               const agentStatusManager = appState.getAgentStatusManager();
               if (agentStatusManager) {
@@ -2193,6 +2187,20 @@ function wireDispatcher(
   let mcpFirstRequestCleanupFn: Unsubscribe | null = null;
   let wrapperReadyCleanupFn: Unsubscribe | null = null;
   const mcpLifecycleModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceCreatedEvent).payload;
+        lifecycleRefs.mcpServerManager.registerWorkspace({
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
+        });
+      },
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceDeletedEvent).payload;
+        lifecycleRefs.mcpServerManager.unregisterWorkspace(payload.workspacePath);
+      },
+    },
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
@@ -2360,7 +2368,22 @@ function wireDispatcher(
   // IpcBridgeLifecycleModule: start → wire API events to IPC, wire Plugin→API.
   // stop → cleanup API event wiring.
   let apiEventCleanupFn: Unsubscribe | null = null;
+  let pluginApiRegistry: PluginApiRegistry | null = null;
   const ipcBridgeLifecycleModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceCreatedEvent).payload;
+        pluginApiRegistry?.registerWorkspace(
+          payload.workspacePath,
+          payload.projectId,
+          payload.workspaceName
+        );
+      },
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceDeletedEvent).payload;
+        pluginApiRegistry?.unregisterWorkspace(payload.workspacePath);
+      },
+    },
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
@@ -2372,10 +2395,9 @@ function wireDispatcher(
 
             // Wire PluginServer to CodeHydraApi (if PluginServer is running)
             if (lifecycleRefs.pluginServer) {
-              wirePluginApi(
+              pluginApiRegistry = wirePluginApi(
                 lifecycleRefs.pluginServer,
                 api,
-                appState,
                 lifecycleRefs.loggingService.createLogger("plugin")
               );
             }
@@ -2391,6 +2413,7 @@ function wireDispatcher(
                 apiEventCleanupFn();
                 apiEventCleanupFn = null;
               }
+              pluginApiRegistry = null;
             } catch (error) {
               lifecycleLogger.error(
                 "IpcBridge lifecycle shutdown failed (non-fatal)",

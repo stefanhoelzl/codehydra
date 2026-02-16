@@ -198,7 +198,7 @@ function createTestAppState(initial?: Partial<TestAppState>): {
       }),
     }),
     getMcpServerManager: vi.fn().mockReturnValue({
-      clearWorkspace: vi.fn().mockImplementation(() => {
+      clearFirstRequestTracking: vi.fn().mockImplementation(() => {
         state.mcpCleared = true;
       }),
     }),
@@ -491,11 +491,6 @@ function createTestHarness(options?: {
                 }
               }
 
-              const mcpServerManager = appState.getMcpServerManager();
-              if (mcpServerManager) {
-                mcpServerManager.clearWorkspace(payload.workspacePath);
-              }
-
               const agentStatusManager = appState.getAgentStatusManager();
               if (agentStatusManager) {
                 agentStatusManager.clearTuiTracking(payload.workspacePath as WorkspacePath);
@@ -786,9 +781,8 @@ describe("DeleteWorkspaceOperation.normalDeletion", () => {
     // Operation returns { started: true }
     expect(result).toEqual({ started: true });
 
-    // Shutdown: server stopped, MCP cleared, TUI cleared
+    // Shutdown: server stopped, TUI cleared (MCP cleared via domain event, not in agent hook)
     expect(harness.testState.serverStopped).toBe(true);
-    expect(harness.testState.mcpCleared).toBe(true);
     expect(harness.testState.tuiCleared).toBe(true);
 
     // Shutdown: view destroyed
@@ -1100,10 +1094,7 @@ describe("DeleteWorkspaceOperation.agentCleanup", () => {
     // Server stopped
     expect(harness.testState.serverStopped).toBe(true);
 
-    // MCP tracking cleared
-    expect(harness.testState.mcpCleared).toBe(true);
-
-    // TUI tracking cleared
+    // TUI tracking cleared (MCP cleared via domain event, not in agent hook)
     expect(harness.testState.tuiCleared).toBe(true);
   });
 });

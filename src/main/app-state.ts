@@ -170,7 +170,7 @@ export class AppState {
       }
       // Clear from MCP seen set so onFirstRequest fires again after restart
       if (this.mcpServerManager) {
-        this.mcpServerManager.clearWorkspace(workspacePath);
+        this.mcpServerManager.clearFirstRequestTracking(workspacePath);
       }
     });
   }
