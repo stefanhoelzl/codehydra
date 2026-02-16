@@ -2245,6 +2245,14 @@ function wireDispatcher(
   // collect() runs handlers sequentially, so mount blocks until the renderer signals ready.
   // After mount completes, project:open dispatches fire — the renderer is already subscribed.
   let mountResolve: (() => void) | null = null;
+
+  // Deferred for the "loaded" hook point: resolved after all initial project:open dispatches
+  // complete. lifecycle.ready awaits this so the renderer receives project:opened events
+  // (via Electron IPC FIFO ordering) before setLoaded() fires.
+  let projectsLoadedResolve: (() => void) | null = null;
+  const projectsLoadedPromise = new Promise<void>((resolve) => {
+    projectsLoadedResolve = resolve;
+  });
   const mountModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -2261,6 +2269,23 @@ function wireDispatcher(
               webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
             });
             return {};
+          },
+        },
+      },
+    },
+  };
+
+  // LoadedSignalModule: "loaded" hook on app-start resolves the deferred so lifecycle.ready
+  // can return to the renderer after all initial project:open dispatches complete.
+  const loadedSignalModule: IntentModule = {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        loaded: {
+          handler: async (): Promise<void> => {
+            if (projectsLoadedResolve) {
+              projectsLoadedResolve();
+              projectsLoadedResolve = null;
+            }
           },
         },
       },
@@ -2315,6 +2340,7 @@ function wireDispatcher(
       ipcBridgeLifecycleModule,
       viewLifecycleModule,
       mountModule,
+      loadedSignalModule,
     ],
     hookRegistry,
     dispatcher
@@ -2642,11 +2668,16 @@ function wireDispatcher(
   registry.register(
     "lifecycle.ready",
     async () => {
-      // Resolve the mount promise so app:start activate completes
-      // and project:open dispatches can fire (renderer is already subscribed).
+      // Only block when mount is actively waiting (mountResolve is set).
+      // When called outside the mount flow (e.g., tests), skip the await.
       if (mountResolve) {
+        // Resolve the mount promise so app:start activate completes
+        // and project:open dispatches can fire (renderer is already subscribed).
         mountResolve();
         mountResolve = null;
+        // Wait for initial project:open dispatches to complete.
+        // This ensures renderer stores are populated before setLoaded() fires.
+        await projectsLoadedPromise;
       }
     },
     { ipc: ApiIpcChannels.LIFECYCLE_READY }
