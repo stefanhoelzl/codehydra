@@ -2311,8 +2311,6 @@ function wireDispatcher(
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
       ipcBridgeLifecycleModule,
-      localProjectModule,
-      remoteProjectModule,
       viewLifecycleModule,
       mountModule,
     ],
