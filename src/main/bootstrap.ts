@@ -602,6 +602,25 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // Hook modules will be wired when setup dependencies are available
   dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
   dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
+  dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
+
+  // Wire set-mode hook early (Alt+X can fire before wireDispatcher completes)
+  const earlySetModeModule: IntentModule = {
+    hooks: {
+      [SET_MODE_OPERATION_ID]: {
+        set: {
+          handler: async (ctx: HookContext): Promise<SetModeHookResult> => {
+            const intent = ctx.intent as SetModeIntent;
+            const vm = deps.viewManagerFn();
+            const previousMode = vm.getMode();
+            vm.setMode(intent.payload.mode);
+            return { previousMode };
+          },
+        },
+      },
+    },
+  };
+  wireModules([earlySetModeModule], hookRegistry, dispatcher);
 
   // 13. Wire setup hook modules (these run during app:setup, before startServices)
   const { configService, codeServerManager, getAgentBinaryManager, extensionManager } =
@@ -1115,7 +1134,7 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
   dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
   dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
-  dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
+  // Note: SetModeOperation is registered early in initializeBootstrap()
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(
@@ -1260,21 +1279,12 @@ function wireDispatcher(
     },
   };
 
-  // UI hook handler module (mode changes + active workspace queries)
+  // UI hook handler module (active workspace queries + workspace switch events)
+  // Note: set-mode hook is wired early in initializeBootstrap()
   let cachedActiveRef: WorkspaceRef | null = null;
 
   const uiHookModule: IntentModule = {
     hooks: {
-      [SET_MODE_OPERATION_ID]: {
-        set: {
-          handler: async (ctx: HookContext): Promise<SetModeHookResult> => {
-            const intent = ctx.intent as SetModeIntent;
-            const previousMode = viewManager.getMode();
-            viewManager.setMode(intent.payload.mode);
-            return { previousMode };
-          },
-        },
-      },
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
           handler: async (): Promise<GetActiveWorkspaceHookResult> => {
