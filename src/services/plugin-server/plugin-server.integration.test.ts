@@ -16,9 +16,10 @@ import {
   waitForConnect,
   type TestClientSocket,
 } from "./plugin-server.test-utils";
-import { wirePluginApi, type WorkspaceResolver } from "../../main/api/wire-plugin-api";
+import { wirePluginApi, type PluginApiRegistry } from "../../main/api/wire-plugin-api";
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
 import type { WorkspaceStatus } from "../../shared/api/types";
+import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 import type { PluginConfig } from "../../shared/plugin-protocol";
 
 // Longer timeout for integration tests
@@ -172,7 +173,7 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
   let port: number;
   let clients: TestClientSocket[] = [];
   let mockApi: ICodeHydraApi;
-  let mockWorkspaceResolver: WorkspaceResolver;
+  let pluginApiRegistry: PluginApiRegistry;
 
   beforeEach(async () => {
     networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
@@ -198,19 +199,17 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
       dispose: vi.fn(),
     };
 
-    // Create mock workspace resolver that finds workspaces
-    mockWorkspaceResolver = {
-      findProjectForWorkspace: vi.fn((workspacePath: string) => {
-        // Return a project for known workspace paths
-        if (workspacePath.startsWith("/projects/myproject/")) {
-          return { path: "/projects/myproject" };
-        }
-        return undefined;
-      }),
-    };
-
     // Wire up the plugin API
-    wirePluginApi(server, mockApi, mockWorkspaceResolver, SILENT_LOGGER);
+    pluginApiRegistry = wirePluginApi(server, mockApi, SILENT_LOGGER);
+
+    // Register known workspaces
+    const projectPath = "/projects/myproject";
+    const workspacePath = "/projects/myproject/workspaces/test";
+    pluginApiRegistry.registerWorkspace(
+      workspacePath,
+      generateProjectId(projectPath),
+      extractWorkspaceName(workspacePath)
+    );
   });
 
   afterEach(async () => {

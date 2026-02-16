@@ -5,8 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { McpServer, createDefaultMcpServer, type McpServerFactory } from "./mcp-server";
 import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
-import type { WorkspaceLookup } from "./workspace-resolver";
-import { type ProjectId, initialPromptSchema } from "../../shared/api/types";
+import { type ProjectId, type WorkspaceName, initialPromptSchema } from "../../shared/api/types";
 import { createMockLogger } from "../logging";
 
 /**
@@ -59,26 +58,6 @@ function createMockCoreApi(overrides?: {
 }
 
 /**
- * Create a mock WorkspaceLookup for testing.
- */
-function createMockAppState(
-  workspaces: { projectPath: string; workspacePath: string }[] = []
-): WorkspaceLookup {
-  return {
-    findProjectForWorkspace(workspacePath: string) {
-      const match = workspaces.find((w) => w.workspacePath === workspacePath);
-      if (match) {
-        return {
-          path: match.projectPath,
-          workspaces: [{ path: match.workspacePath }],
-        };
-      }
-      return undefined;
-    },
-  };
-}
-
-/**
  * Create a mock MCP SDK server for testing.
  */
 function createMockMcpSdk() {
@@ -103,14 +82,12 @@ function createMockMcpSdk() {
 
 describe("McpServer", () => {
   let mockApi: ICoreApi;
-  let mockAppState: WorkspaceLookup;
   let mockLogger: ReturnType<typeof createMockLogger>;
   let mockMcpSdk: ReturnType<typeof createMockMcpSdk>;
   let mockFactory: McpServerFactory;
 
   beforeEach(() => {
     mockApi = createMockCoreApi();
-    mockAppState = createMockAppState();
     mockLogger = createMockLogger();
     mockMcpSdk = createMockMcpSdk();
     mockFactory = () => mockMcpSdk as unknown as ReturnType<typeof createDefaultMcpServer>;
@@ -118,31 +95,31 @@ describe("McpServer", () => {
 
   describe("constructor", () => {
     it("creates server with injected dependencies", () => {
-      const server = new McpServer(mockApi, mockAppState, mockFactory, mockLogger);
+      const server = new McpServer(mockApi, mockFactory, mockLogger);
       expect(server).toBeInstanceOf(McpServer);
     });
 
     it("creates server without logger", () => {
-      const server = new McpServer(mockApi, mockAppState, mockFactory);
+      const server = new McpServer(mockApi, mockFactory);
       expect(server).toBeInstanceOf(McpServer);
     });
 
     it("creates server with default factory", () => {
-      const server = new McpServer(mockApi, mockAppState);
+      const server = new McpServer(mockApi);
       expect(server).toBeInstanceOf(McpServer);
     });
   });
 
   describe("isRunning", () => {
     it("returns false before start", () => {
-      const server = new McpServer(mockApi, mockAppState, mockFactory, mockLogger);
+      const server = new McpServer(mockApi, mockFactory, mockLogger);
       expect(server.isRunning()).toBe(false);
     });
   });
 
   describe("tool registration", () => {
     it("registers all required tools when started", async () => {
-      const server = new McpServer(mockApi, mockAppState, mockFactory, mockLogger);
+      const server = new McpServer(mockApi, mockFactory, mockLogger);
 
       // Start and immediately stop to trigger registration
       await server.start(0); // Port 0 = let OS assign
@@ -165,13 +142,17 @@ describe("McpServer", () => {
     });
 
     it("workspace_restart_agent_server tool calls API and returns port", async () => {
-      // Set up mock app state with a workspace
+      // Set up workspace identity via register
       const workspacePath = "/project/workspaces/test-workspace";
       const projectPath = "/project";
-      mockAppState = createMockAppState([{ projectPath, workspacePath }]);
 
-      // Create server with workspace-aware app state
-      const server = new McpServer(mockApi, mockAppState, mockFactory, mockLogger);
+      // Create server and register workspace
+      const server = new McpServer(mockApi, mockFactory, mockLogger);
+      server.registerWorkspace({
+        projectId: `${projectPath}-12345678` as ProjectId,
+        workspaceName: "test-workspace" as WorkspaceName,
+        workspacePath,
+      });
 
       await server.start(0);
       await server.stop();
@@ -199,7 +180,7 @@ describe("McpServer", () => {
 
   describe("dispose", () => {
     it("stops the server", async () => {
-      const server = new McpServer(mockApi, mockAppState, mockFactory, mockLogger);
+      const server = new McpServer(mockApi, mockFactory, mockLogger);
 
       await server.start(0);
       expect(server.isRunning()).toBe(true);

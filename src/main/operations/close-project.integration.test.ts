@@ -203,7 +203,7 @@ function createTestHarness(options?: {
       }),
     }),
     getMcpServerManager: vi.fn().mockReturnValue({
-      clearWorkspace: vi.fn(),
+      clearFirstRequestTracking: vi.fn(),
     }),
     getAgentStatusManager: vi.fn().mockReturnValue({
       clearTuiTracking: vi.fn(),

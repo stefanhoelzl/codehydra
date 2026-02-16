@@ -7,30 +7,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { McpServer, createDefaultMcpServer } from "./mcp-server";
 import type { ICoreApi } from "../../shared/api/interfaces";
-import type { WorkspaceLookup } from "./workspace-resolver";
 import { createMockLogger } from "../logging";
 import { createMockCoreApi } from "../test-utils";
 import { delay } from "@shared/test-fixtures";
-
-/**
- * Create a mock WorkspaceLookup that resolves specific workspaces.
- */
-function createMockAppState(
-  workspaces: { projectPath: string; workspacePath: string }[]
-): WorkspaceLookup {
-  return {
-    findProjectForWorkspace(workspacePath: string) {
-      const match = workspaces.find((w) => w.workspacePath === workspacePath);
-      if (match) {
-        return {
-          path: match.projectPath,
-          workspaces: [{ path: match.workspacePath }],
-        };
-      }
-      return undefined;
-    },
-  };
-}
+import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 
 /**
  * Find a free port for testing.
@@ -56,7 +36,6 @@ describe("McpServer Boundary Tests", () => {
   let server: McpServer;
   let port: number;
   let mockApi: ICoreApi;
-  let mockAppState: WorkspaceLookup;
   let logger: ReturnType<typeof createMockLogger>;
 
   const testWorkspacePath = "/home/user/projects/my-app/.worktrees/feature-branch";
@@ -65,12 +44,14 @@ describe("McpServer Boundary Tests", () => {
   beforeEach(async () => {
     port = await findFreePort();
     mockApi = createMockCoreApi();
-    mockAppState = createMockAppState([
-      { projectPath: testProjectPath, workspacePath: testWorkspacePath },
-    ]);
     logger = createMockLogger();
 
-    server = new McpServer(mockApi, mockAppState, createDefaultMcpServer, logger);
+    server = new McpServer(mockApi, createDefaultMcpServer, logger);
+    server.registerWorkspace({
+      projectId: generateProjectId(testProjectPath),
+      workspaceName: extractWorkspaceName(testWorkspacePath),
+      workspacePath: testWorkspacePath,
+    });
     await server.start(port);
   });
 

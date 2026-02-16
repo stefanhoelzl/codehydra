@@ -9,9 +9,9 @@ import { McpServerManager } from "./mcp-server-manager";
 import type { PortManager } from "../platform/network";
 import type { PathProvider } from "../platform/path-provider";
 import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
-import type { WorkspaceLookup } from "./workspace-resolver";
 import { createMockLogger } from "../logging";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
+import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 
 /**
  * Find a free port for testing.
@@ -79,26 +79,6 @@ function createMockCoreApi(): ICoreApi {
 }
 
 /**
- * Create a mock WorkspaceLookup.
- */
-function createMockAppState(
-  workspaces: { projectPath: string; workspacePath: string }[]
-): WorkspaceLookup {
-  return {
-    findProjectForWorkspace(workspacePath: string) {
-      const match = workspaces.find((w) => w.workspacePath === workspacePath);
-      if (match) {
-        return {
-          path: match.projectPath,
-          workspaces: [{ path: match.workspacePath }],
-        };
-      }
-      return undefined;
-    },
-  };
-}
-
-/**
  * Send an MCP request to the server.
  */
 async function sendMcpRequest(port: number, workspacePath: string): Promise<Response> {
@@ -120,7 +100,6 @@ describe("McpServerManager Integration Tests", () => {
   let portManager: PortManager;
   let pathProvider: PathProvider;
   let api: ICoreApi;
-  let appState: WorkspaceLookup;
   let logger: ReturnType<typeof createMockLogger>;
   let activeManager: McpServerManager | null = null;
 
@@ -131,9 +110,6 @@ describe("McpServerManager Integration Tests", () => {
     portManager = createRealPortManager();
     pathProvider = createMockPathProvider({ dataRootDir: "/tmp/test-data" });
     api = createMockCoreApi();
-    appState = createMockAppState([
-      { projectPath: testProjectPath, workspacePath: testWorkspacePath },
-    ]);
     logger = createMockLogger();
     activeManager = null;
   });
@@ -145,9 +121,25 @@ describe("McpServerManager Integration Tests", () => {
     }
   });
 
+  /**
+   * Helper to register test workspace with the manager.
+   */
+  function registerTestWorkspace(
+    manager: McpServerManager,
+    workspacePath: string,
+    projectPath: string
+  ): void {
+    manager.registerWorkspace({
+      projectId: generateProjectId(projectPath),
+      workspaceName: extractWorkspaceName(workspacePath),
+      workspacePath,
+    });
+  }
+
   describe("first request detection", () => {
     it("calls callback on first MCP request for a workspace", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
       const callback = vi.fn();
       activeManager.onFirstRequest(callback);
 
@@ -159,7 +151,8 @@ describe("McpServerManager Integration Tests", () => {
     });
 
     it("does not call callback on second request for same workspace", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
       const callback = vi.fn();
       activeManager.onFirstRequest(callback);
 
@@ -173,12 +166,10 @@ describe("McpServerManager Integration Tests", () => {
 
     it("calls callback once per workspace", async () => {
       const workspace2Path = "/home/user/projects/my-app/.worktrees/another-branch";
-      appState = createMockAppState([
-        { projectPath: testProjectPath, workspacePath: testWorkspacePath },
-        { projectPath: testProjectPath, workspacePath: workspace2Path },
-      ]);
 
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
+      registerTestWorkspace(activeManager, workspace2Path, testProjectPath);
       const callback = vi.fn();
       activeManager.onFirstRequest(callback);
 
@@ -200,7 +191,7 @@ describe("McpServerManager Integration Tests", () => {
     });
 
     it("handles unknown workspace path gracefully", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
       const callback = vi.fn();
       activeManager.onFirstRequest(callback);
 
@@ -215,7 +206,7 @@ describe("McpServerManager Integration Tests", () => {
     });
 
     it("normalizes workspace paths for deduplication", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
       const callback = vi.fn();
       activeManager.onFirstRequest(callback);
 
@@ -233,7 +224,7 @@ describe("McpServerManager Integration Tests", () => {
     });
 
     it("unsubscribed callback is not called", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
       const callback = vi.fn();
       const unsubscribe = activeManager.onFirstRequest(callback);
 
@@ -247,7 +238,8 @@ describe("McpServerManager Integration Tests", () => {
     });
 
     it("clears seen workspaces on stop", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
       const callback = vi.fn();
       activeManager.onFirstRequest(callback);
 
@@ -261,6 +253,8 @@ describe("McpServerManager Integration Tests", () => {
 
       // Re-subscribe (old subscription was cleared by stop)
       activeManager.onFirstRequest(callback);
+      // Re-register workspace (cleared by stop)
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
 
       // Second run - workspace should be "first" again
       port = await activeManager.start();
@@ -268,8 +262,9 @@ describe("McpServerManager Integration Tests", () => {
       expect(callback).toHaveBeenCalledTimes(2);
     });
 
-    it("clearWorkspace allows onFirstRequest to fire again for recreated workspace", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+    it("clearFirstRequestTracking allows onFirstRequest to fire again for recreated workspace", async () => {
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
       const callback = vi.fn();
       activeManager.onFirstRequest(callback);
 
@@ -280,8 +275,8 @@ describe("McpServerManager Integration Tests", () => {
       expect(callback).toHaveBeenCalledTimes(1);
       expect(callback).toHaveBeenCalledWith(testWorkspacePath);
 
-      // Clear workspace (simulates deletion)
-      activeManager.clearWorkspace(testWorkspacePath);
+      // Clear first-request tracking (simulates agent server restart)
+      activeManager.clearFirstRequestTracking(testWorkspacePath);
 
       // Next request for same workspace triggers callback again (proves clearing worked)
       await sendMcpRequest(port, testWorkspacePath);
@@ -290,7 +285,7 @@ describe("McpServerManager Integration Tests", () => {
     });
 
     it("handles callback errors gracefully and continues to other callbacks", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
 
       const errorCallback = vi.fn(() => {
         throw new Error("Callback error");
@@ -353,7 +348,8 @@ describe("McpServerManager Integration Tests", () => {
       const mockViewManager = createMockViewManager();
 
       // Create McpServerManager
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
 
       // Wire the callback like index.ts does
       activeManager.onFirstRequest((workspacePath) => {
@@ -380,7 +376,7 @@ describe("McpServerManager Integration Tests", () => {
       const mockViewManager = createMockViewManager();
 
       // Create McpServerManager
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
 
       // Wire the callback - setWorkspaceLoaded is idempotent, should handle unknown workspace
       activeManager.onFirstRequest((workspacePath) => {
@@ -416,7 +412,8 @@ describe("McpServerManager Integration Tests", () => {
       const mockViewManager = createMockViewManager();
 
       // Create McpServerManager
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
 
       // Wire the callback
       activeManager.onFirstRequest((workspacePath) => {
@@ -451,7 +448,8 @@ describe("McpServerManager Integration Tests", () => {
       const mockViewManager = createMockViewManager();
 
       // Create McpServerManager
-      activeManager = new McpServerManager(portManager, pathProvider, api, appState, logger);
+      activeManager = new McpServerManager(portManager, pathProvider, api, logger);
+      registerTestWorkspace(activeManager, testWorkspacePath, testProjectPath);
 
       // Wire the callback - should handle deleted workspace gracefully
       activeManager.onFirstRequest((workspacePath) => {

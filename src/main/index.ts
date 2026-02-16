@@ -503,7 +503,6 @@ async function createServicesAndWireDispatcher(): Promise<void> {
     networkLayer,
     pathProvider,
     codeHydraApi,
-    appState,
     loggingService.createLogger("mcp")
   );
 
