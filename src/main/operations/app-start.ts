@@ -221,6 +221,10 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
         // Skip invalid projects (no longer exist, not git repos, etc.)
       }
     }
+
+    // Hook 7: "loaded" — Signal that initial project:open dispatches are complete.
+    // lifecycle.ready awaits this before returning to the renderer.
+    await ctx.hooks.collect<void>("loaded", hookCtx);
   }
 
   /**
