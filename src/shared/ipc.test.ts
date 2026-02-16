@@ -43,8 +43,8 @@ describe("ApiIpcChannels (v2 API)", () => {
       expect(ApiIpcChannels.PROJECT_OPEN).toBe("api:project:open");
     });
 
-    it("has PROJECT_LIST channel", () => {
-      expect(ApiIpcChannels.PROJECT_LIST).toBe("api:project:list");
+    it("has PROJECT_FETCH_BASES channel", () => {
+      expect(ApiIpcChannels.PROJECT_FETCH_BASES).toBe("api:project:fetch-bases");
     });
   });
 

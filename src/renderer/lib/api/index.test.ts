@@ -82,14 +82,6 @@ describe("renderer API layer", () => {
       expect(result).toHaveProperty("id");
     });
 
-    it("projects.list returns array of projects", async () => {
-      const api = await import("$lib/api");
-      const result = await api.projects.list();
-
-      expect(mockApi.projects.list).toHaveBeenCalled();
-      expect(Array.isArray(result)).toBe(true);
-    });
-
     it("workspaces.create returns Workspace", async () => {
       const api = await import("$lib/api");
       const result = await api.workspaces.create("test-12345678", "feature", "main");

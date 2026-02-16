@@ -40,8 +40,6 @@ contextBridge.exposeInMainWorld("api", {
     close: (projectId: string, options?: { removeLocalRepo?: boolean }) =>
       ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectId, ...options }),
     clone: (url: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLONE, { url }),
-    list: () => ipcRenderer.invoke(ApiIpcChannels.PROJECT_LIST),
-    get: (projectId: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_GET, { projectId }),
     fetchBases: (projectId: string) =>
       ipcRenderer.invoke(ApiIpcChannels.PROJECT_FETCH_BASES, { projectId }),
   },
@@ -64,8 +62,6 @@ contextBridge.exposeInMainWorld("api", {
         workspaceName,
         ...options,
       }),
-    get: (projectId: string, workspaceName: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET, { projectId, workspaceName }),
     getStatus: (projectId: string, workspaceName: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, { projectId, workspaceName }),
     getAgentSession: (projectId: string, workspaceName: string) =>

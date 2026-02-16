@@ -13,7 +13,13 @@ import {
   createBehavioralIpcLayer,
   type BehavioralIpcLayer,
 } from "../../services/platform/ipc.test-utils";
-import type { ProjectId, WorkspaceName, Project, Workspace } from "../../shared/api/types";
+import type {
+  ProjectId,
+  WorkspaceName,
+  Project,
+  Workspace,
+  BaseInfo,
+} from "../../shared/api/types";
 
 describe("registry.register", () => {
   let registry: ApiRegistry;
@@ -30,18 +36,18 @@ describe("registry.register", () => {
     // Register all required methods with stubs
     registerAllMethodsWithStubs(registry);
 
-    // Override projects.list with a real implementation
-    const mockProjects: readonly Project[] = [];
+    // Override projects.fetchBases with a real implementation
+    const mockBases = { bases: [] as readonly BaseInfo[] };
     // Need to create a new registry since we can't re-register
     const freshRegistry = new ApiRegistry();
     registerAllMethodsWithStubs(freshRegistry, {
-      "projects.list": async () => mockProjects,
+      "projects.fetchBases": async () => mockBases,
     });
 
     const api = freshRegistry.getInterface();
-    const result = await api.projects.list();
+    const result = await api.projects.fetchBases("test-12345678" as ProjectId);
 
-    expect(result).toBe(mockProjects);
+    expect(result).toBe(mockBases);
     await freshRegistry.dispose();
   });
 
@@ -494,12 +500,9 @@ function registerAllMethodsWithStubs(
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},
     "projects.clone": async () => createMockProject(),
-    "projects.list": async () => [],
-    "projects.get": async () => undefined,
     "projects.fetchBases": async () => ({ bases: [] }),
     "workspaces.create": async () => createMockWorkspace(),
     "workspaces.remove": async () => ({ started: true }),
-    "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" } }),
     "workspaces.getAgentSession": async () => null,
     "workspaces.restartAgentServer": async () => 12345,

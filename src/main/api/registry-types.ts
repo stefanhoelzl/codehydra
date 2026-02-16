@@ -72,8 +72,7 @@ export interface WorkspaceRemovePayload {
   readonly isRetry?: boolean;
 }
 
-/** workspaces.get, workspaces.getStatus,
-    workspaces.getAgentSession, workspaces.getMetadata */
+/** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata */
 export interface WorkspaceRefPayload {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
@@ -126,8 +125,6 @@ export interface MethodRegistry {
   "projects.open": (payload: ProjectOpenPayload) => Promise<Project>;
   "projects.close": (payload: ProjectClosePayload) => Promise<void>;
   "projects.clone": (payload: ProjectClonePayload) => Promise<Project>;
-  "projects.list": (payload: EmptyPayload) => Promise<readonly Project[]>;
-  "projects.get": (payload: ProjectIdPayload) => Promise<Project | undefined>;
   "projects.fetchBases": (
     payload: ProjectIdPayload
   ) => Promise<{ readonly bases: readonly BaseInfo[] }>;
@@ -135,7 +132,6 @@ export interface MethodRegistry {
   // Workspaces
   "workspaces.create": (payload: WorkspaceCreatePayload) => Promise<Workspace>;
   "workspaces.remove": (payload: WorkspaceRemovePayload) => Promise<{ started: boolean }>;
-  "workspaces.get": (payload: WorkspaceRefPayload) => Promise<Workspace | undefined>;
   "workspaces.getStatus": (payload: WorkspaceRefPayload) => Promise<WorkspaceStatus>;
   "workspaces.getAgentSession": (payload: WorkspaceRefPayload) => Promise<AgentSession | null>;
   "workspaces.restartAgentServer": (payload: WorkspaceRefPayload) => Promise<number>;
@@ -172,14 +168,11 @@ export type ProjectPath =
   | "projects.open"
   | "projects.close"
   | "projects.clone"
-  | "projects.list"
-  | "projects.get"
   | "projects.fetchBases";
 /** @internal Exported for testing only */
 export type WorkspacePath =
   | "workspaces.create"
   | "workspaces.remove"
-  | "workspaces.get"
   | "workspaces.getStatus"
   | "workspaces.getAgentSession"
   | "workspaces.restartAgentServer"
@@ -218,12 +211,9 @@ export const ALL_METHOD_PATHS = [
   "projects.open",
   "projects.close",
   "projects.clone",
-  "projects.list",
-  "projects.get",
   "projects.fetchBases",
   "workspaces.create",
   "workspaces.remove",
-  "workspaces.get",
   "workspaces.getStatus",
   "workspaces.getAgentSession",
   "workspaces.restartAgentServer",

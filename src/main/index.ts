@@ -704,10 +704,8 @@ async function bootstrap(): Promise<void> {
     // Core module deps - factory that captures module-level appState
     // Called when bootstrapResult.startServices() runs in startServices()
     coreDepsFn: (): CoreModuleDeps => {
-      if (!appState || !viewManager || !processRunner || !gitClient || !projectStore) {
-        throw new Error(
-          "Core deps not ready - appState/viewManager/processRunner/gitClient/projectStore not initialized"
-        );
+      if (!appState) {
+        throw new Error("Core deps not ready - appState not initialized");
       }
 
       // Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
@@ -728,21 +726,34 @@ async function bootstrap(): Promise<void> {
           }
         : undefined;
 
-      if (!globalWorktreeProvider) {
-        throw new Error("Global worktree provider not initialized");
-      }
-
       return {
         appState,
-        viewManager,
-        gitClient,
-        pathProvider,
-        projectStore,
-        globalProvider: globalWorktreeProvider,
         ...(dialog ? { dialog } : {}),
         ...(pluginServer ? { pluginServer } : {}),
-        logger: loggingService.createLogger("api"),
       };
+    },
+    // View manager for workspace view lifecycle
+    viewManagerFn: () => {
+      if (!viewManager) {
+        throw new Error("ViewManager not initialized");
+      }
+      return viewManager;
+    },
+    // Git client for clone operations
+    gitClientFn: () => {
+      if (!gitClient) {
+        throw new Error("GitClient not initialized");
+      }
+      return gitClient;
+    },
+    // Path provider for directory paths
+    pathProviderFn: () => pathProvider,
+    // Project store for project persistence
+    projectStoreFn: () => {
+      if (!projectStore) {
+        throw new Error("ProjectStore not initialized");
+      }
+      return projectStore;
     },
     // Global worktree provider for metadata operations
     globalWorktreeProviderFn: () => {

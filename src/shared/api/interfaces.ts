@@ -45,8 +45,6 @@ export interface IProjectApi {
    * @throws Error if clone fails (network, auth, invalid URL)
    */
   clone(url: string): Promise<Project>;
-  list(): Promise<readonly Project[]>;
-  get(projectId: ProjectId): Promise<Project | undefined>;
   fetchBases(projectId: ProjectId): Promise<{ readonly bases: readonly BaseInfo[] }>;
 }
 
@@ -95,7 +93,6 @@ export interface IWorkspaceApi {
       isRetry?: boolean;
     }
   ): Promise<{ started: boolean }>;
-  get(projectId: ProjectId, workspaceName: WorkspaceName): Promise<Workspace | undefined>;
   getStatus(projectId: ProjectId, workspaceName: WorkspaceName): Promise<WorkspaceStatus>;
   /**
    * Get the agent session info for a workspace.

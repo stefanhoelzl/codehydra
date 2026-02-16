@@ -325,6 +325,14 @@ export interface BootstrapDeps {
   readonly app: { quit(): void };
   /** Core module dependencies (provided after setup completes) */
   readonly coreDepsFn: () => CoreModuleDeps;
+  /** View manager for workspace view lifecycle (provided after setup completes) */
+  readonly viewManagerFn: () => import("./managers/view-manager.interface").IViewManager;
+  /** Git client for clone operations (provided after setup completes) */
+  readonly gitClientFn: () => import("../services").IGitClient;
+  /** Path provider for directory paths (provided after setup completes) */
+  readonly pathProviderFn: () => import("../services").PathProvider;
+  /** Project store for project persistence (provided after setup completes) */
+  readonly projectStoreFn: () => import("../services").ProjectStore;
   /** Global worktree provider for metadata operations (provided after setup completes) */
   readonly globalWorktreeProviderFn: () => GitWorktreeProvider;
   /** Factory for KeepFilesService (provided after setup completes) */
@@ -946,6 +954,10 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       dispatcher,
       deps.globalWorktreeProviderFn(),
       coreDeps,
+      deps.viewManagerFn(),
+      deps.gitClientFn(),
+      deps.pathProviderFn(),
+      deps.projectStoreFn(),
       deps.logger,
       deps.keepFilesServiceFn(),
       deps.workspaceFileServiceFn(),
@@ -1116,6 +1128,10 @@ function wireDispatcher(
   dispatcher: Dispatcher,
   globalProvider: GitWorktreeProvider,
   coreDeps: CoreModuleDeps,
+  viewManager: import("./managers/view-manager.interface").IViewManager,
+  gitClient: import("../services").IGitClient,
+  pathProvider: import("../services").PathProvider,
+  projectStore: import("../services").ProjectStore,
   logger: Logger,
   keepFilesService: IKeepFilesService,
   workspaceFileService: IWorkspaceFileService,
@@ -1128,7 +1144,7 @@ function wireDispatcher(
   badgeManager: BadgeManager,
   lifecycleRefs: LifecycleServiceRefs
 ): void {
-  const { appState, viewManager, gitClient, pathProvider, projectStore } = coreDeps;
+  const { appState } = coreDeps;
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
@@ -2415,20 +2431,22 @@ function wireDispatcher(
         activate: {
           handler: async (): Promise<ActivateHookResult> => {
             // Wire loading state changes to IPC
-            loadingChangeCleanupFn = viewManager.onLoadingChange((path, loading) => {
-              try {
-                const webContents = viewManager.getUIWebContents();
-                if (webContents && !webContents.isDestroyed()) {
-                  const payload: WorkspaceLoadingChangedPayload = {
-                    path: path as import("../shared/ipc").WorkspacePath,
-                    loading,
-                  };
-                  webContents.send(ApiIpcChannels.WORKSPACE_LOADING_CHANGED, payload);
+            loadingChangeCleanupFn = viewManager.onLoadingChange(
+              (path: string, loading: boolean) => {
+                try {
+                  const webContents = viewManager.getUIWebContents();
+                  if (webContents && !webContents.isDestroyed()) {
+                    const payload: WorkspaceLoadingChangedPayload = {
+                      path: path as import("../shared/ipc").WorkspacePath,
+                      loading,
+                    };
+                    webContents.send(ApiIpcChannels.WORKSPACE_LOADING_CHANGED, payload);
+                  }
+                } catch {
+                  // Ignore errors - UI might be disconnected during shutdown
                 }
-              } catch {
-                // Ignore errors - UI might be disconnected during shutdown
               }
-            });
+            );
             return {};
           },
         },
@@ -2470,7 +2488,7 @@ function wireDispatcher(
 
   // ShowMainViewModule: finalize → tell renderer to show main view.
   // Must run AFTER project:open dispatches (loads projects, sets active workspace)
-  // so the renderer's initial projects.list query returns the full project list.
+  // so the renderer receives project:opened events for all open projects.
   const showMainViewModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -2748,12 +2766,6 @@ function wireDispatcher(
   registry.register(
     "projects.open",
     async (payload: ProjectOpenPayload) => {
-      if (appState.isProjectOpen(payload.path)) {
-        const project = appState.getProject(payload.path);
-        if (project) {
-          return project as import("../shared/api/types").Project;
-        }
-      }
       const key = new Path(payload.path).toString();
       if (inProgressOpens.has(key)) {
         throw new Error("Project open already in progress");

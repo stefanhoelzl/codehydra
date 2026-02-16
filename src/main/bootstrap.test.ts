@@ -73,25 +73,9 @@ function createMockViewManager(): IViewManager {
 function createMockCoreDeps(): CoreModuleDeps {
   return {
     appState: createMockAppState(),
-    viewManager: createMockViewManager(),
-    gitClient: {
-      clone: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services").IGitClient,
-    pathProvider: {
-      projectsDir: "/test/projects",
-      remotesDir: "/test/remotes",
-    } as unknown as import("../services").PathProvider,
-    projectStore: {
-      findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      getProjectConfig: vi.fn().mockResolvedValue(undefined),
-      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services").ProjectStore,
-    globalProvider: createMockGlobalWorktreeProvider(),
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
-    logger: createMockLogger(),
   };
 }
 
@@ -128,6 +112,23 @@ function createMockDeps(): BootstrapDeps {
     ipcLayer: createBehavioralIpcLayer(),
     app: { quit: vi.fn() },
     coreDepsFn: () => createMockCoreDeps(),
+    viewManagerFn: () => createMockViewManager(),
+    gitClientFn: () =>
+      ({
+        clone: vi.fn().mockResolvedValue(undefined),
+      }) as unknown as import("../services").IGitClient,
+    pathProviderFn: () =>
+      ({
+        projectsDir: "/test/projects",
+        remotesDir: "/test/remotes",
+      }) as unknown as import("../services").PathProvider,
+    projectStoreFn: () =>
+      ({
+        findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
+        saveProject: vi.fn().mockResolvedValue(undefined),
+        getProjectConfig: vi.fn().mockResolvedValue(undefined),
+        deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
+      }) as unknown as import("../services").ProjectStore,
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     keepFilesServiceFn: () => createMockKeepFilesService(),
     workspaceFileServiceFn: () =>

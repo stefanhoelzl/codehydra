@@ -199,8 +199,6 @@ function createMockCodeHydraApi(
       open: (path) => get("projects.open")({ path }),
       close: (projectId, options) => get("projects.close")({ projectId, ...options }),
       clone: (url) => get("projects.clone")({ url }),
-      list: () => get("projects.list")({}),
-      get: (projectId) => get("projects.get")({ projectId }),
       fetchBases: (projectId) => get("projects.fetchBases")({ projectId }),
     },
     workspaces: {
@@ -212,7 +210,6 @@ function createMockCodeHydraApi(
           workspaceName,
           ...options,
         }),
-      get: (projectId, workspaceName) => get("workspaces.get")({ projectId, workspaceName }),
       getStatus: (projectId, workspaceName) =>
         get("workspaces.getStatus")({ projectId, workspaceName }),
       getAgentSession: (projectId, workspaceName) =>
@@ -265,12 +262,9 @@ export function registerAllMethodsWithStubs(
     "projects.open": async () => createMockProject(),
     "projects.close": async () => {},
     "projects.clone": async () => createMockProject(),
-    "projects.list": async () => [],
-    "projects.get": async () => undefined,
     "projects.fetchBases": async () => ({ bases: [] }),
     "workspaces.create": async () => createMockWorkspace(),
     "workspaces.remove": async () => ({ started: true as const }),
-    "workspaces.get": async () => undefined,
     "workspaces.getStatus": async () => ({ isDirty: false, agent: { type: "none" as const } }),
     "workspaces.getAgentSession": async () => null,
     "workspaces.restartAgentServer": async () => 12345,

@@ -121,29 +121,9 @@ function createMockViewManager(): IViewManager {
 function createMockCoreDeps(): CoreModuleDeps {
   return {
     appState: createMockAppState(),
-    viewManager: createMockViewManager(),
-    gitClient: {
-      clone: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services").IGitClient,
-    pathProvider: {
-      projectsDir: "/test/projects",
-      remotesDir: "/test/remotes",
-      getProjectWorkspacesDir: vi.fn().mockImplementation((projectPath: unknown) => {
-        const pathStr = typeof projectPath === "string" ? projectPath : String(projectPath);
-        return { toString: () => `${pathStr}/workspaces` };
-      }),
-    } as unknown as import("../services").PathProvider,
-    projectStore: {
-      findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      getProjectConfig: vi.fn().mockResolvedValue(undefined),
-      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services").ProjectStore,
-    globalProvider: createMockGlobalWorktreeProvider(),
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
-    logger: createMockLogger(),
   };
 }
 
@@ -181,6 +161,27 @@ function createMockDeps(): BootstrapDeps {
     ipcLayer: createBehavioralIpcLayer(),
     app: { quit: vi.fn() },
     coreDepsFn: () => createMockCoreDeps(),
+    viewManagerFn: () => createMockViewManager(),
+    gitClientFn: () =>
+      ({
+        clone: vi.fn().mockResolvedValue(undefined),
+      }) as unknown as import("../services").IGitClient,
+    pathProviderFn: () =>
+      ({
+        projectsDir: "/test/projects",
+        remotesDir: "/test/remotes",
+        getProjectWorkspacesDir: vi.fn().mockImplementation((projectPath: unknown) => {
+          const pathStr = typeof projectPath === "string" ? projectPath : String(projectPath);
+          return { toString: () => `${pathStr}/workspaces` };
+        }),
+      }) as unknown as import("../services").PathProvider,
+    projectStoreFn: () =>
+      ({
+        findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
+        saveProject: vi.fn().mockResolvedValue(undefined),
+        getProjectConfig: vi.fn().mockResolvedValue(undefined),
+        deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
+      }) as unknown as import("../services").ProjectStore,
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     keepFilesServiceFn: () => createMockKeepFilesService(),
     workspaceFileServiceFn: () =>
@@ -250,14 +251,11 @@ describe("bootstrap.startup", () => {
     expect(api.projects).toBeDefined();
     expect(api.projects.open).toBeTypeOf("function");
     expect(api.projects.close).toBeTypeOf("function");
-    expect(api.projects.list).toBeTypeOf("function");
-    expect(api.projects.get).toBeTypeOf("function");
     expect(api.projects.fetchBases).toBeTypeOf("function");
 
     expect(api.workspaces).toBeDefined();
     expect(api.workspaces.create).toBeTypeOf("function");
     expect(api.workspaces.remove).toBeTypeOf("function");
-    expect(api.workspaces.get).toBeTypeOf("function");
     expect(api.workspaces.getStatus).toBeTypeOf("function");
     expect(api.workspaces.getAgentSession).toBeTypeOf("function");
     expect(api.workspaces.setMetadata).toBeTypeOf("function");
@@ -1153,12 +1151,14 @@ describe("bootstrap.lifecycle.ready", () => {
     const coreDeps = createMockCoreDeps();
 
     // Configure viewManager to return null for active workspace
-    (coreDeps.viewManager.getActiveWorkspacePath as ReturnType<typeof vi.fn>).mockReturnValue(null);
+    const mockViewManager = createMockViewManager();
+    (mockViewManager.getActiveWorkspacePath as ReturnType<typeof vi.fn>).mockReturnValue(null);
 
     const ipcLayer = createBehavioralIpcLayer();
     const deps: BootstrapDeps = {
       ...baseDeps,
       coreDepsFn: () => coreDeps,
+      viewManagerFn: () => mockViewManager,
       ipcLayer,
     };
 
