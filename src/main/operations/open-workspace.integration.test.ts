@@ -208,7 +208,10 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(
+    INTENT_SWITCH_WORKSPACE,
+    new SwitchWorkspaceOperation(extractWorkspaceName, (path: string) => generateProjectId(path))
+  );
 
   // Minimal switch modules for workspace:switch (satisfy 3 hook points)
   const switchResolveProjectModule: IntentModule = {

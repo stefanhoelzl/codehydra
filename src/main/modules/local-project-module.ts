@@ -53,6 +53,7 @@ import {
 import type { GetMetadataIntent } from "../operations/get-metadata";
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
+  isAutoSwitch,
   type SwitchWorkspaceIntent,
   type ResolveProjectHookResult,
 } from "../operations/switch-workspace";
@@ -216,8 +217,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const intent = ctx.intent as SwitchWorkspaceIntent;
-            const { projectId } = intent.payload;
+            const { payload } = ctx.intent as SwitchWorkspaceIntent;
+            if (isAutoSwitch(payload)) return {};
+            const { projectId } = payload;
 
             for (const project of projects.values()) {
               if (project.id === projectId) {

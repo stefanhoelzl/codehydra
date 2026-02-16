@@ -24,12 +24,7 @@ import type {
   BlockingProcess,
 } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
-import {
-  INTENT_SWITCH_WORKSPACE,
-  EVENT_WORKSPACE_SWITCHED,
-  type SwitchWorkspaceIntent,
-  type WorkspaceSwitchedEvent,
-} from "./switch-workspace";
+import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 
 // =============================================================================
 // Intent Types
@@ -82,11 +77,10 @@ export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
 
 /**
  * Per-handler result for the "shutdown" hook point.
- * ViewModule provides wasActive/nextSwitch; AgentModule may provide error.
+ * ViewModule provides wasActive; AgentModule may provide error.
  */
 export interface ShutdownHookResult {
   readonly wasActive?: boolean;
-  readonly nextSwitch?: { projectId: ProjectId; workspaceName: WorkspaceName } | null;
   readonly error?: string;
 }
 
@@ -150,7 +144,6 @@ interface MergedResolveWorkspace {
 
 interface MergedShutdown {
   readonly wasActive: boolean;
-  readonly nextSwitch?: { projectId: ProjectId; workspaceName: WorkspaceName } | null;
   readonly errors: readonly string[];
 }
 
@@ -204,21 +197,15 @@ function mergeShutdown(
   collectErrors: readonly Error[]
 ): MergedShutdown {
   let wasActive = false;
-  let nextSwitch: { projectId: ProjectId; workspaceName: WorkspaceName } | null | undefined;
   const errors: string[] = [];
 
   for (const e of collectErrors) errors.push(e.message);
   for (const r of results) {
     if (r.wasActive) wasActive = true;
-    if (r.nextSwitch !== undefined) nextSwitch = r.nextSwitch;
     if (r.error) errors.push(r.error);
   }
 
-  return {
-    wasActive,
-    ...(nextSwitch !== undefined && { nextSwitch }),
-    errors,
-  };
+  return { wasActive, errors };
 }
 
 function mergeRelease(
@@ -375,30 +362,17 @@ export class DeleteWorkspaceOperation implements Operation<
     const shutdown = mergeShutdown(shutdownResults, shutdownCollectErrors);
     this.emitPipelineProgress(payload, resolvedWorkspacePath, { shutdown });
 
-    // Dispatch workspace:switch if deleted workspace was the active one
+    // Dispatch workspace:switch(auto) if deleted workspace was the active one.
+    // Auto-select mode finds the best candidate via find-candidates hook.
     if (shutdown.wasActive && !payload.skipSwitch) {
-      const next = shutdown.nextSwitch;
-      if (next) {
-        try {
-          const switchIntent: SwitchWorkspaceIntent = {
-            type: INTENT_SWITCH_WORKSPACE,
-            payload: {
-              projectId: next.projectId,
-              workspaceName: next.workspaceName,
-              focus: true,
-            },
-          };
-          await ctx.dispatch(switchIntent);
-        } catch {
-          // Best-effort: switch failure doesn't fail the deletion
-        }
-      } else {
-        // No next workspace: emit workspace:switched(null) directly
-        const nullEvent: WorkspaceSwitchedEvent = {
-          type: EVENT_WORKSPACE_SWITCHED,
-          payload: null,
+      try {
+        const switchIntent: SwitchWorkspaceIntent = {
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: { auto: true, currentPath: resolvedWorkspacePath, focus: true },
         };
-        ctx.emit(nullEvent);
+        await ctx.dispatch(switchIntent);
+      } catch {
+        // Best-effort: switch failure doesn't fail the deletion
       }
     }
 

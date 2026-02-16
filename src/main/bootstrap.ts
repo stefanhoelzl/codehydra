@@ -228,7 +228,6 @@ import {
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
 import type { Intent, DomainEvent } from "./intents/infrastructure/types";
-import type { AppState } from "./app-state";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
 import type { IWorkspaceFileService } from "../services";
@@ -1030,93 +1029,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 }
 
 // =============================================================================
-// Workspace Switching Helper
-// =============================================================================
-
-/**
- * Prioritized workspace selection algorithm.
- * Returns the best workspace to switch to when the active workspace is being deleted,
- * or null if no other workspace is available.
- */
-export async function findNextWorkspace(
-  currentWorkspacePath: string,
-  appState: AppState
-): Promise<{
-  projectId: import("../shared/api/types").ProjectId;
-  workspaceName: import("../shared/api/types").WorkspaceName;
-} | null> {
-  const allProjects = await appState.getAllProjects();
-
-  // Build sorted list (projects alphabetically, workspaces alphabetically)
-  const sortedProjects = [...allProjects].sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
-  );
-
-  const workspaces: Array<{ path: string; projectPath: string }> = [];
-  for (const project of sortedProjects) {
-    const sortedWs = [...project.workspaces].sort((a, b) => {
-      const nameA = extractWorkspaceName(a.path);
-      const nameB = extractWorkspaceName(b.path);
-      return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
-    });
-    for (const ws of sortedWs) {
-      workspaces.push({ path: ws.path, projectPath: project.path });
-    }
-  }
-
-  if (workspaces.length === 0) {
-    return null;
-  }
-
-  // Find current workspace index
-  const currentIndex = workspaces.findIndex((w) => w.path === currentWorkspacePath);
-  if (currentIndex === -1) {
-    return null;
-  }
-
-  // Score by agent status: idle=0, busy=1, none=2
-  const agentStatusManager = appState.getAgentStatusManager();
-  const getKey = (ws: { path: string }, index: number): number => {
-    let statusKey: number;
-    const status = agentStatusManager?.getStatus(ws.path as WorkspacePath);
-    if (!status || status.status === "none") {
-      statusKey = 2;
-    } else if (status.status === "busy") {
-      statusKey = 1;
-    } else {
-      statusKey = 0; // idle or mixed
-    }
-
-    const positionKey = (index - currentIndex + workspaces.length) % workspaces.length;
-    return statusKey * workspaces.length + positionKey;
-  };
-
-  // Find best candidate (excluding current)
-  let bestWorkspace: { path: string; projectPath: string } | undefined;
-  let bestKey = Infinity;
-
-  for (let i = 0; i < workspaces.length; i++) {
-    if (i === currentIndex) continue;
-    const key = getKey(workspaces[i]!, i);
-    if (key < bestKey) {
-      bestKey = key;
-      bestWorkspace = workspaces[i];
-    }
-  }
-
-  if (!bestWorkspace) {
-    return null;
-  }
-
-  return {
-    projectId: generateProjectId(bestWorkspace.projectPath),
-    workspaceName: extractWorkspaceName(
-      bestWorkspace.path
-    ) as import("../shared/api/types").WorkspaceName,
-  };
-}
-
-// =============================================================================
 // Intent Dispatcher Wiring
 // =============================================================================
 
@@ -1165,7 +1077,19 @@ function wireDispatcher(
   );
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  // SwitchWorkspaceOperation: needs extractWorkspaceName, generateProjectId, and agent status scorer
+  // for the auto-select algorithm (used when the active workspace is deleted).
+  const agentStatusScorer = (workspacePath: WorkspacePath): number => {
+    const agentStatusManager = appState.getAgentStatusManager();
+    const status = agentStatusManager?.getStatus(workspacePath);
+    if (!status || status.status === "none") return 2;
+    if (status.status === "busy") return 1;
+    return 0; // idle or mixed
+  };
+  dispatcher.registerOperation(
+    INTENT_SWITCH_WORKSPACE,
+    new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId, agentStatusScorer)
+  );
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
@@ -1521,25 +1445,10 @@ function wireDispatcher(
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             const isActive = viewManager.getActiveWorkspacePath() === payload.workspacePath;
-            let nextSwitch: ShutdownHookResult["nextSwitch"];
 
             try {
-              // Populate nextSwitch for the operation to dispatch
-              if (isActive && !payload.skipSwitch) {
-                const next = await findNextWorkspace(payload.workspacePath, appState);
-                nextSwitch = next;
-                // Deactivate immediately if no next (operation will emit null event)
-                if (!next) {
-                  viewManager.setActiveWorkspace(null, false);
-                }
-              }
-
               await viewManager.destroyWorkspaceView(payload.workspacePath);
-
-              return {
-                ...(isActive && { wasActive: true }),
-                ...(nextSwitch !== undefined && { nextSwitch }),
-              };
+              return { ...(isActive && { wasActive: true }) };
             } catch (error) {
               if (payload.force) {
                 logger.warn("ViewModule: error in force mode (ignored)", {
@@ -1547,7 +1456,6 @@ function wireDispatcher(
                 });
                 return {
                   ...(isActive && { wasActive: true }),
-                  ...(nextSwitch !== undefined && { nextSwitch }),
                   error: getErrorMessage(error),
                 };
               }
@@ -1989,6 +1897,14 @@ function wireDispatcher(
             return { resolvedPath: workspacePath };
           },
         },
+      },
+    },
+    events: {
+      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceSwitchedEvent).payload;
+        if (payload === null) {
+          viewManager.setActiveWorkspace(null, false);
+        }
       },
     },
   };
@@ -2510,21 +2426,27 @@ function wireDispatcher(
     },
   };
 
-  // ShowMainViewModule: finalize → tell renderer to show main view.
-  // Must run AFTER project:open dispatches (loads projects, sets active workspace)
-  // so the renderer receives project:opened events for all open projects.
-  const showMainViewModule: IntentModule = {
+  // MountModule: activate → send show-main-view to renderer, block until lifecycle.ready().
+  // Wired last among activate handlers so config loading and callback wiring complete first.
+  // collect() runs handlers sequentially, so mount blocks until the renderer signals ready.
+  // After mount completes, project:open dispatches fire — the renderer is already subscribed.
+  let mountResolve: (() => void) | null = null;
+  const mountModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        finalize: {
-          handler: async () => {
+        activate: {
+          handler: async (): Promise<ActivateHookResult> => {
             const webContents = viewManager.getUIWebContents();
             if (!webContents || webContents.isDestroyed()) {
-              lifecycleLogger.warn("UI not available to show main view");
-              return;
+              lifecycleLogger.warn("UI not available for mount");
+              return {};
             }
-            lifecycleLogger.debug("Showing main view");
-            webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
+            lifecycleLogger.debug("Mounting renderer — waiting for lifecycle.ready");
+            await new Promise<void>((resolve) => {
+              mountResolve = resolve;
+              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
+            });
+            return {};
           },
         },
       },
@@ -2586,7 +2508,7 @@ function wireDispatcher(
       localProjectModule,
       remoteProjectModule,
       viewLifecycleModule,
-      showMainViewModule,
+      mountModule,
     ],
     hookRegistry,
     dispatcher
@@ -2907,25 +2829,11 @@ function wireDispatcher(
   registry.register(
     "lifecycle.ready",
     async () => {
-      // Emit project:opened for each currently open project
-      const allProjects = await appState.getAllProjects();
-      for (const project of allProjects) {
-        registry.emit("project:opened", { project });
-      }
-
-      // Emit workspace:switched for the active workspace
-      const activePath = viewManager.getActiveWorkspacePath();
-      if (activePath) {
-        const project = appState.findProjectForWorkspace(activePath);
-        if (project) {
-          registry.emit("workspace:switched", {
-            projectId: project.id,
-            workspaceName: extractWorkspaceName(activePath),
-            path: activePath,
-          });
-        }
-      } else {
-        registry.emit("workspace:switched", null);
+      // Resolve the mount promise so app:start activate completes
+      // and project:open dispatches can fire (renderer is already subscribed).
+      if (mountResolve) {
+        mountResolve();
+        mountResolve = null;
       }
     },
     { ipc: ApiIpcChannels.LIFECYCLE_READY }

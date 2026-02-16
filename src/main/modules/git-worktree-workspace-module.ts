@@ -34,6 +34,7 @@ import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
+import type { FindCandidatesHookResult } from "../operations/switch-workspace";
 import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import {
@@ -311,13 +312,33 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // switch-workspace -> resolve-workspace
+      // switch-workspace -> resolve-workspace + find-candidates
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "resolve-workspace": {
           handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
             const { projectPath, workspaceName } = ctx as ResolveWorkspaceInput;
             const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
             return workspacePath ? { workspacePath } : {};
+          },
+        },
+        "find-candidates": {
+          handler: async (): Promise<FindCandidatesHookResult> => {
+            const candidates: Array<{
+              projectPath: string;
+              projectName: string;
+              workspacePath: string;
+            }> = [];
+            for (const [key, wsList] of workspaces) {
+              const projectName = new Path(key).basename;
+              for (const ws of wsList) {
+                candidates.push({
+                  projectPath: key,
+                  projectName,
+                  workspacePath: ws.path.toString(),
+                });
+              }
+            }
+            return { candidates };
           },
         },
       },
