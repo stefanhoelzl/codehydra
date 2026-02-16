@@ -2,7 +2,7 @@
  * Tests for the EmptyState component.
  *
  * Note: EmptyState is a simple message-only component that guides users
- * to open a project via the Create Workspace dialog's folder icon.
+ * to open a project by pressing Alt+X Enter.
  */
 
 import { describe, it, expect } from "vitest";
@@ -13,9 +13,10 @@ describe("EmptyState component", () => {
   it("renders guidance message for opening a project", () => {
     render(EmptyState);
 
+    expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
     expect(
       screen.getByText(
-        /No projects open\. Click the \+ button on a project header to create a workspace, or open a project via the Create Workspace dialog\./
+        (_content, element) => element?.textContent === "Press Alt+X+Enter to open a project."
       )
     ).toBeInTheDocument();
   });
