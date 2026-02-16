@@ -14,10 +14,9 @@ import type { IKeepFilesService } from "../services/keepfiles";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
-import type { AppState } from "./app-state";
 import type { IViewManager } from "./managers/view-manager.interface";
 import type { WorkspaceName } from "../shared/api/types";
-import { generateProjectId } from "./api/id-utils";
+import { generateProjectId } from "../shared/api/id-utils";
 
 // =============================================================================
 // Test Constants
@@ -31,58 +30,6 @@ const TEST_WORKSPACE_NAME = "feature" as WorkspaceName;
 // =============================================================================
 // Mock Factories
 // =============================================================================
-
-function createMockAppState(overrides?: Partial<AppState>): AppState {
-  return {
-    openProject: vi.fn().mockResolvedValue({
-      path: TEST_PROJECT_PATH,
-      name: "test-project",
-      workspaces: [],
-    }),
-    closeProject: vi.fn().mockResolvedValue(undefined),
-    getProject: vi.fn().mockReturnValue({
-      path: TEST_PROJECT_PATH,
-      name: "test-project",
-      workspaces: [{ path: TEST_WORKSPACE_PATH, branch: "feature", metadata: { base: "main" } }],
-    }),
-    getAllProjects: vi.fn().mockResolvedValue([
-      {
-        path: TEST_PROJECT_PATH,
-        name: "test-project",
-        workspaces: [{ path: TEST_WORKSPACE_PATH, branch: "feature", metadata: { base: "main" } }],
-      },
-    ]),
-    findProjectForWorkspace: vi.fn().mockReturnValue({
-      id: TEST_PROJECT_ID,
-      path: TEST_PROJECT_PATH,
-      name: "test-project",
-      workspaces: [],
-    }),
-    registerWorkspace: vi.fn(),
-    unregisterWorkspace: vi.fn(),
-    getWorkspaceUrl: vi.fn(),
-    getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
-    setLastBaseBranch: vi.fn(),
-    setDiscoveryService: vi.fn(),
-    getDiscoveryService: vi.fn(),
-    setAgentStatusManager: vi.fn(),
-    getAgentStatusManager: vi.fn().mockReturnValue(null),
-    getServerManager: vi.fn().mockReturnValue({
-      stopServer: vi.fn().mockResolvedValue({ success: true }),
-      getPort: vi.fn().mockReturnValue(null),
-    }),
-    isProjectOpen: vi.fn().mockReturnValue(false),
-    registerProject: vi.fn(),
-    deregisterProject: vi.fn(),
-    getProjectStore: vi.fn().mockReturnValue({
-      getProjectConfig: vi.fn().mockResolvedValue(undefined),
-      removeProject: vi.fn().mockResolvedValue(undefined),
-      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
-    }),
-    getMcpServerManager: vi.fn().mockReturnValue(null),
-    ...overrides,
-  } as unknown as AppState;
-}
 
 function createMockViewManager(): IViewManager {
   const modeChangeHandlers: Array<(event: { mode: string; previousMode: string }) => void> = [];
@@ -120,7 +67,9 @@ function createMockViewManager(): IViewManager {
 
 function createMockCoreDeps(): CoreModuleDeps {
   return {
-    appState: createMockAppState(),
+    resolveWorkspace: vi.fn().mockReturnValue("/mock/workspace"),
+    codeServerPort: 0,
+    wrapperPath: "/mock/bin/claude",
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },

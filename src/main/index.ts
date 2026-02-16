@@ -418,18 +418,7 @@ async function createServicesAndWireDispatcher(): Promise<void> {
   );
 
   // Create AppState (port=0, updated by CodeServerLifecycleModule after start)
-  appState = new AppState(
-    projectStore,
-    viewManager,
-    pathProvider,
-    0,
-    fileSystemLayer,
-    loggingService,
-    selectedAgentType,
-    workspaceFileService,
-    pathProvider.claudeCodeWrapperPath.toString(),
-    globalWorktreeProvider
-  );
+  appState = new AppState(loggingService, selectedAgentType);
 
   // Create agent services
   const agentLoggerName = selectedAgentType === "claude" ? "claude" : "opencode";
@@ -703,10 +692,6 @@ async function bootstrap(): Promise<void> {
     // Core module deps - factory that captures module-level appState
     // Called when bootstrapResult.startServices() runs in startServices()
     coreDepsFn: (): CoreModuleDeps => {
-      if (!appState) {
-        throw new Error("Core deps not ready - appState not initialized");
-      }
-
       // Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
       // dialogLayer is guaranteed set by bootstrap() before startServices()
       const dialogLayerRef = dialogLayer;
@@ -726,7 +711,12 @@ async function bootstrap(): Promise<void> {
         : undefined;
 
       return {
-        appState,
+        // resolveWorkspace is overridden in wireDispatcher with the workspace index
+        resolveWorkspace: () => {
+          throw new Error("resolveWorkspace not wired yet");
+        },
+        codeServerPort: 0, // Updated by CodeServerLifecycleModule
+        wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
         ...(dialog ? { dialog } : {}),
         ...(pluginServer ? { pluginServer } : {}),
       };
@@ -871,6 +861,11 @@ async function bootstrap(): Promise<void> {
           return codeHydraApi;
         },
         windowManager: windowManagerRef,
+        waitForProvider: (wp: string) => appStateRef.waitForProvider(wp),
+        updateCodeServerPort: () => {
+          // No-op: code-server port is now tracked locally in wireDispatcher scope
+        },
+        setMcpServerManager: (mgr) => appStateRef.setMcpServerManager(mgr),
       };
     },
     // Function to get UI webContents for setup error IPC events

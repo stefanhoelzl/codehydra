@@ -11,37 +11,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CoreModule, type CoreModuleDeps } from "./index";
 import { createMockRegistry } from "../../api/registry.test-utils";
 import type { MockApiRegistry } from "../../api/registry.test-utils";
-import type { AppState } from "../../app-state";
-
 // =============================================================================
 // Mock Factories
 // =============================================================================
 
-function createMockAppState(overrides: Partial<AppState> = {}): AppState {
-  return {
-    getProject: vi.fn(),
-    getAllProjects: vi.fn().mockResolvedValue([]),
-    findProjectForWorkspace: vi.fn(),
-    registerWorkspace: vi.fn(),
-    unregisterWorkspace: vi.fn(),
-    getWorkspaceUrl: vi.fn(),
-    getDefaultBaseBranch: vi.fn().mockResolvedValue("main"),
-    setLastBaseBranch: vi.fn(),
-    setDiscoveryService: vi.fn(),
-    getDiscoveryService: vi.fn(),
-    setAgentStatusManager: vi.fn(),
-    getAgentStatusManager: vi.fn().mockReturnValue(null),
-    getServerManager: vi.fn().mockReturnValue({
-      stopServer: vi.fn().mockResolvedValue({ success: true }),
-      getPort: vi.fn().mockReturnValue(null),
-    }),
-    ...overrides,
-  } as unknown as AppState;
-}
-
 function createMockDeps(overrides: Partial<CoreModuleDeps> = {}): CoreModuleDeps {
   const defaults: CoreModuleDeps = {
-    appState: createMockAppState(),
+    resolveWorkspace: vi.fn().mockReturnValue("/mock/workspace"),
+    codeServerPort: 0,
+    wrapperPath: "/mock/bin/claude",
   };
   return { ...defaults, ...overrides };
 }

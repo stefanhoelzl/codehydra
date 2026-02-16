@@ -33,7 +33,7 @@ import type {
   NormalizedInitialPrompt,
 } from "../../shared/api/types";
 import { normalizeInitialPrompt } from "../../shared/api/types";
-import { extractWorkspaceName } from "../api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 
 // =============================================================================

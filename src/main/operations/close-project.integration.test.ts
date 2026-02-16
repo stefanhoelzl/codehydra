@@ -53,10 +53,9 @@ import type {
 } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
-import type { AppState } from "../app-state";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { generateProjectId } from "../../shared/api/id-utils";
-import { extractWorkspaceName, resolveProjectPath } from "../api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 
 // =============================================================================
@@ -209,7 +208,7 @@ function createTestHarness(options?: {
       clearTuiTracking: vi.fn(),
     }),
     unregisterWorkspace: vi.fn(),
-  } as unknown as AppState;
+  };
 
   // Register operations
   const emitProgress: DeletionProgressCallback = () => {};
@@ -223,8 +222,11 @@ function createTestHarness(options?: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const projectPath = await resolveProjectPath(payload.projectId, appState);
-            return projectPath ? { projectPath } : {};
+            const projects = await appState.getAllProjects();
+            const match = projects.find(
+              (p: { path: string }) => generateProjectId(p.path) === payload.projectId
+            );
+            return match ? { projectPath: match.path } : {};
           },
         },
       },
@@ -305,7 +307,7 @@ function createTestHarness(options?: {
             const intent = ctx.intent as CloseProjectIntent;
 
             // Resolve using appState (mirrors bootstrap pattern)
-            const allProjects = await appState.getAllProjects();
+            const allProjects: Project[] = await appState.getAllProjects();
             const found = allProjects.find((p) => p.id === intent.payload.projectId);
             if (!found) {
               throw new Error(`Project not found: ${intent.payload.projectId}`);
@@ -333,7 +335,7 @@ function createTestHarness(options?: {
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
             const { projectPath } = ctx as CloseHookInput;
-            const allProjects = await appState.getAllProjects();
+            const allProjects: Project[] = await appState.getAllProjects();
             const otherProjectsExist = allProjects.some((p) => p.path !== projectPath);
             if (!otherProjectsExist) {
               viewManager.setActiveWorkspace(null, false);
