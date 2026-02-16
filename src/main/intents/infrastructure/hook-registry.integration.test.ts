@@ -168,6 +168,50 @@ describe("HookRegistry", () => {
     expect(result.errors[0]?.message).toBe("string error");
   });
 
+  it("filters undefined results from self-selecting handlers", async () => {
+    const registry = new HookRegistry();
+
+    registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+      handler: async () => undefined,
+    });
+
+    registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+      handler: async () => ({ projectPath: "/selected" }),
+    });
+
+    registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+      handler: async () => undefined,
+    });
+
+    const hooks = registry.resolve(TEST_OPERATION_ID);
+    const ctx = createHookContext();
+
+    const result = await hooks.collect<{ projectPath: string }>(TEST_HOOK_POINT, ctx);
+
+    expect(result.results).toEqual([{ projectPath: "/selected" }]);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("filters null results from self-selecting handlers", async () => {
+    const registry = new HookRegistry();
+
+    registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+      handler: async () => null,
+    });
+
+    registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+      handler: async () => ({ value: "kept" }),
+    });
+
+    const hooks = registry.resolve(TEST_OPERATION_ID);
+    const ctx = createHookContext();
+
+    const result = await hooks.collect<{ value: string }>(TEST_HOOK_POINT, ctx);
+
+    expect(result.results).toEqual([{ value: "kept" }]);
+    expect(result.errors).toEqual([]);
+  });
+
   it("separate hook points are independent", async () => {
     const registry = new HookRegistry();
     const ran: string[] = [];
