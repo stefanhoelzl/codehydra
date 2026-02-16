@@ -202,8 +202,7 @@ describe("RemoteProjectModule Integration", () => {
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toBeUndefined();
+      expect(results).toHaveLength(0);
 
       expect(projectStore.findByRemoteUrl).not.toHaveBeenCalled();
       expect(projectStore.saveProject).not.toHaveBeenCalled();
@@ -282,8 +281,7 @@ describe("RemoteProjectModule Integration", () => {
       );
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toBeUndefined();
+      expect(results).toHaveLength(0);
     });
   });
 
@@ -338,8 +336,7 @@ describe("RemoteProjectModule Integration", () => {
       );
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toBeUndefined();
+      expect(results).toHaveLength(0);
     });
   });
 
@@ -382,12 +379,12 @@ describe("RemoteProjectModule Integration", () => {
       expect(projectStore.removeProject).toHaveBeenCalledWith(projectPath);
       expect(projectStore.deleteProjectDirectory).not.toHaveBeenCalled();
 
-      // Verify state is empty — resolve should return undefined now
+      // Verify state is empty — resolve should return no results now
       const resolveResult = await closeHooks.collect<CloseResolveHookResult | undefined>(
         "resolve-project",
         { intent: closeIntent }
       );
-      expect(resolveResult.results[0]).toBeUndefined();
+      expect(resolveResult.results).toHaveLength(0);
     });
 
     it("removes from state + store + deletes directory when removeLocalRepo=true", async () => {
@@ -591,7 +588,7 @@ describe("RemoteProjectModule Integration", () => {
         "resolve-project",
         { intent: closeProjectIntent({ projectId: newId }) }
       );
-      expect(afterClose[0]).toBeUndefined();
+      expect(afterClose).toHaveLength(0);
 
       // Existing project still resolvable
       const { results: existingStillThere } = await closeHooks.collect<

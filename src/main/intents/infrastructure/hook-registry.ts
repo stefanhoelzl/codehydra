@@ -69,7 +69,10 @@ export class HookRegistry implements IHookRegistry {
         for (const entry of handlers) {
           try {
             const frozenCtx = Object.freeze({ ...inputCtx });
-            results.push((await entry.handler(frozenCtx)) as T);
+            const result = await entry.handler(frozenCtx);
+            if (result !== undefined && result !== null) {
+              results.push(result as T);
+            }
           } catch (err) {
             errors.push(err instanceof Error ? err : new Error(String(err)));
           }
