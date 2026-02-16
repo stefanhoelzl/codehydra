@@ -29,6 +29,7 @@ import {
   SWITCH_WORKSPACE_OPERATION_ID,
   INTENT_SWITCH_WORKSPACE,
   EVENT_WORKSPACE_SWITCHED,
+  isAutoSwitch,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
@@ -38,6 +39,7 @@ import type {
   ResolveWorkspaceHookResult,
   ActivateHookInput,
   WorkspaceSwitchedEvent,
+  FindCandidatesHookResult,
 } from "./switch-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -139,6 +141,7 @@ const TEST_PROJECT_PATH = "/projects/my-app";
 const TEST_PROJECT_NAME = "my-app";
 const TEST_WORKSPACE_PATH = "/projects/my-app/workspaces/feature-login";
 const TEST_WORKSPACE_NAME = "feature-login" as WorkspaceName;
+const TEST_WORKSPACE_PATH_B = "/projects/my-app/workspaces/feature-signup";
 function createTestProject(): ProjectEntry {
   return {
     path: TEST_PROJECT_PATH,
@@ -147,6 +150,24 @@ function createTestProject(): ProjectEntry {
       {
         path: TEST_WORKSPACE_PATH,
         branch: "feature-login",
+        metadata: {},
+      },
+    ],
+  };
+}
+function createMultiWorkspaceProject(): ProjectEntry {
+  return {
+    path: TEST_PROJECT_PATH,
+    name: TEST_PROJECT_NAME,
+    workspaces: [
+      {
+        path: TEST_WORKSPACE_PATH,
+        branch: "feature-login",
+        metadata: {},
+      },
+      {
+        path: TEST_WORKSPACE_PATH_B,
+        branch: "feature-signup",
         metadata: {},
       },
     ],
@@ -170,6 +191,7 @@ function createTestSetup(opts?: {
   initialActive?: string | null;
   withIpcEventBridge?: boolean;
   withTitleModule?: boolean;
+  withAutoSelect?: boolean;
   hasUpdateAvailable?: boolean;
   titleVersion?: string;
   projects?: ProjectEntry[];
@@ -185,7 +207,10 @@ function createTestSetup(opts?: {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(
+    INTENT_SWITCH_WORKSPACE,
+    new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId)
+  );
 
   // ResolveProjectModule: "resolve-project" hook -- resolves projectId → projectPath + projectName
   const resolveProjectModule: IntentModule = {
@@ -193,8 +218,9 @@ function createTestSetup(opts?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const intent = ctx.intent as SwitchWorkspaceIntent;
-            const projectPath = await resolveProjectPath(intent.payload.projectId, appState);
+            const { payload } = ctx.intent as SwitchWorkspaceIntent;
+            if (isAutoSwitch(payload)) return {};
+            const projectPath = await resolveProjectPath(payload.projectId, appState);
             if (!projectPath) return {};
             const project = appState.getProject(projectPath);
             if (!project) return {};
@@ -225,6 +251,7 @@ function createTestSetup(opts?: {
   };
 
   // SwitchViewModule: "activate" hook -- calls setActiveWorkspace
+  // Also subscribes to workspace:switched(null) to clear viewManager.
   const switchViewModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
@@ -244,10 +271,47 @@ function createTestSetup(opts?: {
         },
       },
     },
+    events: {
+      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceSwitchedEvent).payload;
+        if (payload === null) {
+          viewManager.setActiveWorkspace(null, false);
+        }
+      },
+    },
   };
 
   const mockApiRegistry = createMockApiRegistry();
   const modules: IntentModule[] = [resolveProjectModule, resolveWorkspaceModule, switchViewModule];
+
+  if (opts?.withAutoSelect) {
+    const findCandidatesModule: IntentModule = {
+      hooks: {
+        [SWITCH_WORKSPACE_OPERATION_ID]: {
+          "find-candidates": {
+            handler: async (): Promise<FindCandidatesHookResult> => {
+              const candidates: Array<{
+                projectPath: string;
+                projectName: string;
+                workspacePath: string;
+              }> = [];
+              for (const project of appState.projects) {
+                for (const ws of project.workspaces) {
+                  candidates.push({
+                    projectPath: project.path,
+                    projectName: project.name,
+                    workspacePath: ws.path,
+                  });
+                }
+              }
+              return { candidates };
+            },
+          },
+        },
+      },
+    };
+    modules.push(findCandidatesModule);
+  }
 
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge(
@@ -299,8 +363,8 @@ function createTestSetup(opts?: {
 // =============================================================================
 
 /** Resolve project path from project ID using the same logic as id-utils */
-function generateProjectId(path: string): string {
-  return Buffer.from(path).toString("base64url");
+function generateProjectId(path: string): ProjectId {
+  return Buffer.from(path).toString("base64url") as ProjectId;
 }
 
 function extractWorkspaceName(path: string): string {
@@ -535,6 +599,74 @@ describe("SwitchWorkspace Operation", () => {
       expect(result).toBeUndefined();
       expect(viewManager.activeWorkspacePath).toBeNull();
       expect(receivedEvents).toHaveLength(0);
+    });
+  });
+
+  describe("auto-select switches to best candidate (#12)", () => {
+    it("selects nearest workspace when current is being deleted", async () => {
+      const setup = createTestSetup({
+        withAutoSelect: true,
+        projects: [createMultiWorkspaceProject()],
+      });
+      const { dispatcher, viewManager } = setup;
+
+      const autoIntent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { auto: true, currentPath: TEST_WORKSPACE_PATH, focus: true },
+      };
+      await dispatcher.dispatch(autoIntent);
+
+      expect(viewManager.activeWorkspacePath).toBe(TEST_WORKSPACE_PATH_B);
+    });
+  });
+
+  describe("auto-select emits null when no candidates (#13)", () => {
+    it("sets active workspace to null and emits workspace:switched(null)", async () => {
+      const setup = createTestSetup({
+        withAutoSelect: true,
+        projects: [createTestProject()], // only one workspace (the current one)
+      });
+      const { dispatcher, viewManager } = setup;
+
+      const receivedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const autoIntent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { auto: true, currentPath: TEST_WORKSPACE_PATH, focus: true },
+      };
+      await dispatcher.dispatch(autoIntent);
+
+      expect(viewManager.activeWorkspacePath).toBeNull();
+      expect(receivedEvents).toHaveLength(1);
+      expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
+    });
+  });
+
+  describe("auto-select emits null when candidates list is empty (#14)", () => {
+    it("handles zero candidates gracefully", async () => {
+      const setup = createTestSetup({
+        withAutoSelect: true,
+        projects: [], // no projects at all
+      });
+      const { dispatcher, viewManager } = setup;
+
+      const receivedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const autoIntent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { auto: true, currentPath: "/nonexistent", focus: true },
+      };
+      await dispatcher.dispatch(autoIntent);
+
+      expect(viewManager.activeWorkspacePath).toBeNull();
+      expect(receivedEvents).toHaveLength(1);
+      expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
     });
   });
 });

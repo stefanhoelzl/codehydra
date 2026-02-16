@@ -8,11 +8,12 @@
  * 4. "wire" - Wire services (after setup completes if dispatched)
  * 5. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
  *              Telemetry, AutoUpdater, IpcBridge)
- * 6. "activate" - Wire callbacks, gather project paths (Data, View)
- * 7. "finalize" - Post-project-load actions (show main view)
+ * 6. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
  *
- * Between "activate" and "finalize", dispatches project:open for each saved
- * project path (best-effort, skips invalid projects).
+ * After "activate", dispatches project:open for each saved project path
+ * (best-effort, skips invalid projects). The mount handler in activate
+ * blocks until the renderer signals ready, ensuring event subscriptions
+ * are in place before project:open dispatches fire.
  *
  * The "check-config" and "check-deps" hook points use collect() for isolated
  * handler contexts. Each handler returns a typed result; the operation merges
@@ -89,14 +90,6 @@ export interface ShowUIHookResult {
  * Side-effect handlers return `{}`.
  */
 export interface StartHookResult {
-  readonly codeServerPort?: number;
-  readonly mcpPort?: number;
-}
-
-/**
- * Input context for "activate" hook -- carries ports from start results.
- */
-export interface ActivateHookInput extends HookContext {
   readonly codeServerPort?: number;
   readonly mcpPort?: number;
 }
@@ -196,28 +189,14 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     }
 
     // Hook 5: "start" -- Start servers and wire services
-    const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
-      "start",
-      hookCtx
-    );
+    const { errors: startErrors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
     if (startErrors.length > 0) {
       throw startErrors[0]!;
     }
-    let codeServerPort: number | undefined;
-    let mcpPort: number | undefined;
-    for (const result of startResults) {
-      if (result.codeServerPort !== undefined) codeServerPort = result.codeServerPort;
-      if (result.mcpPort !== undefined) mcpPort = result.mcpPort;
-    }
 
-    // Hook 6: "activate" -- Wire callbacks, gather project paths
-    const activateInput: ActivateHookInput = {
-      intent: ctx.intent,
-      ...(codeServerPort !== undefined && { codeServerPort }),
-      ...(mcpPort !== undefined && { mcpPort }),
-    };
+    // Hook 6: "activate" -- Wire callbacks, gather project paths, mount renderer
     const { results: activateResults, errors: activateErrors } =
-      await ctx.hooks.collect<ActivateHookResult>("activate", activateInput);
+      await ctx.hooks.collect<ActivateHookResult>("activate", hookCtx);
     if (activateErrors.length > 0) {
       throw activateErrors[0]!;
     }
@@ -228,6 +207,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
 
     // Dispatch project:open for each saved project (best-effort).
     // Each project:open dispatches workspace:create + workspace:switch internally.
+    // The mount handler in activate ensures the renderer is subscribed before these fire.
     for (const projectPath of projectPaths) {
       try {
         await ctx.dispatch(
@@ -240,12 +220,6 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       } catch {
         // Skip invalid projects (no longer exist, not git repos, etc.)
       }
-    }
-
-    // Hook 7: "finalize" -- Post-project-load actions (show main view)
-    const { errors: finalizeErrors } = await ctx.hooks.collect<void>("finalize", hookCtx);
-    if (finalizeErrors.length > 0) {
-      throw finalizeErrors[0]!;
     }
   }
 

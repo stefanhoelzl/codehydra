@@ -1,8 +1,8 @@
 /**
  * Initialize the application: signal ready, fetch agent statuses, set focus.
  *
- * Calls lifecycle.ready() which causes the main process to emit domain events
- * (project:opened, workspace:switched) for all current state. The renderer's
+ * Calls lifecycle.ready() which unblocks the mount handler in app:start.
+ * After mount completes, project:open dispatches fire and the renderer's
  * event bindings (set up before this function is called) populate the stores.
  *
  * @param options - Initialization options
@@ -12,7 +12,6 @@
 import { tick } from "svelte";
 import { projects, setLoaded, setError } from "$lib/stores/projects.svelte.js";
 import { setAllStatuses } from "$lib/stores/agent-status.svelte.js";
-import { setWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
 import type { Project, WorkspaceStatus, AgentStatus } from "@shared/api/types";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
 import * as api from "$lib/api";
@@ -82,11 +81,10 @@ const defaultApi: InitializeAppApi = {
  * Initialize the application.
  *
  * Performs the following steps:
- * 1. Call lifecycle.ready() — main process emits domain events for current state
- * 2. Mark all workspaces as loading
- * 3. Focus first focusable element (including VSCode Elements)
- * 4. Fetch agent statuses for all workspaces
- * 5. Seed notification service with initial counts
+ * 1. Call lifecycle.ready() — unblocks mount, project:open dispatches populate stores
+ * 2. Focus first focusable element (including VSCode Elements)
+ * 3. Fetch agent statuses for all workspaces
+ * 4. Seed notification service with initial counts
  *
  * @param options - Initialization options
  * @param apiImpl - API implementation (defaults to window.api)
@@ -99,16 +97,9 @@ export async function initializeApp(
   const { containerRef, notificationService } = options;
 
   try {
-    // Signal ready — main process emits initial state events.
-    // Events are processed synchronously via IPC before this resolves.
+    // Signal ready — unblocks mount in app:start so project:open dispatches fire.
+    // The renderer's event subscriptions (set up before this call) handle incoming events.
     await apiImpl.lifecycle.ready();
-
-    // Mark all existing workspaces as loading (handles race with workspace:loading-changed)
-    for (const project of projects.value) {
-      for (const workspace of project.workspaces) {
-        setWorkspaceLoading(workspace.path, true);
-      }
-    }
 
     setLoaded();
 

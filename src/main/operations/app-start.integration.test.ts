@@ -11,7 +11,7 @@
  * #4: activate hook failure propagates
  * #5: PluginServer graceful degradation
  * #6: project:open dispatched for each saved project path
- * #7: finalize hook runs after project dispatches
+ * #7: mount blocks until resolved, project:open dispatches run after
  * #8: check hooks -- no setup needed
  * #9: check hooks -- setup needed (agent null)
  * #10: check hooks -- setup needed (binaries)
@@ -29,7 +29,6 @@ import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./a
 import type {
   AppStartIntent,
   StartHookResult,
-  ActivateHookInput,
   ActivateHookResult,
   CheckConfigResult,
   CheckDepsHookContext,
@@ -57,8 +56,8 @@ interface TestState {
   executionOrder: string[];
   /** Tracks project paths dispatched via project:open */
   openedProjectPaths: string[];
-  /** Whether finalize hook ran */
-  finalized: boolean;
+  /** Whether mount handler ran and was resolved */
+  mountCompleted: boolean;
 }
 
 function createTestState(): TestState {
@@ -69,7 +68,7 @@ function createTestState(): TestState {
     viewActivated: false,
     executionOrder: [],
     openedProjectPaths: [],
-    finalized: false,
+    mountCompleted: false,
   };
 }
 
@@ -119,16 +118,12 @@ function createDataModule(
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
+          handler: async (): Promise<ActivateHookResult> => {
             if (options?.fail) {
               throw new Error("Failed to load persisted projects");
             }
-            // Verify start hook set context via ActivateHookInput
-            const hookCtx = ctx as ActivateHookInput;
-            if (hookCtx.codeServerPort) {
-              state.dataLoaded = true;
-              state.executionOrder.push("data-activate");
-            }
+            state.dataLoaded = true;
+            state.executionOrder.push("data-activate");
             // Return project paths (simulates DataLifecycleModule)
             if (options?.projectPaths) {
               return { projectPaths: options.projectPaths };
@@ -157,14 +152,20 @@ function createViewModule(state: TestState): IntentModule {
   };
 }
 
-function createFinalizeModule(state: TestState): IntentModule {
+/**
+ * Simulates the mountModule pattern: activate handler that blocks until resolved.
+ * In the real implementation, mount sends show-main-view IPC and blocks until
+ * lifecycle.ready() resolves the promise. In tests, we auto-resolve immediately.
+ */
+function createMountModule(state: TestState): IntentModule {
   return {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        finalize: {
-          handler: async () => {
-            state.finalized = true;
-            state.executionOrder.push("finalize");
+        activate: {
+          handler: async (): Promise<ActivateHookResult> => {
+            state.mountCompleted = true;
+            state.executionOrder.push("mount");
+            return {};
           },
         },
       },
@@ -416,7 +417,7 @@ describe("AppStart Operation", () => {
           createMcpModule(state),
           createDataModule(state, { projectPaths: ["/project-a", "/project-b"] }),
           createViewModule(state),
-          createFinalizeModule(state),
+          createMountModule(state),
         ],
         { projectOpenStub: stub }
       );
@@ -435,7 +436,7 @@ describe("AppStart Operation", () => {
           createMcpModule(state),
           createDataModule(state, { projectPaths: ["/invalid", "/valid"] }),
           createViewModule(state),
-          createFinalizeModule(state),
+          createMountModule(state),
         ],
         { projectOpenStub: stub }
       );
@@ -445,8 +446,8 @@ describe("AppStart Operation", () => {
 
       // Only /valid was successfully opened
       expect(state.openedProjectPaths).toEqual(["/valid"]);
-      // Finalize still ran
-      expect(state.finalized).toBe(true);
+      // Mount still completed
+      expect(state.mountCompleted).toBe(true);
     });
 
     it("skips dispatch when no project paths set", async () => {
@@ -458,7 +459,7 @@ describe("AppStart Operation", () => {
           createMcpModule(state),
           createDataModule(state),
           createViewModule(state),
-          createFinalizeModule(state),
+          createMountModule(state),
         ],
         { projectOpenStub: stub }
       );
@@ -466,12 +467,12 @@ describe("AppStart Operation", () => {
       await dispatcher.dispatch(appStartIntent());
 
       expect(state.openedProjectPaths).toEqual([]);
-      expect(state.finalized).toBe(true);
+      expect(state.mountCompleted).toBe(true);
     });
   });
 
-  describe("finalize hook runs after project dispatches (#7)", () => {
-    it("finalize runs after activate and project:open dispatches", async () => {
+  describe("mount blocks in activate, project:open dispatches run after (#7)", () => {
+    it("mount runs in activate, project:open dispatches follow", async () => {
       const state = createTestState();
       const stub = createProjectOpenStub(state);
       const { dispatcher } = createTestSetup(
@@ -480,21 +481,21 @@ describe("AppStart Operation", () => {
           createMcpModule(state),
           createDataModule(state, { projectPaths: ["/project-a"] }),
           createViewModule(state),
-          createFinalizeModule(state),
+          createMountModule(state),
         ],
         { projectOpenStub: stub }
       );
 
       await dispatcher.dispatch(appStartIntent());
 
-      // Verify ordering: activate → project:open → finalize
+      // Verify ordering: start → activate (data + view + mount) → project:open
       expect(state.executionOrder).toEqual([
         "codeserver-start",
         "mcp-start",
         "data-activate",
         "view-activate",
+        "mount",
         "project-open:/project-a",
-        "finalize",
       ]);
     });
   });

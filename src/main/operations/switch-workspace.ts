@@ -1,15 +1,20 @@
 /**
  * SwitchWorkspaceOperation - Orchestrates workspace switching.
  *
- * Runs three sequential hook points using collect():
+ * Two modes:
+ *
+ * **Specific target** (projectId + workspaceName):
  * 1. "resolve-project": resolve projectId → projectPath + projectName
  * 2. "resolve-workspace": resolve workspaceName → workspacePath
  * 3. "activate": call viewManager.setActiveWorkspace()
  *
- * On success, emits a workspace:switched domain event.
+ * **Auto-select** ({ auto: true, currentPath }):
+ * Used when the active workspace is being deleted. Runs a "find-candidates"
+ * hook to gather all available workspaces, applies a selection algorithm
+ * (preferring idle workspaces closest to the deleted one), then dispatches
+ * a specific-target switch. If no candidate found, emits workspace:switched(null).
  *
- * The null deactivation case (no workspace to switch to) is NOT routed through
- * this intent. Operations emit workspace:switched(null) directly via ctx.emit().
+ * On success, emits a workspace:switched domain event.
  *
  * No provider dependencies - the hook handlers do the actual work.
  */
@@ -17,15 +22,33 @@
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { WorkspacePath } from "../../shared/ipc";
 
 // =============================================================================
 // Intent Types
 // =============================================================================
 
-export interface SwitchWorkspacePayload {
+/** Specific-target payload: switch to a known workspace. */
+export interface SwitchWorkspaceTargetPayload {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
   readonly focus?: boolean;
+}
+
+/** Auto-select payload: find the best workspace after deletion. */
+export interface SwitchWorkspaceAutoPayload {
+  readonly auto: true;
+  readonly currentPath: string;
+  readonly focus?: boolean;
+}
+
+export type SwitchWorkspacePayload = SwitchWorkspaceTargetPayload | SwitchWorkspaceAutoPayload;
+
+/** Type guard for auto-select mode. */
+export function isAutoSwitch(
+  payload: SwitchWorkspacePayload
+): payload is SwitchWorkspaceAutoPayload {
+  return "auto" in payload && payload.auto === true;
 }
 
 export interface SwitchWorkspaceIntent extends Intent<void> {
@@ -92,15 +115,130 @@ export interface SwitchWorkspaceHookResult {
 }
 
 // =============================================================================
+// Auto-Select Types
+// =============================================================================
+
+/** A workspace candidate returned by the "find-candidates" hook. */
+export interface WorkspaceCandidate {
+  readonly projectPath: string;
+  readonly projectName: string;
+  readonly workspacePath: string;
+}
+
+/** Per-handler result for the "find-candidates" hook point. */
+export interface FindCandidatesHookResult {
+  readonly candidates?: readonly WorkspaceCandidate[];
+}
+
+/**
+ * Agent status scorer function. Given a workspace path, returns a numeric score:
+ * 0 = idle (preferred), 1 = busy, 2 = none/unknown.
+ */
+export type AgentStatusScorer = (workspacePath: WorkspacePath) => number;
+
+// =============================================================================
+// Selection Algorithm
+// =============================================================================
+
+/**
+ * Prioritized workspace selection algorithm.
+ * Returns the best workspace to switch to when the active workspace is being deleted,
+ * or null if no other workspace is available.
+ *
+ * Scoring: combines agent status priority (idle > busy > none) with positional
+ * proximity to the deleted workspace in alphabetical order.
+ */
+export function selectNextWorkspace(
+  currentWorkspacePath: string,
+  candidates: readonly WorkspaceCandidate[],
+  extractName: (path: string) => string,
+  scorer?: AgentStatusScorer
+): WorkspaceCandidate | null {
+  if (candidates.length === 0) return null;
+
+  // Build sorted list (projects alphabetically, workspaces alphabetically)
+  const byProject = new Map<string, WorkspaceCandidate[]>();
+  for (const c of candidates) {
+    const list = byProject.get(c.projectPath) ?? [];
+    list.push(c);
+    byProject.set(c.projectPath, list);
+  }
+
+  const sortedProjectPaths = [...byProject.keys()].sort((a, b) => {
+    const nameA = byProject.get(a)![0]!.projectName;
+    const nameB = byProject.get(b)![0]!.projectName;
+    return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
+  });
+
+  const sorted: WorkspaceCandidate[] = [];
+  for (const pp of sortedProjectPaths) {
+    const list = byProject.get(pp)!;
+    list.sort((a, b) => {
+      const nameA = extractName(a.workspacePath);
+      const nameB = extractName(b.workspacePath);
+      return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
+    });
+    sorted.push(...list);
+  }
+
+  // Find current workspace index
+  const currentIndex = sorted.findIndex((w) => w.workspacePath === currentWorkspacePath);
+  if (currentIndex === -1) return null;
+
+  const getKey = (ws: WorkspaceCandidate, index: number): number => {
+    let statusKey: number;
+    if (scorer) {
+      statusKey = scorer(ws.workspacePath as WorkspacePath);
+    } else {
+      statusKey = 2; // No scorer: treat all as "none"
+    }
+    const positionKey = (index - currentIndex + sorted.length) % sorted.length;
+    return statusKey * sorted.length + positionKey;
+  };
+
+  // Find best candidate (excluding current)
+  let best: WorkspaceCandidate | undefined;
+  let bestKey = Infinity;
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === currentIndex) continue;
+    const key = getKey(sorted[i]!, i);
+    if (key < bestKey) {
+      bestKey = key;
+      best = sorted[i];
+    }
+  }
+
+  return best ?? null;
+}
+
+// =============================================================================
 // Operation
 // =============================================================================
 
 export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent, void> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
 
+  constructor(
+    private readonly extractName: (path: string) => string,
+    private readonly generateId: (path: string) => ProjectId,
+    private readonly scorer?: AgentStatusScorer
+  ) {}
+
   async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
     const { payload } = ctx.intent;
 
+    if (isAutoSwitch(payload)) {
+      return this.executeAutoSelect(ctx, payload);
+    }
+
+    return this.executeSpecificTarget(ctx, payload);
+  }
+
+  private async executeSpecificTarget(
+    ctx: OperationContext<SwitchWorkspaceIntent>,
+    payload: SwitchWorkspaceTargetPayload
+  ): Promise<void> {
     // 1. Resolve project: projectId → projectPath + projectName
     const resolveProjectCtx: HookContext = { intent: ctx.intent };
     const { results: resolveProjectResults, errors: resolveProjectErrors } =
@@ -187,5 +325,49 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       },
     };
     ctx.emit(event);
+  }
+
+  private async executeAutoSelect(
+    ctx: OperationContext<SwitchWorkspaceIntent>,
+    payload: SwitchWorkspaceAutoPayload
+  ): Promise<void> {
+    // 1. Find candidates via hook
+    const hookCtx: HookContext = { intent: ctx.intent };
+    const { results } = await ctx.hooks.collect<FindCandidatesHookResult>(
+      "find-candidates",
+      hookCtx
+    );
+    const allCandidates: WorkspaceCandidate[] = [];
+    for (const r of results) {
+      if (r.candidates) allCandidates.push(...r.candidates);
+    }
+
+    // 2. Select best candidate
+    const best = selectNextWorkspace(
+      payload.currentPath,
+      allCandidates,
+      this.extractName,
+      this.scorer
+    );
+
+    if (best) {
+      // 3. Dispatch specific-target switch
+      const switchIntent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: {
+          projectId: this.generateId(best.projectPath),
+          workspaceName: this.extractName(best.workspacePath) as WorkspaceName,
+          ...(payload.focus !== undefined && { focus: payload.focus }),
+        },
+      };
+      await ctx.dispatch(switchIntent);
+    } else {
+      // No candidate: emit workspace:switched(null)
+      const nullEvent: WorkspaceSwitchedEvent = {
+        type: EVENT_WORKSPACE_SWITCHED,
+        payload: null,
+      };
+      ctx.emit(nullEvent);
+    }
   }
 }

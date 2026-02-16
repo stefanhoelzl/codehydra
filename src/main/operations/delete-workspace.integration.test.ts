@@ -61,16 +61,19 @@ import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
+  EVENT_WORKSPACE_SWITCHED,
+  isAutoSwitch,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
+  WorkspaceSwitchedEvent,
   ResolveProjectHookResult as SwitchResolveProjectHookResult,
   ResolveWorkspaceHookInput as SwitchResolveWorkspaceHookInput,
   ResolveWorkspaceHookResult as SwitchResolveWorkspaceHookResult,
   ActivateHookInput,
+  FindCandidatesHookResult,
 } from "./switch-workspace";
-import { findNextWorkspace } from "../bootstrap";
 
 // =============================================================================
 // Test Constants
@@ -341,7 +344,21 @@ function createTestHarness(options?: {
 
   // Register operations
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation(emitProgress));
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(
+    INTENT_SWITCH_WORKSPACE,
+    new SwitchWorkspaceOperation(
+      extractWorkspaceName,
+      (path: string) => generateProjectId(path),
+      // Agent status scorer: returns score from mock appState
+      (workspacePath) => {
+        const agentStatusManager = appState.getAgentStatusManager();
+        const status = agentStatusManager?.getStatus(workspacePath);
+        if (!status || status.status === "none") return 2;
+        if (status.status === "busy") return 1;
+        return 0;
+      }
+    )
+  );
 
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();
@@ -424,23 +441,10 @@ function createTestHarness(options?: {
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             const isActive = viewManager.getActiveWorkspacePath() === payload.workspacePath;
-            let nextSwitch: ShutdownHookResult["nextSwitch"];
 
             try {
-              if (isActive && !payload.skipSwitch) {
-                const next = await findNextWorkspace(payload.workspacePath, appState);
-                nextSwitch = next;
-                if (!next) {
-                  viewManager.setActiveWorkspace(null, false);
-                }
-              }
-
               await viewManager.destroyWorkspaceView(payload.workspacePath);
-
-              return {
-                ...(isActive && { wasActive: true }),
-                ...(nextSwitch !== undefined && { nextSwitch }),
-              };
+              return { ...(isActive && { wasActive: true }) };
             } catch (error) {
               if (payload.force) {
                 logger.warn("ViewModule: error in force mode (ignored)", {
@@ -448,7 +452,6 @@ function createTestHarness(options?: {
                 });
                 return {
                   ...(isActive && { wasActive: true }),
-                  ...(nextSwitch !== undefined && { nextSwitch }),
                   error: getErrorMessage(error),
                 };
               }
@@ -685,10 +688,11 @@ function createTestHarness(options?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
-            const intent = ctx.intent as SwitchWorkspaceIntent;
+            const { payload } = ctx.intent as SwitchWorkspaceIntent;
+            if (isAutoSwitch(payload)) return {};
             const allProjects = await appState.getAllProjects();
             const project = allProjects.find(
-              (p) => generateProjectId(p.path) === intent.payload.projectId
+              (p) => generateProjectId(p.path) === payload.projectId
             );
             return project ? { projectPath: project.path, projectName: project.name } : {};
           },
@@ -731,6 +735,42 @@ function createTestHarness(options?: {
         },
       },
     },
+    events: {
+      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceSwitchedEvent).payload;
+        if (payload === null) {
+          viewManager.setActiveWorkspace(null, false);
+        }
+      },
+    },
+  };
+
+  // find-candidates module: returns all workspaces from appState for auto-select
+  const switchFindCandidatesModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "find-candidates": {
+          handler: async (): Promise<FindCandidatesHookResult> => {
+            const allProjects = await appState.getAllProjects();
+            const candidates: Array<{
+              projectPath: string;
+              projectName: string;
+              workspacePath: string;
+            }> = [];
+            for (const project of allProjects) {
+              for (const ws of project.workspaces) {
+                candidates.push({
+                  projectPath: project.path,
+                  projectName: project.name,
+                  workspacePath: ws.path,
+                });
+              }
+            }
+            return { candidates };
+          },
+        },
+      },
+    },
   };
 
   wireModules(
@@ -748,6 +788,7 @@ function createTestHarness(options?: {
       switchResolveProjectModule,
       switchResolveWorkspaceModule,
       switchViewModule,
+      switchFindCandidatesModule,
     ],
     hookRegistry,
     dispatcher

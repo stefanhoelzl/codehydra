@@ -63,6 +63,7 @@ import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
+  isAutoSwitch,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
@@ -72,6 +73,15 @@ import type {
   ResolveWorkspaceHookResult as SwitchResolveWorkspaceHookResult,
   ActivateHookInput,
 } from "./switch-workspace";
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+function extractWorkspaceName(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] ?? "";
+}
 
 // =============================================================================
 // Test Constants
@@ -316,7 +326,10 @@ function createTestHarness(options?: {
   // Register operations
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(
+    INTENT_SWITCH_WORKSPACE,
+    new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId)
+  );
 
   // ---------------------------------------------------------------------------
   // Self-selecting resolve modules (local vs remote)
@@ -597,9 +610,10 @@ function createTestHarness(options?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
-            const intent = ctx.intent as SwitchWorkspaceIntent;
+            const { payload } = ctx.intent as SwitchWorkspaceIntent;
+            if (isAutoSwitch(payload)) return {};
             const project = projectState.registeredProjects.find(
-              (p) => generateProjectId(p.path) === intent.payload.projectId
+              (p) => generateProjectId(p.path) === payload.projectId
             );
             return project ? { projectPath: project.path, projectName: project.name } : {};
           },
@@ -787,7 +801,10 @@ describe("OpenProjectOperation", () => {
 
     dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
     dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-    dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+    dispatcher.registerOperation(
+      INTENT_SWITCH_WORKSPACE,
+      new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId)
+    );
 
     // Resolve module that always returns alreadyOpen: true
     const alreadyOpenResolveModule: IntentModule = {
