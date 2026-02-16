@@ -36,6 +36,14 @@ import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
 import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
+import {
+  SET_METADATA_OPERATION_ID,
+  type ResolveWorkspaceHookInput as SetMetadataResolveWorkspaceInput,
+} from "../operations/set-metadata";
+import {
+  GET_METADATA_OPERATION_ID,
+  type ResolveWorkspaceHookInput as GetMetadataResolveWorkspaceInput,
+} from "../operations/get-metadata";
 import { extractWorkspaceName } from "../api/id-utils";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
@@ -330,6 +338,28 @@ export function createGitWorktreeWorkspaceModule(
         "resolve-workspace": {
           handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
             const { projectPath, workspaceName } = ctx as ResolveWorkspaceInput;
+            const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
+            return workspacePath ? { workspacePath } : {};
+          },
+        },
+      },
+
+      // set-metadata -> resolve-workspace
+      [SET_METADATA_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
+            const { projectPath, workspaceName } = ctx as SetMetadataResolveWorkspaceInput;
+            const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
+            return workspacePath ? { workspacePath } : {};
+          },
+        },
+      },
+
+      // get-metadata -> resolve-workspace
+      [GET_METADATA_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
+            const { projectPath, workspaceName } = ctx as GetMetadataResolveWorkspaceInput;
             const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
             return workspacePath ? { workspacePath } : {};
           },

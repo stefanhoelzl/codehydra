@@ -3,12 +3,12 @@
  * Integration tests for get-active-workspace operation through the Dispatcher.
  *
  * Tests verify the full dispatch pipeline: intent -> operation -> hook -> result,
- * using behavioral mocks for ViewManager and WorkspaceAccessor.
+ * using a cached WorkspaceRef (event-driven pattern).
  *
  * Test plan items covered:
- * #10: get-active-workspace returns ref when active
- * #11: get-active-workspace returns null when none active
- * #12: get-active-workspace returns null when project not found
+ * #10: get-active-workspace returns ref when cached
+ * #11: get-active-workspace returns null when no cached ref
+ * #14: interceptor cancellation prevents operation execution
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -38,41 +38,6 @@ const PROJECT_ROOT = "/project";
 const WORKSPACE_PATH = "/workspaces/feature-x";
 
 // =============================================================================
-// Behavioral Mocks
-// =============================================================================
-
-interface MockViewManager {
-  activeWorkspacePath: string | null;
-  getActiveWorkspacePath(): string | null;
-}
-
-function createMockViewManager(activeWorkspacePath: string | null): MockViewManager {
-  return {
-    activeWorkspacePath,
-    getActiveWorkspacePath(): string | null {
-      return this.activeWorkspacePath;
-    },
-  };
-}
-
-interface MockProjectFinder {
-  projects: Map<string, { path: string; name: string }>;
-  findProjectForWorkspace(workspacePath: string): { path: string; name: string } | undefined;
-}
-
-function createMockProjectFinder(
-  entries: Record<string, { path: string; name: string }> = {}
-): MockProjectFinder {
-  const projects = new Map(Object.entries(entries));
-  return {
-    projects,
-    findProjectForWorkspace(workspacePath: string) {
-      return projects.get(workspacePath);
-    },
-  };
-}
-
-// =============================================================================
 // Test Setup
 // =============================================================================
 
@@ -80,41 +45,19 @@ interface TestSetup {
   dispatcher: Dispatcher;
 }
 
-function createTestSetup(opts: {
-  viewManager: MockViewManager;
-  projectFinder: MockProjectFinder;
-}): TestSetup {
+function createTestSetup(cachedRef: WorkspaceRef | null): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
-  // Active workspace hook handler module
+  // Active workspace hook handler module (event-cache pattern)
   const activeWorkspaceModule: IntentModule = {
     hooks: {
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
           handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-            const activeWorkspacePath = opts.viewManager.getActiveWorkspacePath();
-            if (!activeWorkspacePath) {
-              return { workspaceRef: null };
-            }
-
-            const project = opts.projectFinder.findProjectForWorkspace(activeWorkspacePath);
-            if (!project) {
-              return { workspaceRef: null };
-            }
-
-            const projectId = generateProjectId(project.path);
-            const workspaceName = extractWorkspaceName(activeWorkspacePath);
-
-            return {
-              workspaceRef: {
-                projectId,
-                workspaceName,
-                path: activeWorkspacePath,
-              },
-            };
+            return { workspaceRef: cachedRef };
           },
         },
       },
@@ -142,16 +85,17 @@ function getActiveWorkspaceIntent(): GetActiveWorkspaceIntent {
 // =============================================================================
 
 describe("GetActiveWorkspace Operation", () => {
-  describe("returns ref when active (#10)", () => {
+  describe("returns ref when cached (#10)", () => {
     let setup: TestSetup;
 
+    const expectedRef: WorkspaceRef = {
+      projectId: generateProjectId(PROJECT_ROOT),
+      workspaceName: extractWorkspaceName(WORKSPACE_PATH),
+      path: WORKSPACE_PATH,
+    };
+
     beforeEach(() => {
-      setup = createTestSetup({
-        viewManager: createMockViewManager(WORKSPACE_PATH),
-        projectFinder: createMockProjectFinder({
-          [WORKSPACE_PATH]: { path: PROJECT_ROOT, name: "project" },
-        }),
-      });
+      setup = createTestSetup(expectedRef);
     });
 
     it("returns WorkspaceRef with projectId, workspaceName, and path", async () => {
@@ -160,31 +104,15 @@ describe("GetActiveWorkspace Operation", () => {
       const result = (await dispatcher.dispatch(getActiveWorkspaceIntent())) as WorkspaceRef | null;
 
       expect(result).not.toBeNull();
-      expect(result!.projectId).toBe(generateProjectId(PROJECT_ROOT));
-      expect(result!.workspaceName).toBe(extractWorkspaceName(WORKSPACE_PATH));
+      expect(result!.projectId).toBe(expectedRef.projectId);
+      expect(result!.workspaceName).toBe(expectedRef.workspaceName);
       expect(result!.path).toBe(WORKSPACE_PATH);
     });
   });
 
-  describe("returns null when none active (#11)", () => {
+  describe("returns null when no cached ref (#11)", () => {
     it("returns null when no active workspace", async () => {
-      const setup = createTestSetup({
-        viewManager: createMockViewManager(null),
-        projectFinder: createMockProjectFinder(),
-      });
-
-      const result = await setup.dispatcher.dispatch(getActiveWorkspaceIntent());
-
-      expect(result).toBeNull();
-    });
-  });
-
-  describe("returns null when project not found (#12)", () => {
-    it("returns null when active workspace has no matching project", async () => {
-      const setup = createTestSetup({
-        viewManager: createMockViewManager(WORKSPACE_PATH),
-        projectFinder: createMockProjectFinder({}), // No project entries
-      });
+      const setup = createTestSetup(null);
 
       const result = await setup.dispatcher.dispatch(getActiveWorkspaceIntent());
 
@@ -194,12 +122,12 @@ describe("GetActiveWorkspace Operation", () => {
 
   describe("interceptor", () => {
     it("cancellation prevents operation execution (#14)", async () => {
-      const setup = createTestSetup({
-        viewManager: createMockViewManager(WORKSPACE_PATH),
-        projectFinder: createMockProjectFinder({
-          [WORKSPACE_PATH]: { path: PROJECT_ROOT, name: "project" },
-        }),
-      });
+      const expectedRef: WorkspaceRef = {
+        projectId: generateProjectId(PROJECT_ROOT),
+        workspaceName: extractWorkspaceName(WORKSPACE_PATH),
+        path: WORKSPACE_PATH,
+      };
+      const setup = createTestSetup(expectedRef);
 
       const cancelInterceptor: IntentInterceptor = {
         id: "cancel-all",

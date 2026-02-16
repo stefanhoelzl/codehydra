@@ -42,6 +42,16 @@ import {
 } from "../operations/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
 import {
+  SET_METADATA_OPERATION_ID,
+  type ResolveProjectHookResult as SetMetadataResolveProjectHookResult,
+} from "../operations/set-metadata";
+import type { SetMetadataIntent } from "../operations/set-metadata";
+import {
+  GET_METADATA_OPERATION_ID,
+  type ResolveProjectHookResult as GetMetadataResolveProjectHookResult,
+} from "../operations/get-metadata";
+import type { GetMetadataIntent } from "../operations/get-metadata";
+import {
   SWITCH_WORKSPACE_OPERATION_ID,
   type SwitchWorkspaceIntent,
   type ResolveProjectHookResult,
@@ -252,6 +262,40 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<GetStatusResolveProjectHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of projects.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      [SET_METADATA_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<SetMetadataResolveProjectHookResult> => {
+            const intent = ctx.intent as SetMetadataIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of projects.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      [GET_METADATA_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<GetMetadataResolveProjectHookResult> => {
+            const intent = ctx.intent as GetMetadataIntent;
             const { projectId } = intent.payload;
 
             for (const project of projects.values()) {

@@ -42,13 +42,17 @@ import {
   SET_METADATA_OPERATION_ID,
   INTENT_SET_METADATA,
 } from "./operations/set-metadata";
-import type { SetMetadataIntent } from "./operations/set-metadata";
+import type { SetMetadataIntent, SetHookInput } from "./operations/set-metadata";
 import {
   GetMetadataOperation,
   GET_METADATA_OPERATION_ID,
   INTENT_GET_METADATA,
 } from "./operations/get-metadata";
-import type { GetMetadataIntent, GetMetadataHookResult } from "./operations/get-metadata";
+import type {
+  GetMetadataIntent,
+  GetMetadataHookResult,
+  GetHookInput as GetMetadataGetHookInput,
+} from "./operations/get-metadata";
 import {
   GetWorkspaceStatusOperation,
   GET_WORKSPACE_STATUS_OPERATION_ID,
@@ -238,6 +242,7 @@ import {
   type SetupRowStatus,
   type Workspace,
   type BlockingProcess,
+  type WorkspaceRef,
 } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../services/git/types";
 import { Path } from "../services/platform/path";
@@ -1208,10 +1213,10 @@ function wireDispatcher(
       [SET_METADATA_OPERATION_ID]: {
         set: {
           handler: async (ctx: HookContext) => {
+            const { workspacePath } = ctx as SetHookInput;
             const intent = ctx.intent as SetMetadataIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, appState);
             await globalProvider.setMetadata(
-              new Path(workspace.path),
+              new Path(workspacePath),
               intent.payload.key,
               intent.payload.value
             );
@@ -1221,9 +1226,8 @@ function wireDispatcher(
       [GET_METADATA_OPERATION_ID]: {
         get: {
           handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
-            const intent = ctx.intent as GetMetadataIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, appState);
-            const metadata = await globalProvider.getMetadata(new Path(workspace.path));
+            const { workspacePath } = ctx as GetMetadataGetHookInput;
+            const metadata = await globalProvider.getMetadata(new Path(workspacePath));
             return { metadata };
           },
         },
@@ -1310,6 +1314,8 @@ function wireDispatcher(
   };
 
   // UI hook handler module (mode changes + active workspace queries)
+  let cachedActiveRef: WorkspaceRef | null = null;
+
   const uiHookModule: IntentModule = {
     hooks: {
       [SET_MODE_OPERATION_ID]: {
@@ -1325,28 +1331,23 @@ function wireDispatcher(
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
           handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-            const activeWorkspacePath = viewManager.getActiveWorkspacePath();
-            if (!activeWorkspacePath) {
-              return { workspaceRef: null };
-            }
-
-            const project = appState.findProjectForWorkspace(activeWorkspacePath);
-            if (!project) {
-              return { workspaceRef: null };
-            }
-
-            const projectId = generateProjectId(project.path);
-            const workspaceName = extractWorkspaceName(activeWorkspacePath);
-
-            return {
-              workspaceRef: {
-                projectId,
-                workspaceName,
-                path: activeWorkspacePath,
-              },
-            };
+            return { workspaceRef: cachedActiveRef };
           },
         },
+      },
+    },
+    events: {
+      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceSwitchedEvent).payload;
+        if (payload === null) {
+          cachedActiveRef = null;
+        } else {
+          cachedActiveRef = {
+            projectId: payload.projectId,
+            workspaceName: payload.workspaceName,
+            path: payload.path,
+          };
+        }
       },
     },
   };

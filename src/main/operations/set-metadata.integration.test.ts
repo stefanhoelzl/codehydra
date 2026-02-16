@@ -24,23 +24,36 @@ import {
   INTENT_SET_METADATA,
   EVENT_METADATA_CHANGED,
 } from "./set-metadata";
-import type { SetMetadataIntent, MetadataChangedEvent } from "./set-metadata";
+import type {
+  SetMetadataIntent,
+  MetadataChangedEvent,
+  ResolveProjectHookResult as SetResolveProjectHookResult,
+  ResolveWorkspaceHookResult as SetResolveWorkspaceHookResult,
+  ResolveWorkspaceHookInput as SetResolveWorkspaceHookInput,
+  SetHookInput,
+} from "./set-metadata";
 import {
   GetMetadataOperation,
   GET_METADATA_OPERATION_ID,
   INTENT_GET_METADATA,
 } from "./get-metadata";
-import type { GetMetadataIntent, GetMetadataHookResult } from "./get-metadata";
+import type {
+  GetMetadataIntent,
+  GetMetadataHookResult,
+  ResolveProjectHookResult as GetResolveProjectHookResult,
+  ResolveWorkspaceHookResult as GetResolveWorkspaceHookResult,
+  ResolveWorkspaceHookInput as GetResolveWorkspaceHookInput,
+  GetHookInput,
+} from "./get-metadata";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
 import { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
-import { resolveWorkspace } from "../api/id-utils";
-import type { WorkspaceAccessor } from "../api/id-utils";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
+import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
 import type { HookContext } from "../intents/infrastructure/operation";
 
@@ -115,29 +128,8 @@ function createTestSetup(): TestSetup {
   const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
   globalProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
 
-  // Build workspace accessor (simulates AppState)
   const projectId = generateProjectId(PROJECT_ROOT.toString());
   const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
-
-  const workspaceAccessor: WorkspaceAccessor = {
-    getAllProjects: async () => [{ path: PROJECT_ROOT.toString() }],
-    getProject: (projectPath: string) => {
-      if (new Path(projectPath).equals(PROJECT_ROOT)) {
-        return {
-          path: PROJECT_ROOT.toString(),
-          name: "project",
-          workspaces: [
-            {
-              path: workspacePath.toString(),
-              branch: "feature-x",
-              metadata: { base: "main" },
-            },
-          ],
-        };
-      }
-      return undefined;
-    },
-  };
 
   // Build dispatcher with hook registry
   const hookRegistry = new HookRegistry();
@@ -147,34 +139,100 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
 
-  // Register provider hook handlers (same pattern as bootstrap.ts)
-  hookRegistry.register(SET_METADATA_OPERATION_ID, "set", {
-    handler: async (ctx: HookContext) => {
-      const intent = ctx.intent as SetMetadataIntent;
-      const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
-      await globalProvider.setMetadata(
-        new Path(workspace.path),
-        intent.payload.key,
-        intent.payload.value
-      );
+  // resolve-project module: resolves projectId → projectPath
+  const resolveProjectModule: IntentModule = {
+    hooks: {
+      [SET_METADATA_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<SetResolveProjectHookResult> => {
+            const intent = ctx.intent as SetMetadataIntent;
+            if (intent.payload.projectId === projectId) {
+              return { projectPath: PROJECT_ROOT.toString() };
+            }
+            return {};
+          },
+        },
+      },
+      [GET_METADATA_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<GetResolveProjectHookResult> => {
+            const intent = ctx.intent as GetMetadataIntent;
+            if (intent.payload.projectId === projectId) {
+              return { projectPath: PROJECT_ROOT.toString() };
+            }
+            return {};
+          },
+        },
+      },
     },
-  });
+  };
 
-  hookRegistry.register(GET_METADATA_OPERATION_ID, "get", {
-    handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
-      const intent = ctx.intent as GetMetadataIntent;
-      const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
-      const metadata = await globalProvider.getMetadata(new Path(workspace.path));
-      return { metadata };
+  // resolve-workspace module: resolves workspaceName → workspacePath
+  const resolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [SET_METADATA_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<SetResolveWorkspaceHookResult> => {
+            const { workspaceName: name } = ctx as SetResolveWorkspaceHookInput;
+            if (name === workspaceName) {
+              return { workspacePath: workspacePath.toString() };
+            }
+            return {};
+          },
+        },
+      },
+      [GET_METADATA_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<GetResolveWorkspaceHookResult> => {
+            const { workspaceName: name } = ctx as GetResolveWorkspaceHookInput;
+            if (name === workspaceName) {
+              return { workspacePath: workspacePath.toString() };
+            }
+            return {};
+          },
+        },
+      },
     },
-  });
+  };
+
+  // set/get module: performs actual provider operations (reads workspacePath from enriched context)
+  const metadataModule: IntentModule = {
+    hooks: {
+      [SET_METADATA_OPERATION_ID]: {
+        set: {
+          handler: async (ctx: HookContext) => {
+            const { workspacePath: wp } = ctx as SetHookInput;
+            const intent = ctx.intent as SetMetadataIntent;
+            await globalProvider.setMetadata(
+              new Path(wp),
+              intent.payload.key,
+              intent.payload.value
+            );
+          },
+        },
+      },
+      [GET_METADATA_OPERATION_ID]: {
+        get: {
+          handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
+            const { workspacePath: wp } = ctx as GetHookInput;
+            const metadata = await globalProvider.getMetadata(new Path(wp));
+            return { metadata };
+          },
+        },
+      },
+    },
+  };
 
   // Wire IpcEventBridge
   const mockApiRegistry = createMockApiRegistry();
   const ipcEventBridge = createIpcEventBridge(
     mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry
   );
-  wireModules([ipcEventBridge], hookRegistry, dispatcher);
+  wireModules(
+    [resolveProjectModule, resolveWorkspaceModule, metadataModule, ipcEventBridge],
+    hookRegistry,
+    dispatcher
+  );
 
   return {
     dispatcher,
