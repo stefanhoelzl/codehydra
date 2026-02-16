@@ -395,51 +395,32 @@ function createTestHarness(options?: {
   // Self-selecting register modules (local vs remote)
   // ---------------------------------------------------------------------------
 
-  // LocalRegisterModule: generates ID for local projects (no remoteUrl)
+  // RegisterModule: generates ID for all projects, detects duplicates
+  const registeredPaths = new Set<string>();
+
   const localRegisterModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         register: {
           handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
-            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
-
-            // Self-select: only handle local projects
-            if (remoteUrl !== undefined) {
-              return {};
-            }
+            const { projectPath: projectPathStr } = ctx as RegisterHookInput;
 
             const projectPath = new Path(projectPathStr);
+            const normalizedKey = projectPath.toString();
             const projectId = generateProjectId(projectPathStr);
+
+            // Already registered — return alreadyOpen
+            if (registeredPaths.has(normalizedKey)) {
+              return { projectId, name: projectPath.basename, alreadyOpen: true };
+            }
 
             const config = await projectStore.getProjectConfig(projectPathStr);
             if (!config) {
               await projectStore.saveProject(projectPathStr);
             }
 
+            registeredPaths.add(normalizedKey);
             return { projectId, name: projectPath.basename };
-          },
-        },
-      },
-    },
-  };
-
-  // RemoteRegisterModule: generates ID for remote projects (has remoteUrl)
-  const remoteRegisterModule: IntentModule = {
-    hooks: {
-      [OPEN_PROJECT_OPERATION_ID]: {
-        register: {
-          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
-            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
-
-            // Self-select: only handle remote projects
-            if (!remoteUrl) {
-              return {};
-            }
-
-            const projectId = generateProjectId(projectPathStr);
-            const projectPath = new Path(projectPathStr);
-
-            return { projectId, name: projectPath.basename, remoteUrl };
           },
         },
       },
@@ -662,7 +643,6 @@ function createTestHarness(options?: {
       localResolveModule,
       remoteResolveModule,
       localRegisterModule,
-      remoteRegisterModule,
       appStateRegisterModule,
       discoverModule,
       resolveProjectModule,

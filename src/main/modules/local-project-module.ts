@@ -1,17 +1,17 @@
 /**
- * LocalProjectModule - Owns local project state and responds to hook points.
+ * LocalProjectModule - Sole owner of project state for ALL projects.
  *
- * Handles local filesystem projects (not git-URL clones). Uses the self-selection
- * pattern with collect(): returns empty results when the project isn't "ours"
- * (e.g., when remoteUrl is present, indicating a cloned project).
+ * Manages internal state (projects map) and responds to resolve-project
+ * hook points across all operations. Completely unaware of remoteUrl —
+ * remote-specific concerns (cloning, directory cleanup) stay in RemoteProjectModule.
  *
  * Hook registrations:
  * - project:open  → resolve:  validate .git exists for local paths
- * - project:open  → register: generate ID, persist, add to internal state
+ * - project:open  → register: generate ID, persist, add to internal state (all projects)
  * - project:close → resolve-project:  look up projectId in internal state
- * - project:close → close:    remove from internal state and ProjectStore
+ * - project:close → close:    remove from internal state and ProjectStore (all projects)
  * - workspace:switch → resolve-project: look up projectId in internal state
- * - app:start     → activate: load saved project paths from ProjectStore
+ * - app:start     → activate: load ALL saved project paths from ProjectStore
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -83,7 +83,8 @@ import {
 // =============================================================================
 
 /**
- * Internal representation of a local project tracked by this module.
+ * Internal representation of a project tracked by this module.
+ * No remoteUrl — LocalProjectModule is unaware of remote concerns.
  */
 export interface LocalProject {
   readonly id: ProjectId;
@@ -107,7 +108,7 @@ export interface LocalProjectModuleDeps {
 // =============================================================================
 
 /**
- * Create a LocalProjectModule that owns local project state.
+ * Create a LocalProjectModule that owns project state for ALL projects.
  *
  * @param deps - ProjectStore for persistence, GitWorktreeProvider for .git validation
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
@@ -115,7 +116,7 @@ export interface LocalProjectModuleDeps {
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
   const { projectStore, globalProvider } = deps;
 
-  /** Internal state: local projects keyed by normalized path string. */
+  /** Internal state: all projects keyed by normalized path string. */
   const projects = new Map<string, LocalProject>();
 
   return {
@@ -143,27 +144,28 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
           },
         },
 
-        // register: generate ID, persist, add to internal state
+        // register: generate ID, persist, add to internal state (all projects)
         register: {
           handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
-            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
-
-            // Self-select: only handle local projects (no remoteUrl)
-            if (remoteUrl !== undefined) {
-              return {};
-            }
+            const { projectPath: projectPathStr } = ctx as RegisterHookInput;
 
             const projectPath = new Path(projectPathStr);
+            const normalizedKey = projectPath.toString();
             const projectId = generateProjectId(projectPathStr);
 
-            // Persist to store if new
+            // Already in state — return alreadyOpen without re-persisting
+            if (projects.has(normalizedKey)) {
+              return { projectId, name: projectPath.basename, alreadyOpen: true };
+            }
+
+            // Persist to store if new (remote projects already saved by RemoteProjectModule.resolve)
             const existingConfig = await projectStore.getProjectConfig(projectPathStr);
             if (!existingConfig) {
               await projectStore.saveProject(projectPathStr);
             }
 
             // Add to internal state
-            projects.set(projectPath.toString(), {
+            projects.set(normalizedKey, {
               id: projectId,
               name: projectPath.basename,
               path: projectPath,
@@ -188,20 +190,15 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               }
             }
 
-            // Not ours — return empty (another module may handle it)
+            // Not found — return empty
             return {};
           },
         },
 
-        // close: remove from internal state and ProjectStore
+        // close: remove from internal state and ProjectStore (all projects)
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath, remoteUrl } = ctx as CloseHookInput;
-
-            // Self-select: only handle local projects (no remoteUrl)
-            if (remoteUrl !== undefined) {
-              return {};
-            }
+            const { projectPath } = ctx as CloseHookInput;
 
             // Remove from internal state
             const normalizedKey = new Path(projectPath).toString();
@@ -238,28 +235,11 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [APP_START_OPERATION_ID]: {
-        // activate: load saved local project configs, populate state, return paths
+        // activate: scan saved project configs and return paths for project:open dispatch
         activate: {
           handler: async (): Promise<ActivateHookResult> => {
             const configs = await projectStore.loadAllProjectConfigs();
-            const localPaths: string[] = [];
-
-            for (const config of configs) {
-              if (config.remoteUrl === undefined) {
-                const path = new Path(config.path);
-                const projectId = generateProjectId(config.path);
-
-                projects.set(path.toString(), {
-                  id: projectId,
-                  name: path.basename,
-                  path,
-                });
-
-                localPaths.push(config.path);
-              }
-            }
-
-            return { projectPaths: localPaths };
+            return { projectPaths: configs.map((c) => c.path) };
           },
         },
       },
@@ -317,16 +297,18 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [OPEN_WORKSPACE_OPERATION_ID]: {
-        // resolve-project: resolve projectId to path from local project state
+        // resolve-project: resolve projectId to path from project state (sole handler)
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<OpenWorkspaceResolveProjectHookResult> => {
             const intent = ctx.intent as OpenWorkspaceIntent;
             const { projectId, projectPath: payloadPath } = intent.payload;
 
             // Short-circuit: authoritative path already provided
-            if (payloadPath) return { projectPath: payloadPath };
+            if (payloadPath) {
+              return { projectPath: payloadPath };
+            }
 
-            // Look up projectId in local project state
+            // Look up projectId in project state
             if (!projectId) return {};
             for (const project of projects.values()) {
               if (project.id === projectId) {

@@ -10,16 +10,17 @@
  * #2: resolve skips for git URL payloads
  * #3: resolve propagates validation errors
  * #4: register generates ID and persists new local projects
- * #5: register skips when remoteUrl is present
+ * #5: register registers remote project (no re-save when config exists)
  * #6: register skips save when project config already exists
  * #7: close resolve finds project by ID in internal state
  * #8: close resolve returns empty for unknown project ID
  * #9: close removes from state and persistent store
- * #10: close skips when remoteUrl is present
- * #11: activate returns only local paths (filters out remote configs)
+ * #10: close removes remote project from state and store
+ * #11: activate returns all project paths including remote
  * #12: activate returns empty when no projects saved
- * #13: activate populates internal state (close-resolve finds activated projects)
+ * #13: activate does NOT populate internal state — project:open register handles that
  * #14: resolve returns alreadyOpen when path is in internal state
+ * #15: register returns alreadyOpen for duplicate path
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -239,8 +240,14 @@ describe("LocalProjectModule Integration", () => {
       expect(projectStore.saveProject).toHaveBeenCalledWith(new Path(PROJECT_PATH).toString());
     });
 
-    it("skips when remoteUrl is present (#5)", async () => {
+    it("registers remote project without re-saving when config exists (#5)", async () => {
       const { openHooks, projectStore } = createTestSetup();
+      // Remote projects already have their config saved by RemoteProjectModule.resolve
+      vi.mocked(projectStore.getProjectConfig).mockResolvedValue({
+        version: 2,
+        path: new Path(PROJECT_PATH).toString(),
+        remoteUrl: "https://github.com/user/repo.git",
+      });
 
       const ctx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
@@ -252,7 +259,8 @@ describe("LocalProjectModule Integration", () => {
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results[0]!.projectId).toBe(PROJECT_ID);
+      expect(results[0]!.name).toBe(new Path(PROJECT_PATH).basename);
       expect(projectStore.saveProject).not.toHaveBeenCalled();
     });
 
@@ -273,6 +281,38 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
       expect(results[0]!.projectId).toBe(PROJECT_ID);
       expect(projectStore.saveProject).not.toHaveBeenCalled();
+    });
+
+    it("returns alreadyOpen for duplicate path (#15)", async () => {
+      const { openHooks, projectStore } = createTestSetup();
+
+      const ctx: RegisterHookInput = {
+        intent: openLocalIntent(PROJECT_PATH),
+        projectPath: new Path(PROJECT_PATH).toString(),
+      };
+
+      // First registration — should persist
+      const { results: first, errors: firstErrors } = await openHooks.collect<RegisterHookResult>(
+        "register",
+        ctx
+      );
+
+      expect(firstErrors).toHaveLength(0);
+      expect(first[0]!.projectId).toBe(PROJECT_ID);
+      expect(first[0]!.alreadyOpen).toBeUndefined();
+      expect(projectStore.saveProject).toHaveBeenCalledTimes(1);
+
+      // Second registration — should return alreadyOpen without re-persisting
+      const { results: second, errors: secondErrors } = await openHooks.collect<RegisterHookResult>(
+        "register",
+        ctx
+      );
+
+      expect(secondErrors).toHaveLength(0);
+      expect(second[0]!.projectId).toBe(PROJECT_ID);
+      expect(second[0]!.name).toBe(new Path(PROJECT_PATH).basename);
+      expect(second[0]!.alreadyOpen).toBe(true);
+      expect(projectStore.saveProject).toHaveBeenCalledTimes(1); // no additional save
     });
   });
 
@@ -354,20 +394,42 @@ describe("LocalProjectModule Integration", () => {
       expect(resolveResults[0]).toEqual({});
     });
 
-    it("skips when remoteUrl is present (#10)", async () => {
-      const { closeHooks, projectStore } = createTestSetup();
+    it("closes remote project — removes from state and store (#10)", async () => {
+      const setup = createTestSetup();
 
+      // Register a remote project first so it's in internal state
+      vi.mocked(setup.projectStore.getProjectConfig).mockResolvedValue({
+        version: 2,
+        path: new Path(PROJECT_PATH).toString(),
+        remoteUrl: "https://github.com/user/repo.git",
+      });
+      const registerCtx: RegisterHookInput = {
+        intent: openLocalIntent(PROJECT_PATH),
+        projectPath: new Path(PROJECT_PATH).toString(),
+        remoteUrl: "https://github.com/user/repo.git",
+      };
+      await setup.openHooks.collect<RegisterHookResult>("register", registerCtx);
+
+      // Close with remoteUrl present
       const closeCtx: CloseHookInput = {
         intent: closeIntent(PROJECT_ID),
         projectPath: new Path(PROJECT_PATH).toString(),
         remoteUrl: "https://github.com/user/repo.git",
         removeLocalRepo: false,
       };
-      const { results, errors } = await closeHooks.collect<CloseHookResult>("close", closeCtx);
+      const { errors } = await setup.closeHooks.collect<CloseHookResult>("close", closeCtx);
 
       expect(errors).toHaveLength(0);
-      expect(results[0]).toEqual({});
-      expect(projectStore.removeProject).not.toHaveBeenCalled();
+      expect(setup.projectStore.removeProject).toHaveBeenCalledWith(
+        new Path(PROJECT_PATH).toString()
+      );
+
+      // Verify it's gone from internal state
+      const { results: resolveResults } = await setup.closeHooks.collect<CloseResolveHookResult>(
+        "resolve-project",
+        { intent: closeIntent(PROJECT_ID) }
+      );
+      expect(resolveResults[0]).toEqual({});
     });
   });
 
@@ -376,7 +438,7 @@ describe("LocalProjectModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("app:start activate", () => {
-    it("returns only local paths, filters out remote configs (#11)", async () => {
+    it("returns all project paths including remote (#11)", async () => {
       const { startHooks, projectStore } = createTestSetup();
       const localConfig: ProjectConfig = { version: 2, path: "/projects/alpha" };
       const remoteConfig: ProjectConfig = {
@@ -392,7 +454,7 @@ describe("LocalProjectModule Integration", () => {
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
-      expect(results[0]!.projectPaths).toEqual(["/projects/alpha"]);
+      expect(results[0]!.projectPaths).toEqual(["/projects/alpha", "/remotes/repo"]);
     });
 
     it("returns empty when no projects saved (#12)", async () => {
@@ -408,7 +470,7 @@ describe("LocalProjectModule Integration", () => {
       expect(results[0]!.projectPaths).toEqual([]);
     });
 
-    it("populates internal state so close-resolve finds activated projects (#13)", async () => {
+    it("does not populate internal state — project:open register handles that (#13)", async () => {
       const setup = createTestSetup();
       const localConfig: ProjectConfig = { version: 2, path: PROJECT_PATH };
       vi.mocked(setup.projectStore.loadAllProjectConfigs).mockResolvedValue([localConfig]);
@@ -417,7 +479,7 @@ describe("LocalProjectModule Integration", () => {
         intent: appStartIntent(),
       });
 
-      // Close resolve should find the project by ID
+      // activate should NOT populate state — close-resolve should return empty
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
         "resolve-project",
         { intent: closeIntent(PROJECT_ID) }
@@ -425,7 +487,7 @@ describe("LocalProjectModule Integration", () => {
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
-      expect(results[0]!.projectPath).toBe(new Path(PROJECT_PATH).toString());
+      expect(results[0]).toEqual({});
     });
   });
 });
