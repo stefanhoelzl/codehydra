@@ -61,6 +61,16 @@ import {
   type OpenWorkspaceIntent,
   type ResolveProjectHookResult as OpenWorkspaceResolveProjectHookResult,
 } from "../operations/open-workspace";
+import {
+  GET_AGENT_SESSION_OPERATION_ID,
+  type GetAgentSessionIntent,
+  type ResolveProjectHookResult as GetAgentSessionResolveProjectHookResult,
+} from "../operations/get-agent-session";
+import {
+  RESTART_AGENT_OPERATION_ID,
+  type RestartAgentIntent,
+  type ResolveProjectHookResult as RestartAgentResolveProjectHookResult,
+} from "../operations/restart-agent";
 
 // =============================================================================
 // Exported Types
@@ -299,6 +309,46 @@ export function createRemoteProjectModule(deps: {
 
             // Look up projectId in remote project state
             if (!projectId) return {};
+            for (const project of state.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------------
+      // get-agent-session
+      // -----------------------------------------------------------------------
+      [GET_AGENT_SESSION_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<GetAgentSessionResolveProjectHookResult> => {
+            const intent = ctx.intent as GetAgentSessionIntent;
+            const { projectId } = intent.payload;
+
+            for (const project of state.values()) {
+              if (project.id === projectId) {
+                return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------------
+      // restart-agent
+      // -----------------------------------------------------------------------
+      [RESTART_AGENT_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<RestartAgentResolveProjectHookResult> => {
+            const intent = ctx.intent as RestartAgentIntent;
+            const { projectId } = intent.payload;
+
             for (const project of state.values()) {
               if (project.id === projectId) {
                 return { projectPath: project.path.toString() };

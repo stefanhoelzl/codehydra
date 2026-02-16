@@ -69,6 +69,7 @@ import {
 } from "./operations/get-agent-session";
 import type {
   GetAgentSessionIntent,
+  GetAgentSessionHookInput,
   GetAgentSessionHookResult,
 } from "./operations/get-agent-session";
 import {
@@ -76,7 +77,11 @@ import {
   RESTART_AGENT_OPERATION_ID,
   INTENT_RESTART_AGENT,
 } from "./operations/restart-agent";
-import type { RestartAgentIntent, RestartAgentHookResult } from "./operations/restart-agent";
+import type {
+  RestartAgentIntent,
+  RestartAgentHookInput,
+  RestartAgentHookResult,
+} from "./operations/restart-agent";
 import { SetModeOperation, SET_MODE_OPERATION_ID, INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent, SetModeHookResult } from "./operations/set-mode";
 import {
@@ -1261,10 +1266,9 @@ function wireDispatcher(
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
-            const intent = ctx.intent as GetAgentSessionIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, appState);
+            const { workspacePath } = ctx as GetAgentSessionHookInput;
             const agentStatusManager = appState.getAgentStatusManager();
-            const session = agentStatusManager?.getSession(workspace.path as WorkspacePath) ?? null;
+            const session = agentStatusManager?.getSession(workspacePath as WorkspacePath) ?? null;
             return { session };
           },
         },
@@ -1272,15 +1276,14 @@ function wireDispatcher(
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
           handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
-            const intent = ctx.intent as RestartAgentIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, appState);
+            const { workspacePath } = ctx as RestartAgentHookInput;
             const serverManager = appState.getServerManager();
             if (!serverManager) {
               throw new Error("Agent server manager not available");
             }
-            const result = await serverManager.restartServer(workspace.path);
+            const result = await serverManager.restartServer(workspacePath);
             if (result.success) {
-              return { port: result.port, workspacePath: workspace.path };
+              return { port: result.port };
             } else {
               throw new Error(result.error);
             }

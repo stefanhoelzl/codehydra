@@ -34,6 +34,8 @@ import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
+import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
+import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import { extractWorkspaceName } from "../api/id-utils";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
@@ -312,8 +314,27 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // Note: get-workspace-status hooks removed — the current operation doesn't use
-      // enriched contexts. Inline hooks in bootstrap.ts handle this for now.
+      // get-agent-session -> resolve-workspace
+      [GET_AGENT_SESSION_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
+            const { projectPath, workspaceName } = ctx as ResolveWorkspaceInput;
+            const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
+            return workspacePath ? { workspacePath } : {};
+          },
+        },
+      },
+
+      // restart-agent -> resolve-workspace
+      [RESTART_AGENT_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
+            const { projectPath, workspaceName } = ctx as ResolveWorkspaceInput;
+            const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
+            return workspacePath ? { workspacePath } : {};
+          },
+        },
+      },
     },
   };
 }

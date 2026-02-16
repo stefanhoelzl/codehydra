@@ -20,16 +20,20 @@ import {
   GET_AGENT_SESSION_OPERATION_ID,
   INTENT_GET_AGENT_SESSION,
 } from "./get-agent-session";
-import type { GetAgentSessionIntent, GetAgentSessionHookResult } from "./get-agent-session";
+import type {
+  GetAgentSessionIntent,
+  GetAgentSessionHookInput,
+  GetAgentSessionHookResult,
+  ResolveProjectHookResult,
+  ResolveWorkspaceHookInput,
+  ResolveWorkspaceHookResult,
+} from "./get-agent-session";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
-import { resolveWorkspace } from "../api/id-utils";
-import type { WorkspaceAccessor } from "../api/id-utils";
 import type { ProjectId, WorkspaceName, AgentSession } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
 import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
-import { Path } from "../../services/platform/path";
 
 // =============================================================================
 // Test Constants
@@ -76,41 +80,54 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
   const projectId = generateProjectId(PROJECT_ROOT);
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
-  const workspaceAccessor: WorkspaceAccessor = {
-    getAllProjects: async () => [{ path: PROJECT_ROOT }],
-    getProject: (projectPath: string) => {
-      if (new Path(projectPath).equals(new Path(PROJECT_ROOT))) {
-        return {
-          path: PROJECT_ROOT,
-          name: "project",
-          workspaces: [
-            {
-              path: WORKSPACE_PATH,
-              branch: "feature-x",
-              metadata: { base: "main" },
-            },
-          ],
-        };
-      }
-      return undefined;
-    },
-  };
-
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
 
-  // Agent session hook handler module
+  // Resolve-project module: look up projectId
+  const resolveProjectModule: IntentModule = {
+    hooks: {
+      [GET_AGENT_SESSION_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as GetAgentSessionIntent;
+            if (intent.payload.projectId === projectId) {
+              return { projectPath: PROJECT_ROOT };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // Resolve-workspace module: look up workspaceName
+  const resolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [GET_AGENT_SESSION_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { workspaceName: name } = ctx as ResolveWorkspaceHookInput;
+            if (name === workspaceName) {
+              return { workspacePath: WORKSPACE_PATH };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // Agent session hook handler module (reads from enriched context)
   const agentSessionModule: IntentModule = {
     hooks: {
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
-            const intent = ctx.intent as GetAgentSessionIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
+            const { workspacePath } = ctx as GetAgentSessionHookInput;
             const manager = opts.agentStatusManager;
-            const session = manager?.getSession(workspace.path as WorkspacePath) ?? null;
+            const session = manager?.getSession(workspacePath as WorkspacePath) ?? null;
             return { session };
           },
         },
@@ -118,7 +135,11 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
     },
   };
 
-  wireModules([agentSessionModule], hookRegistry, dispatcher);
+  wireModules(
+    [resolveProjectModule, resolveWorkspaceModule, agentSessionModule],
+    hookRegistry,
+    dispatcher
+  );
 
   return { dispatcher, projectId, workspaceName };
 }

@@ -24,17 +24,18 @@ import {
 } from "./restart-agent";
 import type {
   RestartAgentIntent,
+  RestartAgentHookInput,
   RestartAgentHookResult,
+  ResolveProjectHookResult,
+  ResolveWorkspaceHookInput,
+  ResolveWorkspaceHookResult,
   AgentRestartedEvent,
 } from "./restart-agent";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
-import { resolveWorkspace } from "../api/id-utils";
-import type { WorkspaceAccessor } from "../api/id-utils";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
-import { Path } from "../../services/platform/path";
 
 // =============================================================================
 // Test Constants
@@ -77,42 +78,55 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
   const projectId = generateProjectId(PROJECT_ROOT);
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
-  const workspaceAccessor: WorkspaceAccessor = {
-    getAllProjects: async () => [{ path: PROJECT_ROOT }],
-    getProject: (projectPath: string) => {
-      if (new Path(projectPath).equals(new Path(PROJECT_ROOT))) {
-        return {
-          path: PROJECT_ROOT,
-          name: "project",
-          workspaces: [
-            {
-              path: WORKSPACE_PATH,
-              branch: "feature-x",
-              metadata: { base: "main" },
-            },
-          ],
-        };
-      }
-      return undefined;
-    },
-  };
-
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
 
-  // Restart hook handler module
+  // Resolve-project module: look up projectId
+  const resolveProjectModule: IntentModule = {
+    hooks: {
+      [RESTART_AGENT_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const intent = ctx.intent as RestartAgentIntent;
+            if (intent.payload.projectId === projectId) {
+              return { projectPath: PROJECT_ROOT };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // Resolve-workspace module: look up workspaceName
+  const resolveWorkspaceModule: IntentModule = {
+    hooks: {
+      [RESTART_AGENT_OPERATION_ID]: {
+        "resolve-workspace": {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { workspaceName: name } = ctx as ResolveWorkspaceHookInput;
+            if (name === workspaceName) {
+              return { workspacePath: WORKSPACE_PATH };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // Restart hook handler module (reads from enriched context)
   const restartModule: IntentModule = {
     hooks: {
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
           handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
-            const intent = ctx.intent as RestartAgentIntent;
-            const { workspace } = await resolveWorkspace(intent.payload, workspaceAccessor);
-            const result = await opts.serverManager.restartServer(workspace.path);
+            const { workspacePath } = ctx as RestartAgentHookInput;
+            const result = await opts.serverManager.restartServer(workspacePath);
             if (result.success) {
-              return { port: result.port, workspacePath: workspace.path };
+              return { port: result.port };
             } else {
               throw new Error(result.error);
             }
@@ -122,7 +136,11 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
     },
   };
 
-  wireModules([restartModule], hookRegistry, dispatcher);
+  wireModules(
+    [resolveProjectModule, resolveWorkspaceModule, restartModule],
+    hookRegistry,
+    dispatcher
+  );
 
   return { dispatcher, projectId, workspaceName };
 }
