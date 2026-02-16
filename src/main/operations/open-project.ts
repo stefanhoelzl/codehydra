@@ -87,7 +87,8 @@ export interface RegisterHookResult {
   /** Optional when using collect() — handler may skip via self-selection. */
   readonly projectId?: ProjectId;
   readonly name?: string;
-  readonly remoteUrl?: string;
+  /** If true, the project is already open — skip workspace:open and event emission. */
+  readonly alreadyOpen?: boolean;
 }
 
 /** Input context for the "discover" hook point. */
@@ -147,17 +148,14 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
     }
     let projectId: ProjectId | undefined;
     let name: string | undefined;
-    let registeredRemoteUrl: string | undefined;
     for (const r of registerResults) {
       if (r.projectId) projectId = r.projectId;
       if (r.name !== undefined) name = r.name;
-      if (r.remoteUrl !== undefined) registeredRemoteUrl = r.remoteUrl;
+      if (r.alreadyOpen) alreadyOpen = true;
     }
     if (!projectId) {
       throw new Error("Register hook did not provide projectId");
     }
-
-    const finalRemoteUrl = registeredRemoteUrl ?? resolvedRemoteUrl;
 
     // 3. Discover: find existing workspaces
     const discoverCtx: DiscoverHookInput = { intent: ctx.intent, projectPath };
@@ -183,7 +181,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       name: name ?? new Path(projectPath).basename,
       workspaces: toIpcWorkspaces(workspaces, projectId),
       ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-      ...(finalRemoteUrl !== undefined && { remoteUrl: finalRemoteUrl }),
+      ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
     };
 
     // When already open, register + discover ran (idempotent) but skip side effects

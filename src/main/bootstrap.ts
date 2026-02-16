@@ -2157,7 +2157,8 @@ function wireDispatcher(
   };
 
   // Project modules: activate → load saved project configs, populate state, return paths.
-  // LocalProjectModule handles local paths; RemoteProjectModule handles URL-cloned projects.
+  // LocalProjectModule is sole project state owner for ALL projects.
+  // RemoteProjectModule handles filesystem concerns (clone on open, delete on close).
   const localProjectModule = createLocalProjectModule({
     projectStore,
     globalProvider,
@@ -2292,9 +2293,10 @@ function wireDispatcher(
       deleteWindowsLockModule,
       deleteCodeServerModule,
       deleteIpcBridge,
-      // Project:open modules
-      localProjectModule,
+      // Project modules: remote before local so RemoteProjectModule.close reads
+      // the project config before LocalProjectModule.close removes the store entry.
       remoteProjectModule,
+      localProjectModule,
       gitWorktreeWorkspaceModule,
       projectViewModule,
       // Project:close modules
