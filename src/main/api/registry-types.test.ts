@@ -47,7 +47,7 @@ describe("registry-types.paths", () => {
     // This test is compile-time verified by the `satisfies` constraint in registry-types.ts
     // At runtime, we verify the count matches
     // Note: lifecycle methods (getState, setAgent, setup, startServices) were removed in app:setup migration
-    const registryKeyCount = 21; // Count of all methods in MethodRegistry
+    const registryKeyCount = 18; // Count of all methods in MethodRegistry
     expect(ALL_METHOD_PATHS.length).toBe(registryKeyCount);
   });
 
@@ -74,14 +74,11 @@ describe("registry-types.paths", () => {
     // Project paths
     expectTypeOf<"projects.open">().toExtend<ProjectPath>();
     expectTypeOf<"projects.close">().toExtend<ProjectPath>();
-    expectTypeOf<"projects.list">().toExtend<ProjectPath>();
-    expectTypeOf<"projects.get">().toExtend<ProjectPath>();
     expectTypeOf<"projects.fetchBases">().toExtend<ProjectPath>();
 
     // Workspace paths
     expectTypeOf<"workspaces.create">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.remove">().toExtend<WorkspacePath>();
-    expectTypeOf<"workspaces.get">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.getStatus">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.getAgentSession">().toExtend<WorkspacePath>();
     expectTypeOf<"workspaces.setMetadata">().toExtend<WorkspacePath>();
@@ -99,7 +96,6 @@ describe("registry-types.payload", () => {
   it("extracts EmptyPayload for no-arg methods", () => {
     // Note: lifecycle.getState, lifecycle.setup removed in app:setup migration
     expectTypeOf<MethodPayload<"lifecycle.quit">>().toEqualTypeOf<EmptyPayload>();
-    expectTypeOf<MethodPayload<"projects.list">>().toEqualTypeOf<EmptyPayload>();
     expectTypeOf<MethodPayload<"ui.selectFolder">>().toEqualTypeOf<EmptyPayload>();
     expectTypeOf<MethodPayload<"ui.getActiveWorkspace">>().toEqualTypeOf<EmptyPayload>();
   });
@@ -112,11 +108,10 @@ describe("registry-types.payload", () => {
   });
 
   it("extracts ProjectIdPayload for project ID methods", () => {
-    expectTypeOf<MethodPayload<"projects.get">>().toEqualTypeOf<ProjectIdPayload>();
     expectTypeOf<MethodPayload<"projects.fetchBases">>().toEqualTypeOf<ProjectIdPayload>();
     // Verify shape
-    expectTypeOf<MethodPayload<"projects.get">>().toHaveProperty("projectId");
-    expectTypeOf<MethodPayload<"projects.get">["projectId"]>().toEqualTypeOf<ProjectId>();
+    expectTypeOf<MethodPayload<"projects.fetchBases">>().toHaveProperty("projectId");
+    expectTypeOf<MethodPayload<"projects.fetchBases">["projectId"]>().toEqualTypeOf<ProjectId>();
   });
 
   it("extracts ProjectClosePayload for projects.close", () => {
@@ -147,7 +142,6 @@ describe("registry-types.payload", () => {
   });
 
   it("extracts WorkspaceRefPayload for workspace ref methods", () => {
-    expectTypeOf<MethodPayload<"workspaces.get">>().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<MethodPayload<"workspaces.getStatus">>().toEqualTypeOf<WorkspaceRefPayload>();
     expectTypeOf<
       MethodPayload<"workspaces.getAgentSession">
@@ -197,7 +191,7 @@ describe("registry-types.handler", () => {
     expectTypeOf<MethodHandler<"lifecycle.quit">>().toEqualTypeOf<
       MethodRegistry["lifecycle.quit"]
     >();
-    expectTypeOf<MethodHandler<"projects.list">>().toEqualTypeOf<MethodRegistry["projects.list"]>();
+    expectTypeOf<MethodHandler<"projects.open">>().toEqualTypeOf<MethodRegistry["projects.open"]>();
     expectTypeOf<MethodHandler<"workspaces.create">>().toEqualTypeOf<
       MethodRegistry["workspaces.create"]
     >();
@@ -213,8 +207,6 @@ describe("registry-types.result", () => {
     // Project methods
     expectTypeOf<MethodResult<"projects.open">>().toEqualTypeOf<Project>();
     expectTypeOf<MethodResult<"projects.close">>().toEqualTypeOf<void>();
-    expectTypeOf<MethodResult<"projects.list">>().toEqualTypeOf<readonly Project[]>();
-    expectTypeOf<MethodResult<"projects.get">>().toEqualTypeOf<Project | undefined>();
     expectTypeOf<MethodResult<"projects.fetchBases">>().toEqualTypeOf<{
       readonly bases: readonly BaseInfo[];
     }>();
@@ -222,7 +214,6 @@ describe("registry-types.result", () => {
     // Workspace methods
     expectTypeOf<MethodResult<"workspaces.create">>().toEqualTypeOf<Workspace>();
     expectTypeOf<MethodResult<"workspaces.remove">>().toEqualTypeOf<{ started: boolean }>();
-    expectTypeOf<MethodResult<"workspaces.get">>().toEqualTypeOf<Workspace | undefined>();
     expectTypeOf<MethodResult<"workspaces.getStatus">>().toEqualTypeOf<WorkspaceStatus>();
     expectTypeOf<MethodResult<"workspaces.getAgentSession">>().toEqualTypeOf<AgentSession | null>();
     expectTypeOf<MethodResult<"workspaces.setMetadata">>().toEqualTypeOf<void>();

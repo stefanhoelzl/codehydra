@@ -112,37 +112,6 @@ describe("preload API", () => {
       });
     });
 
-    it("projects.list calls api:project:list", async () => {
-      const mockProjects = [
-        { id: "my-app-12345678", name: "my-app", path: "/test", workspaces: [] },
-      ];
-      mockIpcRenderer.invoke.mockResolvedValue(mockProjects);
-
-      const projects = exposedApi.projects as { list: () => Promise<unknown[]> };
-      const result = await projects.list();
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:list");
-      expect(result).toEqual(mockProjects);
-    });
-
-    it("projects.get calls api:project:get with projectId", async () => {
-      const mockProject = {
-        id: "my-app-12345678",
-        name: "my-app",
-        path: "/test",
-        workspaces: [],
-      };
-      mockIpcRenderer.invoke.mockResolvedValue(mockProject);
-
-      const projects = exposedApi.projects as { get: (projectId: string) => Promise<unknown> };
-      const result = await projects.get("my-app-12345678");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:get", {
-        projectId: "my-app-12345678",
-      });
-      expect(result).toEqual(mockProject);
-    });
-
     it("projects.fetchBases calls api:project:fetch-bases with projectId", async () => {
       const mockBases = { bases: [{ name: "main", isRemote: false }] };
       mockIpcRenderer.invoke.mockResolvedValue(mockBases);
@@ -201,27 +170,6 @@ describe("preload API", () => {
         keepBranch: true,
       });
       expect(result).toEqual(mockResult);
-    });
-
-    it("workspaces.get calls api:workspace:get", async () => {
-      const mockWorkspace = {
-        projectId: "my-app-12345678",
-        name: "feature",
-        branch: "feature",
-        path: "/ws/feature",
-      };
-      mockIpcRenderer.invoke.mockResolvedValue(mockWorkspace);
-
-      const workspaces = exposedApi.workspaces as {
-        get: (projectId: string, workspaceName: string) => Promise<unknown>;
-      };
-      const result = await workspaces.get("my-app-12345678", "feature");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get", {
-        projectId: "my-app-12345678",
-        workspaceName: "feature",
-      });
-      expect(result).toEqual(mockWorkspace);
     });
 
     it("workspaces.getStatus calls api:workspace:get-status", async () => {

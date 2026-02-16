@@ -25,7 +25,6 @@ function createMockCoreApi(overrides?: {
       projectId: "test-12345678" as ProjectId,
     }),
     remove: vi.fn().mockResolvedValue({ started: true }),
-    get: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
     getAgentSession: vi.fn().mockResolvedValue(14001),
     restartAgentServer: vi.fn().mockResolvedValue(14001),
@@ -48,8 +47,6 @@ function createMockCoreApi(overrides?: {
       path: "/path",
       workspaces: [],
     }),
-    list: vi.fn().mockResolvedValue([]),
-    get: vi.fn().mockResolvedValue(undefined),
     fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
   };
 

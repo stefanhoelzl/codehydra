@@ -35,8 +35,6 @@ export interface Api {
     open(path: string): Promise<Project>;
     close(projectId: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
     clone(url: string): Promise<Project>;
-    list(): Promise<readonly Project[]>;
-    get(projectId: string): Promise<Project | undefined>;
     fetchBases(projectId: string): Promise<{ readonly bases: readonly ApiBaseInfo[] }>;
   };
   workspaces: {
@@ -61,7 +59,6 @@ export interface Api {
         isRetry?: boolean;
       }
     ): Promise<{ started: boolean }>;
-    get(projectId: string, workspaceName: string): Promise<Workspace | undefined>;
     getStatus(projectId: string, workspaceName: string): Promise<WorkspaceStatus>;
     /**
      * Get the OpenCode server port for a workspace.

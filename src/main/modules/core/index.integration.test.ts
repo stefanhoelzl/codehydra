@@ -8,7 +8,7 @@
  * src/main/operations/close-project.integration.test.ts
  *
  * This file tests CoreModule-specific behavior
- * (e.g., workspace execute command, project queries).
+ * (e.g., workspace execute command, ui.selectFolder).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -16,8 +16,6 @@ import { CoreModule, type CoreModuleDeps } from "./index";
 import { createMockRegistry } from "../../api/registry.test-utils";
 import type { MockApiRegistry } from "../../api/registry.test-utils";
 import type { AppState } from "../../app-state";
-import type { IViewManager } from "../../managers/view-manager.interface";
-import { createMockLogger } from "../../../services/logging";
 
 // =============================================================================
 // Mock Factories
@@ -45,47 +43,9 @@ function createMockAppState(overrides: Partial<AppState> = {}): AppState {
   } as unknown as AppState;
 }
 
-function createMockViewManager(): IViewManager {
-  return {
-    getUIView: vi.fn(),
-    createWorkspaceView: vi.fn(),
-    destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
-    getWorkspaceView: vi.fn(),
-    updateBounds: vi.fn(),
-    setActiveWorkspace: vi.fn(),
-    getActiveWorkspacePath: vi.fn().mockReturnValue(null),
-    focusActiveWorkspace: vi.fn(),
-    focusUI: vi.fn(),
-    setMode: vi.fn(),
-    getMode: vi.fn().mockReturnValue("workspace"),
-    onModeChange: vi.fn().mockReturnValue(() => {}),
-    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
-    updateCodeServerPort: vi.fn(),
-  } as unknown as IViewManager;
-}
-
 function createMockDeps(overrides: Partial<CoreModuleDeps> = {}): CoreModuleDeps {
   const defaults: CoreModuleDeps = {
     appState: createMockAppState(),
-    viewManager: createMockViewManager(),
-    gitClient: {
-      clone: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../../../services").IGitClient,
-    pathProvider: {
-      projectsDir: "/test/projects",
-      remotesDir: "/test/remotes",
-    } as unknown as import("../../../services").PathProvider,
-    projectStore: {
-      findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      getProjectConfig: vi.fn().mockResolvedValue(undefined),
-      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../../../services").ProjectStore,
-    globalProvider: {
-      listBases: vi.fn().mockResolvedValue([]),
-      updateBases: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../../../services/git/git-worktree-provider").GitWorktreeProvider,
-    logger: createMockLogger(),
   };
   return { ...defaults, ...overrides };
 }
@@ -107,9 +67,6 @@ describe("core.registration", () => {
     new CoreModule(registry, deps);
 
     const registeredPaths = registry.getRegisteredPaths();
-    expect(registeredPaths).toContain("projects.list");
-    expect(registeredPaths).toContain("projects.get");
-    expect(registeredPaths).toContain("workspaces.get");
     expect(registeredPaths).toContain("workspaces.executeCommand");
     expect(registeredPaths).toContain("ui.selectFolder");
 

@@ -41,13 +41,6 @@ describe("IProjectApi Interface", () => {
         void url;
         throw new Error("mock");
       },
-      async list(): Promise<readonly Project[]> {
-        return [];
-      },
-      async get(projectId: ProjectId): Promise<Project | undefined> {
-        void projectId;
-        return undefined;
-      },
       async fetchBases(projectId: ProjectId): Promise<{ readonly bases: readonly BaseInfo[] }> {
         void projectId;
         return { bases: [] };
@@ -57,8 +50,6 @@ describe("IProjectApi Interface", () => {
     expect(api).toBeDefined();
     expect(typeof api.open).toBe("function");
     expect(typeof api.close).toBe("function");
-    expect(typeof api.list).toBe("function");
-    expect(typeof api.get).toBe("function");
     expect(typeof api.fetchBases).toBe("function");
   });
 });
@@ -87,14 +78,6 @@ describe("IWorkspaceApi Interface", () => {
         void workspaceName;
         void options;
         return { started: true };
-      },
-      async get(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName
-      ): Promise<Workspace | undefined> {
-        void projectId;
-        void workspaceName;
-        return undefined;
       },
       async getStatus(
         projectId: ProjectId,
@@ -156,7 +139,6 @@ describe("IWorkspaceApi Interface", () => {
     expect(api).toBeDefined();
     expect(typeof api.create).toBe("function");
     expect(typeof api.remove).toBe("function");
-    expect(typeof api.get).toBe("function");
     expect(typeof api.getStatus).toBe("function");
     expect(typeof api.setMetadata).toBe("function");
     expect(typeof api.getMetadata).toBe("function");

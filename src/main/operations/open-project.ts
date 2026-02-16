@@ -72,6 +72,8 @@ export interface ResolveHookResult {
   /** Optional when using collect() — handler may skip via self-selection. */
   readonly projectPath?: string;
   readonly remoteUrl?: string;
+  /** If true, the project is already open — skip workspace:open and event emission. */
+  readonly alreadyOpen?: boolean;
 }
 
 /** Result returned by handlers on the "discover" hook point. */
@@ -119,9 +121,11 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
     }
     let projectPath: string | undefined;
     let resolvedRemoteUrl: string | undefined;
+    let alreadyOpen = false;
     for (const r of resolveResults) {
       if (r.projectPath && !projectPath) projectPath = r.projectPath;
       if (r.remoteUrl !== undefined) resolvedRemoteUrl = r.remoteUrl;
+      if (r.alreadyOpen) alreadyOpen = true;
     }
     if (!projectPath) {
       throw new Error("Resolve hook did not provide projectPath");
@@ -172,34 +176,6 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
     }
 
-    // Dispatch workspace:open per discovered workspace (best-effort)
-    for (const workspace of workspaces) {
-      try {
-        const existingWorkspace: ExistingWorkspaceData = {
-          path: workspace.path.toString(),
-          name: workspace.name,
-          branch: workspace.branch,
-          metadata: workspace.metadata,
-        };
-
-        const openWsIntent: OpenWorkspaceIntent = {
-          type: INTENT_OPEN_WORKSPACE,
-          payload: {
-            projectId,
-            workspaceName: workspace.name,
-            base: workspace.metadata.base ?? "",
-            existingWorkspace,
-            projectPath,
-            keepInBackground: true,
-          },
-        };
-
-        await ctx.dispatch(openWsIntent);
-      } catch {
-        // Best-effort: individual workspace:open failures don't fail the project open
-      }
-    }
-
     // Build Project return value
     const project: Project = {
       id: projectId,
@@ -210,27 +186,58 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       ...(finalRemoteUrl !== undefined && { remoteUrl: finalRemoteUrl }),
     };
 
-    // Emit project:opened event
-    const event: ProjectOpenedEvent = {
-      type: EVENT_PROJECT_OPENED,
-      payload: { project },
-    };
-    ctx.emit(event);
+    // When already open, register + discover ran (idempotent) but skip side effects
+    if (!alreadyOpen) {
+      // Dispatch workspace:open per discovered workspace (best-effort)
+      for (const workspace of workspaces) {
+        try {
+          const existingWorkspace: ExistingWorkspaceData = {
+            path: workspace.path.toString(),
+            name: workspace.name,
+            branch: workspace.branch,
+            metadata: workspace.metadata,
+          };
 
-    // Dispatch workspace:switch for the first workspace
-    if (project.workspaces.length > 0) {
-      const firstWorkspace = project.workspaces[0]!;
-      const switchIntent: SwitchWorkspaceIntent = {
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: {
-          projectId,
-          workspaceName: extractWorkspaceName(firstWorkspace.path),
-        },
+          const openWsIntent: OpenWorkspaceIntent = {
+            type: INTENT_OPEN_WORKSPACE,
+            payload: {
+              projectId,
+              workspaceName: workspace.name,
+              base: workspace.metadata.base ?? "",
+              existingWorkspace,
+              projectPath,
+              keepInBackground: true,
+            },
+          };
+
+          await ctx.dispatch(openWsIntent);
+        } catch {
+          // Best-effort: individual workspace:open failures don't fail the project open
+        }
+      }
+
+      // Emit project:opened event
+      const event: ProjectOpenedEvent = {
+        type: EVENT_PROJECT_OPENED,
+        payload: { project },
       };
-      try {
-        await ctx.dispatch(switchIntent);
-      } catch {
-        // Best-effort: switch failure doesn't fail the project open
+      ctx.emit(event);
+
+      // Dispatch workspace:switch for the first workspace
+      if (project.workspaces.length > 0) {
+        const firstWorkspace = project.workspaces[0]!;
+        const switchIntent: SwitchWorkspaceIntent = {
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: {
+            projectId,
+            workspaceName: extractWorkspaceName(firstWorkspace.path),
+          },
+        };
+        try {
+          await ctx.dispatch(switchIntent);
+        } catch {
+          // Best-effort: switch failure doesn't fail the project open
+        }
       }
     }
 

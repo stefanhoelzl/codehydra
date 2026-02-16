@@ -19,6 +19,7 @@
  * #11: activate returns only local paths (filters out remote configs)
  * #12: activate returns empty when no projects saved
  * #13: activate populates internal state (close-resolve finds activated projects)
+ * #14: resolve returns alreadyOpen when path is in internal state
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -190,6 +191,30 @@ describe("LocalProjectModule Integration", () => {
       expect(results).toHaveLength(0);
       expect(errors).toHaveLength(1);
       expect(errors[0]!.message).toBe("Not a git repository");
+    });
+
+    it("returns alreadyOpen when path is in internal state (#14)", async () => {
+      const setup = createTestSetup();
+
+      // Register a project so it's in internal state
+      const registerCtx: RegisterHookInput = {
+        intent: openLocalIntent(PROJECT_PATH),
+        projectPath: new Path(PROJECT_PATH).toString(),
+      };
+      await setup.openHooks.collect<RegisterHookResult>("register", registerCtx);
+
+      // Resolve again — should return alreadyOpen and skip validation
+      const { results, errors } = await setup.openHooks.collect<ResolveHookResult>("resolve", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        projectPath: new Path(PROJECT_PATH).toString(),
+        alreadyOpen: true,
+      });
+      expect(setup.globalProvider.validateRepository).not.toHaveBeenCalled();
     });
   });
 

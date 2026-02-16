@@ -158,6 +158,39 @@ describe("RemoteProjectModule Integration", () => {
       expect(projectStore.saveProject).not.toHaveBeenCalled();
     });
 
+    it("returns alreadyOpen when URL maps to path already in internal state", async () => {
+      const { hookRegistry, projectStore } = createTestSetup();
+
+      // First: register the remote project via open-project/register to populate state
+      const projectPath = "/test/app-data/remotes/abc12345/repo";
+      const openHooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
+      const registerCtx: RegisterHookInput = {
+        intent: openProjectIntent({ git: "https://github.com/org/repo.git" }),
+        projectPath,
+        remoteUrl: "https://github.com/org/repo.git",
+      };
+      await openHooks.collect<RegisterHookResult | undefined>("register", registerCtx);
+
+      // Set up findByRemoteUrl to return the registered path
+      projectStore.findByRemoteUrl.mockResolvedValue(projectPath);
+
+      // Resolve again — should return alreadyOpen
+      const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
+      const { results, errors } = await openHooks.collect<ResolveHookResult | undefined>(
+        "resolve",
+        { intent }
+      );
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+
+      const result = results[0]!;
+      expect(result).toBeDefined();
+      expect(result!.projectPath).toBe(projectPath);
+      expect(result!.remoteUrl).toBe("https://github.com/org/repo.git");
+      expect(result!.alreadyOpen).toBe(true);
+    });
+
     it("returns undefined for local path (no git URL)", async () => {
       const { hookRegistry, projectStore } = createTestSetup();
 

@@ -129,7 +129,13 @@ export function createRemoteProjectModule(deps: {
                 url: expanded,
                 existingPath,
               });
-              return { projectPath: existingPath, remoteUrl: expanded };
+              // Already in internal state — signal short-circuit
+              const alreadyOpen = state.has(new Path(existingPath).toString());
+              return {
+                projectPath: existingPath,
+                remoteUrl: expanded,
+                ...(alreadyOpen && { alreadyOpen }),
+              };
             }
 
             // Clone

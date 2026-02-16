@@ -116,6 +116,11 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               return {};
             }
 
+            // Already open — skip validation, signal short-circuit
+            if (projects.has(path.toString())) {
+              return { projectPath: path.toString(), alreadyOpen: true };
+            }
+
             await globalProvider.validateRepository(path);
 
             return { projectPath: path.toString() };

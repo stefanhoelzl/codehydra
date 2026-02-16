@@ -173,8 +173,6 @@ export class ApiRegistry implements IApiRegistry {
         open: (path) => get("projects.open")({ path }),
         close: (projectId, options) => get("projects.close")({ projectId, ...options }),
         clone: (url) => get("projects.clone")({ url }),
-        list: () => get("projects.list")({}),
-        get: (projectId) => get("projects.get")({ projectId }),
         fetchBases: (projectId) => get("projects.fetchBases")({ projectId }),
       },
       workspaces: {
@@ -186,7 +184,6 @@ export class ApiRegistry implements IApiRegistry {
             workspaceName,
             ...options,
           }),
-        get: (projectId, workspaceName) => get("workspaces.get")({ projectId, workspaceName }),
         getStatus: (projectId, workspaceName) =>
           get("workspaces.getStatus")({ projectId, workspaceName }),
         getAgentSession: (projectId, workspaceName) =>
