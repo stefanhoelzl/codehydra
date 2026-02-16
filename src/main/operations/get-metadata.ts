@@ -1,10 +1,12 @@
 /**
  * GetMetadataOperation - Orchestrates workspace metadata reads.
  *
- * Runs the "get" hook point (where the actual provider read happens),
- * checks for errors, then returns the metadata from the extended hook context.
+ * Runs three hook points in sequence:
+ * 1. "resolve-project" - Resolves projectId to projectPath
+ * 2. "resolve-workspace" - Resolves workspaceName to workspacePath
+ * 3. "get" - Each handler performs the actual provider read
  *
- * No provider dependencies - the hook handler does the actual work.
+ * No provider dependencies - hook handlers do the actual work.
  * No domain events - this is a query operation.
  */
 
@@ -29,10 +31,41 @@ export interface GetMetadataIntent extends Intent<Readonly<Record<string, string
 export const INTENT_GET_METADATA = "workspace:get-metadata" as const;
 
 // =============================================================================
-// Operation
+// Hook Types
 // =============================================================================
 
 export const GET_METADATA_OPERATION_ID = "get-metadata";
+
+/**
+ * Per-handler result contract for the "resolve-project" hook point.
+ * Each handler returns projectPath if it owns the project, or `{}` to skip.
+ */
+export interface ResolveProjectHookResult {
+  readonly projectPath?: string;
+}
+
+/**
+ * Per-handler result contract for the "resolve-workspace" hook point.
+ * Each handler returns workspacePath if it can resolve, or `{}` to skip.
+ */
+export interface ResolveWorkspaceHookResult {
+  readonly workspacePath?: string;
+}
+
+/**
+ * Input context for "resolve-workspace" handlers — built from resolve-project results.
+ */
+export interface ResolveWorkspaceHookInput extends HookContext {
+  readonly projectPath: string;
+  readonly workspaceName: string;
+}
+
+/**
+ * Input context for "get" handlers — built from resolve-workspace results.
+ */
+export interface GetHookInput extends HookContext {
+  readonly workspacePath: string;
+}
 
 /**
  * Per-handler result contract for the "get" hook point.
@@ -41,6 +74,10 @@ export const GET_METADATA_OPERATION_ID = "get-metadata";
 export interface GetMetadataHookResult {
   readonly metadata: Readonly<Record<string, string>>;
 }
+
+// =============================================================================
+// Operation
+// =============================================================================
 
 export class GetMetadataOperation implements Operation<
   GetMetadataIntent,
@@ -51,12 +88,51 @@ export class GetMetadataOperation implements Operation<
   async execute(
     ctx: OperationContext<GetMetadataIntent>
   ): Promise<Readonly<Record<string, string>>> {
-    const hookCtx: HookContext = {
-      intent: ctx.intent,
-    };
+    const { payload } = ctx.intent;
 
-    // Run "get" hook — handler performs the actual provider read
-    const { results, errors } = await ctx.hooks.collect<GetMetadataHookResult>("get", hookCtx);
+    // 1. resolve-project — resolve projectId to projectPath
+    const { results: resolveProjectResults, errors: resolveProjectErrors } =
+      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", {
+        intent: ctx.intent,
+      });
+    if (resolveProjectErrors.length > 0) {
+      throw new AggregateError(resolveProjectErrors, "get-metadata resolve-project failed");
+    }
+
+    let projectPath: string | undefined;
+    for (const result of resolveProjectResults) {
+      if (result.projectPath !== undefined) projectPath = result.projectPath;
+    }
+    if (!projectPath) {
+      throw new Error(`Project not found: ${payload.projectId}`);
+    }
+
+    // 2. resolve-workspace — resolve workspaceName to workspacePath
+    const resolveWorkspaceCtx: ResolveWorkspaceHookInput = {
+      intent: ctx.intent,
+      projectPath,
+      workspaceName: payload.workspaceName,
+    };
+    const { results: resolveWorkspaceResults, errors: resolveWorkspaceErrors } =
+      await ctx.hooks.collect<ResolveWorkspaceHookResult>("resolve-workspace", resolveWorkspaceCtx);
+    if (resolveWorkspaceErrors.length > 0) {
+      throw new AggregateError(resolveWorkspaceErrors, "get-metadata resolve-workspace failed");
+    }
+
+    let workspacePath: string | undefined;
+    for (const result of resolveWorkspaceResults) {
+      if (result.workspacePath !== undefined) workspacePath = result.workspacePath;
+    }
+    if (!workspacePath) {
+      throw new Error(`Workspace not found: ${payload.workspaceName}`);
+    }
+
+    // 3. get — handler performs the actual provider read
+    const getCtx: GetHookInput = {
+      intent: ctx.intent,
+      workspacePath,
+    };
+    const { results, errors } = await ctx.hooks.collect<GetMetadataHookResult>("get", getCtx);
     if (errors.length > 0) {
       throw errors[0]!;
     }
