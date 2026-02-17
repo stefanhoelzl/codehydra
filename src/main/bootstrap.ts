@@ -145,6 +145,7 @@ import type {
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createBadgeModule } from "./modules/badge-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
+import { createTelemetryModule } from "./modules/telemetry-module";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
@@ -1937,41 +1938,13 @@ function wireDispatcher(
     },
   };
 
-  // TelemetryLifecycleModule: start → capture app_launched. stop → flush & shutdown.
-  const telemetryLifecycleModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            lifecycleRefs.telemetryService?.capture("app_launched", {
-              platform: lifecycleRefs.platformInfo.platform,
-              arch: lifecycleRefs.platformInfo.arch,
-              isDevelopment: lifecycleRefs.buildInfo.isDevelopment,
-              agent: lifecycleRefs.selectedAgentType,
-            });
-            return {};
-          },
-        },
-      },
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              if (lifecycleRefs.telemetryService) {
-                await lifecycleRefs.telemetryService.shutdown();
-              }
-            } catch (error) {
-              lifecycleLogger.error(
-                "Telemetry lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
+  const telemetryLifecycleModule = createTelemetryModule({
+    telemetryService: lifecycleRefs.telemetryService,
+    platformInfo: lifecycleRefs.platformInfo,
+    buildInfo: lifecycleRefs.buildInfo,
+    selectedAgentType: lifecycleRefs.selectedAgentType,
+    logger: lifecycleLogger,
+  });
 
   // AutoUpdaterLifecycleModule: start → start, wire update-available→title.
   // stop → dispose.
