@@ -482,7 +482,7 @@ describe("DeletionProgressView", () => {
         operations: [
           { id: "killing-blockers", label: "Killing blocking tasks...", status: "in-progress" },
           { id: "kill-terminals", label: "Terminating processes", status: "pending" },
-          { id: "stop-server", label: "Stopping OpenCode server", status: "pending" },
+          { id: "stop-server", label: "Stopping agent server", status: "pending" },
           { id: "cleanup-vscode", label: "Closing VS Code view", status: "pending" },
           { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
         ],
@@ -512,7 +512,7 @@ describe("DeletionProgressView", () => {
         operations: [
           { id: "closing-handles", label: "Closing blocking handles...", status: "in-progress" },
           { id: "kill-terminals", label: "Terminating processes", status: "pending" },
-          { id: "stop-server", label: "Stopping OpenCode server", status: "pending" },
+          { id: "stop-server", label: "Stopping agent server", status: "pending" },
           { id: "cleanup-vscode", label: "Closing VS Code view", status: "pending" },
           { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
         ],
@@ -542,7 +542,7 @@ describe("DeletionProgressView", () => {
         operations: [
           { id: "killing-blockers", label: "Killing blocking tasks...", status: "done" },
           { id: "kill-terminals", label: "Terminating processes", status: "in-progress" },
-          { id: "stop-server", label: "Stopping OpenCode server", status: "pending" },
+          { id: "stop-server", label: "Stopping agent server", status: "pending" },
           { id: "cleanup-vscode", label: "Closing VS Code view", status: "pending" },
           { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
         ],
@@ -586,7 +586,7 @@ describe("DeletionProgressView", () => {
       ...defaultProgress,
       operations: [
         { id: "kill-terminals", label: "Terminating processes", status: "done" },
-        { id: "stop-server", label: "Stopping OpenCode server", status: "done" },
+        { id: "stop-server", label: "Stopping agent server", status: "done" },
         { id: "cleanup-vscode", label: "Closing VS Code view", status: "done" },
         {
           id: "cleanup-workspace",
