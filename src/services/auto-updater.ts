@@ -52,7 +52,7 @@ export class AutoUpdater {
 
     // Configure electron-updater
     // autoInstallOnAppQuit is true by default
-    autoUpdater.autoDownload = true;
+    autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
 
     // Route electron-updater logs through app logger
@@ -65,9 +65,11 @@ export class AutoUpdater {
 
     // Wire up event handlers
     this.handleError = this.handleError.bind(this);
+    this.handleUpdateAvailable = this.handleUpdateAvailable.bind(this);
     this.handleUpdateDownloaded = this.handleUpdateDownloaded.bind(this);
 
     autoUpdater.on("error", this.handleError);
+    autoUpdater.on("update-available", this.handleUpdateAvailable);
     autoUpdater.on("update-downloaded", this.handleUpdateDownloaded);
   }
 
@@ -143,6 +145,7 @@ export class AutoUpdater {
 
     // Remove event listeners
     autoUpdater.off("error", this.handleError);
+    autoUpdater.off("update-available", this.handleUpdateAvailable);
     autoUpdater.off("update-downloaded", this.handleUpdateDownloaded);
 
     this.callbacks.clear();
@@ -164,6 +167,19 @@ export class AutoUpdater {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  /**
+   * Handle update-available events by starting the download manually.
+   * (autoDownload is disabled to avoid unhandled promise rejections from
+   * electron-updater's internal download promise chain.)
+   */
+  private handleUpdateAvailable(): void {
+    autoUpdater.downloadUpdate().catch((error: unknown) => {
+      this.logger.warn("Update download failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   /**

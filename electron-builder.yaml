@@ -79,7 +79,7 @@ linux:
 
 # AppImage-specific settings
 appImage:
-  artifactName: ${productName}-linux-${arch}.${ext}
+  artifactName: ${productName}-linux-x64.${ext}
 
 # macOS configuration
 mac:
