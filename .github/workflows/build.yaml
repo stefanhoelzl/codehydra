@@ -139,6 +139,7 @@ jobs:
 
       - name: Install Wine
         if: matrix.wine
+        timeout-minutes: 5
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
