@@ -34,12 +34,22 @@ export class UACCancelledError extends Error {
 export interface WorkspaceLockHandler {
   /**
    * Detect processes blocking access to files in the given path.
+   * Uses Restart Manager + CWD scan + handle enumeration (full detection).
    * Returns empty array if no blocking processes found or on non-Windows platforms.
    *
    * @param path - Directory path to check for blocking processes
    * @returns Array of blocking process information with locked files and CWD
    */
   detect(path: Path): Promise<BlockingProcess[]>;
+
+  /**
+   * Detect processes with CWD under the given path (lightweight, no RM/handle scan).
+   * Used during the release phase to find and kill terminal processes before deletion.
+   *
+   * @param path - Directory path to check for CWD-based blocking
+   * @returns Array of blocking process information (files array will be empty)
+   */
+  detectCwd(path: Path): Promise<BlockingProcess[]>;
 
   /**
    * Kill processes by their PIDs using taskkill.
@@ -110,6 +120,17 @@ export class WindowsWorkspaceLockHandler implements WorkspaceLockHandler {
   ) {}
 
   async detect(path: Path): Promise<BlockingProcess[]> {
+    return this.runDetectAction(path, "Detect");
+  }
+
+  async detectCwd(path: Path): Promise<BlockingProcess[]> {
+    return this.runDetectAction(path, "DetectCwd");
+  }
+
+  private async runDetectAction(
+    path: Path,
+    action: "Detect" | "DetectCwd"
+  ): Promise<BlockingProcess[]> {
     if (!this.scriptPath) {
       throw new Error("script path not configured");
     }
@@ -124,13 +145,16 @@ export class WindowsWorkspaceLockHandler implements WorkspaceLockHandler {
       "-BasePath",
       path.toNative(),
       "-Action",
-      "Detect",
+      action,
     ]);
 
     const result = await proc.wait(DETECT_TIMEOUT_MS);
 
     if (result.running) {
-      this.logger.warn("Blocking process detection timed out", { path: path.toString() });
+      this.logger.warn("Blocking process detection timed out", {
+        path: path.toString(),
+        action,
+      });
       await proc.kill(1000, 1000);
       return [];
     }
@@ -138,6 +162,7 @@ export class WindowsWorkspaceLockHandler implements WorkspaceLockHandler {
     if (result.exitCode !== 0) {
       this.logger.warn("Blocking process detection failed", {
         path: path.toString(),
+        action,
         exitCode: result.exitCode,
         stderr: result.stderr,
       });

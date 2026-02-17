@@ -130,6 +130,24 @@ export function createMockWorkspaceLockHandler(
         }));
     },
 
+    async detectCwd(path: Path): Promise<BlockingProcess[]> {
+      mock.detectCalls++;
+      mock.lastDetectPath = path;
+      options.onDetect?.(path);
+
+      // Same behavioral simulation as detect, but only returns processes with a CWD
+      if (state.handlesClosed) {
+        return [];
+      }
+
+      return state.initialProcesses
+        .filter((p) => !state.killedPids.has(p.pid) && p.cwd !== null)
+        .map((p) => ({
+          ...p,
+          cwd: p.cwd ?? null,
+        }));
+    },
+
     async killProcesses(pids: number[]): Promise<void> {
       mock.killProcessesCalls++;
       mock.lastKillPids = pids;

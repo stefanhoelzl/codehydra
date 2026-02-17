@@ -243,20 +243,16 @@
     openRemoveDialog(workspaceRef);
   }
 
-  // Handle retry with options (consolidated handler for retry variants)
-  function handleRetryWithOptions(unblock?: "kill" | "close" | "ignore", isRetry?: boolean): void {
+  // Handle retry (Kill & Retry when blockers shown, plain retry otherwise)
+  function handleRetry(): void {
     if (!activeDeletionState) return;
     logger.debug("Retrying deletion", {
       workspaceName: activeDeletionState.workspaceName,
-      unblock: unblock ?? "none",
-      isRetry: isRetry ?? false,
     });
-    // Fire-and-forget - new progress events will update the state
+    // Fire-and-forget - signals the waiting pipeline via workspaces.remove handler
     void api.workspaces.remove(activeDeletionState.projectId, activeDeletionState.workspaceName, {
       keepBranch: activeDeletionState.keepBranch,
       skipSwitch: true,
-      ...(unblock !== undefined && { unblock }),
-      ...(isRetry !== undefined && { isRetry }),
     });
   }
 
@@ -320,11 +316,8 @@
   {#if activeDeletionState}
     <DeletionProgressView
       progress={activeDeletionState}
-      onRetry={() => handleRetryWithOptions(undefined, true)}
+      onRetry={handleRetry}
       onDismiss={handleDismiss}
-      onKillAndRetry={() => handleRetryWithOptions("kill")}
-      onCloseHandlesAndRetry={() => handleRetryWithOptions("close")}
-      onIgnoreBlockers={() => handleRetryWithOptions("ignore")}
     />
   {:else if activeLoading}
     <WorkspaceLoadingOverlay />
