@@ -75,20 +75,26 @@ jobs:
         run: |
           mkdir -p release-assets
 
-          # Copy file artifacts
+          # Linux AppImage (raw file for auto-updater compatibility)
           cp artifacts/CodeHydra-linux-x64.AppImage/CodeHydra-linux-x64.AppImage \
              release-assets/CodeHydra-linux-x64.AppImage
+
+          # macOS tar.gz archives (preserves framework symlinks + permissions)
+          cp "artifacts/CodeHydra-darwin-x64.tar.gz/CodeHydra-darwin-x64.tar.gz" \
+             release-assets/CodeHydra-darwin-x64.tar.gz
+          cp "artifacts/CodeHydra-darwin-arm64.tar.gz/CodeHydra-darwin-arm64.tar.gz" \
+             release-assets/CodeHydra-darwin-arm64.tar.gz
+
+          # Windows installer
           cp artifacts/CodeHydra-win-installer-x64.exe/CodeHydra-win-installer-x64.exe \
              release-assets/CodeHydra-win-installer-x64.exe
 
-          # Zip directory artifacts
+          # Windows portable (zip — no symlink/permission issues)
           cd artifacts
           zip -r ../release-assets/CodeHydra-win-portable-x64.zip CodeHydra-win-portable-x64
-          zip -r ../release-assets/CodeHydra-darwin-x64.zip CodeHydra-darwin-x64
-          zip -r ../release-assets/CodeHydra-darwin-arm64.zip CodeHydra-darwin-arm64
           cd ..
 
-          # Copy update metadata files for auto-updater
+          # Update metadata for auto-updater
           cp artifacts/update-metadata-win-installer-x64/latest.yml \
              release-assets/latest.yml
           cp artifacts/update-metadata-linux-x64/latest-linux.yml \

@@ -6,6 +6,7 @@ import platform
 import stat
 import subprocess
 import sys
+import tarfile
 import zipfile
 from importlib.metadata import version as get_version
 from pathlib import Path
@@ -15,8 +16,8 @@ REPO = "stefanhoelzl/codehydra"
 
 ASSET_MAP = {
     ("Linux", "x86_64"): "CodeHydra-linux-x64.AppImage",
-    ("Darwin", "x86_64"): "CodeHydra-darwin-x64.zip",
-    ("Darwin", "arm64"): "CodeHydra-darwin-arm64.zip",
+    ("Darwin", "x86_64"): "CodeHydra-darwin-x64.tar.gz",
+    ("Darwin", "arm64"): "CodeHydra-darwin-arm64.tar.gz",
     ("Windows", "AMD64"): "CodeHydra-win-portable-x64.zip",
 }
 
@@ -50,7 +51,7 @@ def get_binary_path(cache_dir: Path, asset_name: str) -> Path:
     if system == "Windows":
         return cache_dir / "CodeHydra-win-portable-x64" / "CodeHydra.exe"
     elif system == "Darwin":
-        app_name = asset_name.replace(".zip", "")
+        app_name = asset_name.removesuffix(".tar.gz")
         return cache_dir / app_name / "CodeHydra.app" / "Contents" / "MacOS" / "CodeHydra"
     return cache_dir / asset_name
 
@@ -81,7 +82,12 @@ def main() -> None:
         download_path = cache_dir / asset_name
         download(download_url, download_path, pkg_version)
 
-        if asset_name.endswith(".zip"):
+        if asset_name.endswith(".tar.gz"):
+            print("Extracting...")
+            with tarfile.open(download_path, "r:gz") as tf:
+                tf.extractall(cache_dir)
+            download_path.unlink()
+        elif asset_name.endswith(".zip"):
             print("Extracting...")
             with zipfile.ZipFile(download_path, "r") as zf:
                 zf.extractall(cache_dir)
