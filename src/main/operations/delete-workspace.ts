@@ -81,6 +81,7 @@ export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
  */
 export interface ShutdownHookResult {
   readonly wasActive?: boolean;
+  readonly serverName?: string;
   readonly error?: string;
 }
 
@@ -144,6 +145,7 @@ interface MergedResolveWorkspace {
 
 interface MergedShutdown {
   readonly wasActive: boolean;
+  readonly serverName: string | undefined;
   readonly errors: readonly string[];
 }
 
@@ -197,15 +199,17 @@ function mergeShutdown(
   collectErrors: readonly Error[]
 ): MergedShutdown {
   let wasActive = false;
+  let serverName: string | undefined;
   const errors: string[] = [];
 
   for (const e of collectErrors) errors.push(e.message);
   for (const r of results) {
     if (r.wasActive) wasActive = true;
+    if (r.serverName && !serverName) serverName = r.serverName;
     if (r.error) errors.push(r.error);
   }
 
-  return { wasActive, errors };
+  return { wasActive, serverName, errors };
 }
 
 function mergeRelease(
@@ -483,7 +487,7 @@ export class DeleteWorkspaceOperation implements Operation<
     });
     operations.push({
       id: "stop-server",
-      label: "Stopping OpenCode server",
+      label: `Stopping ${state.shutdown?.serverName ?? "agent"} server`,
       status: shutdownStatus,
       ...(shutdownError && { error: shutdownError }),
     });

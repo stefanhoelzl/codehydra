@@ -1472,6 +1472,9 @@ function wireDispatcher(
     },
   };
 
+  const agentServerName =
+    lifecycleRefs.selectedAgentType === "claude" ? "Claude Code hook" : "OpenCode";
+
   const deleteAgentModule: IntentModule = {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
@@ -1509,13 +1512,15 @@ function wireDispatcher(
                 payload.workspacePath as WorkspacePath
               );
 
-              return serverError ? { error: serverError } : {};
+              return serverError
+                ? { serverName: agentServerName, error: serverError }
+                : { serverName: agentServerName };
             } catch (error) {
               if (payload.force) {
                 logger.warn("AgentModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
-                return { error: getErrorMessage(error) };
+                return { serverName: agentServerName, error: getErrorMessage(error) };
               }
               throw error;
             }
