@@ -80,7 +80,7 @@ export interface IWorkspaceApi {
    *
    * @param projectId Project containing the workspace
    * @param workspaceName Name of the workspace to remove
-   * @param options Optional removal options (keepBranch, skipSwitch, force, unblock, isRetry)
+   * @param options Optional removal options (keepBranch, skipSwitch, force)
    */
   remove(
     projectId: ProjectId,
@@ -89,8 +89,6 @@ export interface IWorkspaceApi {
       keepBranch?: boolean;
       skipSwitch?: boolean;
       force?: boolean;
-      unblock?: "kill" | "close" | "ignore";
-      isRetry?: boolean;
     }
   ): Promise<{ started: boolean }>;
   getStatus(projectId: ProjectId, workspaceName: WorkspaceName): Promise<WorkspaceStatus>;

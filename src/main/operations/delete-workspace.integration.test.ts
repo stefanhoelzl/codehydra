@@ -3,21 +3,13 @@
  *
  * Tests the full delete-workspace pipeline through dispatcher.dispatch():
  * - Operation orchestrates hooks (shutdown -> release -> delete)
+ * - On delete failure: detect -> emit -> wait -> flush -> delete (retry loop)
  * - Interceptor enforces idempotency (per-workspace)
  * - Event subscribers update state and emit IPC events
  * - Progress callback captures DeletionProgress objects
  *
  * All tests use behavioral mocks -- state changes and outcomes are verified,
  * not call tracking. Windows behavior is tested via behavioral mocks on all platforms.
- *
- * Regression coverage (APP_LIFECYCLE_INTENTS #11):
- * The deleteAgentModule's shutdown hook behavior (stopping per-workspace server) is
- * tested in test #9 ("agent resources cleaned up after deletion"). This verifies that
- * the extended agentModule (which now also has app:start/stop hooks in the production
- * bootstrap) still correctly handles per-workspace server shutdown via its
- * workspace:delete shutdown hook. The badgeModule's workspace:deleted event handler
- * (evicting from map) is also verified via the IPC event bridge tests which depend
- * on event emission.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -39,6 +31,9 @@ import type {
   ShutdownHookResult,
   ReleaseHookResult,
   DeleteHookResult,
+  DetectHookResult,
+  FlushHookResult,
+  FlushHookInput,
   ResolveProjectHookResult,
   ResolveWorkspaceHookResult,
   ResolveWorkspaceHookInput,
@@ -300,10 +295,9 @@ function createTestWorkspaceFileService(): IWorkspaceFileService {
 // Test Harness: Wires all modules with real Dispatcher + HookRegistry
 // =============================================================================
 
-// =============================================================================
-
 interface TestHarness {
   dispatcher: Dispatcher;
+  deleteOp: DeleteWorkspaceOperation;
   progressCaptures: DeletionProgress[];
   appState: MockAppState;
   testState: TestAppState;
@@ -313,6 +307,9 @@ interface TestHarness {
   emittedEvents: Array<{ event: string; payload: unknown }>;
   inProgressDeletions: Set<string>;
   globalProviderState: { removed: boolean };
+  globalProviderMock: {
+    globalProvider: { removeWorkspace: ReturnType<typeof vi.fn> };
+  };
 }
 
 function createTestHarness(options?: {
@@ -358,7 +355,8 @@ function createTestHarness(options?: {
   const workspaceFileService = createTestWorkspaceFileService();
 
   // Register operations
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation(emitProgress));
+  const deleteOp = new DeleteWorkspaceOperation(emitProgress);
+  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
   dispatcher.registerOperation(
     INTENT_SWITCH_WORKSPACE,
     new SwitchWorkspaceOperation(
@@ -544,51 +542,44 @@ function createTestHarness(options?: {
               return {};
             }
 
-            if (payload.unblock === "kill" || payload.unblock === "close") {
+            // CWD-only scan: find and kill processes whose CWD is under workspace
+            try {
+              const cwdProcesses = await workspaceLockHandler.detectCwd(
+                new Path(payload.workspacePath)
+              );
+              if (cwdProcesses.length > 0) {
+                await workspaceLockHandler.killProcesses(cwdProcesses.map((p) => p.pid));
+              }
+            } catch {
+              // Non-fatal
+            }
+            return {};
+          },
+        },
+        detect: {
+          handler: async (ctx: HookContext): Promise<DetectHookResult> => {
+            if (!workspaceLockHandler) return {};
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+
+            try {
+              const detected = await workspaceLockHandler.detect(new Path(payload.workspacePath));
+              return { blockingProcesses: detected };
+            } catch {
+              return { blockingProcesses: [] };
+            }
+          },
+        },
+        flush: {
+          handler: async (ctx: HookContext): Promise<FlushHookResult> => {
+            if (!workspaceLockHandler) return {};
+            const { blockingPids } = ctx as FlushHookInput;
+            if (blockingPids.length > 0) {
               try {
-                if (payload.unblock === "kill") {
-                  const detected = await workspaceLockHandler.detect(
-                    new Path(payload.workspacePath)
-                  );
-                  if (detected.length > 0) {
-                    logger.info("Killing blocking processes before deletion", {
-                      workspacePath: payload.workspacePath,
-                      pids: detected.map((p) => p.pid).join(","),
-                    });
-                    await workspaceLockHandler.killProcesses(detected.map((p) => p.pid));
-                  }
-                  return { unblockPerformed: true };
-                } else {
-                  logger.info("Closing handles before deletion", {
-                    workspacePath: payload.workspacePath,
-                  });
-                  await workspaceLockHandler.closeHandles(new Path(payload.workspacePath));
-                  return { unblockPerformed: true };
-                }
+                await workspaceLockHandler.killProcesses([...blockingPids]);
               } catch (error) {
-                return { unblockPerformed: false, error: getErrorMessage(error) };
+                return { error: getErrorMessage(error) };
               }
             }
-
-            if (!payload.isRetry && payload.unblock !== "ignore") {
-              try {
-                const detected = await workspaceLockHandler.detect(new Path(payload.workspacePath));
-
-                if (detected.length > 0) {
-                  return {
-                    blockingProcesses: detected,
-                    error: `Blocked by ${detected.length} process(es)`,
-                  };
-                }
-                return { blockingProcesses: [] };
-              } catch (error) {
-                logger.warn("Detection failed, continuing with deletion", {
-                  error: getErrorMessage(error),
-                });
-                return {};
-              }
-            }
-
             return {};
           },
         },
@@ -619,30 +610,7 @@ function createTestHarness(options?: {
                 });
                 return { error: getErrorMessage(error) };
               }
-
-              let reactiveBlockingProcesses: readonly BlockingProcess[] | undefined;
-              if (workspaceLockHandler) {
-                try {
-                  const detected = await workspaceLockHandler.detect(new Path(workspacePath));
-                  if (detected.length > 0) {
-                    reactiveBlockingProcesses = detected;
-                    logger.info("Detected blocking processes", {
-                      workspacePath,
-                      count: detected.length,
-                    });
-                  }
-                } catch (detectError) {
-                  logger.warn("Failed to detect blocking processes", {
-                    workspacePath,
-                    error: getErrorMessage(detectError),
-                  });
-                }
-              }
-
-              return {
-                ...(reactiveBlockingProcesses && { reactiveBlockingProcesses }),
-                error: getErrorMessage(error),
-              };
+              throw error;
             }
           },
         },
@@ -814,6 +782,7 @@ function createTestHarness(options?: {
 
   return {
     dispatcher,
+    deleteOp,
     progressCaptures,
     appState,
     testState,
@@ -823,6 +792,7 @@ function createTestHarness(options?: {
     emittedEvents,
     inProgressDeletions,
     globalProviderState: globalProviderMock,
+    globalProviderMock: globalProviderMock as unknown as TestHarness["globalProviderMock"],
   };
 }
 
@@ -985,17 +955,17 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
 });
 
 describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
-  it("test 6: Windows blocker detection stops deletion", async () => {
-    const blockingProcesses = [
-      { pid: 1234, name: "node.exe", commandLine: "node server.js", files: ["file.txt"], cwd: "." },
+  it("test 6: CWD processes found in release → auto-killed → deletion succeeds", async () => {
+    const cwdProcesses: BlockingProcess[] = [
+      { pid: 1234, name: "bash.exe", commandLine: "bash", files: [], cwd: "." },
     ];
+    let detectCwdCalls = 0;
 
     const workspaceLockHandler: WorkspaceLockHandler = {
-      detect: vi.fn().mockImplementation(async (path: Path) => {
-        if (path.toString() === new Path(WORKSPACE_PATH).toString()) {
-          return blockingProcesses;
-        }
-        return [];
+      detect: vi.fn().mockResolvedValue([]),
+      detectCwd: vi.fn().mockImplementation(async () => {
+        detectCwdCalls++;
+        return cwdProcesses;
       }),
       killProcesses: vi.fn().mockResolvedValue(undefined),
       closeHandles: vi.fn().mockResolvedValue(undefined),
@@ -1007,26 +977,186 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     const result = await harness.dispatcher.dispatch(intent);
     expect(result).toEqual({ started: true });
 
+    // CWD processes were detected and killed in release
+    expect(detectCwdCalls).toBe(1);
+    expect(workspaceLockHandler.killProcesses).toHaveBeenCalledWith([1234]);
+
+    // Worktree removed (deletion succeeded)
+    expect(harness.testState.worktreeRemoved).toBe(true);
+
+    // No blocking processes in final progress (CWD kill was transparent)
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.completed).toBe(true);
+    expect(finalProgress.hasErrors).toBe(false);
+    expect(finalProgress.blockingProcesses).toBeUndefined();
+  });
+
+  it("test 22: delete fails → detect finds blockers → progress shows process list → signal retry → flush kills PIDs → delete succeeds", async () => {
+    const blockingProcesses: BlockingProcess[] = [
+      { pid: 5678, name: "node.exe", commandLine: "node server.js", files: ["file.txt"], cwd: "." },
+    ];
+
+    let deleteAttempts = 0;
+    const workspaceLockHandler: WorkspaceLockHandler = {
+      detect: vi.fn().mockResolvedValue(blockingProcesses),
+      detectCwd: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn().mockResolvedValue(undefined),
+      closeHandles: vi.fn().mockResolvedValue(undefined),
+    };
+
+    // Make first delete fail, second succeed
+    const globalProvider = {
+      removeWorkspace: vi.fn().mockImplementation(async () => {
+        deleteAttempts++;
+        if (deleteAttempts === 1) {
+          throw new Error("Permission denied");
+        }
+      }),
+    };
+
+    const harness = createTestHarness({ workspaceLockHandler });
+    // Override the worktree module's provider
+    harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
+
+    const intent = buildDeleteIntent();
+
+    // Start deletion (will block at waitForRetryChoice)
+    const dispatchPromise = harness.dispatcher.dispatch(intent);
+
+    // Wait for the pipeline to reach the retry wait
+    await vi.waitFor(() => {
+      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
+    });
+
+    // Verify progress shows blocking processes
+    const progressWithBlockers = harness.progressCaptures.find(
+      (p) => p.blockingProcesses && p.blockingProcesses.length > 0
+    );
+    expect(progressWithBlockers).toBeDefined();
+    expect(progressWithBlockers!.blockingProcesses![0]!.pid).toBe(5678);
+    expect(progressWithBlockers!.completed).toBe(true);
+    expect(progressWithBlockers!.hasErrors).toBe(true);
+
+    // Verify detecting-blockers operation in progress
+    const detectOp = progressWithBlockers!.operations.find((op) => op.id === "detecting-blockers");
+    expect(detectOp).toBeDefined();
+    expect(detectOp!.status).toBe("error");
+
+    // Signal retry
+    harness.deleteOp.signalRetry(WORKSPACE_PATH);
+
+    // Wait for completion
+    const result = await dispatchPromise;
+    expect(result).toEqual({ started: true });
+
+    // Flush killed the PIDs
+    expect(workspaceLockHandler.killProcesses).toHaveBeenCalledWith([5678]);
+
+    // Second delete succeeded
+    expect(deleteAttempts).toBe(2);
+
+    // Final progress: success
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.completed).toBe(true);
+    expect(finalProgress.hasErrors).toBe(false);
+  });
+
+  it("test 23: delete fails → detect → signal dismiss → pipeline exits with hasErrors", async () => {
+    const blockingProcesses: BlockingProcess[] = [
+      { pid: 9999, name: "code.exe", commandLine: "code .", files: ["file.txt"], cwd: null },
+    ];
+
+    const workspaceLockHandler: WorkspaceLockHandler = {
+      detect: vi.fn().mockResolvedValue(blockingProcesses),
+      detectCwd: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn().mockResolvedValue(undefined),
+      closeHandles: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const harness = createTestHarness({
+      workspaceLockHandler,
+      worktreeRemoveError: "Permission denied",
+    });
+    const intent = buildDeleteIntent();
+
+    // Start deletion
+    const dispatchPromise = harness.dispatcher.dispatch(intent);
+
+    // Wait for retry prompt
+    await vi.waitFor(() => {
+      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
+    });
+
+    // Signal dismiss
+    harness.deleteOp.signalDismiss(WORKSPACE_PATH);
+
+    const result = await dispatchPromise;
+    expect(result).toEqual({ started: true });
+
     // Workspace should NOT be removed from state (no workspace:deleted event)
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
 
     // No IPC workspace:removed event
     const ipcEvent = harness.emittedEvents.find((e) => e.event === "workspace:removed");
     expect(ipcEvent).toBeUndefined();
+  });
 
-    // Progress should show detecting-blockers as error
+  it("test 24: multiple retry loop: detect → retry → flush → delete(fails) → detect → retry → flush → delete(succeeds)", async () => {
+    const blockingProcesses: BlockingProcess[] = [
+      { pid: 1111, name: "node.exe", commandLine: "node", files: ["a.js"], cwd: null },
+    ];
+
+    let deleteAttempts = 0;
+    const workspaceLockHandler: WorkspaceLockHandler = {
+      detect: vi.fn().mockResolvedValue(blockingProcesses),
+      detectCwd: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn().mockResolvedValue(undefined),
+      closeHandles: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const globalProvider = {
+      removeWorkspace: vi.fn().mockImplementation(async () => {
+        deleteAttempts++;
+        // First two fail, third succeeds
+        if (deleteAttempts <= 2) {
+          throw new Error("Permission denied");
+        }
+      }),
+    };
+
+    const harness = createTestHarness({ workspaceLockHandler });
+    harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
+
+    const intent = buildDeleteIntent();
+    const dispatchPromise = harness.dispatcher.dispatch(intent);
+
+    // First retry cycle
+    await vi.waitFor(() => {
+      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
+    });
+    harness.deleteOp.signalRetry(WORKSPACE_PATH);
+
+    // Second retry cycle (second delete also fails)
+    await vi.waitFor(() => {
+      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
+    });
+    harness.deleteOp.signalRetry(WORKSPACE_PATH);
+
+    // Third delete succeeds
+    const result = await dispatchPromise;
+    expect(result).toEqual({ started: true });
+    expect(deleteAttempts).toBe(3);
+
+    // Final progress: success
     const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
     expect(finalProgress.completed).toBe(true);
-    expect(finalProgress.hasErrors).toBe(true);
+    expect(finalProgress.hasErrors).toBe(false);
 
-    const detectOp = finalProgress.operations.find((op) => op.id === "detecting-blockers");
-    expect(detectOp).toBeDefined();
-    expect(detectOp!.status).toBe("error");
-
-    // Blocking processes included in progress
-    expect(finalProgress.blockingProcesses).toBeDefined();
-    expect(finalProgress.blockingProcesses!.length).toBe(1);
-    expect(finalProgress.blockingProcesses![0]!.pid).toBe(1234);
+    // Workspace was deleted
+    expect(harness.testState.removedWorkspaces).toContainEqual({
+      projectPath: PROJECT_PATH,
+      workspacePath: WORKSPACE_PATH,
+    });
   });
 });
 

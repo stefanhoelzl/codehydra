@@ -13,7 +13,7 @@ param(
     [string]$BasePath,
     
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Detect', 'CloseHandles')]
+    [ValidateSet('Detect', 'DetectCwd', 'CloseHandles')]
     [string]$Action
 )
 
@@ -467,10 +467,10 @@ public class BlockingProcessDetector {
             }
 
             // If directory is empty, Restart Manager can't detect blocking processes
-            // Fall back to scanning all processes for CWD in workspace
+            // CWD-based detection is handled at the PowerShell level
             if (files.Length == 0) {
                 RmEndSession(sessionHandle);
-                return GetProcessesWithCwdUnder(basePath);
+                return result;
             }
 
             rmResult = RmRegisterResources(sessionHandle, (uint)files.Length, files, 0, null, 0, null);
@@ -626,8 +626,68 @@ public class BlockingProcessDetector {
 
     $workspacePath = [System.IO.Path]::GetFullPath($BasePath)
 
+    # DetectCwd mode: only scan for processes with CWD under workspace
+    if ($Action -eq 'DetectCwd') {
+        $cwdProcesses = [BlockingProcessDetector]::GetProcessesWithCwdUnder($workspacePath)
+
+        if ($cwdProcesses.Count -eq 0) {
+            @{ blocking = @() } | ConvertTo-Json -Compress -Depth 4
+            exit 0
+        }
+
+        # Enrich with command line
+        $blocking = @()
+        foreach ($proc in $cwdProcesses) {
+            try {
+                $cimProc = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Pid)" -ErrorAction SilentlyContinue
+                if ($cimProc) { $proc.CommandLine = $cimProc.CommandLine }
+            } catch {}
+            if ([string]::IsNullOrEmpty($proc.CommandLine)) {
+                $proc.CommandLine = $proc.Name
+            }
+
+            # Get relative CWD
+            $cwd = [BlockingProcessDetector]::GetProcessCwd($proc.Pid)
+            if ($cwd) {
+                $normalizedCwd = [System.IO.Path]::GetFullPath($cwd).TrimEnd('\', '/')
+                $normalizedBase = $workspacePath.TrimEnd('\', '/')
+                if ($normalizedCwd.StartsWith($normalizedBase, [StringComparison]::OrdinalIgnoreCase)) {
+                    if ($normalizedCwd.Length -eq $normalizedBase.Length) {
+                        $proc.Cwd = "."
+                    } elseif ($normalizedCwd[$normalizedBase.Length] -eq '\' -or $normalizedCwd[$normalizedBase.Length] -eq '/') {
+                        $proc.Cwd = $normalizedCwd.Substring($normalizedBase.Length + 1)
+                    }
+                }
+            }
+
+            $blocking += @{
+                pid = $proc.Pid
+                name = $proc.Name
+                commandLine = $proc.CommandLine
+                files = @()
+                cwd = $proc.Cwd
+            }
+        }
+
+        @{ blocking = $blocking } | ConvertTo-Json -Compress -Depth 4
+        exit 0
+    }
+
     # Step 1: Detect blocking processes using Restart Manager
     $blockingProcesses = [BlockingProcessDetector]::GetBlockingProcesses($workspacePath)
+
+    # Step 1b: Also scan for CWD-based processes (always, not just when dir is empty)
+    $seenPids = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($proc in $blockingProcesses) {
+        [void]$seenPids.Add($proc.Pid)
+    }
+    $cwdProcesses = [BlockingProcessDetector]::GetProcessesWithCwdUnder($workspacePath)
+    foreach ($cwdProc in $cwdProcesses) {
+        if (-not $seenPids.Contains($cwdProc.Pid)) {
+            [void]$seenPids.Add($cwdProc.Pid)
+            $blockingProcesses.Add($cwdProc)
+        }
+    }
 
     if ($blockingProcesses.Count -eq 0) {
         $output = @{

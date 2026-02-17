@@ -66,10 +66,6 @@ export interface WorkspaceRemovePayload {
   readonly skipSwitch?: boolean;
   /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
   readonly force?: boolean;
-  /** Unblock option: "kill" to kill processes, "close" to close handles (elevated), "ignore" to skip detection. */
-  readonly unblock?: "kill" | "close" | "ignore";
-  /** If true, skip proactive detection (user claims they fixed it manually). */
-  readonly isRetry?: boolean;
 }
 
 /** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata */

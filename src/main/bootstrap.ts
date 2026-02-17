@@ -120,6 +120,9 @@ import type {
   ShutdownHookResult,
   ReleaseHookResult,
   DeleteHookResult,
+  DetectHookResult,
+  FlushHookResult,
+  FlushHookInput,
 } from "./operations/delete-workspace";
 import {
   OpenProjectOperation,
@@ -1137,10 +1140,8 @@ function wireDispatcher(
   // Note: SetModeOperation is registered early in initializeBootstrap()
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  dispatcher.registerOperation(
-    INTENT_DELETE_WORKSPACE,
-    new DeleteWorkspaceOperation(emitDeletionProgress)
-  );
+  const deleteOp = new DeleteWorkspaceOperation(emitDeletionProgress);
+  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
   // SwitchWorkspaceOperation: needs extractWorkspaceName, generateProjectId, and agent status scorer
@@ -1537,58 +1538,58 @@ function wireDispatcher(
           handler: async (ctx: HookContext): Promise<ReleaseHookResult> => {
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
-            // Skip entirely in force mode
             if (payload.force || !workspaceLockHandler) {
               return {};
             }
 
-            // Handle unblock actions (kill/close)
-            if (payload.unblock === "kill" || payload.unblock === "close") {
-              try {
-                if (payload.unblock === "kill") {
-                  const detected = await workspaceLockHandler.detect(
-                    new Path(payload.workspacePath)
-                  );
-                  if (detected.length > 0) {
-                    logger.info("Killing blocking processes before deletion", {
-                      workspacePath: payload.workspacePath,
-                      pids: detected.map((p) => p.pid).join(","),
-                    });
-                    await workspaceLockHandler.killProcesses(detected.map((p) => p.pid));
-                  }
-                  return { unblockPerformed: true };
-                } else {
-                  logger.info("Closing handles before deletion", {
-                    workspacePath: payload.workspacePath,
-                  });
-                  await workspaceLockHandler.closeHandles(new Path(payload.workspacePath));
-                  return { unblockPerformed: true };
-                }
-              } catch (error) {
-                return { unblockPerformed: false, error: getErrorMessage(error) };
-              }
-            }
-
-            // Proactive detection (first attempt only, not retry, not ignore)
-            if (!payload.isRetry && payload.unblock !== "ignore") {
-              try {
-                const detected = await workspaceLockHandler.detect(new Path(payload.workspacePath));
-
-                if (detected.length > 0) {
-                  return {
-                    blockingProcesses: detected,
-                    error: `Blocked by ${detected.length} process(es)`,
-                  };
-                }
-                return { blockingProcesses: [] };
-              } catch (error) {
-                logger.warn("Detection failed, continuing with deletion", {
-                  error: getErrorMessage(error),
+            // CWD-only scan: find and kill processes whose CWD is under workspace
+            try {
+              const cwdProcesses = await workspaceLockHandler.detectCwd(
+                new Path(payload.workspacePath)
+              );
+              if (cwdProcesses.length > 0) {
+                logger.info("Killing CWD-blocking processes before deletion", {
+                  workspacePath: payload.workspacePath,
+                  pids: cwdProcesses.map((p) => p.pid).join(","),
                 });
-                return {};
+                await workspaceLockHandler.killProcesses(cwdProcesses.map((p) => p.pid));
+              }
+            } catch {
+              // Non-fatal: CWD detection/kill failure shouldn't block deletion
+            }
+            return {};
+          },
+        },
+        detect: {
+          handler: async (ctx: HookContext): Promise<DetectHookResult> => {
+            if (!workspaceLockHandler) return {};
+
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+
+            try {
+              const detected = await workspaceLockHandler.detect(new Path(payload.workspacePath));
+              return { blockingProcesses: detected };
+            } catch (error) {
+              logger.warn("Detection failed", {
+                workspacePath: payload.workspacePath,
+                error: getErrorMessage(error),
+              });
+              return { blockingProcesses: [] };
+            }
+          },
+        },
+        flush: {
+          handler: async (ctx: HookContext): Promise<FlushHookResult> => {
+            if (!workspaceLockHandler) return {};
+
+            const { blockingPids } = ctx as FlushHookInput;
+            if (blockingPids.length > 0) {
+              try {
+                await workspaceLockHandler.killProcesses([...blockingPids]);
+              } catch (error) {
+                return { error: getErrorMessage(error) };
               }
             }
-
             return {};
           },
         },
@@ -2399,6 +2400,17 @@ function wireDispatcher(
         throw new Error(`Workspace not found: ${payload.workspaceName}`);
       }
 
+      // If pipeline is waiting for user choice, signal it instead of dispatching new intent
+      if (deleteOp.hasPendingRetry(workspacePath)) {
+        if (payload.force) {
+          deleteOp.signalDismiss(workspacePath);
+          // Fall through to dispatch force intent after pipeline exits
+        } else {
+          deleteOp.signalRetry(workspacePath);
+          return { started: true };
+        }
+      }
+
       const intent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
@@ -2410,8 +2422,6 @@ function wireDispatcher(
           force: payload.force ?? false,
           removeWorktree: true,
           ...(payload.skipSwitch !== undefined && { skipSwitch: payload.skipSwitch }),
-          ...(payload.unblock !== undefined && { unblock: payload.unblock }),
-          ...(payload.isRetry !== undefined && { isRetry: payload.isRetry }),
         },
       };
 
