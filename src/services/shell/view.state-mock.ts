@@ -69,6 +69,12 @@ export interface ViewExpectation {
  */
 export interface ViewLayerMockState extends MockState {
   /**
+   * Window children z-order for assertions.
+   * Maps window ID to ordered array of view IDs (index 0 = bottom).
+   */
+  readonly windowChildren: Map<string, string[]>;
+
+  /**
    * Simulates Electron's 'did-finish-load' event.
    * Invokes all registered handlers for the specified view.
    *
@@ -364,14 +370,19 @@ export function createViewLayerMock(): MockViewLayer {
       view.focused = true;
     },
 
-    attachToWindow(handle: ViewHandle, windowHandle: WindowHandle, index?: number): void {
+    attachToWindow(
+      handle: ViewHandle,
+      windowHandle: WindowHandle,
+      index?: number,
+      options?: { force?: boolean }
+    ): void {
       const view = getView(handle);
       const children = getWindowChildren(windowHandle.id);
       const currentIndex = children.indexOf(handle.id);
       const isAttached = currentIndex !== -1;
 
       // Check if already at the correct position (no-op to preserve focus)
-      if (isAttached) {
+      if (isAttached && !options?.force) {
         // For "top" position (no index), check if already at end
         if (index === undefined && currentIndex === children.length - 1) {
           return; // Already at top
@@ -380,7 +391,9 @@ export function createViewLayerMock(): MockViewLayer {
         if (index !== undefined && currentIndex === index) {
           return; // Already at correct index
         }
-        // Need to move - remove first
+      }
+      if (isAttached) {
+        // Need to move (or force re-composite) - remove first
         children.splice(currentIndex, 1);
       }
 
