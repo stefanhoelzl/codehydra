@@ -155,7 +155,12 @@ export interface ViewLayer {
    * @param index - Optional z-order index (0 = bottom, omit = top)
    * @throws ShellError with code VIEW_NOT_FOUND if view handle is invalid
    */
-  attachToWindow(handle: ViewHandle, windowHandle: WindowHandle, index?: number): void;
+  attachToWindow(
+    handle: ViewHandle,
+    windowHandle: WindowHandle,
+    index?: number,
+    options?: { force?: boolean }
+  ): void;
 
   /**
    * Detach the view from its window's content view.
@@ -355,7 +360,12 @@ export class DefaultViewLayer implements ViewLayer {
     state.view.webContents.focus();
   }
 
-  attachToWindow(handle: ViewHandle, windowHandle: WindowHandle, index?: number): void {
+  attachToWindow(
+    handle: ViewHandle,
+    windowHandle: WindowHandle,
+    index?: number,
+    options?: { force?: boolean }
+  ): void {
     const state = this.getView(handle);
 
     // Get the content view from the window layer
@@ -374,7 +384,7 @@ export class DefaultViewLayer implements ViewLayer {
     });
 
     // Check if already at the correct position (no-op to preserve focus)
-    if (isAttached) {
+    if (isAttached && !options?.force) {
       // For "top" position (no index), check if already at end
       if (index === undefined && currentIndex === children.length - 1) {
         this.logger.debug("View already at top, skipping attach", { viewId: handle.id });
@@ -388,7 +398,9 @@ export class DefaultViewLayer implements ViewLayer {
         });
         return; // Already at correct index
       }
-      // Need to move - remove first
+    }
+    if (isAttached) {
+      // Need to move (or force re-composite) - remove first
       this.logger.debug("View needs to move, removing first", {
         viewId: handle.id,
         fromIndex: currentIndex,

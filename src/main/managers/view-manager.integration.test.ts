@@ -728,6 +728,25 @@ describe("ViewManager", () => {
       });
     });
 
+    it("keeps UI view at index 0 in workspace mode (DirectComposition workaround)", () => {
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setWorkspaceLoaded("/path/to/workspace");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // UI view should be at index 0 (bottom)
+      const uiHandle = manager.getUIViewHandle();
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      expect(children?.[0]).toBe(uiHandle.id);
+    });
+
     it("null workspace detaches current", () => {
       const deps = createViewManagerDeps();
       const manager = ViewManager.create(deps);

@@ -181,6 +181,23 @@ describe("ViewLayer (integration)", () => {
       expect(viewLayer).toHaveView(handle.id, { attachedTo: "window-1" });
     });
 
+    it("force re-attaches view already at correct index", () => {
+      const handle1 = viewLayer.createView({});
+      const handle2 = viewLayer.createView({});
+      const windowHandle = { id: "window-1", __brand: "WindowHandle" as const };
+
+      // Attach handle1 at index 0, handle2 on top
+      viewLayer.attachToWindow(handle1, windowHandle, 0);
+      viewLayer.attachToWindow(handle2, windowHandle);
+
+      // Force re-attach handle1 at index 0 (triggers remove+add cycle)
+      viewLayer.attachToWindow(handle1, windowHandle, 0, { force: true });
+
+      // handle1 should still be at index 0 and attached
+      expect(viewLayer).toHaveView(handle1.id, { attachedTo: "window-1" });
+      expect(viewLayer).toHaveView(handle2.id, { attachedTo: "window-1" });
+    });
+
     it("detach is idempotent", () => {
       const handle = viewLayer.createView({});
 

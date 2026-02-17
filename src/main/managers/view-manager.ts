@@ -707,6 +707,18 @@ export class ViewManager implements IViewManager {
         } catch {
           // Ignore errors during z-order change - window may be closing
         }
+      } else {
+        // Windows DirectComposition workaround: force UI view re-composite
+        // so the transparent sidebar strip is rendered on startup
+        try {
+          if (!this.windowLayer.isDestroyed(this.windowHandle)) {
+            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, 0, {
+              force: true,
+            });
+          }
+        } catch {
+          // window may be closing
+        }
       }
 
       this.updateBounds();
@@ -943,6 +955,18 @@ export class ViewManager implements IViewManager {
           }
         } catch {
           // Ignore errors - window may be closing
+        }
+      } else {
+        // Windows DirectComposition workaround: force UI view re-composite
+        // so the transparent sidebar strip is rendered on startup
+        try {
+          if (!this.windowLayer.isDestroyed(this.windowHandle)) {
+            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, 0, {
+              force: true,
+            });
+          }
+        } catch {
+          // window may be closing
         }
       }
 
