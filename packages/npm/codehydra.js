@@ -14,8 +14,8 @@ const REPO = "stefanhoelzl/codehydra";
 // Platform/arch to GitHub asset mapping
 const ASSET_MAP = {
   "linux-x64": "CodeHydra-linux-x64.AppImage",
-  "darwin-x64": "CodeHydra-darwin-x64.zip",
-  "darwin-arm64": "CodeHydra-darwin-arm64.zip",
+  "darwin-x64": "CodeHydra-darwin-x64.tar.gz",
+  "darwin-arm64": "CodeHydra-darwin-arm64.tar.gz",
   "win32-x64": "CodeHydra-win-portable-x64.zip",
 };
 
@@ -62,7 +62,7 @@ function getBinaryPath(cacheDir, assetName) {
   if (platform === "win32") {
     return path.join(cacheDir, "CodeHydra-win-portable-x64", "CodeHydra.exe");
   } else if (platform === "darwin") {
-    const appName = assetName.replace(".zip", "");
+    const appName = assetName.replace(".tar.gz", "");
     return path.join(cacheDir, appName, "CodeHydra.app", "Contents", "MacOS", "CodeHydra");
   }
   return path.join(cacheDir, assetName);
@@ -109,7 +109,11 @@ async function main() {
     const downloadPath = path.join(cacheDir, assetName);
     await download(downloadUrl, downloadPath);
 
-    if (assetName.endsWith(".zip")) {
+    if (assetName.endsWith(".tar.gz")) {
+      console.log("Extracting...");
+      execSync(`tar xzf "${downloadPath}" -C "${cacheDir}"`, { stdio: "pipe" });
+      fs.unlinkSync(downloadPath);
+    } else if (assetName.endsWith(".zip")) {
       console.log("Extracting...");
       if (os.platform() === "win32") {
         execSync(

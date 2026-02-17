@@ -117,10 +117,12 @@ jobs:
             target: mac:intel
             output: mac
             rename: CodeHydra-darwin-x64
+            tar: true
           - artifact: darwin-arm64
             target: mac:arm
             output: mac-arm64
             rename: CodeHydra-darwin-arm64
+            tar: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -153,11 +155,17 @@ jobs:
         if: matrix.rename
         run: mv dist/${{ matrix.output }} dist/${{ matrix.rename }}
 
+      - name: Create tar archive
+        if: matrix.tar
+        run: |
+          NAME="${{ matrix.rename || matrix.output }}"
+          tar czf "dist/${NAME}.tar.gz" -C dist "$NAME"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.rename || matrix.output }}
-          path: dist/${{ matrix.rename || matrix.output }}
+          name: ${{ matrix.rename || matrix.output }}${{ matrix.tar && '.tar.gz' || '' }}
+          path: dist/${{ matrix.rename || matrix.output }}${{ matrix.tar && '.tar.gz' || '' }}
           retention-days: 1
           if-no-files-found: error
 
