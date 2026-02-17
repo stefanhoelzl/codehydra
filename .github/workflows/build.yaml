@@ -103,8 +103,7 @@ jobs:
         include:
           - artifact: linux-x64
             target: linux:appimage
-            output: CodeHydra-linux-x86_64.AppImage
-            rename: CodeHydra-linux-x64.AppImage
+            output: CodeHydra-linux-x64.AppImage
           - artifact: win-installer-x64
             target: win:installer
             output: CodeHydra-win-installer-x64.exe
