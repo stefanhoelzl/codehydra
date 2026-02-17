@@ -98,6 +98,21 @@ function getInitialPromptConfig(): InitialPromptConfig | undefined {
 }
 
 /**
+ * Build permission flags based on agent type.
+ * - "plan" agent: read-only mode with --permissions-mode plan
+ * - All others (including "implement" and no agent): full permissions
+ *
+ * @param agent - The agent name from initial prompt config
+ * @returns Array of CLI permission flags
+ */
+function buildPermissionArgs(agent?: string): string[] {
+  if (agent === "plan") {
+    return ["--allow-dangerously-skip-permissions", "--permission-mode", "plan"];
+  }
+  return ["--dangerously-skip-permissions"];
+}
+
+/**
  * Build CLI arguments from initial prompt config.
  * Returns array of arguments to prepend to claude command.
  *
@@ -359,7 +374,7 @@ async function main(): Promise<never> {
   const isWindows = process.platform === "win32";
   const args = [
     ...initialPromptArgs,
-    "--allow-dangerously-skip-permissions",
+    ...buildPermissionArgs(initialPromptConfig?.agent),
     "--ide",
     "--settings",
     settingsPath,
@@ -400,4 +415,10 @@ if (!process.env.VITEST) {
 }
 
 // Export for testing
-export { findSystemClaude, notifyHook, getInitialPromptConfig, buildInitialPromptArgs };
+export {
+  findSystemClaude,
+  notifyHook,
+  getInitialPromptConfig,
+  buildInitialPromptArgs,
+  buildPermissionArgs,
+};
