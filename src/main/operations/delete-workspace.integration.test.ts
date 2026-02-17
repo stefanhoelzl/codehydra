@@ -1209,20 +1209,109 @@ describe("DeleteWorkspaceOperation.progressFormat", () => {
 
     await harness.dispatcher.dispatch(intent);
 
-    // At least 3 progress emissions: after shutdown, after release, final (after delete)
-    expect(harness.progressCaptures.length).toBeGreaterThanOrEqual(3);
+    // At least 4 progress emissions: pre-shutdown, post-shutdown, post-release, final
+    expect(harness.progressCaptures.length).toBeGreaterThanOrEqual(4);
 
-    // First progress (after shutdown): shutdown ops should be done, delete should be pending
+    // First progress (pre-shutdown): kill-terminals should be in-progress
     const firstProgress = harness.progressCaptures[0]!;
     expect(firstProgress.completed).toBe(false);
     const killTerminals = firstProgress.operations.find((op) => op.id === "kill-terminals");
-    expect(killTerminals?.status).toBe("done");
+    expect(killTerminals?.status).toBe("in-progress");
     const cleanupWorkspace = firstProgress.operations.find((op) => op.id === "cleanup-workspace");
     expect(cleanupWorkspace?.status).toBe("pending");
+
+    // Second progress (post-shutdown): shutdown ops done, cleanup-workspace in-progress
+    const secondProgress = harness.progressCaptures[1]!;
+    expect(secondProgress.completed).toBe(false);
+    const killTerminals2 = secondProgress.operations.find((op) => op.id === "kill-terminals");
+    expect(killTerminals2?.status).toBe("done");
+    const cleanupWorkspace2 = secondProgress.operations.find((op) => op.id === "cleanup-workspace");
+    expect(cleanupWorkspace2?.status).toBe("in-progress");
 
     // Last progress: all done, completed
     const lastProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
     expect(lastProgress.completed).toBe(true);
+  });
+});
+
+describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
+  it("test 25: normal deletion emits in-progress before each hook point", async () => {
+    const harness = createTestHarness();
+    const intent = buildDeleteIntent();
+
+    await harness.dispatcher.dispatch(intent);
+
+    // Pre-shutdown: kill-terminals in-progress, cleanup-workspace pending
+    const preShutdown = harness.progressCaptures[0]!;
+    expect(preShutdown.operations.find((op) => op.id === "kill-terminals")?.status).toBe(
+      "in-progress"
+    );
+    expect(preShutdown.operations.find((op) => op.id === "cleanup-workspace")?.status).toBe(
+      "pending"
+    );
+
+    // Post-shutdown: cleanup-workspace in-progress immediately, shutdown ops done
+    const postShutdown = harness.progressCaptures[1]!;
+    expect(postShutdown.operations.find((op) => op.id === "cleanup-workspace")?.status).toBe(
+      "in-progress"
+    );
+    expect(postShutdown.operations.find((op) => op.id === "kill-terminals")?.status).toBe("done");
+  });
+
+  it("test 26: retry loop emits in-progress for detecting-blockers, killing-blockers, and cleanup-workspace", async () => {
+    const blockingProcesses: BlockingProcess[] = [
+      { pid: 4444, name: "node.exe", commandLine: "node", files: ["f.js"], cwd: null },
+    ];
+
+    let deleteAttempts = 0;
+    const workspaceLockHandler: WorkspaceLockHandler = {
+      detect: vi.fn().mockResolvedValue(blockingProcesses),
+      detectCwd: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn().mockResolvedValue(undefined),
+      closeHandles: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const globalProvider = {
+      removeWorkspace: vi.fn().mockImplementation(async () => {
+        deleteAttempts++;
+        if (deleteAttempts === 1) {
+          throw new Error("Permission denied");
+        }
+      }),
+    };
+
+    const harness = createTestHarness({ workspaceLockHandler });
+    harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
+
+    const intent = buildDeleteIntent();
+    const dispatchPromise = harness.dispatcher.dispatch(intent);
+
+    await vi.waitFor(() => {
+      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
+    });
+
+    // Before user choice: should have emitted detecting-blockers as in-progress
+    const detectInProgress = harness.progressCaptures.find(
+      (p) => p.operations.find((op) => op.id === "detecting-blockers")?.status === "in-progress"
+    );
+    expect(detectInProgress).toBeDefined();
+
+    harness.deleteOp.signalRetry(WORKSPACE_PATH);
+    await dispatchPromise;
+
+    // After retry: should have emitted killing-blockers as in-progress
+    const flushInProgress = harness.progressCaptures.find(
+      (p) => p.operations.find((op) => op.id === "killing-blockers")?.status === "in-progress"
+    );
+    expect(flushInProgress).toBeDefined();
+
+    // After retry: should have emitted cleanup-workspace as in-progress (retry delete)
+    const retryDeleteInProgress = harness.progressCaptures.find(
+      (p) =>
+        p.operations.some((op) => op.id === "killing-blockers") &&
+        p.operations.find((op) => op.id === "cleanup-workspace")?.status === "in-progress"
+    );
+    expect(retryDeleteInProgress).toBeDefined();
   });
 });
 

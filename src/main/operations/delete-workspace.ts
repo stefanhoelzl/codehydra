@@ -28,6 +28,8 @@ import type {
   WorkspaceName,
   DeletionProgress,
   DeletionOperation,
+  DeletionOperationId,
+  DeletionOperationStatus,
   BlockingProcess,
 } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
@@ -448,10 +450,18 @@ export class DeleteWorkspaceOperation implements Operation<
     };
 
     // --- Shutdown ---
+    this.emitPipelineProgress(payload, resolvedWorkspacePath, {}, false, false, "kill-terminals");
     const { results: shutdownResults, errors: shutdownCollectErrors } =
       await ctx.hooks.collect<ShutdownHookResult>("shutdown", pipelineCtx);
     const shutdown = mergeShutdown(shutdownResults, shutdownCollectErrors);
-    this.emitPipelineProgress(payload, resolvedWorkspacePath, { shutdown });
+    this.emitPipelineProgress(
+      payload,
+      resolvedWorkspacePath,
+      { shutdown },
+      false,
+      false,
+      "cleanup-workspace"
+    );
 
     // Dispatch workspace:switch(auto) if deleted workspace was the active one.
     // Auto-select mode finds the best candidate via find-candidates hook.
@@ -520,6 +530,14 @@ export class DeleteWorkspaceOperation implements Operation<
     let currentDel = del;
     for (;;) {
       // Detect
+      this.emitPipelineProgress(
+        payload,
+        resolvedWorkspacePath,
+        { shutdown, release, del: currentDel },
+        false,
+        false,
+        "detecting-blockers"
+      );
       const { results: detectResults, errors: detectCollectErrors } =
         await ctx.hooks.collect<DetectHookResult>("detect", pipelineCtx);
       const detect = mergeDetect(detectResults, detectCollectErrors);
@@ -539,6 +557,14 @@ export class DeleteWorkspaceOperation implements Operation<
       }
 
       // Flush (kill collected PIDs)
+      this.emitPipelineProgress(
+        payload,
+        resolvedWorkspacePath,
+        { shutdown, release, del: currentDel, detect },
+        false,
+        false,
+        "killing-blockers"
+      );
       const blockingPids = detect.blockingProcesses?.map((p) => p.pid) ?? [];
       const flushCtx: FlushHookInput = {
         ...pipelineCtx,
@@ -548,7 +574,7 @@ export class DeleteWorkspaceOperation implements Operation<
         await ctx.hooks.collect<FlushHookResult>("flush", flushCtx);
       const flush = mergeFlush(flushResults, flushCollectErrors);
 
-      // Emit progress showing kill in progress
+      // Emit progress showing kill completed
       this.emitPipelineProgress(payload, resolvedWorkspacePath, {
         shutdown,
         release,
@@ -558,6 +584,14 @@ export class DeleteWorkspaceOperation implements Operation<
       });
 
       // Re-attempt delete
+      this.emitPipelineProgress(
+        payload,
+        resolvedWorkspacePath,
+        { shutdown, release, del: currentDel, detect, flush },
+        false,
+        false,
+        "cleanup-workspace"
+      );
       const { results: retryDeleteResults, errors: retryDeleteCollectErrors } =
         await ctx.hooks.collect<DeleteHookResult>("delete", pipelineCtx);
       const retryDel = mergeDelete(retryDeleteResults, retryDeleteCollectErrors);
@@ -587,9 +621,15 @@ export class DeleteWorkspaceOperation implements Operation<
     resolvedWorkspacePath: string,
     state: PipelineState,
     completed = false,
-    hasErrors = false
+    hasErrors = false,
+    currentStep?: DeletionOperationId
   ): void {
     const operations: DeletionOperation[] = [];
+
+    const applyCurrentStep = (
+      id: DeletionOperationId,
+      status: DeletionOperationStatus
+    ): DeletionOperationStatus => (currentStep === id ? "in-progress" : status);
 
     // Shutdown operations (always present)
     const shutdownStatus = this.hookPointStatus(state.shutdown);
@@ -601,18 +641,18 @@ export class DeleteWorkspaceOperation implements Operation<
     operations.push({
       id: "kill-terminals",
       label: "Terminating processes",
-      status: shutdownStatus,
+      status: applyCurrentStep("kill-terminals", shutdownStatus),
     });
     operations.push({
       id: "stop-server",
       label: `Stopping ${state.shutdown?.serverName ?? "agent"} server`,
-      status: shutdownStatus,
+      status: applyCurrentStep("stop-server", shutdownStatus),
       ...(shutdownError && { error: shutdownError }),
     });
     operations.push({
       id: "cleanup-vscode",
       label: "Closing VS Code view",
-      status: shutdownStatus,
+      status: applyCurrentStep("cleanup-vscode", shutdownStatus),
       ...(shutdownError && { error: shutdownError }),
     });
 
@@ -634,10 +674,16 @@ export class DeleteWorkspaceOperation implements Operation<
       operations.push({
         id: "detecting-blockers",
         label: "Detecting blocking processes...",
-        status: blockersFound ? "error" : "done",
+        status: applyCurrentStep("detecting-blockers", blockersFound ? "error" : "done"),
         ...(blockersFound && {
           error: `Blocked by ${state.detect.blockingProcesses.length} process(es)`,
         }),
+      });
+    } else if (currentStep === "detecting-blockers") {
+      operations.push({
+        id: "detecting-blockers",
+        label: "Detecting blocking processes...",
+        status: "in-progress",
       });
     }
 
@@ -647,8 +693,14 @@ export class DeleteWorkspaceOperation implements Operation<
       operations.push({
         id: "killing-blockers",
         label: "Killing blocking processes...",
-        status: flushError ? "error" : "done",
+        status: applyCurrentStep("killing-blockers", flushError ? "error" : "done"),
         ...(flushError && { error: flushError }),
+      });
+    } else if (currentStep === "killing-blockers") {
+      operations.push({
+        id: "killing-blockers",
+        label: "Killing blocking processes...",
+        status: "in-progress",
       });
     }
 
