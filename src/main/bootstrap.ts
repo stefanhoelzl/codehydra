@@ -37,22 +37,10 @@ import {
 } from "../shared/ipc";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
-import {
-  SetMetadataOperation,
-  SET_METADATA_OPERATION_ID,
-  INTENT_SET_METADATA,
-} from "./operations/set-metadata";
-import type { SetMetadataIntent, SetHookInput } from "./operations/set-metadata";
-import {
-  GetMetadataOperation,
-  GET_METADATA_OPERATION_ID,
-  INTENT_GET_METADATA,
-} from "./operations/get-metadata";
-import type {
-  GetMetadataIntent,
-  GetMetadataHookResult,
-  GetHookInput as GetMetadataGetHookInput,
-} from "./operations/get-metadata";
+import { SetMetadataOperation, INTENT_SET_METADATA } from "./operations/set-metadata";
+import type { SetMetadataIntent } from "./operations/set-metadata";
+import { GetMetadataOperation, INTENT_GET_METADATA } from "./operations/get-metadata";
+import type { GetMetadataIntent } from "./operations/get-metadata";
 import {
   GetWorkspaceStatusOperation,
   GET_WORKSPACE_STATUS_OPERATION_ID,
@@ -231,6 +219,7 @@ import { expandGitUrl } from "../services/project/url-utils";
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
+import { createMetadataModule } from "./modules/metadata-module";
 
 // =============================================================================
 // Constants
@@ -1196,33 +1185,7 @@ function wireDispatcher(
     },
   };
 
-  // Metadata hook handler module
-  const metadataModule: IntentModule = {
-    hooks: {
-      [SET_METADATA_OPERATION_ID]: {
-        set: {
-          handler: async (ctx: HookContext) => {
-            const { workspacePath } = ctx as SetHookInput;
-            const intent = ctx.intent as SetMetadataIntent;
-            await globalProvider.setMetadata(
-              new Path(workspacePath),
-              intent.payload.key,
-              intent.payload.value
-            );
-          },
-        },
-      },
-      [GET_METADATA_OPERATION_ID]: {
-        get: {
-          handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
-            const { workspacePath } = ctx as GetMetadataGetHookInput;
-            const metadata = await globalProvider.getMetadata(new Path(workspacePath));
-            return { metadata };
-          },
-        },
-      },
-    },
-  };
+  const metadataModule = createMetadataModule({ globalProvider });
 
   // Workspace status hook handler module (get hook only — resolve handled by extracted modules)
   const workspaceStatusModule: IntentModule = {
