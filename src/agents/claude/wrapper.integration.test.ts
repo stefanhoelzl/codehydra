@@ -87,23 +87,23 @@ describe("getInitialPromptConfig integration", () => {
     expect(mockRmdirSync).not.toHaveBeenCalled();
   });
 
-  it("returns undefined when file does not exist", () => {
+  it("returns undefined silently when file does not exist (restart scenario)", () => {
     process.env.CODEHYDRA_INITIAL_PROMPT_FILE = "/tmp/nonexistent/initial-prompt.json";
 
-    // Mock file not found error
+    // Mock file not found error (expected on restart - file consumed on first launch)
     mockReadFileSync.mockImplementation(() => {
       const error = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
       error.code = "ENOENT";
       throw error;
     });
 
-    // Suppress console.warn during test
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const result = getInitialPromptConfig();
 
     expect(result).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalled();
+    // ENOENT should NOT produce a warning - it's expected on restart
+    expect(warnSpy).not.toHaveBeenCalled();
 
     warnSpy.mockRestore();
   });
