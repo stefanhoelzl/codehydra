@@ -63,7 +63,6 @@
       }
     ],
     "configurationDefaults": {
-      "editor.editContext": false,
       "workbench.startupEditor": "none",
       "window.autoDetectColorScheme": true,
       "workbench.preferredDarkColorTheme": "Default Dark+",
