@@ -225,6 +225,7 @@ import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createMetadataModule } from "./modules/metadata-module";
+import { createKeepFilesModule } from "./modules/keepfiles-module";
 
 // =============================================================================
 // Constants
@@ -1277,33 +1278,7 @@ function wireDispatcher(
   // ---------------------------------------------------------------------------
 
   // KeepFilesModule: "setup" hook -- copies .keepfiles to workspace (best-effort)
-  const keepFilesModule: IntentModule = {
-    hooks: {
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        setup: {
-          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
-            const setupCtx = ctx as SetupHookInput;
-
-            try {
-              await keepFilesService.copyToWorkspace(
-                new Path(setupCtx.projectPath),
-                new Path(setupCtx.workspacePath)
-              );
-            } catch (error) {
-              logger.error(
-                "Keepfiles copy failed for workspace (non-fatal)",
-                { workspacePath: setupCtx.workspacePath },
-                error instanceof Error ? error : undefined
-              );
-              // Do not re-throw -- keepfiles is best-effort
-            }
-
-            return {};
-          },
-        },
-      },
-    },
-  };
+  const keepFilesModule = createKeepFilesModule({ keepFilesService, logger });
 
   // AgentModule: "setup" hook -- starts agent server, sets initial prompt, gets env vars (fatal)
   const agentModule: IntentModule = {
