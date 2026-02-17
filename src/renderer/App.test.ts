@@ -575,8 +575,11 @@ describe("App component", () => {
       render(App);
       showMainView();
 
-      // Wait for subscription
+      // Wait for loading to complete and subscription to be ready.
+      // This ensures the "Application ready." announcement has already fired
+      // before we trigger shortcut mode.
       await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
         expect(getEventCallback("ui:mode-changed")).toBeDefined();
       });
 
@@ -1056,6 +1059,103 @@ describe("App component", () => {
       unmount();
 
       expect(unsubFunctions.get("workspace:status-changed")).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("startup overlay", () => {
+    it("shows startup overlay when main view appears but loading is not complete", async () => {
+      // Block lifecycle.ready() to keep loading state
+      mockApi.lifecycle.ready.mockImplementation(() => new Promise(() => {}));
+
+      render(App);
+      showMainView();
+
+      await waitFor(() => {
+        expect(screen.getByText("CodeHydra is starting...")).toBeInTheDocument();
+      });
+    });
+
+    it("hides startup overlay after loading completes", async () => {
+      render(App);
+      showMainView();
+
+      // Wait for loading to complete (default mock resolves lifecycle.ready)
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      expect(screen.queryByText("CodeHydra is starting...")).not.toBeInTheDocument();
+    });
+
+    it("hides startup overlay on loading error", async () => {
+      mockApi.lifecycle.ready.mockRejectedValue(new Error("Network error"));
+
+      render(App);
+      showMainView();
+
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("error");
+      });
+
+      expect(screen.queryByText("CodeHydra is starting...")).not.toBeInTheDocument();
+    });
+
+    it("marks main-view-container as inert during loading", async () => {
+      // Block lifecycle.ready() to keep loading state
+      mockApi.lifecycle.ready.mockImplementation(() => new Promise(() => {}));
+
+      render(App);
+      showMainView();
+
+      await waitFor(() => {
+        const container = document.querySelector(".main-view-container");
+        expect(container).toHaveAttribute("inert");
+      });
+    });
+
+    it("removes inert from main-view-container after loading completes", async () => {
+      render(App);
+      showMainView();
+
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      const container = document.querySelector(".main-view-container");
+      expect(container).not.toHaveAttribute("inert");
+    });
+
+    it("announces 'Application ready' only after loading completes", async () => {
+      // Block lifecycle.ready() initially
+      let resolveReady!: () => void;
+      mockApi.lifecycle.ready.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveReady = resolve;
+          })
+      );
+
+      render(App);
+      showMainView();
+
+      // During loading, should NOT announce "Application ready"
+      await waitFor(() => {
+        expect(screen.getByText("CodeHydra is starting...")).toBeInTheDocument();
+      });
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      expect(liveRegion).not.toHaveTextContent("Application ready");
+
+      // Complete loading
+      resolveReady();
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      // Now should announce
+      await waitFor(() => {
+        const region = document.querySelector('[aria-live="polite"]');
+        expect(region).toHaveTextContent("Application ready");
+      });
     });
   });
 

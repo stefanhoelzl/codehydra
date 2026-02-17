@@ -136,7 +136,10 @@ describe("setupDomainEventBindings", () => {
       expect(projectsStore.projects.value).not.toContainEqual(TEST_PROJECT);
     });
 
-    it("auto-opens create dialog when project with no workspaces is opened", () => {
+    it("auto-opens create dialog when project with no workspaces is opened after loading", () => {
+      // Simulate post-startup state (loading complete)
+      projectsStore.setLoaded();
+
       setupDomainEventBindings(notificationService, mockApi.api);
 
       mockApi.emit("project:opened", { project: TEST_PROJECT });
@@ -145,6 +148,18 @@ describe("setupDomainEventBindings", () => {
         type: "create",
         projectId: TEST_PROJECT_ID,
       });
+    });
+
+    it("does not auto-open create dialog during initial loading", () => {
+      // loadingState is "loading" by default after reset
+      expect(projectsStore.loadingState.value).toBe("loading");
+
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("project:opened", { project: TEST_PROJECT });
+
+      // Dialog should NOT open during initial loading
+      expect(dialogsStore.dialogState.value).toEqual({ type: "closed" });
     });
 
     it("does not open create dialog when project has workspaces", () => {

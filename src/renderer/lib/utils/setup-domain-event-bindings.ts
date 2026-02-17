@@ -8,6 +8,7 @@
  */
 import {
   projects,
+  loadingState,
   addProject,
   removeProject,
   setActiveWorkspace,
@@ -110,7 +111,13 @@ export function setupDomainEventBindings(
     },
     {
       onProjectOpenedHook: (project) => {
-        if (project.workspaces.length === 0 && dialogState.value.type === "closed") {
+        // Only auto-open during normal operation, not during initial startup loading.
+        // The auto-show $effect in MainView.svelte handles the post-load case.
+        if (
+          loadingState.value === "loaded" &&
+          project.workspaces.length === 0 &&
+          dialogState.value.type === "closed"
+        ) {
           openCreateDialog(project.id);
         }
       },
