@@ -1008,8 +1008,8 @@ describe("CodeServerManager (PATH and EDITOR)", () => {
 });
 
 describe("getCodeServerPort", () => {
-  it("returns fixed port in production mode", () => {
-    const buildInfo = createMockBuildInfo({ isDevelopment: false });
+  it("returns fixed port when packaged", () => {
+    const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
 
     const port = getCodeServerPort(buildInfo);
 
@@ -1076,9 +1076,10 @@ describe("getCodeServerPort", () => {
     expect(port).toBeLessThan(65000);
   });
 
-  it("returns fixed port even when gitBranch is set in production", () => {
+  it("returns fixed port even when gitBranch is set when packaged", () => {
     const buildInfo = createMockBuildInfo({
       isDevelopment: false,
+      isPackaged: true,
       gitBranch: "should-be-ignored",
     });
 

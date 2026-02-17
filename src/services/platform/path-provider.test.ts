@@ -315,6 +315,7 @@ describe("DefaultPathProvider", () => {
     it("returns ~/.local/share/codehydra/ based paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -355,6 +356,7 @@ describe("DefaultPathProvider", () => {
     it("binDir is under dataRootDir", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -369,6 +371,7 @@ describe("DefaultPathProvider", () => {
     it("returns versioned binary directories", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -388,6 +391,7 @@ describe("DefaultPathProvider", () => {
     it("returns correct binary paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -409,6 +413,7 @@ describe("DefaultPathProvider", () => {
     it("returns ~/Library/Application Support/Codehydra/ based paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/Applications/Codehydra.app/Contents/Resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -444,6 +449,7 @@ describe("DefaultPathProvider", () => {
     it("returns versioned binary directories and correct paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/Applications/Codehydra.app/Contents/Resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -479,6 +485,7 @@ describe("DefaultPathProvider", () => {
     it("returns <home>/AppData/Roaming/Codehydra/ based paths", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "C:/Program Files/Codehydra/resources/app.asar",
       });
       // Use forward slashes for homeDir since Node's join() on Linux doesn't handle
@@ -504,6 +511,7 @@ describe("DefaultPathProvider", () => {
     it("returns Windows binary paths with correct extensions", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "C:/Program Files/Codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -524,6 +532,7 @@ describe("DefaultPathProvider", () => {
     it("returns bundled Node path with .exe extension", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "C:/Program Files/Codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -542,6 +551,7 @@ describe("DefaultPathProvider", () => {
     it("returns correct structure for absolute path", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -565,6 +575,7 @@ describe("DefaultPathProvider", () => {
     it("accepts Path object as input", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({
@@ -583,6 +594,7 @@ describe("DefaultPathProvider", () => {
     it("throws TypeError for relative path", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
@@ -595,6 +607,7 @@ describe("DefaultPathProvider", () => {
     it("throws TypeError for empty path", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
+        isPackaged: true,
         appPath: "/opt/codehydra/resources/app.asar",
       });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });

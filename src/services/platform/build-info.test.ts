@@ -19,7 +19,13 @@ describe("createMockBuildInfo", () => {
     expect(buildInfo.isDevelopment).toBe(true);
   });
 
-  it("returns gitBranch: 'test-branch' by default in dev mode", () => {
+  it("returns isPackaged: false by default", () => {
+    const buildInfo = createMockBuildInfo();
+
+    expect(buildInfo.isPackaged).toBe(false);
+  });
+
+  it("returns gitBranch: 'test-branch' by default when not packaged", () => {
     const buildInfo = createMockBuildInfo();
 
     expect(buildInfo.gitBranch).toBe("test-branch");
@@ -37,8 +43,14 @@ describe("createMockBuildInfo", () => {
     expect(buildInfo.isDevelopment).toBe(false);
   });
 
-  it("returns undefined gitBranch when isDevelopment is false", () => {
-    const buildInfo = createMockBuildInfo({ isDevelopment: false });
+  it("accepts override for isPackaged", () => {
+    const buildInfo = createMockBuildInfo({ isPackaged: true });
+
+    expect(buildInfo.isPackaged).toBe(true);
+  });
+
+  it("returns undefined gitBranch when isPackaged is true", () => {
+    const buildInfo = createMockBuildInfo({ isPackaged: true });
 
     expect(buildInfo.gitBranch).toBeUndefined();
   });
@@ -56,7 +68,9 @@ describe("createMockBuildInfo", () => {
     // This test verifies the interface is implemented correctly
     expect(buildInfo).toHaveProperty("version");
     expect(buildInfo).toHaveProperty("isDevelopment");
+    expect(buildInfo).toHaveProperty("isPackaged");
     expect(typeof buildInfo.version).toBe("string");
     expect(typeof buildInfo.isDevelopment).toBe("boolean");
+    expect(typeof buildInfo.isPackaged).toBe("boolean");
   });
 });

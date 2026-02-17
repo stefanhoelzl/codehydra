@@ -124,10 +124,10 @@ function parseElectronFlags(flags: string | undefined): { name: string; value?: 
 // 2. redirectElectronDataPaths() needs pathProvider
 const buildInfo: BuildInfo = new ElectronBuildInfo();
 
-// Disable ASAR virtual filesystem in development mode.
+// Disable ASAR virtual filesystem when not packaged.
 // Prevents file handle issues on Windows when deleting workspaces
 // that contain node_modules/electron directories.
-if (buildInfo.isDevelopment) {
+if (!buildInfo.isPackaged) {
   process.noAsar = true;
 }
 
@@ -624,9 +624,9 @@ async function bootstrap(): Promise<void> {
   );
 
   // 4. Create WindowManager with appropriate title and icon
-  // In dev mode, show branch name: "CodeHydra (branch-name)"
+  // When not packaged, show branch name: "CodeHydra (branch-name)"
   const windowTitle =
-    buildInfo.isDevelopment && buildInfo.gitBranch
+    !buildInfo.isPackaged && buildInfo.gitBranch
       ? `CodeHydra (${buildInfo.gitBranch})`
       : "CodeHydra";
 

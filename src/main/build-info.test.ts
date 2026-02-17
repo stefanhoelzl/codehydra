@@ -13,6 +13,9 @@ const { mockState } = vi.hoisted(() => {
 // Mock __APP_VERSION__ global (Vite-injected constant)
 vi.stubGlobal("__APP_VERSION__", "2026.01.01-dev.test1234");
 
+// Mock __IS_DEV_BUILD__ global (Vite-injected constant)
+vi.stubGlobal("__IS_DEV_BUILD__", true);
+
 // Mock Electron app module with getters
 vi.mock("electron", () => ({
   app: {
@@ -47,20 +50,39 @@ describe("ElectronBuildInfo", () => {
   });
 
   describe("isDevelopment", () => {
-    it("returns true when app is not packaged", () => {
-      mockState.isPackaged = false;
-
+    it("reflects __IS_DEV_BUILD__ build-time constant", () => {
+      // __IS_DEV_BUILD__ is stubbed as true
       const buildInfo = new ElectronBuildInfo();
 
       expect(buildInfo.isDevelopment).toBe(true);
     });
 
-    it("returns false when app is packaged", () => {
+    it("is independent of app.isPackaged", () => {
+      // Even when packaged, isDevelopment reflects the build-time flag
       mockState.isPackaged = true;
 
       const buildInfo = new ElectronBuildInfo();
 
-      expect(buildInfo.isDevelopment).toBe(false);
+      expect(buildInfo.isDevelopment).toBe(true);
+      expect(buildInfo.isPackaged).toBe(true);
+    });
+  });
+
+  describe("isPackaged", () => {
+    it("returns false when app is not packaged", () => {
+      mockState.isPackaged = false;
+
+      const buildInfo = new ElectronBuildInfo();
+
+      expect(buildInfo.isPackaged).toBe(false);
+    });
+
+    it("returns true when app is packaged", () => {
+      mockState.isPackaged = true;
+
+      const buildInfo = new ElectronBuildInfo();
+
+      expect(buildInfo.isPackaged).toBe(true);
     });
 
     it("caches the value at construction time", () => {
@@ -71,7 +93,7 @@ describe("ElectronBuildInfo", () => {
       mockState.isPackaged = true;
 
       // Should still return the original cached value
-      expect(buildInfo.isDevelopment).toBe(true);
+      expect(buildInfo.isPackaged).toBe(false);
     });
   });
 
@@ -84,7 +106,7 @@ describe("ElectronBuildInfo", () => {
       expect(buildInfo.appPath).toBe("/test/electron/app");
     });
 
-    it("is available in both dev and prod mode", () => {
+    it("is available in both packaged and unpackaged mode", () => {
       mockState.appPath = "/some/path";
 
       mockState.isPackaged = false;
@@ -99,7 +121,7 @@ describe("ElectronBuildInfo", () => {
   });
 
   describe("gitBranch", () => {
-    it("returns the git branch name in development mode", () => {
+    it("returns the git branch name when not packaged", () => {
       mockState.isPackaged = false;
       const mockGetBranch = vi.fn(() => "feature/my-branch");
 
@@ -109,7 +131,7 @@ describe("ElectronBuildInfo", () => {
       expect(mockGetBranch).toHaveBeenCalledOnce();
     });
 
-    it("returns undefined in production mode", () => {
+    it("returns undefined when packaged", () => {
       mockState.isPackaged = true;
       const mockGetBranch = vi.fn(() => "should-not-be-called");
 
