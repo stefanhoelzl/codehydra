@@ -47,7 +47,6 @@ export class WindowManager {
   private readonly logger: Logger;
   private readonly platformInfo: PlatformInfo;
   private readonly resizeCallbacks: Set<() => void> = new Set();
-  private updateAvailable = false;
 
   private constructor(deps: WindowManagerDeps, windowHandle: WindowHandle) {
     this.windowLayer = deps.windowLayer;
@@ -225,22 +224,5 @@ export class WindowManager {
    */
   close(): void {
     this.windowLayer.close(this.windowHandle);
-  }
-
-  /**
-   * Marks that an update is available for display in the window title.
-   *
-   * When set, the title will include " - (update available)" suffix.
-   * The suffix persists across workspace switches.
-   */
-  setUpdateAvailable(): void {
-    this.updateAvailable = true;
-  }
-
-  /**
-   * Returns whether an update is available.
-   */
-  hasUpdateAvailable(): boolean {
-    return this.updateAvailable;
   }
 }

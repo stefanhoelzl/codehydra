@@ -45,7 +45,9 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
-import { formatWindowTitle } from "../ipc/api-handlers";
+import { createWindowTitleModule } from "../modules/window-title-module";
+import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./update-available";
+import type { UpdateAvailableIntent } from "./update-available";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 // =============================================================================
@@ -184,7 +186,6 @@ interface TestSetup {
   appState: MockAppState;
   mockApiRegistry: MockApiRegistry;
   setTitle: ReturnType<typeof vi.fn>;
-  hasUpdateAvailable: () => boolean;
 }
 
 function createTestSetup(opts?: {
@@ -192,7 +193,6 @@ function createTestSetup(opts?: {
   withIpcEventBridge?: boolean;
   withTitleModule?: boolean;
   withAutoSelect?: boolean;
-  hasUpdateAvailable?: boolean;
   titleVersion?: string;
   projects?: ProjectEntry[];
 }): TestSetup {
@@ -201,8 +201,6 @@ function createTestSetup(opts?: {
   const appState = createMockAppState(projects);
   const setTitle = vi.fn();
   const titleVersion = opts?.titleVersion ?? "main";
-  const hasUpdateAvailableValue = opts?.hasUpdateAvailable ?? false;
-  const hasUpdateAvailable = (): boolean => hasUpdateAvailableValue;
 
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -321,29 +319,8 @@ function createTestSetup(opts?: {
   }
 
   if (opts?.withTitleModule) {
-    const switchTitleModule: IntentModule = {
-      events: {
-        [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-          const payload = (event as WorkspaceSwitchedEvent).payload;
-          const hasUpdate = hasUpdateAvailable();
-
-          if (payload === null) {
-            const title = formatWindowTitle(undefined, undefined, titleVersion, hasUpdate);
-            setTitle(title);
-            return;
-          }
-
-          const title = formatWindowTitle(
-            payload.projectName,
-            payload.workspaceName,
-            titleVersion,
-            hasUpdate
-          );
-          setTitle(title);
-        },
-      },
-    };
-    modules.push(switchTitleModule);
+    dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
+    modules.push(createWindowTitleModule(setTitle, titleVersion));
   }
 
   wireModules(modules, hookRegistry, dispatcher);
@@ -354,7 +331,6 @@ function createTestSetup(opts?: {
     appState,
     mockApiRegistry,
     setTitle,
-    hasUpdateAvailable,
   };
 }
 
@@ -560,13 +536,19 @@ describe("SwitchWorkspace Operation", () => {
   });
 
   describe("title module formats title with update-available suffix (#10)", () => {
-    it("includes (update available) when hasUpdateAvailable returns true", async () => {
+    it("includes (update available) after update:available intent", async () => {
       const setup = createTestSetup({
         withTitleModule: true,
         titleVersion: "main",
-        hasUpdateAvailable: true,
       });
       const { dispatcher, setTitle } = setup;
+
+      // Dispatch update:available before workspace switch
+      await dispatcher.dispatch({
+        type: INTENT_UPDATE_AVAILABLE,
+        payload: { version: "1.2.3" },
+      } as UpdateAvailableIntent);
+      setTitle.mockClear();
 
       await dispatcher.dispatch(switchIntent());
 

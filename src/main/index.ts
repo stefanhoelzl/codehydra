@@ -801,8 +801,6 @@ async function bootstrap(): Promise<void> {
     setTitleFn: () => (title: string) => windowManager?.setTitle(title),
     // Version suffix for window title (branch in dev, version in packaged)
     titleVersionFn: () => buildInfo.gitBranch ?? buildInfo.version,
-    // Callback to check if an update is available
-    hasUpdateAvailableFn: () => () => windowManager?.hasUpdateAvailable() ?? false,
     // BadgeManager (created in startServices, passed to bootstrap for BadgeModule wiring)
     badgeManagerFn: () => {
       if (!badgeManager) {

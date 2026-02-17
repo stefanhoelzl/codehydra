@@ -111,7 +111,6 @@ function createMockDeps(): BootstrapDeps {
     dispatcherFn: createMockDispatcher,
     setTitleFn: () => vi.fn(),
     titleVersionFn: () => "test",
-    hasUpdateAvailableFn: () => () => false,
     badgeManagerFn: () =>
       ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
     lifecycleRefsFn: () =>
