@@ -4,6 +4,7 @@
   import Features from "./components/Features.svelte";
   import Screenshot from "./components/Screenshot.svelte";
   import QuickStart from "./components/QuickStart.svelte";
+  import Abstract from "./components/Abstract.svelte";
   import Footer from "./components/Footer.svelte";
 </script>
 
@@ -11,6 +12,7 @@
 <main id="main-content">
   <Hero />
   <QuickStart />
+  <Abstract />
   <Features />
   <Screenshot />
 </main>
