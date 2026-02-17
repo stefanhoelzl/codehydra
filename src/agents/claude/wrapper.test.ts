@@ -5,7 +5,29 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildInitialPromptArgs, type InitialPromptConfig } from "./wrapper";
+import { buildInitialPromptArgs, buildPermissionArgs, type InitialPromptConfig } from "./wrapper";
+
+describe("buildPermissionArgs", () => {
+  it("returns --dangerously-skip-permissions when no agent", () => {
+    expect(buildPermissionArgs()).toEqual(["--dangerously-skip-permissions"]);
+  });
+
+  it("returns --dangerously-skip-permissions for implement agent", () => {
+    expect(buildPermissionArgs("implement")).toEqual(["--dangerously-skip-permissions"]);
+  });
+
+  it("returns plan mode flags for plan agent", () => {
+    expect(buildPermissionArgs("plan")).toEqual([
+      "--allow-dangerously-skip-permissions",
+      "--permission-mode",
+      "plan",
+    ]);
+  });
+
+  it("returns --dangerously-skip-permissions for unknown agents", () => {
+    expect(buildPermissionArgs("coder")).toEqual(["--dangerously-skip-permissions"]);
+  });
+});
 
 describe("buildInitialPromptArgs", () => {
   it("with prompt only returns prompt as single argument", () => {
