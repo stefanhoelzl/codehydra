@@ -71,7 +71,16 @@ function getInitialPromptConfig(): InitialPromptConfig | undefined {
     const config = JSON.parse(content) as InitialPromptConfig;
     return config;
   } catch (error) {
-    // Log warning but don't fail - initial prompt is optional
+    // File not found is expected on restart (consumed on first launch)
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return undefined;
+    }
+
+    // Log warning for unexpected errors but don't fail
     console.warn(
       `Warning: Failed to read initial prompt file: ${error instanceof Error ? error.message : String(error)}`
     );
