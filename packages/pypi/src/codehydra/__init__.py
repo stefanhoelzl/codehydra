@@ -93,7 +93,11 @@ def main() -> None:
                 zf.extractall(cache_dir)
             download_path.unlink()
 
-        if platform.system() != "Windows":
+        if platform.system() == "Darwin":
+            app_name = asset_name.removesuffix(".tar.gz")
+            app_path = cache_dir / app_name / "CodeHydra.app"
+            subprocess.run(["xattr", "-cr", str(app_path)], check=True)
+        elif platform.system() != "Windows":
             binary_path.chmod(binary_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
         print("Done!\n")
