@@ -144,10 +144,13 @@ import type {
 } from "./operations/switch-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createBadgeModule } from "./modules/badge-module";
+import { createWindowTitleModule } from "./modules/window-title-module";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
 } from "./operations/update-agent-status";
+import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
+import type { UpdateAvailableIntent } from "./operations/update-available";
 import {
   AppStartOperation,
   INTENT_APP_START,
@@ -190,8 +193,7 @@ import {
   type ShowAgentSelectionPayload,
   type AgentSelectedPayload,
 } from "../shared/ipc";
-import nodePath from "node:path";
-import { wireApiEvents, formatWindowTitle } from "./ipc/api-handlers";
+import { wireApiEvents } from "./ipc/api-handlers";
 import { wirePluginApi, type PluginApiRegistry } from "./api/wire-plugin-api";
 import type { UpdateAgentStatusIntent } from "./operations/update-agent-status";
 import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
@@ -337,8 +339,6 @@ export interface BootstrapDeps {
   readonly setTitleFn: () => (title: string) => void;
   /** Version suffix for window title (branch in dev, version in packaged) */
   readonly titleVersionFn: () => string | undefined;
-  /** Callback to check if an update is available */
-  readonly hasUpdateAvailableFn: () => () => boolean;
   /** BadgeManager factory (created in index.ts, passed down) */
   readonly badgeManagerFn: () => import("./managers/badge-manager").BadgeManager;
   /** Lifecycle service references for app:start/shutdown modules */
@@ -967,7 +967,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.workspaceLockHandlerFn(),
       deps.setTitleFn(),
       deps.titleVersionFn(),
-      deps.hasUpdateAvailableFn(),
       deps.badgeManagerFn(),
       deps.lifecycleRefsFn()
     );
@@ -1062,7 +1061,6 @@ function wireDispatcher(
   workspaceLockHandler: WorkspaceLockHandler | undefined,
   setTitle: (title: string) => void,
   titleVersion: string | undefined,
-  hasUpdateAvailable: () => boolean,
   badgeManager: BadgeManager,
   lifecycleRefs: LifecycleServiceRefs
 ): (projectId: ProjectId, workspaceName: import("../shared/api/types").WorkspaceName) => string {
@@ -1146,6 +1144,7 @@ function wireDispatcher(
     new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId, agentStatusScorer)
   );
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+  dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
   // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
   // Idempotency module (interceptor + event handler, wired via wireModules below)
@@ -1697,29 +1696,8 @@ function wireDispatcher(
     },
   };
 
-  // SwitchTitleModule: event subscriber on workspace:switched -- updates window title
-  const switchTitleModule: IntentModule = {
-    events: {
-      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
-        const hasUpdate = hasUpdateAvailable();
-
-        if (payload === null) {
-          const title = formatWindowTitle(undefined, undefined, titleVersion, hasUpdate);
-          setTitle(title);
-          return;
-        }
-
-        const title = formatWindowTitle(
-          payload.projectName,
-          payload.workspaceName,
-          titleVersion,
-          hasUpdate
-        );
-        setTitle(title);
-      },
-    },
-  };
+  // WindowTitleModule: event subscriber on workspace:switched and update:available
+  const windowTitleModule = createWindowTitleModule(setTitle, titleVersion);
 
   // ---------------------------------------------------------------------------
   // App lifecycle modules (app:start and app:shutdown hooks)
@@ -2030,26 +2008,12 @@ function wireDispatcher(
             const refs = lifecycleRefs;
             refs.autoUpdater.start();
 
-            // Wire auto-updater to update window title when update is available
-            refs.autoUpdater.onUpdateAvailable(() => {
-              refs.windowManager.setUpdateAvailable();
-              // Update the current title immediately
-              const activeWorkspace = viewManager.getActiveWorkspacePath();
-              const titleVersion = refs.buildInfo.gitBranch ?? refs.buildInfo.version;
-              if (activeWorkspace) {
-                const info = workspaceToProject.get(new Path(activeWorkspace).toString());
-                const workspaceName = nodePath.basename(activeWorkspace);
-                const title = formatWindowTitle(
-                  info?.projectName,
-                  workspaceName,
-                  titleVersion,
-                  true
-                );
-                refs.windowManager.setTitle(title);
-              } else {
-                const title = formatWindowTitle(undefined, undefined, titleVersion, true);
-                refs.windowManager.setTitle(title);
-              }
+            // Wire auto-updater to dispatch update:available intent
+            refs.autoUpdater.onUpdateAvailable((version: string) => {
+              void lifecycleRefs.dispatcher.dispatch({
+                type: INTENT_UPDATE_AVAILABLE,
+                payload: { version },
+              } as UpdateAvailableIntent);
             });
             return {};
           },
@@ -2308,7 +2272,7 @@ function wireDispatcher(
       projectWorktreeCloseModule,
       // Workspace:switch modules
       switchViewModule,
-      switchTitleModule,
+      windowTitleModule,
       // App lifecycle modules
       codeServerLifecycleModule,
       agentLifecycleModule,
