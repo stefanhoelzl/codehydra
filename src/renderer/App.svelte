@@ -34,6 +34,7 @@
     handleShortcutKey,
   } from "$lib/stores/shortcuts.svelte.js";
   import { setupState, errorSetup, resetSetup } from "$lib/stores/setup.svelte.js";
+  import { loadingState } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
   import MainView from "$lib/components/MainView.svelte";
   import SetupScreen from "$lib/components/SetupScreen.svelte";
@@ -156,20 +157,31 @@
   });
 
   // Subscribe to lifecycle:show-main-view event from main process
-  // Main process tells us when setup is complete and we can show the main view
+  // Main process tells us when setup is complete and we can show the main view.
+  // Note: MainView mounts in this mode but is covered by a startup overlay
+  // until projects finish loading (loadingState becomes "loaded").
   $effect(() => {
     const unsub = api.on<void>("lifecycle:show-main-view", () => {
       logger.debug("Showing main view");
       appMode = { type: "ready" };
-      // Announce mode transition for screen readers
-      announceMessage = "Application ready.";
-      setTimeout(() => {
-        announceMessage = "";
-      }, ARIA_ANNOUNCEMENT_CLEAR_MS);
     });
     return () => {
       unsub();
     };
+  });
+
+  // Announce "Application ready." once when projects finish loading
+  // (the startup overlay disappears at this point).
+  // One-shot guard prevents re-announcing if reactive deps are re-read.
+  let announcedReady = false;
+  $effect(() => {
+    if (appMode.type === "ready" && loadingState.value === "loaded" && !announcedReady) {
+      announcedReady = true;
+      announceMessage = "Application ready.";
+      setTimeout(() => {
+        announceMessage = "";
+      }, ARIA_ANNOUNCEMENT_CLEAR_MS);
+    }
   });
 
   // Subscribe to lifecycle:setup-error event from main process
@@ -221,7 +233,9 @@
 
   // Get aria-label for main element based on mode
   function getAriaLabel(): string {
-    if (appMode.type === "ready") return "Application workspace";
+    if (appMode.type === "ready") {
+      return loadingState.value === "loading" ? "Loading projects" : "Application workspace";
+    }
     if (appMode.type === "loading") return "Loading services";
     if (appMode.type === "agent-selection") return "Agent selection";
     if (appMode.type === "initializing") return "Application starting";
@@ -279,11 +293,16 @@
       {/if}
     </div>
   {:else}
-    <!-- Ready mode - normal app with fade-in animation -->
-    <!-- Uses CSS animation that respects prefers-reduced-motion -->
-    <div class="main-view-container">
+    <!-- Ready mode - MainView must mount to call lifecycle.ready() -->
+    <!-- Startup overlay stays visible until projects finish loading -->
+    <div class="main-view-container" inert={loadingState.value === "loading"}>
       <MainView />
     </div>
+    {#if loadingState.value === "loading"}
+      <div class="startup-overlay" role="status" aria-busy="true" aria-label="Loading projects">
+        <SetupScreen message="CodeHydra is starting..." subtitle="" hideProgress={true} />
+      </div>
+    {/if}
   {/if}
 </main>
 
@@ -313,6 +332,22 @@
     width: 100vw;
     height: 100vh;
     animation: fadeIn 200ms ease-out;
+  }
+
+  .startup-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: var(--ch-foreground);
+    background-color: var(--ch-background);
+    z-index: 1000;
   }
 
   @keyframes fadeIn {
