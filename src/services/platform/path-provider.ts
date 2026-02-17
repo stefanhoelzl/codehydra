@@ -228,7 +228,7 @@ export class DefaultPathProvider implements PathProvider {
    * In production: relative to __dirname (bundled resources)
    */
   private computeAppIconPath(buildInfo: BuildInfo): Path {
-    if (buildInfo.isDevelopment) {
+    if (!buildInfo.isPackaged) {
       return new Path(process.cwd(), "resources", "icon.png");
     }
     // In production, resources are in the app.asar or extracted resources folder
@@ -303,7 +303,7 @@ export class DefaultPathProvider implements PathProvider {
    * Compute the data root directory based on build mode and platform.
    */
   private computeDataRootDir(buildInfo: BuildInfo, platformInfo: PlatformInfo): string {
-    if (buildInfo.isDevelopment) {
+    if (!buildInfo.isPackaged) {
       return join(process.cwd(), "app-data");
     }
 

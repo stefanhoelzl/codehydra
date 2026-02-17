@@ -5,6 +5,7 @@ import { resolve } from "path";
 import { codehydraDefaults } from "./vite.defaults";
 
 const appVersion = process.env.CODEHYDRA_VERSION ?? "0.0.0-dev";
+const isDevBuild = process.env.CODEHYDRA_RELEASE !== "true";
 
 // PostHog configuration - injected at build time from environment variables
 // API key is stored in GitHub secrets and passed via CI, or in .env.local for local dev
@@ -23,6 +24,7 @@ export default defineConfig({
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __IS_DEV_BUILD__: JSON.stringify(isDevBuild),
       // PostHog constants - undefined if not configured (telemetry disabled)
       __POSTHOG_API_KEY__: posthogApiKey ? JSON.stringify(posthogApiKey) : "undefined",
       __POSTHOG_HOST__: JSON.stringify(posthogHost),
@@ -67,6 +69,7 @@ export default defineConfig({
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __IS_DEV_BUILD__: JSON.stringify(isDevBuild),
     },
     plugins: [codehydraDefaults(), svelte()],
     resolve: {

@@ -9,32 +9,41 @@ export interface BuildInfo {
   readonly version: string;
 
   /**
-   * Whether the app is running in development mode.
-   * - true: Development (unpackaged, via electron-vite dev)
-   * - false: Production (packaged .app/.exe/.AppImage)
+   * Whether this is a development (non-release) build.
+   * Set at build time via __IS_DEV_BUILD__ (sourced from CODEHYDRA_RELEASE env var).
+   * - true: Local dev and CI dev builds
+   * - false: Release builds
    */
   readonly isDevelopment: boolean;
 
   /**
-   * Git branch name (only populated in development mode).
+   * Whether the app is running as a packaged Electron app.
+   * Determined at runtime via app.isPackaged.
+   * - true: Packaged .app/.exe/.AppImage (including CI dev builds)
+   * - false: Running via electron-vite dev
+   */
+  readonly isPackaged: boolean;
+
+  /**
+   * Git branch name (only populated when not packaged).
    * Used to display branch in window title for developer convenience.
-   * - In dev mode: current branch name, or "unknown branch" if git fails
-   * - In prod mode: undefined
+   * - Unpackaged: current branch name, or "unknown branch" if git fails
+   * - Packaged: undefined
    */
   readonly gitBranch?: string;
 
   /**
    * Application root path for locating bundled resources.
-   * - In dev mode: process.cwd() (project root)
-   * - In prod mode: app.getAppPath() (inside ASAR archive)
+   * - Unpackaged: process.cwd() (project root)
+   * - Packaged: app.getAppPath() (inside ASAR archive)
    */
   readonly appPath: string;
 
   /**
    * Path to application resources directory (outside ASAR).
    * Used for files that need external process access (scripts, extensions).
-   * - In dev mode: undefined (use appPath-relative paths directly)
-   * - In prod mode: process.resourcesPath (extraResources destination)
+   * - Unpackaged: undefined (use appPath-relative paths directly)
+   * - Packaged: process.resourcesPath (extraResources destination)
    */
   readonly resourcesPath?: string;
 }

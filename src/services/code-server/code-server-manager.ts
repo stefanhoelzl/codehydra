@@ -31,7 +31,7 @@ export const CODE_SERVER_PORT = 25448;
  * @returns Port number for code-server
  */
 export function getCodeServerPort(buildInfo: BuildInfo): number {
-  if (!buildInfo.isDevelopment) {
+  if (buildInfo.isPackaged) {
     return CODE_SERVER_PORT;
   }
 

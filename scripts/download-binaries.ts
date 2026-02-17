@@ -60,6 +60,7 @@ function createDevBuildInfo(): BuildInfo {
   return {
     version: "dev",
     isDevelopment: true,
+    isPackaged: false,
     appPath: process.cwd(),
   };
 }

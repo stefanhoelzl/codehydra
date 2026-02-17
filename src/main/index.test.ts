@@ -22,6 +22,9 @@ let mockIsPackaged = false;
 // Mock __APP_VERSION__ global (Vite-injected constant)
 vi.stubGlobal("__APP_VERSION__", "2026.01.01-dev.test1234");
 
+// Mock __IS_DEV_BUILD__ global (Vite-injected constant)
+vi.stubGlobal("__IS_DEV_BUILD__", true);
+
 // Mock Electron app module with getters and methods
 vi.mock("electron", () => ({
   app: {
@@ -38,12 +41,14 @@ vi.mock("electron", () => ({
 describe("Main process wiring", () => {
   beforeEach(() => {
     mockIsPackaged = false;
+    vi.stubGlobal("__IS_DEV_BUILD__", true);
     // Clear CODEHYDRA_BUNDLE_DIR to ensure tests use expected paths
     vi.stubEnv("CODEHYDRA_BUNDLE_DIR", "");
   });
 
   afterEach(() => {
     mockIsPackaged = false;
+    vi.stubGlobal("__IS_DEV_BUILD__", true);
     vi.unstubAllEnvs();
   });
 
@@ -90,7 +95,7 @@ describe("Main process wiring", () => {
     it.skipIf(process.platform !== "linux")(
       "returns paths from pathProvider in production mode",
       () => {
-        const buildInfo = createMockBuildInfo({ isDevelopment: false });
+        const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
         const platformInfo = createMockPlatformInfo({
           platform: "linux",
           homeDir: "/home/testuser",
@@ -109,28 +114,28 @@ describe("Main process wiring", () => {
   });
 
   describe("DevTools registration pattern", () => {
-    it("isDevelopment controls DevTools availability", async () => {
+    it("isDevelopment reflects __IS_DEV_BUILD__ build-time flag", async () => {
       // This tests the pattern used in bootstrap():
       // if (buildInfo.isDevelopment) { ... register DevTools handler ... }
+      // isDevelopment now comes from __IS_DEV_BUILD__, not app.isPackaged
 
-      // Import ElectronBuildInfo which uses the mocked app.isPackaged
-      mockIsPackaged = false;
       const { ElectronBuildInfo } = await import("./build-info");
 
+      // Dev build (default __IS_DEV_BUILD__ = true)
       const devBuildInfo = new ElectronBuildInfo();
       expect(devBuildInfo.isDevelopment).toBe(true);
 
-      // Change mock for production
+      // A packaged dev build still has isDevelopment = true
       mockIsPackaged = true;
-      // Need to create a new instance to get the new value
-      const prodBuildInfo = new ElectronBuildInfo();
-      expect(prodBuildInfo.isDevelopment).toBe(false);
+      const packagedDevBuildInfo = new ElectronBuildInfo();
+      expect(packagedDevBuildInfo.isDevelopment).toBe(true);
+      expect(packagedDevBuildInfo.isPackaged).toBe(true);
     });
   });
 
   describe.skipIf(process.platform !== "darwin")("Full wiring chain (Darwin)", () => {
     it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
       const platformInfo = createMockPlatformInfo({
         platform: "darwin",
         homeDir: "/Users/test",
@@ -154,7 +159,7 @@ describe("Main process wiring", () => {
 
   describe.skipIf(process.platform !== "linux")("Full wiring chain (Linux)", () => {
     it("getProjectWorkspacesDir works through the chain", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
       const platformInfo = createMockPlatformInfo({
         platform: "linux",
         homeDir: "/home/user",
@@ -172,7 +177,7 @@ describe("Main process wiring", () => {
 
   describe.skipIf(process.platform !== "win32")("Full wiring chain (Windows)", () => {
     it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false });
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
       const platformInfo = createMockPlatformInfo({
         platform: "win32",
         homeDir: "C:/Users/test",

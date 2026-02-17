@@ -1,6 +1,7 @@
 /**
  * Electron implementation of BuildInfo.
- * Uses Electron's app.isPackaged to determine build mode.
+ * isDevelopment is set at build time via __IS_DEV_BUILD__.
+ * isPackaged is determined at runtime via app.isPackaged.
  */
 
 import { execSync } from "node:child_process";
@@ -28,16 +29,17 @@ export function getGitBranch(): string {
 }
 
 /**
- * BuildInfo implementation using Electron's app.isPackaged.
+ * BuildInfo implementation using build-time and runtime Electron flags.
  *
- * - app.isPackaged = false → isDevelopment = true (running via electron-vite dev)
- * - app.isPackaged = true → isDevelopment = false (packaged app)
+ * - isDevelopment: Set at build time via __IS_DEV_BUILD__ (true for non-release builds)
+ * - isPackaged: Set at runtime via app.isPackaged (true for packaged .app/.exe/.AppImage)
  *
- * In development mode, also captures the git branch name for display in the window title.
+ * When not packaged, also captures the git branch name for display in the window title.
  */
 export class ElectronBuildInfo implements BuildInfo {
   readonly version: string;
   readonly isDevelopment: boolean;
+  readonly isPackaged: boolean;
   readonly gitBranch?: string;
   readonly appPath: string;
   readonly resourcesPath?: string;
@@ -46,9 +48,10 @@ export class ElectronBuildInfo implements BuildInfo {
     // Cache at construction time - these values should never change during runtime
     // __APP_VERSION__ is injected by Vite at build time (git-based versioning)
     this.version = __APP_VERSION__;
-    this.isDevelopment = !app.isPackaged;
+    this.isDevelopment = __IS_DEV_BUILD__;
+    this.isPackaged = app.isPackaged;
 
-    if (this.isDevelopment) {
+    if (!this.isPackaged) {
       this.gitBranch = gitBranchFn();
     }
 
@@ -58,8 +61,8 @@ export class ElectronBuildInfo implements BuildInfo {
     this.appPath = app.getAppPath();
 
     // Resources path for external process access (outside ASAR)
-    // Only set in production - dev mode accesses files directly from appPath
-    if (!this.isDevelopment) {
+    // Only set when packaged - unpackaged mode accesses files directly from appPath
+    if (this.isPackaged) {
       this.resourcesPath = process.resourcesPath;
     }
   }

@@ -50,27 +50,29 @@ export class AutoUpdater {
     this.logger = deps.logger;
     this.isDevelopment = deps.isDevelopment;
 
-    // Configure electron-updater
-    // autoInstallOnAppQuit is true by default
-    autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
+    if (!this.isDevelopment) {
+      // Configure electron-updater
+      // autoInstallOnAppQuit is true by default
+      autoUpdater.autoDownload = false;
+      autoUpdater.autoInstallOnAppQuit = true;
 
-    // Route electron-updater logs through app logger
-    autoUpdater.logger = {
-      info: (message) => this.logger.info(String(message ?? "")),
-      warn: (message) => this.logger.warn(String(message ?? "")),
-      error: (message) => this.logger.error(String(message ?? "")),
-      debug: (message) => this.logger.debug(String(message ?? "")),
-    };
+      // Route electron-updater logs through app logger
+      autoUpdater.logger = {
+        info: (message) => this.logger.info(String(message ?? "")),
+        warn: (message) => this.logger.warn(String(message ?? "")),
+        error: (message) => this.logger.error(String(message ?? "")),
+        debug: (message) => this.logger.debug(String(message ?? "")),
+      };
 
-    // Wire up event handlers
-    this.handleError = this.handleError.bind(this);
-    this.handleUpdateAvailable = this.handleUpdateAvailable.bind(this);
-    this.handleUpdateDownloaded = this.handleUpdateDownloaded.bind(this);
+      // Wire up event handlers
+      this.handleError = this.handleError.bind(this);
+      this.handleUpdateAvailable = this.handleUpdateAvailable.bind(this);
+      this.handleUpdateDownloaded = this.handleUpdateDownloaded.bind(this);
 
-    autoUpdater.on("error", this.handleError);
-    autoUpdater.on("update-available", this.handleUpdateAvailable);
-    autoUpdater.on("update-downloaded", this.handleUpdateDownloaded);
+      autoUpdater.on("error", this.handleError);
+      autoUpdater.on("update-available", this.handleUpdateAvailable);
+      autoUpdater.on("update-downloaded", this.handleUpdateDownloaded);
+    }
   }
 
   /**
@@ -143,10 +145,12 @@ export class AutoUpdater {
       this.startupTimer = null;
     }
 
-    // Remove event listeners
-    autoUpdater.off("error", this.handleError);
-    autoUpdater.off("update-available", this.handleUpdateAvailable);
-    autoUpdater.off("update-downloaded", this.handleUpdateDownloaded);
+    // Remove event listeners (only registered when not in dev mode)
+    if (!this.isDevelopment) {
+      autoUpdater.off("error", this.handleError);
+      autoUpdater.off("update-available", this.handleUpdateAvailable);
+      autoUpdater.off("update-downloaded", this.handleUpdateDownloaded);
+    }
 
     this.callbacks.clear();
     this.logger.debug("Auto-updater disposed");
