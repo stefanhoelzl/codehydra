@@ -126,7 +126,11 @@ async function main() {
       fs.unlinkSync(downloadPath);
     }
 
-    if (os.platform() !== "win32") {
+    if (os.platform() === "darwin") {
+      const appName = assetName.replace(".tar.gz", "");
+      const appPath = path.join(cacheDir, appName, "CodeHydra.app");
+      execSync(`xattr -cr "${appPath}"`, { stdio: "pipe" });
+    } else if (os.platform() !== "win32") {
       fs.chmodSync(binaryPath, 0o755);
     }
     console.log("Done!\n");
