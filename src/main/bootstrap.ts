@@ -29,12 +29,7 @@ import type {
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { Logger } from "../services/logging";
 import type { IpcLayer } from "../services/platform/ipc";
-import {
-  ApiIpcChannels,
-  type WorkspacePath,
-  type WorkspaceLoadingChangedPayload,
-  type SetupErrorPayload,
-} from "../shared/ipc";
+import { ApiIpcChannels, type WorkspacePath, type SetupErrorPayload } from "../shared/ipc";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { SetMetadataOperation, INTENT_SET_METADATA } from "./operations/set-metadata";
@@ -71,17 +66,13 @@ import type {
   RestartAgentHookInput,
   RestartAgentHookResult,
 } from "./operations/restart-agent";
-import { SetModeOperation, SET_MODE_OPERATION_ID, INTENT_SET_MODE } from "./operations/set-mode";
-import type { SetModeIntent, SetModeHookResult } from "./operations/set-mode";
+import { SetModeOperation, INTENT_SET_MODE } from "./operations/set-mode";
+import type { SetModeIntent } from "./operations/set-mode";
 import {
   GetActiveWorkspaceOperation,
-  GET_ACTIVE_WORKSPACE_OPERATION_ID,
   INTENT_GET_ACTIVE_WORKSPACE,
 } from "./operations/get-active-workspace";
-import type {
-  GetActiveWorkspaceIntent,
-  GetActiveWorkspaceHookResult,
-} from "./operations/get-active-workspace";
+import type { GetActiveWorkspaceIntent } from "./operations/get-active-workspace";
 import {
   OpenWorkspaceOperation,
   OPEN_WORKSPACE_OPERATION_ID,
@@ -127,18 +118,8 @@ import type {
   CloseHookResult,
   ProjectClosedEvent,
 } from "./operations/close-project";
-import {
-  SwitchWorkspaceOperation,
-  SWITCH_WORKSPACE_OPERATION_ID,
-  INTENT_SWITCH_WORKSPACE,
-  EVENT_WORKSPACE_SWITCHED,
-} from "./operations/switch-workspace";
-import type {
-  SwitchWorkspaceIntent,
-  SwitchWorkspaceHookResult,
-  ActivateHookInput,
-  WorkspaceSwitchedEvent,
-} from "./operations/switch-workspace";
+import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./operations/switch-workspace";
+import type { SwitchWorkspaceIntent } from "./operations/switch-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createBadgeModule } from "./modules/badge-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
@@ -213,7 +194,6 @@ import {
   type SetupRowProgress,
   type SetupRowStatus,
   type Workspace,
-  type WorkspaceRef,
 } from "../shared/api/types";
 import { Path } from "../services/platform/path";
 import { expandGitUrl } from "../services/project/url-utils";
@@ -223,6 +203,7 @@ import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspa
 import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createCodeServerModule } from "./modules/code-server-module";
+import { createViewModule, type MountSignal } from "./modules/view-module";
 
 // =============================================================================
 // Constants
@@ -333,6 +314,12 @@ export interface BootstrapDeps {
   readonly badgeManagerFn: () => import("./managers/badge-manager").BadgeManager;
   /** Lifecycle service references for app:start/shutdown modules */
   readonly lifecycleRefsFn: () => LifecycleServiceRefs;
+  /** ViewLayer for shell layer disposal (nullable for testing) */
+  readonly viewLayer: import("../services/shell/view").ViewLayer | null;
+  /** WindowLayer for shell layer disposal (nullable for testing) */
+  readonly windowLayer: import("../services/shell/window").WindowLayerInternal | null;
+  /** SessionLayer for shell layer disposal (nullable for testing) */
+  readonly sessionLayer: import("../services/shell/session").SessionLayer | null;
   /** Function to get UI webContents for setup error IPC events */
   readonly getUIWebContentsFn: () => import("electron").WebContents | null;
   /** Setup dependencies for app:setup hook modules (available immediately) */
@@ -509,48 +496,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  // 11. UI hooks for app-start and setup operations
-  const appStartUIModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        "show-ui": {
-          handler: async (): Promise<ShowUIHookResult> => {
-            const webContents = deps.getUIWebContentsFn();
-            if (webContents && !webContents.isDestroyed()) {
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
-
-  const setupUIModule: IntentModule = {
-    hooks: {
-      [SETUP_OPERATION_ID]: {
-        "show-ui": {
-          handler: async () => {
-            const webContents = deps.getUIWebContentsFn();
-            if (webContents && !webContents.isDestroyed()) {
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_SETUP);
-            }
-          },
-        },
-        "hide-ui": {
-          handler: async () => {
-            const webContents = deps.getUIWebContentsFn();
-            if (webContents && !webContents.isDestroyed()) {
-              // Return to starting screen
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
-            }
-          },
-        },
-      },
-    },
-  };
-
-  // RetryModule: "show-ui" hook on app-start -- returns waitForRetry
+  // 11. RetryModule: "show-ui" hook on app-start -- returns waitForRetry
   // waitForRetry returns a promise that resolves when the renderer sends lifecycle:retry IPC
   const retryModule: IntentModule = {
     hooks: {
@@ -573,11 +519,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  wireModules(
-    [appStartWireModule, setupErrorModule, appStartUIModule, setupUIModule, retryModule],
-    hookRegistry,
-    dispatcher
-  );
+  wireModules([appStartWireModule, setupErrorModule, retryModule], hookRegistry, dispatcher);
 
   // 12. Register AppStartOperation and SetupOperation immediately (before UI loads)
   // app:start is dispatched first in index.ts, so both must be registered early
@@ -586,23 +528,16 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
   dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
 
-  // Wire set-mode hook early (Alt+X can fire before wireDispatcher completes)
-  const earlySetModeModule: IntentModule = {
-    hooks: {
-      [SET_MODE_OPERATION_ID]: {
-        set: {
-          handler: async (ctx: HookContext): Promise<SetModeHookResult> => {
-            const intent = ctx.intent as SetModeIntent;
-            const vm = deps.viewManagerFn();
-            const previousMode = vm.getMode();
-            vm.setMode(intent.payload.mode);
-            return { previousMode };
-          },
-        },
-      },
-    },
-  };
-  wireModules([earlySetModeModule], hookRegistry, dispatcher);
+  // Wire ViewModule early (set-mode, app-start UI, setup UI, view lifecycle, mount)
+  // Alt+X can fire before wireDispatcher completes, so set-mode must be wired here.
+  const { module: viewModule, mountSignal } = createViewModule({
+    viewManager: deps.viewManagerFn(),
+    logger: deps.logger,
+    viewLayer: deps.viewLayer,
+    windowLayer: deps.windowLayer,
+    sessionLayer: deps.sessionLayer,
+  });
+  wireModules([viewModule], hookRegistry, dispatcher);
 
   // 13. Wire setup hook modules (these run during app:setup, before startServices)
   const { configService, codeServerManager, getAgentBinaryManager, extensionManager } =
@@ -892,7 +827,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.setTitleFn(),
       deps.titleVersionFn(),
       deps.badgeManagerFn(),
-      deps.lifecycleRefsFn()
+      deps.lifecycleRefsFn(),
+      mountSignal
     );
 
     // Create CoreModule with workspace index resolver wired in
@@ -984,7 +920,8 @@ function wireDispatcher(
   setTitle: (title: string) => void,
   titleVersion: string | undefined,
   badgeManager: BadgeManager,
-  lifecycleRefs: LifecycleServiceRefs
+  lifecycleRefs: LifecycleServiceRefs,
+  mountSignal: MountSignal
 ): (projectId: ProjectId, workspaceName: import("../shared/api/types").WorkspaceName) => string {
   // --- Workspace Index (replaces AppState project/workspace Maps for API boundary) ---
   const projectsById = new Map<string, { path: string; name: string }>();
@@ -1161,36 +1098,6 @@ function wireDispatcher(
     },
   };
 
-  // UI hook handler module (active workspace queries + workspace switch events)
-  // Note: set-mode hook is wired early in initializeBootstrap()
-  let cachedActiveRef: WorkspaceRef | null = null;
-
-  const uiHookModule: IntentModule = {
-    hooks: {
-      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
-        get: {
-          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-            return { workspaceRef: cachedActiveRef };
-          },
-        },
-      },
-    },
-    events: {
-      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
-        if (payload === null) {
-          cachedActiveRef = null;
-        } else {
-          cachedActiveRef = {
-            projectId: payload.projectId,
-            workspaceName: payload.workspaceName,
-            path: payload.path,
-          };
-        }
-      },
-    },
-  };
-
   // ---------------------------------------------------------------------------
   // Open-workspace hook modules
   // ---------------------------------------------------------------------------
@@ -1246,59 +1153,8 @@ function wireDispatcher(
   };
 
   // ---------------------------------------------------------------------------
-  // Create-workspace event subscriber modules
-  // ---------------------------------------------------------------------------
-
-  // ViewModule: subscribes to workspace:created, creates workspace view
-  // Note: workspace activation is now handled by OpenWorkspaceOperation dispatching workspace:switch
-  const viewModule: IntentModule = {
-    events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        viewManager.createWorkspaceView(
-          payload.workspacePath,
-          payload.workspaceUrl,
-          payload.projectPath,
-          true
-        );
-        viewManager.preloadWorkspaceUrl(payload.workspacePath);
-      },
-    },
-  };
-
-  // ---------------------------------------------------------------------------
   // Delete-workspace hook modules
   // ---------------------------------------------------------------------------
-
-  const deleteViewModule: IntentModule = {
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        shutdown: {
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            const isActive = viewManager.getActiveWorkspacePath() === payload.workspacePath;
-
-            try {
-              await viewManager.destroyWorkspaceView(payload.workspacePath);
-              return { ...(isActive && { wasActive: true }) };
-            } catch (error) {
-              if (payload.force) {
-                logger.warn("ViewModule: error in force mode (ignored)", {
-                  error: getErrorMessage(error),
-                });
-                return {
-                  ...(isActive && { wasActive: true }),
-                  error: getErrorMessage(error),
-                };
-              }
-              throw error;
-            }
-          },
-        },
-      },
-    },
-  };
 
   const agentServerName =
     lifecycleRefs.selectedAgentType === "claude" ? "Claude Code hook" : "OpenCode";
@@ -1443,20 +1299,6 @@ function wireDispatcher(
 
   const inProgressOpens = new Set<string>();
 
-  // ProjectViewModule: subscribes to project:opened, preloads non-first workspaces
-  // Note: first workspace activation is now handled by OpenProjectOperation dispatching workspace:switch
-  const projectViewModule: IntentModule = {
-    events: {
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const payload = (event as ProjectOpenedEvent).payload;
-        const workspaces = payload.project.workspaces;
-        for (let i = 1; i < workspaces.length; i++) {
-          viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
-        }
-      },
-    },
-  };
-
   // ---------------------------------------------------------------------------
   // Project:close hook modules
   // ---------------------------------------------------------------------------
@@ -1500,38 +1342,6 @@ function wireDispatcher(
   // ---------------------------------------------------------------------------
   // Workspace:switch hook modules
   // ---------------------------------------------------------------------------
-
-  // SwitchViewModule: "activate" hook -- calls setActiveWorkspace
-  // Resolution is handled by resolve-project and resolve-workspace hooks.
-  // When the workspace is already active, resolvedPath is left undefined (no-op).
-  const switchViewModule: IntentModule = {
-    hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        activate: {
-          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath } = ctx as ActivateHookInput;
-            const intent = ctx.intent as SwitchWorkspaceIntent;
-
-            if (viewManager.getActiveWorkspacePath() === workspacePath) {
-              return {};
-            }
-
-            const focus = intent.payload.focus ?? true;
-            viewManager.setActiveWorkspace(workspacePath, focus);
-            return { resolvedPath: workspacePath };
-          },
-        },
-      },
-    },
-    events: {
-      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
-        if (payload === null) {
-          viewManager.setActiveWorkspace(null, false);
-        }
-      },
-    },
-  };
 
   // WindowTitleModule: event subscriber on workspace:switched and update:available
   const windowTitleModule = createWindowTitleModule(setTitle, titleVersion);
@@ -1792,78 +1602,6 @@ function wireDispatcher(
     pathProvider,
     logger
   );
-  // ViewLifecycleModule: activate → wire loading-state→IPC callback.
-  // stop → destroy views, cleanup loading-state callback, dispose layers.
-  // Note: first workspace activation + window title are now handled by
-  // project:open → workspace:switch dispatches during startup.
-  let loadingChangeCleanupFn: Unsubscribe | null = null;
-  const viewLifecycleModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
-            // Wire loading state changes to IPC
-            loadingChangeCleanupFn = viewManager.onLoadingChange(
-              (path: string, loading: boolean) => {
-                try {
-                  const webContents = viewManager.getUIWebContents();
-                  if (webContents && !webContents.isDestroyed()) {
-                    const payload: WorkspaceLoadingChangedPayload = {
-                      path: path as import("../shared/ipc").WorkspacePath,
-                      loading,
-                    };
-                    webContents.send(ApiIpcChannels.WORKSPACE_LOADING_CHANGED, payload);
-                  }
-                } catch {
-                  // Ignore errors - UI might be disconnected during shutdown
-                }
-              }
-            );
-            return {};
-          },
-        },
-      },
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              // Cleanup loading state callback
-              if (loadingChangeCleanupFn) {
-                loadingChangeCleanupFn();
-                loadingChangeCleanupFn = null;
-              }
-
-              // Dispose layers in reverse initialization order
-              // Note: ViewManager.destroy() is called by cleanup() in index.ts
-              // (ViewManager has concrete type there, IViewManager interface here)
-              if (lifecycleRefs.viewLayer) {
-                await lifecycleRefs.viewLayer.dispose();
-              }
-              if (lifecycleRefs.windowLayer) {
-                await lifecycleRefs.windowLayer.dispose();
-              }
-              if (lifecycleRefs.sessionLayer) {
-                await lifecycleRefs.sessionLayer.dispose();
-              }
-            } catch (error) {
-              lifecycleLogger.error(
-                "View lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
-
-  // MountModule: activate → send show-main-view to renderer, block until lifecycle.ready().
-  // Wired last among activate handlers so config loading and callback wiring complete first.
-  // collect() runs handlers sequentially, so mount blocks until the renderer signals ready.
-  // After mount completes, project:open dispatches fire — the renderer is already subscribed.
-  let mountResolve: (() => void) | null = null;
-
   // Deferred for the "loaded" hook point: resolved after all initial project:open dispatches
   // complete. lifecycle.ready awaits this so the renderer receives project:opened events
   // (via Electron IPC FIFO ordering) before setLoaded() fires.
@@ -1871,28 +1609,6 @@ function wireDispatcher(
   const projectsLoadedPromise = new Promise<void>((resolve) => {
     projectsLoadedResolve = resolve;
   });
-  const mountModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
-            const webContents = viewManager.getUIWebContents();
-            if (!webContents || webContents.isDestroyed()) {
-              lifecycleLogger.warn("UI not available for mount");
-              return {};
-            }
-            lifecycleLogger.debug("Mounting renderer — waiting for lifecycle.ready");
-            await new Promise<void>((resolve) => {
-              mountResolve = resolve;
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
-            });
-            return {};
-          },
-        },
-      },
-    },
-  };
-
   // LoadedSignalModule: "loaded" hook on app-start resolves the deferred so lifecycle.ready
   // can return to the renderer after all initial project:open dispatches complete.
   const loadedSignalModule: IntentModule = {
@@ -1923,14 +1639,11 @@ function wireDispatcher(
       metadataModule,
       workspaceStatusModule,
       agentStatusModule,
-      uiHookModule,
       // Open-workspace hook modules (kept inline)
       keepFilesModule,
       agentModule,
-      viewModule,
       // Delete-workspace modules
       idempotencyModule,
-      deleteViewModule,
       deleteAgentModule,
       deleteWindowsLockModule,
       deleteIpcBridge,
@@ -1939,12 +1652,10 @@ function wireDispatcher(
       remoteProjectModule,
       localProjectModule,
       gitWorktreeWorkspaceModule,
-      projectViewModule,
       // Project:close modules
       projectCloseIndexModule,
       projectWorktreeCloseModule,
       // Workspace:switch modules
-      switchViewModule,
       windowTitleModule,
       // App lifecycle modules
       agentLifecycleModule,
@@ -1952,8 +1663,6 @@ function wireDispatcher(
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
       ipcBridgeLifecycleModule,
-      viewLifecycleModule,
-      mountModule,
       loadedSignalModule,
     ],
     hookRegistry,
@@ -2291,13 +2000,13 @@ function wireDispatcher(
   registry.register(
     "lifecycle.ready",
     async () => {
-      // Only block when mount is actively waiting (mountResolve is set).
+      // Only block when mount is actively waiting (mountSignal.resolve is set).
       // When called outside the mount flow (e.g., tests), skip the await.
-      if (mountResolve) {
+      if (mountSignal.resolve) {
         // Resolve the mount promise so app:start activate completes
         // and project:open dispatches can fire (renderer is already subscribed).
-        mountResolve();
-        mountResolve = null;
+        mountSignal.resolve();
+        mountSignal.resolve = null;
         // Wait for initial project:open dispatches to complete.
         // This ensures renderer stores are populated before setLoaded() fires.
         await projectsLoadedPromise;

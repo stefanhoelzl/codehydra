@@ -34,7 +34,9 @@ const TEST_WORKSPACE_NAME = "feature" as WorkspaceName;
 function createMockViewManager(): IViewManager {
   const modeChangeHandlers: Array<(event: { mode: string; previousMode: string }) => void> = [];
   return {
-    getUIView: vi.fn(),
+    getUIViewHandle: vi.fn(),
+    getUIWebContents: vi.fn().mockReturnValue(null),
+    sendToUI: vi.fn(),
     createWorkspaceView: vi.fn(),
     destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
     getWorkspaceView: vi.fn(),
@@ -54,6 +56,10 @@ function createMockViewManager(): IViewManager {
     }),
     onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
+    isWorkspaceLoading: vi.fn().mockReturnValue(false),
+    setWorkspaceLoaded: vi.fn(),
+    onLoadingChange: vi.fn().mockReturnValue(() => {}),
+    preloadWorkspaceUrl: vi.fn(),
     // Test helper for emitting mode changes
     _emitModeChange: (event: { mode: string; previousMode: string }) => {
       for (const handler of modeChangeHandlers) {
@@ -168,6 +174,9 @@ function createMockDeps(): BootstrapDeps {
         },
         selectedAgentType: "opencode",
       }) as unknown as import("./bootstrap").LifecycleServiceRefs,
+    viewLayer: null,
+    windowLayer: null,
+    sessionLayer: null,
     getUIWebContentsFn: () => null,
     setupDeps: {
       configService: {
@@ -537,9 +546,29 @@ function createSetupTestDeps(overrides?: {
   const baseDeps = createMockDeps();
   const configAgent = overrides?.configAgent !== undefined ? overrides.configAgent : "opencode";
 
+  // Create a viewManager that returns the mock webContents for show-ui hooks
+  // but returns null for the mount handler in activate (to avoid blocking).
+  // ViewModule's activate handler calls onLoadingChange() before the mount check,
+  // so we use it as a signal to switch getUIWebContents to return null.
+  const setupViewManager = createMockViewManager();
+  let inActivateHandler = false;
+  (setupViewManager as unknown as Record<string, unknown>).onLoadingChange = vi
+    .fn()
+    .mockImplementation(() => {
+      inActivateHandler = true;
+      return () => {};
+    });
+  (setupViewManager as unknown as Record<string, unknown>).getUIWebContents = vi
+    .fn()
+    .mockImplementation(() => {
+      if (inActivateHandler) return null;
+      return mockWebContents as unknown as import("electron").WebContents;
+    });
+
   const deps: BootstrapDeps = {
     ...baseDeps,
     ipcLayer: captured.ipcLayer,
+    viewManagerFn: () => setupViewManager,
     dispatcherFn: () => {
       const hookRegistry = new HookRegistry();
       captured.dispatcher = new Dispatcher(hookRegistry);
