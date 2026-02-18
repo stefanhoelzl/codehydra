@@ -47,9 +47,6 @@ export interface McpError {
 /**
  * MCP Server interface.
  */
-/** Callback for MCP request events. Fire-and-forget, errors logged internally. */
-export type McpRequestCallback = (workspacePath: string) => void;
-
 export interface IMcpServer extends IDisposable {
   /**
    * Start the server on a specific port.

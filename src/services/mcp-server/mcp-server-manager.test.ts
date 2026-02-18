@@ -209,46 +209,4 @@ describe("McpServerManager", () => {
       expect(manager.getPort()).toBeNull();
     });
   });
-
-  describe("onFirstRequest", () => {
-    it("returns unsubscribe function", () => {
-      const manager = new McpServerManager(portManager, pathProvider, api, logger);
-      const callback = vi.fn();
-
-      const unsubscribe = manager.onFirstRequest(callback);
-
-      expect(typeof unsubscribe).toBe("function");
-    });
-
-    it("unsubscribe removes callback from internal set", () => {
-      const manager = new McpServerManager(portManager, pathProvider, api, logger);
-      const callback1 = vi.fn();
-      const callback2 = vi.fn();
-
-      const unsub1 = manager.onFirstRequest(callback1);
-      manager.onFirstRequest(callback2);
-
-      // Unsubscribe first callback
-      unsub1();
-
-      // Internal state is not directly testable, but we can verify
-      // that unsubscribe is callable multiple times without error
-      expect(() => unsub1()).not.toThrow();
-    });
-
-    it("stop clears callbacks", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, api, logger, {
-        serverFactory: mockSdkFactory,
-      });
-
-      const callback = vi.fn();
-      activeManager.onFirstRequest(callback);
-
-      await activeManager.start();
-      await activeManager.stop();
-
-      // After stop, callbacks should be cleared (verified by no errors on restart)
-      expect(activeManager.getPort()).toBeNull();
-    });
-  });
 });

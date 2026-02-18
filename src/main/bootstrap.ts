@@ -149,7 +149,6 @@ import {
 } from "./operations/update-agent-status";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
 import type { UpdateAvailableIntent } from "./operations/update-available";
-import { McpAttachedOperation, INTENT_MCP_ATTACHED } from "./operations/mcp-attached";
 import {
   AppStartOperation,
   INTENT_APP_START,
@@ -1064,7 +1063,6 @@ function wireDispatcher(
   );
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
-  dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
   // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
   // Idempotency module (interceptor + event handler, wired via wireModules below)

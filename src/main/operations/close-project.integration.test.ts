@@ -201,9 +201,7 @@ function createTestHarness(options?: {
         return { success: true };
       }),
     }),
-    getMcpServerManager: vi.fn().mockReturnValue({
-      clearFirstRequestTracking: vi.fn(),
-    }),
+    getMcpServerManager: vi.fn().mockReturnValue({}),
     getAgentStatusManager: vi.fn().mockReturnValue({
       clearTuiTracking: vi.fn(),
     }),
