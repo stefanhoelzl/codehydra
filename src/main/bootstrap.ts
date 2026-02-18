@@ -149,6 +149,7 @@ import {
 } from "./operations/update-agent-status";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
 import type { UpdateAvailableIntent } from "./operations/update-available";
+import { McpAttachedOperation, INTENT_MCP_ATTACHED } from "./operations/mcp-attached";
 import {
   AppStartOperation,
   INTENT_APP_START,
@@ -193,8 +194,6 @@ import {
 import { wireApiEvents } from "./ipc/api-handlers";
 import { wirePluginApi, type PluginApiRegistry } from "./api/wire-plugin-api";
 import type { UpdateAgentStatusIntent } from "./operations/update-agent-status";
-import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
-import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import { wireModules } from "./intents/infrastructure/wire";
 import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
@@ -260,8 +259,6 @@ export interface LifecycleServiceRefs {
   readonly agentStatusManager: import("../agents").AgentStatusManager;
   /** AgentServerManager instance */
   readonly serverManager: import("../agents").AgentServerManager;
-  /** McpServerManager instance (constructed but not started) */
-  readonly mcpServerManager: import("../services/mcp-server").McpServerManager;
   /** TelemetryService instance */
   readonly telemetryService: import("../services/telemetry").TelemetryService | null;
   /** AutoUpdater instance (constructed but not started) */
@@ -292,10 +289,6 @@ export interface LifecycleServiceRefs {
   readonly windowManager: import("./managers/window-manager").WindowManager;
   /** Wait for agent provider registration after server start */
   readonly waitForProvider: (workspacePath: string) => Promise<void>;
-  /** Inject MCP server manager into AppState for onServerStopped cleanup */
-  readonly setMcpServerManager: (
-    manager: import("../services/mcp-server").McpServerManager
-  ) => void;
 }
 
 /**
@@ -1061,6 +1054,7 @@ function wireDispatcher(
   );
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
+  dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
   // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
   // Idempotency module (interceptor + event handler, wired via wireModules below)
@@ -1603,105 +1597,6 @@ function wireDispatcher(
     },
   };
 
-  // McpLifecycleModule: start → start server, wire callbacks, configure ServerManager with
-  // MCP port, inject into AppState. stop → dispose server, cleanup callbacks.
-  let mcpFirstRequestCleanupFn: Unsubscribe | null = null;
-  let wrapperReadyCleanupFn: Unsubscribe | null = null;
-  const mcpLifecycleModule: IntentModule = {
-    events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        lifecycleRefs.mcpServerManager.registerWorkspace({
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
-          workspacePath: payload.workspacePath,
-        });
-      },
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        lifecycleRefs.mcpServerManager.unregisterWorkspace(payload.workspacePath);
-      },
-    },
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            const refs = lifecycleRefs;
-
-            const mcpPort = await refs.mcpServerManager.start();
-            lifecycleLogger.info("MCP server started", {
-              port: mcpPort,
-              configPath: refs.pathProvider.opencodeConfig.toString(),
-            });
-
-            // Register callback for first MCP request per workspace
-            mcpFirstRequestCleanupFn = refs.mcpServerManager.onFirstRequest((workspacePath) => {
-              viewManager.setWorkspaceLoaded(workspacePath);
-              refs.agentStatusManager.markActive(
-                workspacePath as import("../shared/ipc").WorkspacePath
-              );
-            });
-
-            // Register callback for wrapper start (Claude Code only)
-            if (refs.selectedAgentType === "claude" && refs.serverManager) {
-              const claudeServerManager = refs.serverManager as ClaudeCodeServerManager;
-              if (claudeServerManager.onWorkspaceReady) {
-                wrapperReadyCleanupFn = claudeServerManager.onWorkspaceReady((workspacePath) => {
-                  viewManager.setWorkspaceLoaded(workspacePath);
-                });
-              }
-            }
-
-            // Configure server manager to connect to MCP
-            if (refs.serverManager && refs.selectedAgentType === "claude") {
-              const claudeManager = refs.serverManager as ClaudeCodeServerManager;
-              claudeManager.setMcpConfig({
-                port: refs.mcpServerManager.getPort()!,
-              });
-            } else if (refs.serverManager) {
-              const opencodeManager = refs.serverManager as OpenCodeServerManager;
-              opencodeManager.setMcpConfig({
-                configPath: refs.pathProvider.opencodeConfig.toString(),
-                port: refs.mcpServerManager.getPort()!,
-              });
-            }
-
-            // Inject MCP server manager into AppState for onServerStopped cleanup
-            lifecycleRefs.setMcpServerManager(refs.mcpServerManager);
-
-            return { mcpPort };
-          },
-        },
-      },
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              // Cleanup callbacks
-              if (mcpFirstRequestCleanupFn) {
-                mcpFirstRequestCleanupFn();
-                mcpFirstRequestCleanupFn = null;
-              }
-              if (wrapperReadyCleanupFn) {
-                wrapperReadyCleanupFn();
-                wrapperReadyCleanupFn = null;
-              }
-
-              // Dispose MCP server
-              await lifecycleRefs.mcpServerManager.dispose();
-            } catch (error) {
-              lifecycleLogger.error(
-                "MCP lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
-
   const telemetryLifecycleModule = createTelemetryModule({
     telemetryService: lifecycleRefs.telemetryService,
     platformInfo: lifecycleRefs.platformInfo,
@@ -1986,7 +1881,6 @@ function wireDispatcher(
       // App lifecycle modules
       agentLifecycleModule,
       badgeLifecycleModule,
-      mcpLifecycleModule,
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
       ipcBridgeLifecycleModule,

@@ -67,6 +67,8 @@ import { registerLogHandlers } from "./ipc";
 import { initializeBootstrap, type BootstrapResult, type LifecycleServiceRefs } from "./bootstrap";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
+import { wireModules } from "./intents/infrastructure/wire";
+import { createMcpModule } from "./modules/mcp-module";
 import { INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent } from "./operations/set-mode";
 import { INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
@@ -249,6 +251,12 @@ let bootstrapResult:
  * Created in bootstrap() and used in createServicesAndWireDispatcher() for agent status dispatch.
  */
 let dispatcherInstance: Dispatcher | null = null;
+
+/**
+ * HookRegistry instance for the intent system.
+ * Created in bootstrap() and used in createServicesAndWireDispatcher() for MCP module wiring.
+ */
+let hookRegistryInstance: HookRegistry | null = null;
 
 /**
  * Flag to track if services have been started.
@@ -485,20 +493,34 @@ async function createServicesAndWireDispatcher(): Promise<void> {
   }
 
   // Create remaining modules (CoreModule) and wire intent dispatcher
-  // Note: lifecycleRefsFn uses getters for late-bound references (codeHydraApi, mcpServerManager)
+  // Note: lifecycleRefsFn uses getters for late-bound references (codeHydraApi)
   bootstrapResult.startServices();
 
   // Get the typed API interface (all methods are now registered)
   codeHydraApi = bootstrapResult.getInterface();
 
   // Create McpServerManager now that API is available
-  // (start() moves to McpLifecycleModule's start hook)
   mcpServerManager = new McpServerManager(
     networkLayer,
     pathProvider,
     codeHydraApi,
     loggingService.createLogger("mcp")
   );
+
+  // Wire MCP module now that McpServerManager exists
+  // (must happen before app:start's "start" hook collects handlers)
+  const mcpModule = createMcpModule({
+    mcpServerManager,
+    pathProvider,
+    viewManager: viewManager!,
+    agentStatusManager: agentStatusManager!,
+    serverManager: serverManager!,
+    selectedAgentType: appState!.getAgentType(),
+    dispatcher: dispatcherInstance!,
+    logger: loggingService.createLogger("mcp"),
+    setMcpServerManager: (mgr) => appState!.setMcpServerManager(mgr),
+  });
+  wireModules([mcpModule], hookRegistryInstance!, dispatcherInstance!);
 
   // Note: app:start is NOT dispatched here - the start intent flow handles that after
   // this callback returns. This function only creates services and wires the dispatcher.
@@ -658,6 +680,7 @@ async function bootstrap(): Promise<void> {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcherInstance = dispatcher;
+  hookRegistryInstance = hookRegistry;
 
   // 6b. Create ViewManager with port=0 initially
   // Port will be updated when startServices() runs
@@ -835,15 +858,6 @@ async function bootstrap(): Promise<void> {
         fileSystemLayer,
         agentStatusManager: agentStatusManagerRef,
         serverManager: serverManagerRef,
-        // Getter: mcpServerManager is created after wireDispatcher runs
-        get mcpServerManager() {
-          if (!mcpServerManager) {
-            throw new Error(
-              "McpServerManager not initialized - accessed before app:start dispatch"
-            );
-          }
-          return mcpServerManager;
-        },
         telemetryService,
         autoUpdater: autoUpdaterRef,
         loggingService,
@@ -865,7 +879,6 @@ async function bootstrap(): Promise<void> {
         },
         windowManager: windowManagerRef,
         waitForProvider: (wp: string) => appStateRef.waitForProvider(wp),
-        setMcpServerManager: (mgr) => appStateRef.setMcpServerManager(mgr),
       };
     },
     // Function to get UI webContents for setup error IPC events
@@ -999,6 +1012,7 @@ async function cleanup(): Promise<void> {
   serverManager = null;
   mcpServerManager = null;
   dispatcherInstance = null;
+  hookRegistryInstance = null;
 
   // Clear shell layer references (disposed by ViewLifecycleModule)
   viewLayer = null;
