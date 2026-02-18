@@ -225,9 +225,15 @@ function createTestSetup(): TestSetup {
 
   // Wire IpcEventBridge
   const mockApiRegistry = createMockApiRegistry();
-  const ipcEventBridge = createIpcEventBridge(
-    mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry
-  );
+  const ipcEventBridge = createIpcEventBridge({
+    apiRegistry: mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry,
+    getApi: () => {
+      throw new Error("not wired");
+    },
+    getUIWebContents: () => null,
+    pluginServer: null,
+    logger: SILENT_LOGGER,
+  });
   wireModules(
     [resolveProjectModule, resolveWorkspaceModule, metadataModule, ipcEventBridge],
     hookRegistry,

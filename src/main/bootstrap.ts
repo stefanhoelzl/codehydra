@@ -102,7 +102,7 @@ import {
   INTENT_APP_START,
   APP_START_OPERATION_ID,
 } from "./operations/app-start";
-import type { ShowUIHookResult, StartHookResult } from "./operations/app-start";
+import type { ShowUIHookResult } from "./operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -114,9 +114,6 @@ import type { SetupErrorEvent } from "./operations/setup";
 import type { BadgeManager } from "./managers/badge-manager";
 import type { IpcEventHandler } from "../services/platform/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
-import { wireApiEvents } from "./ipc/api-handlers";
-import { wirePluginApi, type PluginApiRegistry } from "./api/wire-plugin-api";
-import type { Unsubscribe } from "../shared/api/interfaces";
 import { wireModules } from "./intents/infrastructure/wire";
 import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
@@ -807,19 +804,6 @@ function wireDispatcher(
 
   const deleteWindowsLockModule = createWindowsFileLockModule({ workspaceLockHandler, logger });
 
-  const deleteIpcBridge: IntentModule = {
-    events: {
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        registry.emit("workspace:removed", {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
-          path: payload.workspacePath,
-        });
-      },
-    },
-  };
-
   // ---------------------------------------------------------------------------
   // Project:open modules
   // ---------------------------------------------------------------------------
@@ -878,68 +862,6 @@ function wireDispatcher(
     logger: lifecycleLogger,
   });
 
-  // IpcBridgeLifecycleModule: start → wire API events to IPC, wire Plugin→API.
-  // stop → cleanup API event wiring.
-  let apiEventCleanupFn: Unsubscribe | null = null;
-  let pluginApiRegistry: PluginApiRegistry | null = null;
-  const ipcBridgeLifecycleModule: IntentModule = {
-    events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        pluginApiRegistry?.registerWorkspace(
-          payload.workspacePath,
-          payload.projectId,
-          payload.workspaceName
-        );
-      },
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        pluginApiRegistry?.unregisterWorkspace(payload.workspacePath);
-      },
-    },
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            const api = lifecycleRefs.getApi();
-
-            // Wire API events to IPC emission
-            apiEventCleanupFn = wireApiEvents(api, () => viewManager.getUIWebContents());
-
-            // Wire PluginServer to CodeHydraApi (if PluginServer is running)
-            if (lifecycleRefs.pluginServer) {
-              pluginApiRegistry = wirePluginApi(
-                lifecycleRefs.pluginServer,
-                api,
-                lifecycleRefs.loggingService.createLogger("plugin")
-              );
-            }
-            return {};
-          },
-        },
-      },
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              if (apiEventCleanupFn) {
-                apiEventCleanupFn();
-                apiEventCleanupFn = null;
-              }
-              pluginApiRegistry = null;
-            } catch (error) {
-              lifecycleLogger.error(
-                "IpcBridge lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
-
   // Project modules: activate → load saved project configs, populate state, return paths.
   // LocalProjectModule is sole project state owner for ALL projects.
   // RemoteProjectModule handles filesystem concerns (clone on open, delete on close).
@@ -984,7 +906,13 @@ function wireDispatcher(
 
   // Wire IpcEventBridge, BadgeModule, and hook handler modules
   // Note: shutdownIdempotencyModule and quitModule are wired early in initializeBootstrap()
-  const ipcEventBridge = createIpcEventBridge(registry);
+  const ipcEventBridge = createIpcEventBridge({
+    apiRegistry: registry,
+    getApi: () => lifecycleRefs.getApi(),
+    getUIWebContents: () => viewManager.getUIWebContents(),
+    pluginServer: lifecycleRefs.pluginServer,
+    logger: lifecycleLogger,
+  });
   const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
   wireModules(
     [
@@ -998,7 +926,6 @@ function wireDispatcher(
       // Delete-workspace modules
       idempotencyModule,
       deleteWindowsLockModule,
-      deleteIpcBridge,
       // Project modules: remote before local so RemoteProjectModule.close reads
       // the project config before LocalProjectModule.close removes the store entry.
       remoteProjectModule,
@@ -1011,7 +938,6 @@ function wireDispatcher(
       // App lifecycle modules
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
-      ipcBridgeLifecycleModule,
       loadedSignalModule,
     ],
     hookRegistry,
