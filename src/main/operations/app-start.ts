@@ -94,6 +94,11 @@ export interface StartHookResult {
   readonly mcpPort?: number;
 }
 
+/** Input context for "activate" -- carries mcpPort from start results. */
+export interface ActivateHookContext extends HookContext {
+  readonly mcpPort: number | null;
+}
+
 /**
  * Per-handler result for "activate" hook point.
  * LocalProjectModule and RemoteProjectModule return projectPaths; others return `{}`.
@@ -189,14 +194,21 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     }
 
     // Hook 5: "start" -- Start servers and wire services
-    const { errors: startErrors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
+      "start",
+      hookCtx
+    );
     if (startErrors.length > 0) {
       throw startErrors[0]!;
     }
 
+    // Extract mcpPort from start results for activate handlers
+    const mcpPort = startResults.find((r) => r.mcpPort !== undefined)?.mcpPort ?? null;
+
     // Hook 6: "activate" -- Wire callbacks, gather project paths, mount renderer
+    const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort };
     const { results: activateResults, errors: activateErrors } =
-      await ctx.hooks.collect<ActivateHookResult>("activate", hookCtx);
+      await ctx.hooks.collect<ActivateHookResult>("activate", activateCtx);
     if (activateErrors.length > 0) {
       throw activateErrors[0]!;
     }
