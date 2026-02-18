@@ -261,6 +261,25 @@ describe("ViewManager", () => {
       expect(handle.__brand).toBe("ViewHandle");
     });
 
+    it("registers dom-ready handler that disables EditContext", () => {
+      const deps = createViewManagerDeps();
+      const manager = ViewManager.create(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Spy on executeJavaScript to verify it's called on dom-ready
+      const executeJsSpy = vi.spyOn(deps.viewLayer, "executeJavaScript");
+
+      // Trigger dom-ready event on the workspace view
+      deps.viewLayer.$.triggerDomReady(wsHandle);
+
+      expect(executeJsSpy).toHaveBeenCalledWith(wsHandle, "delete globalThis.EditContext");
+    });
+
     it("loads URL on first activation", () => {
       const deps = createViewManagerDeps();
       const manager = ViewManager.create(deps);

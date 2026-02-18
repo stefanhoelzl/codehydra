@@ -174,7 +174,7 @@ describe("WorkspaceFileService", () => {
         new Path("/project/workspaces/my-feature.code-workspace")
       );
       const parsed = JSON.parse(content) as CodeWorkspaceFile;
-      expect(parsed.settings).toEqual({}); // Default empty settings from config
+      expect(parsed.settings).toEqual({});
     });
 
     it("creates file if it does not exist", async () => {
@@ -303,9 +303,7 @@ describe("createWorkspaceFileConfig", () => {
       "editor.fontSize": 14,
     });
 
-    expect(config.defaultSettings).toEqual({
-      "editor.fontSize": 14,
-    });
+    expect(config.defaultSettings).toEqual({ "editor.fontSize": 14 });
   });
 
   it("omits recommendedExtensions when none provided", () => {

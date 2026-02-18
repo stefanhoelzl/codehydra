@@ -170,11 +170,6 @@ function applyElectronFlags(): void {
 // CRITICAL: Must be before app.whenReady() and any code that might trigger GPU initialization.
 applyElectronFlags();
 
-// Disable EditContext API at the Blink level. Code-server's web context
-// doesn't reliably support EditContext, and configurationDefaults for
-// editor.editContext don't always apply before the editor initializes.
-app.commandLine.appendSwitch("disable-blink-features", "EditContext");
-
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 
 const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));

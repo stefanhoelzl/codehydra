@@ -85,6 +85,16 @@ export interface ViewLayerMockState extends MockState {
   triggerDidFinishLoad(handle: ViewHandle): void;
 
   /**
+   * Simulates Electron's 'dom-ready' event.
+   * Invokes all registered handlers for the specified view.
+   *
+   * @example
+   * mock.onDomReady(handle, callback);
+   * mock.$.triggerDomReady(handle); // callback is invoked
+   */
+  triggerDomReady(handle: ViewHandle): void;
+
+  /**
    * Simulates Electron's 'will-navigate' event.
    * Invokes all registered handlers for the specified view.
    *
@@ -131,12 +141,14 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
   private readonly _views: Map<string, ViewState>;
   private readonly _windowChildren: Map<string, string[]>;
   private readonly _didFinishLoadCallbacks: Map<string, Set<() => void>>;
+  private readonly _domReadyCallbacks: Map<string, Set<() => void>>;
   private readonly _willNavigateCallbacks: Map<string, Set<(url: string) => boolean>>;
 
   constructor() {
     this._views = new Map();
     this._windowChildren = new Map();
     this._didFinishLoadCallbacks = new Map();
+    this._domReadyCallbacks = new Map();
     this._willNavigateCallbacks = new Map();
   }
 
@@ -153,12 +165,25 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
     return this._didFinishLoadCallbacks;
   }
 
+  get domReadyCallbacks(): Map<string, Set<() => void>> {
+    return this._domReadyCallbacks;
+  }
+
   get willNavigateCallbacks(): Map<string, Set<(url: string) => boolean>> {
     return this._willNavigateCallbacks;
   }
 
   triggerDidFinishLoad(handle: ViewHandle): void {
     const callbacks = this._didFinishLoadCallbacks.get(handle.id);
+    if (callbacks) {
+      for (const callback of callbacks) {
+        callback();
+      }
+    }
+  }
+
+  triggerDomReady(handle: ViewHandle): void {
+    const callbacks = this._domReadyCallbacks.get(handle.id);
     if (callbacks) {
       for (const callback of callbacks) {
         callback();
@@ -304,6 +329,7 @@ export function createViewLayerMock(): MockViewLayer {
         focused: false,
       });
       state.didFinishLoadCallbacks.set(id, new Set());
+      state.domReadyCallbacks.set(id, new Set());
       state.willNavigateCallbacks.set(id, new Set());
       return { id, __brand: "ViewHandle" };
     },
@@ -325,12 +351,14 @@ export function createViewLayerMock(): MockViewLayer {
       }
       state.views.delete(handle.id);
       state.didFinishLoadCallbacks.delete(handle.id);
+      state.domReadyCallbacks.delete(handle.id);
       state.willNavigateCallbacks.delete(handle.id);
     },
 
     destroyAll(): void {
       state.views.clear();
       state.didFinishLoadCallbacks.clear();
+      state.domReadyCallbacks.clear();
       state.willNavigateCallbacks.clear();
       state.windowChildren.clear();
     },
@@ -430,6 +458,15 @@ export function createViewLayerMock(): MockViewLayer {
       };
     },
 
+    onDomReady(handle: ViewHandle, callback: () => void): Unsubscribe {
+      getView(handle); // Validate handle exists
+      const callbacks = state.domReadyCallbacks.get(handle.id);
+      callbacks?.add(callback);
+      return () => {
+        callbacks?.delete(callback);
+      };
+    },
+
     onWillNavigate(handle: ViewHandle, callback: (url: string) => boolean): Unsubscribe {
       getView(handle); // Validate handle exists
       const callbacks = state.willNavigateCallbacks.get(handle.id);
@@ -442,6 +479,11 @@ export function createViewLayerMock(): MockViewLayer {
     setWindowOpenHandler(handle: ViewHandle, handler: WindowOpenHandler | null): void {
       const view = getView(handle);
       view.hasWindowOpenHandler = handler !== null;
+    },
+
+    async executeJavaScript(_handle: ViewHandle, _code: string): Promise<unknown> {
+      getView(_handle); // Validate handle exists
+      return undefined;
     },
 
     send(_handle: ViewHandle, _channel: string, ..._args: unknown[]): void {
@@ -459,6 +501,7 @@ export function createViewLayerMock(): MockViewLayer {
     async dispose(): Promise<void> {
       state.views.clear();
       state.didFinishLoadCallbacks.clear();
+      state.domReadyCallbacks.clear();
       state.willNavigateCallbacks.clear();
       state.windowChildren.clear();
     },

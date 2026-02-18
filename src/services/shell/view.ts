@@ -182,6 +182,16 @@ export interface ViewLayer {
   onDidFinishLoad(handle: ViewHandle, callback: () => void): Unsubscribe;
 
   /**
+   * Subscribe to dom-ready events.
+   *
+   * @param handle - Handle to the view
+   * @param callback - Called when DOM is ready
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onDomReady(handle: ViewHandle, callback: () => void): Unsubscribe;
+
+  /**
    * Subscribe to will-navigate events.
    *
    * @param handle - Handle to the view
@@ -200,6 +210,17 @@ export interface ViewLayer {
    * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
    */
   setWindowOpenHandler(handle: ViewHandle, handler: WindowOpenHandler | null): void;
+
+  // Execution
+  /**
+   * Execute JavaScript in the view's renderer process.
+   *
+   * @param handle - Handle to the view
+   * @param code - JavaScript code to execute
+   * @returns Promise resolving with the result of the executed code
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  executeJavaScript(handle: ViewHandle, code: string): Promise<unknown>;
 
   // IPC
   /**
@@ -470,6 +491,16 @@ export class DefaultViewLayer implements ViewLayer {
     };
   }
 
+  onDomReady(handle: ViewHandle, callback: () => void): Unsubscribe {
+    const state = this.getView(handle);
+    state.view.webContents.on("dom-ready", callback);
+    return () => {
+      if (!state.view.webContents.isDestroyed()) {
+        state.view.webContents.off("dom-ready", callback);
+      }
+    };
+  }
+
   onWillNavigate(handle: ViewHandle, callback: (url: string) => boolean): Unsubscribe {
     const state = this.getView(handle);
     const handler = (event: Electron.Event, url: string) => {
@@ -500,6 +531,11 @@ export class DefaultViewLayer implements ViewLayer {
         });
       });
     }
+  }
+
+  executeJavaScript(handle: ViewHandle, code: string): Promise<unknown> {
+    const state = this.getView(handle);
+    return state.view.webContents.executeJavaScript(code);
   }
 
   send(handle: ViewHandle, channel: string, ...args: unknown[]): void {
