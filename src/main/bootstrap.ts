@@ -101,12 +101,12 @@ import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createBadgeModule } from "./modules/badge-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
 import { createTelemetryModule } from "./modules/telemetry-module";
+import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
 } from "./operations/update-agent-status";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
-import type { UpdateAvailableIntent } from "./operations/update-available";
 import {
   AppStartOperation,
   INTENT_APP_START,
@@ -1066,44 +1066,11 @@ function wireDispatcher(
     logger: lifecycleLogger,
   });
 
-  // AutoUpdaterLifecycleModule: start → start, wire update-available→title.
-  // stop → dispose.
-  const autoUpdaterLifecycleModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            const refs = lifecycleRefs;
-            refs.autoUpdater.start();
-
-            // Wire auto-updater to dispatch update:available intent
-            refs.autoUpdater.onUpdateAvailable((version: string) => {
-              void lifecycleRefs.dispatcher.dispatch({
-                type: INTENT_UPDATE_AVAILABLE,
-                payload: { version },
-              } as UpdateAvailableIntent);
-            });
-            return {};
-          },
-        },
-      },
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              lifecycleRefs.autoUpdater.dispose();
-            } catch (error) {
-              lifecycleLogger.error(
-                "AutoUpdater lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
+  const autoUpdaterLifecycleModule = createAutoUpdaterModule({
+    autoUpdater: lifecycleRefs.autoUpdater,
+    dispatcher: lifecycleRefs.dispatcher,
+    logger: lifecycleLogger,
+  });
 
   // IpcBridgeLifecycleModule: start → wire API events to IPC, wire Plugin→API.
   // stop → cleanup API event wiring.
