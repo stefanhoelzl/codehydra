@@ -53,8 +53,26 @@ export type McpServerFactory = () => McpServerSdk;
 /**
  * Default factory that creates an MCP SDK server instance.
  */
+/**
+ * Server-level instructions surfaced to AI agents via MCP initialize response.
+ * Guides agents on how to use CodeHydra tools effectively.
+ */
+export const SERVER_INSTRUCTIONS = [
+  "CodeHydra manages workspaces as git worktrees, each with its own AI agent session.",
+  "",
+  "When creating a workspace with workspace_create, the initialPrompt parameter controls what the new workspace's agent will do.",
+  "Use the object form { prompt, agent } to control the agent's permission mode:",
+  '- agent: "plan" — the agent starts in read-only/plan mode. Use this when the task requires planning, research, or exploration before making changes.',
+  "- No agent field — the agent starts with full permissions. Use this when the task should proceed directly to implementation.",
+  "",
+  "The model is automatically propagated from your current session — you do not need to specify it.",
+].join("\n");
+
 export function createDefaultMcpServer(): McpServerSdk {
-  return new McpServerSdk({ name: "codehydra", version: "1.0.0" }, { capabilities: { tools: {} } });
+  return new McpServerSdk(
+    { name: "codehydra", version: "1.0.0" },
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
+  );
 }
 
 /**
@@ -388,7 +406,10 @@ export class McpServer implements IMcpServer {
             initialPrompt: initialPromptSchema
               .optional()
               .describe(
-                "Optional initial prompt to send after workspace is created. Can be a string or { prompt, agent? }"
+                "Optional initial prompt to send after workspace is created. " +
+                  "Can be a string or { prompt, agent? }. " +
+                  'Set agent to "plan" for read-only/planning mode, ' +
+                  "or omit agent for full-permission implementation mode."
               ),
             keepInBackground: z
               .boolean()
