@@ -127,6 +127,9 @@ export interface AgentServerManager {
   /** Callback when server stops */
   onServerStopped(callback: (workspacePath: string, ...args: unknown[]) => void): () => void;
 
+  /** Set handler called when workspace becomes active (WrapperStart / first idle) */
+  setMarkActiveHandler(handler: (workspacePath: string) => void): void;
+
   /**
    * Set the initial prompt for a workspace.
    * Optional - only Claude Code implements this method.

@@ -15,7 +15,7 @@
  * - Agent status/session/restart queries
  *
  * Internal closure state: handleServerStarted, waitForProvider, serverStartedPromises,
- * agentStatusUnsubscribe, wrapperReadyCleanup (from AppState + agentLifecycleModule).
+ * agentStatusUnsubscribe (from AppState + agentLifecycleModule).
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -160,9 +160,6 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
   /** Cleanup function for agentStatusManager.onStatusChanged subscription. */
   let agentStatusUnsubscribeFn: Unsubscribe | null = null;
 
-  /** Cleanup function for onWorkspaceReady (markActive) registration. */
-  let markActiveCleanupFn: Unsubscribe | null = null;
-
   /** Cleanup functions for onServerStarted/onServerStopped callbacks. */
   let serverStartedCleanupFn: Unsubscribe | null = null;
   let serverStoppedCleanupFn: Unsubscribe | null = null;
@@ -287,7 +284,10 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
    * Called from the `start` hook after lazy deps are resolved.
    */
   function wireServerCallbacks(lifecycle: AgentLifecycleDeps): void {
-    const { serverManager, agentStatusManager, selectedAgentType } = lifecycle;
+    const { serverManager, agentStatusManager } = lifecycle;
+
+    // Wire markActive handler so both OpenCode and Claude Code call it
+    serverManager.setMarkActiveHandler((wp) => agentStatusManager.markActive(wp as WorkspacePath));
 
     // Wire server started callback
     // Note: OpenCode passes (workspacePath, port, pendingPrompt)
@@ -317,8 +317,6 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
       }
     });
-
-    void selectedAgentType; // used in handleServerStarted via closure
   }
 
   // =========================================================================
@@ -386,21 +384,12 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         },
 
         // -------------------------------------------------------------------
-        // app-start → activate: register onWorkspaceReady for markActive
-        // (OpenCode only), configure MCP
+        // app-start → activate: configure MCP
         // -------------------------------------------------------------------
         activate: {
           handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
             const { mcpPort } = ctx as ActivateHookContext;
             const lifecycle = deps.getLifecycleDeps();
-
-            // Register callback for markActive (OpenCode only)
-            if (lifecycle.selectedAgentType === "opencode") {
-              const opencodeManager = lifecycle.serverManager as OpenCodeServerManager;
-              markActiveCleanupFn = opencodeManager.onWorkspaceReady((workspacePath) => {
-                lifecycle.agentStatusManager.markActive(workspacePath as WorkspacePath);
-              });
-            }
 
             // Configure server manager to connect to MCP
             if (mcpPort !== null) {
@@ -426,12 +415,6 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
           handler: async () => {
             const lifecycleLogger = logger;
             try {
-              // Cleanup markActive callback
-              if (markActiveCleanupFn) {
-                markActiveCleanupFn();
-                markActiveCleanupFn = null;
-              }
-
               // Cleanup server callbacks
               if (serverStartedCleanupFn) {
                 serverStartedCleanupFn();

@@ -176,6 +176,24 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(readyCallback).not.toHaveBeenCalled(); // No change, already idle
     });
 
+    it("markActiveHandler is called when status becomes idle", async () => {
+      const markActiveHandler = vi.fn();
+      serverManager.setMarkActiveHandler(markActiveHandler);
+
+      const port = await serverManager.startServer("/workspace/feature-a");
+
+      // WrapperStart sets status to idle, should trigger markActiveHandler
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
+
+      // Make busy then idle again
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      expect(markActiveHandler).toHaveBeenCalledTimes(2);
+    });
+
     it("onWorkspaceReady unsubscribe works", async () => {
       const readyCallback = vi.fn();
       const unsubscribe = serverManager.onWorkspaceReady(readyCallback);
