@@ -361,7 +361,7 @@ describe("OpenCodeServerManager", () => {
 
       // Create manager with multiple ports
       const multiPortManager = createPortManagerMock([14001, 14002]);
-      const testManager = new OpenCodeServerManager(
+      manager = new OpenCodeServerManager(
         mockProcessRunner,
         multiPortManager,
         mockHttpClient,
@@ -369,10 +369,10 @@ describe("OpenCodeServerManager", () => {
         SILENT_LOGGER
       );
 
-      await testManager.startServer("/project/.worktrees/feature-a");
-      await testManager.startServer("/project/.worktrees/feature-b");
+      await manager.startServer("/project/.worktrees/feature-a");
+      await manager.startServer("/project/.worktrees/feature-b");
 
-      await testManager.stopAllForProject("/project");
+      await manager.stopAllForProject("/project");
 
       expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
       expect(mockProcessRunner.$.spawned(1)).toHaveBeenKilled();
@@ -392,7 +392,7 @@ describe("OpenCodeServerManager", () => {
         }),
       });
 
-      const testManager = new OpenCodeServerManager(
+      manager = new OpenCodeServerManager(
         mockProcessRunner,
         multiPortManager,
         mockHttpClient,
@@ -401,8 +401,8 @@ describe("OpenCodeServerManager", () => {
       );
 
       const [port1, port2] = await Promise.all([
-        testManager.startServer("/workspace/feature-a"),
-        testManager.startServer("/workspace/feature-b"),
+        manager.startServer("/workspace/feature-a"),
+        manager.startServer("/workspace/feature-b"),
       ]);
 
       expect(port1).not.toBe(port2);
@@ -433,7 +433,7 @@ describe("OpenCodeServerManager", () => {
 
       // Create manager with multiple ports
       const multiPortManager = createPortManagerMock([14001, 14002]);
-      const testManager = new OpenCodeServerManager(
+      manager = new OpenCodeServerManager(
         mockProcessRunner,
         multiPortManager,
         mockHttpClient,
@@ -441,10 +441,10 @@ describe("OpenCodeServerManager", () => {
         SILENT_LOGGER
       );
 
-      await testManager.startServer("/workspace/feature-a");
-      await testManager.startServer("/workspace/feature-b");
+      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-b");
 
-      await testManager.dispose();
+      await manager.dispose();
 
       expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
       expect(mockProcessRunner.$.spawned(1)).toHaveBeenKilled();
