@@ -865,9 +865,6 @@ async function bootstrap(): Promise<void> {
         },
         windowManager: windowManagerRef,
         waitForProvider: (wp: string) => appStateRef.waitForProvider(wp),
-        updateCodeServerPort: () => {
-          // No-op: code-server port is now tracked locally in wireDispatcher scope
-        },
         setMcpServerManager: (mgr) => appStateRef.setMcpServerManager(mgr),
       };
     },
