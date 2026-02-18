@@ -57,12 +57,11 @@ import {
 import { ExtensionManager } from "../services/vscode-setup/extension-manager";
 import { AgentStatusManager, type AgentType, type AgentServerManager } from "../agents";
 import { ClaudeCodeServerManager } from "../agents/claude/server-manager";
-import { PluginServer } from "../services/plugin-server";
+import { PluginServer, type ConfigDataProvider } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
-import { AppState } from "./app-state";
 import { registerLogHandlers } from "./ipc";
 import { initializeBootstrap, type BootstrapResult, type LifecycleServiceRefs } from "./bootstrap";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
@@ -210,7 +209,7 @@ function createCodeServerConfig(): CodeServerConfig {
 // Global state
 let windowManager: WindowManager | null = null;
 let viewManager: ViewManager | null = null;
-let appState: AppState | null = null;
+let selectedAgentTypeValue: AgentType | null = null;
 let codeServerManager: CodeServerManager | null = null;
 let agentStatusManager: AgentStatusManager | null = null;
 let badgeManager: BadgeManager | null = null;
@@ -322,7 +321,7 @@ let gitClient: import("../services").IGitClient | null = null;
 
 /**
  * ProjectStore for project configuration storage.
- * Created in startServices() for use in AppState and CoreModule.
+ * Created in startServices() for use in CoreModule.
  */
 let projectStore: import("../services").ProjectStore | null = null;
 
@@ -356,7 +355,7 @@ let workspaceFileService: import("../services").IWorkspaceFileService | null = n
  *
  * Called by the app:start intent's beforeAppStart callback after setup completes.
  * This function:
- * 1. Creates all service instances (PluginServer, CodeServerManager, AppState, etc.)
+ * 1. Creates all service instances (PluginServer, CodeServerManager, etc.)
  * 2. Calls bootstrapResult.startServices() to wire the remaining intent operations
  * 3. Does NOT dispatch app:start (that's handled by the start intent flow)
  */
@@ -378,6 +377,7 @@ async function createServicesAndWireDispatcher(): Promise<void> {
   }
   const appConfig = await configService.load();
   const selectedAgentType: AgentType = appConfig.agent ?? "opencode";
+  selectedAgentTypeValue = selectedAgentType;
 
   if (!processRunner) {
     throw new Error(
@@ -425,9 +425,6 @@ async function createServicesAndWireDispatcher(): Promise<void> {
     loggingService.createLogger("workspace-file")
   );
 
-  // Create AppState (port=0, updated by CodeServerLifecycleModule after start)
-  appState = new AppState(loggingService, selectedAgentType);
-
   // Create agent services
   const agentLoggerName = selectedAgentType === "claude" ? "claude" : "opencode";
   agentStatusManager = new AgentStatusManager(loggingService.createLogger(agentLoggerName));
@@ -470,12 +467,6 @@ async function createServicesAndWireDispatcher(): Promise<void> {
     logger: loggingService.createLogger("updater"),
     isDevelopment: buildInfo.isDevelopment,
   });
-
-  // Inject services into AppState
-  appState.setAgentStatusManager(agentStatusManager);
-  if (serverManager) {
-    appState.setServerManager(serverManager);
-  }
 
   // =========================================================================
   // Phase 2: Wire dispatcher (CoreModule and remaining operations)
@@ -822,10 +813,10 @@ async function bootstrap(): Promise<void> {
     // Lifecycle service references for app:start/shutdown modules
     // Uses getters for references that are set after wireDispatcher() runs
     lifecycleRefsFn: (): LifecycleServiceRefs => {
-      if (!appState || !viewManager || !windowManager) {
+      if (!viewManager || !windowManager) {
         throw new Error("Core services not initialized");
       }
-      if (!agentStatusManager || !serverManager) {
+      if (!agentStatusManager || !serverManager || !selectedAgentTypeValue) {
         throw new Error("Agent services not initialized");
       }
       if (!codeServerManager || !autoUpdater || !badgeManager) {
@@ -833,12 +824,21 @@ async function bootstrap(): Promise<void> {
       }
 
       // Capture for getter closures
-      const appStateRef = appState;
       const agentStatusManagerRef = agentStatusManager;
       const serverManagerRef = serverManager;
+      const selectedAgentTypeRef = selectedAgentTypeValue;
       const codeServerManagerRef = codeServerManager;
       const autoUpdaterRef = autoUpdater;
       const windowManagerRef = windowManager;
+
+      // ConfigDataProvider for PluginServer (agent env vars + type)
+      const configDataProvider: ConfigDataProvider = (workspacePath: string) => {
+        const env =
+          agentStatusManagerRef
+            .getProvider(workspacePath as import("../shared/ipc").WorkspacePath)
+            ?.getEnvironmentVariables() ?? null;
+        return { env, agentType: selectedAgentTypeRef };
+      };
 
       return {
         pluginServer,
@@ -849,7 +849,7 @@ async function bootstrap(): Promise<void> {
         telemetryService,
         autoUpdater: autoUpdaterRef,
         loggingService,
-        selectedAgentType: appStateRef.getAgentType(),
+        selectedAgentType: selectedAgentTypeRef,
         platformInfo,
         buildInfo,
         pathProvider,
@@ -866,7 +866,7 @@ async function bootstrap(): Promise<void> {
           return codeHydraApi;
         },
         windowManager: windowManagerRef,
-        waitForProvider: (wp: string) => appStateRef.waitForProvider(wp),
+        configDataProvider,
       };
     },
     // Shell layers for ViewModule (available immediately from bootstrap)
@@ -997,7 +997,7 @@ async function cleanup(): Promise<void> {
   // Clear module-level references
   windowManager = null;
   viewManager = null;
-  appState = null;
+  selectedAgentTypeValue = null;
   codeServerManager = null;
   agentStatusManager = null;
   badgeManager = null;

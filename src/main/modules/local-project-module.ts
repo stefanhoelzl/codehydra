@@ -77,6 +77,11 @@ import {
   type DeleteWorkspaceIntent,
   type ResolveProjectHookResult as DeleteWorkspaceResolveProjectHookResult,
 } from "../operations/delete-workspace";
+import {
+  UPDATE_AGENT_STATUS_OPERATION_ID,
+  type ResolveProjectHookInput as UpdateAgentStatusResolveProjectInput,
+  type ResolveProjectHookResult as UpdateAgentStatusResolveProjectResult,
+} from "../operations/update-agent-status";
 
 // =============================================================================
 // Types
@@ -364,6 +369,23 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             for (const project of projects.values()) {
               if (project.id === projectId) {
                 return { projectPath: project.path.toString() };
+              }
+            }
+
+            return {};
+          },
+        },
+      },
+
+      [UPDATE_AGENT_STATUS_OPERATION_ID]: {
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<UpdateAgentStatusResolveProjectResult> => {
+            const { projectPath } = ctx as UpdateAgentStatusResolveProjectInput;
+            const normalizedKey = new Path(projectPath).toString();
+
+            for (const project of projects.values()) {
+              if (project.path.toString() === normalizedKey) {
+                return { projectId: project.id };
               }
             }
 
