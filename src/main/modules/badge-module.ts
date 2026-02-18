@@ -5,6 +5,9 @@
  * - agent:status-updated: updates internal map, re-aggregates, calls badgeManager.updateBadge()
  * - workspace:deleted: evicts deleted workspace from internal map, re-aggregates
  *
+ * Hooks:
+ * - app-shutdown/stop: disposes BadgeManager (clears badge and overlay icon)
+ *
  * The aggregation logic (aggregateWorkspaceStates) is a standalone pure function
  * extracted from BadgeManager.
  */
@@ -16,6 +19,8 @@ import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status"
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { WorkspaceDeletedEvent } from "../operations/delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../operations/delete-workspace";
+import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
+import type { Logger } from "../../services/logging/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 
 /**
@@ -64,12 +69,14 @@ export function aggregateWorkspaceStates(
 }
 
 /**
- * Create a badge module that subscribes to agent status and workspace deletion events.
+ * Create a badge module that subscribes to agent status and workspace deletion events,
+ * and disposes the BadgeManager on app shutdown.
  *
  * @param badgeManager - The BadgeManager to call updateBadge() on
- * @returns IntentModule with event subscriptions
+ * @param logger - Logger for shutdown error reporting
+ * @returns IntentModule with event subscriptions and shutdown hook
  */
-export function createBadgeModule(badgeManager: BadgeManager): IntentModule {
+export function createBadgeModule(badgeManager: BadgeManager, logger: Logger): IntentModule {
   const workspaceStatuses = new Map<WorkspacePath, AggregatedAgentStatus>();
 
   function updateBadge(): void {
@@ -88,6 +95,23 @@ export function createBadgeModule(badgeManager: BadgeManager): IntentModule {
         const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
         workspaceStatuses.delete(workspacePath as WorkspacePath);
         updateBadge();
+      },
+    },
+    hooks: {
+      [APP_SHUTDOWN_OPERATION_ID]: {
+        stop: {
+          handler: async () => {
+            try {
+              badgeManager.dispose();
+            } catch (error) {
+              logger.error(
+                "Badge lifecycle shutdown failed (non-fatal)",
+                {},
+                error instanceof Error ? error : undefined
+              );
+            }
+          },
+        },
       },
     },
   };

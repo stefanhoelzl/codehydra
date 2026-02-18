@@ -967,28 +967,6 @@ function wireDispatcher(
     },
   };
 
-  // BadgeLifecycleModule: start → (badgeManager already created, just needs to exist).
-  // stop → dispose BadgeManager.
-  const badgeLifecycleModule: IntentModule = {
-    hooks: {
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              badgeManager.dispose();
-            } catch (error) {
-              lifecycleLogger.error(
-                "Badge lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
-
   const telemetryLifecycleModule = createTelemetryModule({
     telemetryService: lifecycleRefs.telemetryService,
     platformInfo: lifecycleRefs.platformInfo,
@@ -1110,7 +1088,7 @@ function wireDispatcher(
   // Wire IpcEventBridge, BadgeModule, and hook handler modules
   // Note: shutdownIdempotencyModule and quitModule are wired early in initializeBootstrap()
   const ipcEventBridge = createIpcEventBridge(registry);
-  const badgeModule = createBadgeModule(badgeManager);
+  const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
   wireModules(
     [
       // Workspace index (must be first to receive events before other modules)
@@ -1137,7 +1115,6 @@ function wireDispatcher(
       windowTitleModule,
       // App lifecycle modules
       wrapperReadyViewModule,
-      badgeLifecycleModule,
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
       ipcBridgeLifecycleModule,
