@@ -511,7 +511,6 @@ async function createServicesAndWireDispatcher(): Promise<void> {
   // (must happen before app:start's "start" hook collects handlers)
   const mcpModule = createMcpModule({
     mcpServerManager,
-    pathProvider,
     viewManager: viewManager!,
     agentStatusManager: agentStatusManager!,
     serverManager: serverManager!,

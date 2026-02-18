@@ -41,7 +41,6 @@ function createMockPathProvider(): PathProvider {
     binDir: new Path("/app/bin"),
     binAssetsDir: new Path("/app/assets/bin"),
     setupMarkerPath: new Path("/app/setup.json"),
-    opencodeConfig: new Path("/app/opencode.json"),
     electronDataDir: new Path("/app/electron"),
     scriptsRuntimeDir: new Path("/app/scripts"),
     appIconPath: new Path("/app/icon.png"),

@@ -50,9 +50,6 @@ export interface PathProvider {
   /** Directory for CLI wrapper scripts: `<dataRoot>/bin/` */
   readonly binDir: Path;
 
-  /** Path to OpenCode config file: `<dataRoot>/opencode/opencode.codehydra.json` */
-  readonly opencodeConfig: Path;
-
   /** Directory for CLI wrapper script assets: `<appPath>/out/main/assets/bin/` */
   readonly binAssetsDir: Path;
 
@@ -151,7 +148,6 @@ export class DefaultPathProvider implements PathProvider {
   readonly scriptsDir: Path;
   readonly appIconPath: Path;
   readonly binDir: Path;
-  readonly opencodeConfig: Path;
   readonly binAssetsDir: Path;
   readonly binRuntimeDir: Path;
   readonly scriptsRuntimeDir: Path;
@@ -189,7 +185,6 @@ export class DefaultPathProvider implements PathProvider {
     this.setupMarkerPath = new Path(this.dataRootDir, ".setup-completed");
     this.electronDataDir = new Path(this.dataRootDir, "electron");
     this.binDir = new Path(this.dataRootDir, "bin");
-    this.opencodeConfig = new Path(this.dataRootDir, "opencode", "opencode.codehydra.json");
 
     // Assets are bundled at out/main/assets/ (inside ASAR in production)
     this.vscodeAssetsDir = new Path(buildInfo.appPath, "out", "main", "assets");

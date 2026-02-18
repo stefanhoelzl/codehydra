@@ -144,7 +144,7 @@ export interface OpencodeProcess {
 /**
  * Start an opencode serve process with the given configuration.
  *
- * Uses OPENCODE_CONFIG environment variable to inject configuration.
+ * Uses OPENCODE_CONFIG_CONTENT environment variable to inject inline configuration.
  * The process is started in the background and monitored.
  *
  * @param config - Test configuration

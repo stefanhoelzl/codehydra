@@ -86,8 +86,6 @@ export interface StartServerOptions {
  * MCP server configuration for OpenCode integration.
  */
 export interface McpConfig {
-  /** Path to the MCP config file */
-  readonly configPath: string;
   /** MCP server port */
   readonly port: number;
 }
@@ -226,14 +224,20 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     let env: NodeJS.ProcessEnv | undefined;
     if (this.mcpConfig) {
       // Use Path.toString() for the workspace path (already POSIX format).
-      // OpenCode substitutes {env:CODEHYDRA_WORKSPACE_PATH} directly into JSON,
-      // so backslashes would become invalid escape sequences and cause JSON parsing errors.
+      // Backslashes would become invalid escape sequences in JSON.
       const normalizedWorkspacePath = new Path(workspacePath).toString();
       env = {
         ...process.env,
-        OPENCODE_CONFIG: this.mcpConfig.configPath,
-        CODEHYDRA_WORKSPACE_PATH: normalizedWorkspacePath,
-        CODEHYDRA_MCP_PORT: String(this.mcpConfig.port),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          mcp: {
+            codehydra: {
+              type: "remote",
+              url: `http://127.0.0.1:${this.mcpConfig.port}/mcp`,
+              headers: { "X-Workspace-Path": normalizedWorkspacePath },
+              enabled: true,
+            },
+          },
+        }),
       };
     }
 
@@ -511,7 +515,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    */
   setMcpConfig(config: McpConfig): void {
     this.mcpConfig = config;
-    this.logger.debug("MCP config set", { configPath: config.configPath, port: config.port });
+    this.logger.debug("MCP config set", { port: config.port });
   }
 
   /**
