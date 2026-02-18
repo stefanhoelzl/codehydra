@@ -66,16 +66,12 @@ import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "./operations/op
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
-  DELETE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_DELETED,
 } from "./operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   WorkspaceDeletedEvent,
-  ReleaseHookResult,
-  DetectHookResult,
-  FlushHookResult,
-  FlushHookInput,
+  DeletionProgressCallback,
 } from "./operations/delete-workspace";
 import {
   OpenProjectOperation,
@@ -136,8 +132,6 @@ import type { GitWorktreeProvider } from "../services/git/git-worktree-provider"
 import type { IKeepFilesService } from "../services/keepfiles";
 import type { IWorkspaceFileService } from "../services";
 import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-handler";
-import type { DeletionProgressCallback } from "./operations/delete-workspace";
-import { getErrorMessage } from "../shared/error-utils";
 import {
   type ProjectId,
   type SetupRowId,
@@ -152,6 +146,7 @@ import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
+import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createCodeServerModule } from "./modules/code-server-module";
 import { createViewModule, type MountSignal } from "./modules/view-module";
 import { createAgentModule } from "./modules/agent-module";
@@ -847,71 +842,7 @@ function wireDispatcher(
   // Delete-workspace hook modules
   // ---------------------------------------------------------------------------
 
-  const deleteWindowsLockModule: IntentModule = {
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        release: {
-          handler: async (ctx: HookContext): Promise<ReleaseHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            if (payload.force || !workspaceLockHandler) {
-              return {};
-            }
-
-            // CWD-only scan: find and kill processes whose CWD is under workspace
-            try {
-              const cwdProcesses = await workspaceLockHandler.detectCwd(
-                new Path(payload.workspacePath)
-              );
-              if (cwdProcesses.length > 0) {
-                logger.info("Killing CWD-blocking processes before deletion", {
-                  workspacePath: payload.workspacePath,
-                  pids: cwdProcesses.map((p) => p.pid).join(","),
-                });
-                await workspaceLockHandler.killProcesses(cwdProcesses.map((p) => p.pid));
-              }
-            } catch {
-              // Non-fatal: CWD detection/kill failure shouldn't block deletion
-            }
-            return {};
-          },
-        },
-        detect: {
-          handler: async (ctx: HookContext): Promise<DetectHookResult> => {
-            if (!workspaceLockHandler) return {};
-
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            try {
-              const detected = await workspaceLockHandler.detect(new Path(payload.workspacePath));
-              return { blockingProcesses: detected };
-            } catch (error) {
-              logger.warn("Detection failed", {
-                workspacePath: payload.workspacePath,
-                error: getErrorMessage(error),
-              });
-              return { blockingProcesses: [] };
-            }
-          },
-        },
-        flush: {
-          handler: async (ctx: HookContext): Promise<FlushHookResult> => {
-            if (!workspaceLockHandler) return {};
-
-            const { blockingPids } = ctx as FlushHookInput;
-            if (blockingPids.length > 0) {
-              try {
-                await workspaceLockHandler.killProcesses([...blockingPids]);
-              } catch (error) {
-                return { error: getErrorMessage(error) };
-              }
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
+  const deleteWindowsLockModule = createWindowsFileLockModule({ workspaceLockHandler, logger });
 
   const deleteIpcBridge: IntentModule = {
     events: {
