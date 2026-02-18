@@ -406,6 +406,14 @@ export class ViewManager implements IViewManager {
       return true; // Allow navigation within code-server
     });
 
+    // Disable EditContext API before VS Code editor initializes.
+    // EditContext (Chromium 121+) is incompatible with code-server's web context,
+    // causing the editor to ignore all keyboard input. Removing it from the JS
+    // context at dom-ready ensures VS Code falls back to the legacy input method.
+    this.viewLayer.onDomReady(viewHandle, () => {
+      void this.viewLayer.executeJavaScript(viewHandle, "delete globalThis.EditContext");
+    });
+
     // Store workspace state
     this.workspaceStates.set(workspacePath, {
       handle: viewHandle,

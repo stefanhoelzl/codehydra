@@ -244,6 +244,42 @@ describe("ViewLayer (integration)", () => {
     });
   });
 
+  describe("onDomReady", () => {
+    it("registers callback", () => {
+      const handle = viewLayer.createView({});
+      const callback = vi.fn();
+
+      viewLayer.onDomReady(handle, callback);
+      viewLayer.$.triggerDomReady(handle);
+
+      expect(callback).toHaveBeenCalled();
+    });
+
+    it("unsubscribes from callback", () => {
+      const handle = viewLayer.createView({});
+      const callback = vi.fn();
+
+      const unsubscribe = viewLayer.onDomReady(handle, callback);
+      unsubscribe();
+      viewLayer.$.triggerDomReady(handle);
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("supports multiple callbacks", () => {
+      const handle = viewLayer.createView({});
+      const callback1 = vi.fn();
+      const callback2 = vi.fn();
+
+      viewLayer.onDomReady(handle, callback1);
+      viewLayer.onDomReady(handle, callback2);
+      viewLayer.$.triggerDomReady(handle);
+
+      expect(callback1).toHaveBeenCalled();
+      expect(callback2).toHaveBeenCalled();
+    });
+  });
+
   describe("onWillNavigate", () => {
     it("registers callback with URL", () => {
       const handle = viewLayer.createView({});
@@ -283,6 +319,20 @@ describe("ViewLayer (integration)", () => {
       viewLayer.setWindowOpenHandler(handle, null);
 
       expect(viewLayer).toHaveView(handle.id, { hasWindowOpenHandler: false });
+    });
+  });
+
+  describe("executeJavaScript", () => {
+    it("resolves for valid view", async () => {
+      const handle = viewLayer.createView({});
+
+      await expect(viewLayer.executeJavaScript(handle, "1 + 1")).resolves.toBeUndefined();
+    });
+
+    it("throws VIEW_NOT_FOUND for non-existent view", async () => {
+      const fakeHandle = { id: "view-999", __brand: "ViewHandle" as const };
+
+      await expect(viewLayer.executeJavaScript(fakeHandle, "1")).rejects.toThrow(ShellError);
     });
   });
 
