@@ -134,6 +134,8 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   private bridgeStartPromise: Promise<void> | null = null;
   /** Callbacks for workspace ready events (wrapper started) */
   private readonly workspaceReadyCallbacks = new Set<WorkspaceReadyCallback>();
+  /** Handler called when workspace becomes active (WrapperStart) */
+  private markActiveHandler: ((workspacePath: string) => void) | null = null;
 
   constructor(
     processRunner: ProcessRunner,
@@ -557,6 +559,14 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   }
 
   /**
+   * Set handler called when workspace becomes active (WrapperStart).
+   * The handler is invoked with the normalized workspace path.
+   */
+  setMarkActiveHandler(handler: (workspacePath: string) => void): void {
+    this.markActiveHandler = handler;
+  }
+
+  /**
    * Set the MCP server configuration.
    * This must be called before starting servers if MCP integration is desired.
    *
@@ -727,6 +737,8 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
           callback(normalizedPath);
         }
 
+        this.markActiveHandler?.(normalizedPath);
+
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true }));
       } catch (error) {
@@ -754,6 +766,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     this.startedCallbacks.clear();
     this.stoppedCallbacks.clear();
     this.workspaceReadyCallbacks.clear();
+    this.markActiveHandler = null;
     await this.stopBridgeServer();
   }
 }

@@ -178,6 +178,7 @@ function createMockDeps(): BootstrapDeps {
         serverManager: {
           onServerStarted: vi.fn().mockReturnValue(() => {}),
           onServerStopped: vi.fn().mockReturnValue(() => {}),
+          setMarkActiveHandler: vi.fn(),
           dispose: vi.fn().mockResolvedValue(undefined),
           onWorkspaceReady: vi.fn().mockReturnValue(() => {}),
         },

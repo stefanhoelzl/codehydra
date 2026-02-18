@@ -398,6 +398,52 @@ describe("OpenCodeServerManager integration", () => {
       expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
     });
 
+    it("calls markActiveHandler when WrapperStart notification received", async () => {
+      const markActiveHandler = vi.fn();
+      serverManager.setMarkActiveHandler(markActiveHandler);
+
+      await serverManager.startServer("/workspace/feature-a");
+
+      const bridgePort = serverManager.getBridgePort()!;
+      const payload = JSON.stringify({ workspacePath: "/workspace/feature-a" });
+
+      // Send WrapperStart notification to bridge server
+      await new Promise<void>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            hostname: "127.0.0.1",
+            port: bridgePort,
+            path: "/hook/WrapperStart",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(payload),
+            },
+          },
+          (res) => {
+            let body = "";
+            res.on("data", (chunk: Buffer) => {
+              body += chunk.toString();
+            });
+            res.on("end", () => {
+              try {
+                const parsed = JSON.parse(body) as { success: boolean };
+                expect(parsed.success).toBe(true);
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            });
+          }
+        );
+        req.on("error", reject);
+        req.write(payload);
+        req.end();
+      });
+
+      expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
+    });
+
     it("cleans up bridge server on dispose", async () => {
       await serverManager.startServer("/workspace/feature-a");
       expect(serverManager.getBridgePort()).not.toBeNull();

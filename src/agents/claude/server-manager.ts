@@ -121,6 +121,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   private readonly stoppedCallbacks = new Set<ServerStoppedCallback>();
   private readonly workspaceReadyCallbacks = new Set<WorkspaceReadyCallback>();
 
+  /** Handler called when workspace becomes active (first idle) */
+  private markActiveHandler: ((workspacePath: string) => void) | null = null;
+
   /** MCP configuration (set before starting servers) */
   private mcpConfig: McpConfig | null = null;
 
@@ -330,6 +333,14 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
+   * Set handler called when workspace becomes active (first idle).
+   * The handler is invoked with the normalized workspace path.
+   */
+  setMarkActiveHandler(handler: (workspacePath: string) => void): void {
+    this.markActiveHandler = handler;
+  }
+
+  /**
    * Subscribe to status changes for a specific workspace.
    *
    * @param workspacePath - Absolute path to the workspace
@@ -473,6 +484,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.startedCallbacks.clear();
     this.stoppedCallbacks.clear();
     this.workspaceReadyCallbacks.clear();
+    this.markActiveHandler = null;
   }
 
   /**
@@ -650,6 +662,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
         for (const callback of this.workspaceReadyCallbacks) {
           callback(normalizedPath);
         }
+
+        this.markActiveHandler?.(normalizedPath);
       }
     }
   }

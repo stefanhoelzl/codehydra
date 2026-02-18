@@ -282,12 +282,12 @@ function createMockServerManager(agentType: "opencode" | "claude" = "opencode") 
     stopAllForProject: vi.fn().mockResolvedValue(undefined),
     onServerStarted: vi.fn().mockReturnValue(vi.fn()),
     onServerStopped: vi.fn().mockReturnValue(vi.fn()),
+    setMarkActiveHandler: vi.fn(),
     setInitialPrompt: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn().mockResolvedValue(undefined),
   };
 
   if (agentType === "opencode") {
-    base.onWorkspaceReady = vi.fn().mockReturnValue(vi.fn());
     base.getBridgePort = vi.fn().mockReturnValue(9999);
     base.setMcpConfig = vi.fn();
   } else {
@@ -632,6 +632,34 @@ describe("AgentModule", () => {
       ).toHaveBeenCalledWith(expect.any(Function));
     });
 
+    it("calls setMarkActiveHandler for opencode", async () => {
+      const lifecycleDeps = createMockLifecycleDeps("opencode");
+      const deps = createMockDeps({ lifecycleDeps });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(
+        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
+          .setMarkActiveHandler!
+      ).toHaveBeenCalledWith(expect.any(Function));
+    });
+
+    it("calls setMarkActiveHandler for claude", async () => {
+      const lifecycleDeps = createMockLifecycleDeps("claude");
+      const deps = createMockDeps({ lifecycleDeps });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(
+        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
+          .setMarkActiveHandler!
+      ).toHaveBeenCalledWith(expect.any(Function));
+    });
+
     it("dispatches agent:update-status when status changes", async () => {
       // Build deps first, then wire so lifecycle.dispatcher is the SAME dispatcher
       const lifecycleDeps = createMockLifecycleDeps();
@@ -715,21 +743,6 @@ describe("AgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("activate", () => {
-    it("registers onWorkspaceReady for markActive (OpenCode)", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalActivateOperation({ mcpPort: 5555 }));
-
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      const serverManager = lifecycleDeps.serverManager as unknown as Record<
-        string,
-        ReturnType<typeof vi.fn>
-      >;
-      expect(serverManager.onWorkspaceReady).toHaveBeenCalledWith(expect.any(Function));
-    });
-
     it("calls setMcpConfig with mcpPort (OpenCode)", async () => {
       const lifecycleDeps = createMockLifecycleDeps("opencode");
       const deps = createMockDeps({ lifecycleDeps });
@@ -758,22 +771,6 @@ describe("AgentModule", () => {
         ReturnType<typeof vi.fn>
       >;
       expect(serverManager.setMcpConfig).toHaveBeenCalledWith({ port: 5555 });
-    });
-
-    it("skips onWorkspaceReady for markActive (Claude)", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("claude");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalActivateOperation({ mcpPort: null }));
-
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      const serverManager = lifecycleDeps.serverManager as unknown as Record<
-        string,
-        ReturnType<typeof vi.fn>
-      >;
-      // Claude server manager does not have onWorkspaceReady
-      expect(serverManager.onWorkspaceReady).toBeUndefined();
     });
 
     it("skips setMcpConfig when mcpPort is null", async () => {
