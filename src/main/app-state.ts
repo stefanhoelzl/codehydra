@@ -16,8 +16,6 @@ import { createAgentProvider, type AgentType } from "../agents";
 import type { AgentServerManager } from "../agents/types";
 import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { PendingPrompt } from "../agents/opencode/server-manager";
-import type { McpServerManager } from "../services/mcp-server";
-
 /**
  * Manages application state for agent lifecycle and server coordination.
  */
@@ -26,7 +24,6 @@ export class AppState {
   private readonly agentType: AgentType;
   private agentStatusManager: AgentStatusManager | null = null;
   private serverManager: AgentServerManager | null = null;
-  private mcpServerManager: McpServerManager | null = null;
   /**
    * Tracks pending handleServerStarted() promises so callers can await provider registration.
    */
@@ -212,20 +209,5 @@ export class AppState {
    */
   getServerManager(): AgentServerManager | null {
     return this.serverManager;
-  }
-
-  /**
-   * Set the MCP server manager.
-   * Called from main process after creating services.
-   */
-  setMcpServerManager(manager: McpServerManager): void {
-    this.mcpServerManager = manager;
-  }
-
-  /**
-   * Get the MCP server manager.
-   */
-  getMcpServerManager(): McpServerManager | null {
-    return this.mcpServerManager;
   }
 }

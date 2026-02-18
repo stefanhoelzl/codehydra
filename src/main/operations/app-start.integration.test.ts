@@ -29,6 +29,7 @@ import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./a
 import type {
   AppStartIntent,
   StartHookResult,
+  ActivateHookContext,
   ActivateHookResult,
   CheckConfigResult,
   CheckDepsHookContext,
@@ -757,6 +758,64 @@ describe("AppStart Operation", () => {
       await dispatcher.dispatch(appStartIntent());
 
       expect(receivedAgent).toBe("opencode");
+    });
+  });
+
+  // ===========================================================================
+  // Activate Hook Context (mcpPort flowing from start to activate)
+  // ===========================================================================
+
+  describe("activate hook receives mcpPort from start results (#15)", () => {
+    it("passes mcpPort from MCP start handler to activate handlers", async () => {
+      const state = createTestState();
+      let receivedMcpPort: number | null | undefined;
+
+      const mcpPortReaderModule: IntentModule = {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            activate: {
+              handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
+                receivedMcpPort = (ctx as ActivateHookContext).mcpPort;
+                return {};
+              },
+            },
+          },
+        },
+      };
+
+      const { dispatcher } = createTestSetup([
+        createCodeServerModule(state),
+        createMcpModule(state),
+        mcpPortReaderModule,
+      ]);
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(receivedMcpPort).toBe(9090);
+    });
+
+    it("passes null mcpPort when no start handler returns mcpPort", async () => {
+      const state = createTestState();
+      let receivedMcpPort: number | null | undefined;
+
+      const mcpPortReaderModule: IntentModule = {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            activate: {
+              handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
+                receivedMcpPort = (ctx as ActivateHookContext).mcpPort;
+                return {};
+              },
+            },
+          },
+        },
+      };
+
+      const { dispatcher } = createTestSetup([createCodeServerModule(state), mcpPortReaderModule]);
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(receivedMcpPort).toBeNull();
     });
   });
 });

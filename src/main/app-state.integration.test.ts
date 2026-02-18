@@ -41,16 +41,6 @@ describe("AppState Integration", () => {
     });
   });
 
-  describe("MCP server manager lifecycle", () => {
-    it("injects and retrieves MCP server manager", () => {
-      const mockMcpManager = {};
-
-      appState.setMcpServerManager(mockMcpManager as never);
-
-      expect(appState.getMcpServerManager()).toBe(mockMcpManager);
-    });
-  });
-
   describe("waitForProvider", () => {
     it("resolves immediately when no pending promise exists", async () => {
       await expect(appState.waitForProvider("/some/path")).resolves.toBeUndefined();

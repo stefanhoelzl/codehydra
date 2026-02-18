@@ -157,6 +157,7 @@ import {
 import type {
   ShowUIHookResult,
   StartHookResult,
+  ActivateHookContext,
   ActivateHookResult,
   CheckConfigResult,
   CheckDepsHookContext,
@@ -1223,7 +1224,21 @@ function wireDispatcher(
             const agentProvider = lifecycleRefs.agentStatusManager.getProvider(
               workspacePath as WorkspacePath
             );
-            return { envVars: agentProvider?.getEnvironmentVariables() ?? {} };
+            const envVars: Record<string, string> = {
+              ...(agentProvider?.getEnvironmentVariables() ?? {}),
+            };
+
+            // 5. Add bridge port for OpenCode wrapper notifications
+            if (lifecycleRefs.selectedAgentType === "opencode") {
+              const bridgePort = (
+                lifecycleRefs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager
+              ).getBridgePort();
+              if (bridgePort !== null) {
+                envVars.CODEHYDRA_BRIDGE_PORT = String(bridgePort);
+              }
+            }
+
+            return { envVars };
           },
         },
       },
@@ -1527,9 +1542,10 @@ function wireDispatcher(
 
   const lifecycleLogger = lifecycleRefs.loggingService.createLogger("lifecycle");
 
-  // AgentLifecycleModule: start → wire status→dispatcher. stop → dispose ServerManager,
-  // unsubscribe, dispose AgentStatusManager.
+  // AgentLifecycleModule: start → wire status→dispatcher. activate → wire onWorkspaceReady,
+  // configure MCP. stop → dispose ServerManager, unsubscribe, dispose AgentStatusManager.
   let agentStatusUnsubscribeFn: Unsubscribe | null = null;
+  let wrapperReadyCleanupFn: Unsubscribe | null = null;
   const agentLifecycleModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -1554,11 +1570,55 @@ function wireDispatcher(
             return {};
           },
         },
+        activate: {
+          handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
+            const { mcpPort } = ctx as ActivateHookContext;
+
+            // Register callback for wrapper ready (bridge server notification)
+            if (lifecycleRefs.selectedAgentType === "claude") {
+              const claudeServerManager =
+                lifecycleRefs.serverManager as import("../agents/claude/server-manager").ClaudeCodeServerManager;
+              if (claudeServerManager.onWorkspaceReady) {
+                wrapperReadyCleanupFn = claudeServerManager.onWorkspaceReady((workspacePath) => {
+                  viewManager.setWorkspaceLoaded(workspacePath);
+                });
+              }
+            } else if (lifecycleRefs.selectedAgentType === "opencode") {
+              const opencodeManager =
+                lifecycleRefs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager;
+              wrapperReadyCleanupFn = opencodeManager.onWorkspaceReady((workspacePath) => {
+                viewManager.setWorkspaceLoaded(workspacePath);
+                lifecycleRefs.agentStatusManager.markActive(workspacePath as WorkspacePath);
+              });
+            }
+
+            // Configure server manager to connect to MCP
+            if (mcpPort !== null) {
+              if (lifecycleRefs.selectedAgentType === "claude") {
+                const claudeManager =
+                  lifecycleRefs.serverManager as import("../agents/claude/server-manager").ClaudeCodeServerManager;
+                claudeManager.setMcpConfig({ port: mcpPort });
+              } else {
+                const opencodeManager =
+                  lifecycleRefs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager;
+                opencodeManager.setMcpConfig({ port: mcpPort });
+              }
+            }
+
+            return {};
+          },
+        },
       },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
             try {
+              // Cleanup wrapper ready callback
+              if (wrapperReadyCleanupFn) {
+                wrapperReadyCleanupFn();
+                wrapperReadyCleanupFn = null;
+              }
+
               // Dispose ServerManager (stops all servers)
               await lifecycleRefs.serverManager.dispose();
 

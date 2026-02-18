@@ -55,18 +55,6 @@ describe("AppState", () => {
     });
   });
 
-  describe("MCP server manager", () => {
-    it("returns null when not set", () => {
-      expect(appState.getMcpServerManager()).toBeNull();
-    });
-
-    it("returns manager after set", () => {
-      const mockManager = { mock: true };
-      appState.setMcpServerManager(mockManager as never);
-      expect(appState.getMcpServerManager()).toBe(mockManager);
-    });
-  });
-
   describe("waitForProvider", () => {
     it("resolves immediately when no pending promise", async () => {
       await expect(appState.waitForProvider("/some/path")).resolves.toBeUndefined();

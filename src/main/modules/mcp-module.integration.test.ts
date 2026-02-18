@@ -5,9 +5,9 @@
  * Tests verify the full pipeline:
  * - workspace:created event → mcpServerManager.registerWorkspace()
  * - workspace:deleted event → mcpServerManager.unregisterWorkspace()
- * - app:shutdown / stop → dispose MCP server, cleanup callbacks
+ * - app:start / start → start MCP server, return port
  * - workspace:delete / shutdown → unregister workspace from MCP
- * - Agent server configured with MCP port
+ * - app:shutdown / stop → dispose MCP server
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -35,6 +35,7 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import { createMcpModule, type McpModuleDeps } from "./mcp-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+
 // =============================================================================
 // Mock McpServerManager
 // =============================================================================
@@ -55,50 +56,6 @@ function createMockMcpServerManager(port = 9999): MockMcpServerManager {
     unregisterWorkspace: vi.fn(),
     getPort: vi.fn().mockReturnValue(port),
   };
-}
-
-// =============================================================================
-// Mock ViewManager
-// =============================================================================
-
-function createMockViewManager(): { setWorkspaceLoaded: ReturnType<typeof vi.fn> } {
-  return {
-    setWorkspaceLoaded: vi.fn(),
-  };
-}
-
-// =============================================================================
-// Mock AgentStatusManager
-// =============================================================================
-
-function createMockAgentStatusManager(): { markActive: ReturnType<typeof vi.fn> } {
-  return {
-    markActive: vi.fn(),
-  };
-}
-
-// =============================================================================
-// Mock AgentServerManager (OpenCode variant)
-// =============================================================================
-
-function createMockAgentServerManager(): {
-  setMcpConfig: ReturnType<typeof vi.fn>;
-  getBridgePort: ReturnType<typeof vi.fn>;
-  onWorkspaceReady: ReturnType<typeof vi.fn>;
-  capturedWorkspaceReadyCallback: ((workspacePath: string) => void) | null;
-} {
-  const mock: ReturnType<typeof createMockAgentServerManager> = {
-    setMcpConfig: vi.fn(),
-    getBridgePort: vi.fn().mockReturnValue(15000),
-    capturedWorkspaceReadyCallback: null,
-    onWorkspaceReady: vi.fn().mockImplementation((cb: (wp: string) => void) => {
-      mock.capturedWorkspaceReadyCallback = cb;
-      return () => {
-        mock.capturedWorkspaceReadyCallback = null;
-      };
-    }),
-  };
-  return mock;
 }
 
 // =============================================================================
@@ -168,21 +125,13 @@ interface TestSetup {
   dispatcher: Dispatcher;
   hookRegistry: HookRegistry;
   mcpServerManager: MockMcpServerManager;
-  viewManager: ReturnType<typeof createMockViewManager>;
-  agentStatusManager: ReturnType<typeof createMockAgentStatusManager>;
-  agentServerManager: ReturnType<typeof createMockAgentServerManager>;
-  setMcpServerManager: ReturnType<typeof vi.fn>;
 }
 
-function createTestSetup(agentType: "opencode" | "claude" = "opencode"): TestSetup {
+function createTestSetup(): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   const mcpServerManager = createMockMcpServerManager();
-  const viewManager = createMockViewManager();
-  const agentStatusManager = createMockAgentStatusManager();
-  const agentServerManager = createMockAgentServerManager();
-  const setMcpServerManager = vi.fn();
 
   // Register operations
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new MinimalOpenOperation());
@@ -192,12 +141,7 @@ function createTestSetup(agentType: "opencode" | "claude" = "opencode"): TestSet
 
   const mcpModule = createMcpModule({
     mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
-    viewManager: viewManager as unknown as McpModuleDeps["viewManager"],
-    agentStatusManager: agentStatusManager as unknown as McpModuleDeps["agentStatusManager"],
-    serverManager: agentServerManager as unknown as McpModuleDeps["serverManager"],
-    selectedAgentType: agentType,
     logger: SILENT_LOGGER,
-    setMcpServerManager,
   });
 
   wireModules([mcpModule], hookRegistry, dispatcher);
@@ -206,10 +150,6 @@ function createTestSetup(agentType: "opencode" | "claude" = "opencode"): TestSet
     dispatcher,
     hookRegistry,
     mcpServerManager,
-    viewManager,
-    agentStatusManager,
-    agentServerManager,
-    setMcpServerManager,
   };
 }
 
@@ -271,43 +211,6 @@ describe("McpModule Integration", () => {
 
       expect(mcpServerManager.start).toHaveBeenCalled();
     });
-
-    it("configures OpenCode agent server manager with MCP config", async () => {
-      const { dispatcher, agentServerManager } = createTestSetup("opencode");
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(agentServerManager.setMcpConfig).toHaveBeenCalledWith({
-        port: 9999,
-      });
-    });
-
-    it("configures Claude agent server manager with MCP port only", async () => {
-      const { dispatcher, agentServerManager } = createTestSetup("claude");
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(agentServerManager.setMcpConfig).toHaveBeenCalledWith({
-        port: 9999,
-      });
-    });
-
-    it("injects MCP server manager into AppState", async () => {
-      const { dispatcher, mcpServerManager, setMcpServerManager } = createTestSetup();
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(setMcpServerManager).toHaveBeenCalledWith(mcpServerManager);
-    });
   });
 
   describe("workspace:delete / shutdown hook", () => {
@@ -340,13 +243,7 @@ describe("McpModule Integration", () => {
 
       const mcpModule = createMcpModule({
         mcpServerManager: msm as unknown as McpModuleDeps["mcpServerManager"],
-        viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
-        agentStatusManager:
-          createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
-        serverManager: createMockAgentServerManager() as unknown as McpModuleDeps["serverManager"],
-        selectedAgentType: "opencode",
         logger: SILENT_LOGGER,
-        setMcpServerManager: vi.fn(),
       });
 
       wireModules([mcpModule], hookRegistry, d);
@@ -371,7 +268,7 @@ describe("McpModule Integration", () => {
   });
 
   describe("app:shutdown / stop hook", () => {
-    it("disposes MCP server and cleans up callbacks", async () => {
+    it("disposes MCP server", async () => {
       // Wire a quit module to prevent app.quit() error
       const quitModule: IntentModule = {
         hooks: {
@@ -388,13 +285,7 @@ describe("McpModule Integration", () => {
       const msm = createMockMcpServerManager();
       const mcpModule = createMcpModule({
         mcpServerManager: msm as unknown as McpModuleDeps["mcpServerManager"],
-        viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
-        agentStatusManager:
-          createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
-        serverManager: createMockAgentServerManager() as unknown as McpModuleDeps["serverManager"],
-        selectedAgentType: "opencode",
         logger: SILENT_LOGGER,
-        setMcpServerManager: vi.fn(),
       });
 
       wireModules([mcpModule, quitModule], hookRegistry, shutdownDispatcher);
@@ -412,147 +303,6 @@ describe("McpModule Integration", () => {
       } as AppShutdownIntent);
 
       expect(msm.dispose).toHaveBeenCalled();
-    });
-  });
-
-  describe("Claude-specific: onWorkspaceReady", () => {
-    it("calls setWorkspaceLoaded when Claude wrapper signals ready", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-
-      const mcpServerManager = createMockMcpServerManager();
-      const viewManager = createMockViewManager();
-
-      let capturedReadyCallback: ((workspacePath: string) => void) | null = null;
-      const claudeServerManager = {
-        setMcpConfig: vi.fn(),
-        onWorkspaceReady: vi.fn().mockImplementation((cb: (wp: string) => void) => {
-          capturedReadyCallback = cb;
-          return () => {
-            capturedReadyCallback = null;
-          };
-        }),
-      };
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
-
-      const mcpModule = createMcpModule({
-        mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
-        viewManager: viewManager as unknown as McpModuleDeps["viewManager"],
-        agentStatusManager:
-          createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
-        serverManager: claudeServerManager as unknown as McpModuleDeps["serverManager"],
-        selectedAgentType: "claude",
-        logger: SILENT_LOGGER,
-        setMcpServerManager: vi.fn(),
-      });
-
-      wireModules([mcpModule], hookRegistry, dispatcher);
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(claudeServerManager.onWorkspaceReady).toHaveBeenCalled();
-      expect(capturedReadyCallback).not.toBeNull();
-
-      capturedReadyCallback!("/workspaces/claude-ws");
-      expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/claude-ws");
-    });
-  });
-
-  describe("OpenCode-specific: onWorkspaceReady", () => {
-    it("calls setWorkspaceLoaded and markActive when OpenCode wrapper signals ready", async () => {
-      const { dispatcher, agentServerManager, viewManager, agentStatusManager } =
-        createTestSetup("opencode");
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(agentServerManager.onWorkspaceReady).toHaveBeenCalled();
-      expect(agentServerManager.capturedWorkspaceReadyCallback).not.toBeNull();
-
-      agentServerManager.capturedWorkspaceReadyCallback!("/workspaces/oc-ws");
-      expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/oc-ws");
-      expect(agentStatusManager.markActive).toHaveBeenCalledWith("/workspaces/oc-ws");
-    });
-  });
-
-  describe("workspace:open / setup hook", () => {
-    it("contributes CODEHYDRA_BRIDGE_PORT env var for OpenCode", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-
-      const mcpServerManager = createMockMcpServerManager();
-      const agentServerManager = createMockAgentServerManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
-
-      const mcpModule = createMcpModule({
-        mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
-        viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
-        agentStatusManager:
-          createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
-        serverManager: agentServerManager as unknown as McpModuleDeps["serverManager"],
-        selectedAgentType: "opencode",
-        logger: SILENT_LOGGER,
-        setMcpServerManager: vi.fn(),
-      });
-
-      wireModules([mcpModule], hookRegistry, dispatcher);
-
-      // Call the setup hook directly through the hook registry
-      const setupCtx = {
-        intent: { type: "workspace:open", payload: {} },
-        workspacePath: "/workspaces/test-ws",
-        projectPath: "/projects/test",
-      };
-      const hooks = hookRegistry.resolve("open-workspace");
-      const { results } = await hooks.collect("setup", setupCtx);
-
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({ envVars: { CODEHYDRA_BRIDGE_PORT: "15000" } });
-    });
-
-    it("returns empty result for Claude agent type", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-
-      const mcpServerManager = createMockMcpServerManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
-
-      const claudeServerManager = {
-        setMcpConfig: vi.fn(),
-        onWorkspaceReady: vi.fn().mockReturnValue(() => {}),
-      };
-
-      const mcpModule = createMcpModule({
-        mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
-        viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
-        agentStatusManager:
-          createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
-        serverManager: claudeServerManager as unknown as McpModuleDeps["serverManager"],
-        selectedAgentType: "claude",
-        logger: SILENT_LOGGER,
-        setMcpServerManager: vi.fn(),
-      });
-
-      wireModules([mcpModule], hookRegistry, dispatcher);
-
-      const setupCtx = {
-        intent: { type: "workspace:open", payload: {} },
-        workspacePath: "/workspaces/test-ws",
-        projectPath: "/projects/test",
-      };
-      const hooks = hookRegistry.resolve("open-workspace");
-      const { results } = await hooks.collect("setup", setupCtx);
-
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
     });
   });
 });

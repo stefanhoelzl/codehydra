@@ -208,7 +208,6 @@ function createTestAppState(initial?: Partial<TestAppState>): {
         return { success: true };
       }),
     }),
-    getMcpServerManager: vi.fn().mockReturnValue({}),
     getAgentStatusManager: vi.fn().mockReturnValue({
       clearTuiTracking: vi.fn().mockImplementation(() => {
         state.tuiCleared = true;
