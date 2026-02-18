@@ -874,6 +874,10 @@ async function bootstrap(): Promise<void> {
         waitForProvider: (wp: string) => appStateRef.waitForProvider(wp),
       };
     },
+    // Shell layers for ViewModule (available immediately from bootstrap)
+    viewLayer,
+    windowLayer,
+    sessionLayer,
     // Function to get UI webContents for setup error IPC events
     // ViewManager is available after bootstrap creates it
     getUIWebContentsFn: () => viewManager?.getUIWebContents() ?? null,

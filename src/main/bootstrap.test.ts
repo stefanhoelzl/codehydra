@@ -117,6 +117,9 @@ function createMockDeps(): BootstrapDeps {
       ({
         loggingService: { createLogger: () => createMockLogger() },
       }) as unknown as import("./bootstrap").LifecycleServiceRefs,
+    viewLayer: null,
+    windowLayer: null,
+    sessionLayer: null,
     getUIWebContentsFn: () => null,
     setupDeps: {
       configService: {
