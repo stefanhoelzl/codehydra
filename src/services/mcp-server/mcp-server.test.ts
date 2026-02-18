@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { McpServer, createDefaultMcpServer, type McpServerFactory } from "./mcp-server";
+import {
+  McpServer,
+  createDefaultMcpServer,
+  SERVER_INSTRUCTIONS,
+  type McpServerFactory,
+} from "./mcp-server";
 import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
 import { type ProjectId, type WorkspaceName, initialPromptSchema } from "../../shared/api/types";
 import { createMockLogger } from "../logging";
@@ -198,6 +203,15 @@ describe("createDefaultMcpServer", () => {
     expect(typeof sdk.registerTool).toBe("function");
     expect(typeof sdk.connect).toBe("function");
     expect(typeof sdk.close).toBe("function");
+  });
+});
+
+describe("SERVER_INSTRUCTIONS", () => {
+  it("includes workspace creation guidance", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("workspace_create");
+    expect(SERVER_INSTRUCTIONS).toContain('"plan"');
+    expect(SERVER_INSTRUCTIONS).toContain("read-only");
+    expect(SERVER_INSTRUCTIONS).toContain("full permissions");
   });
 });
 
