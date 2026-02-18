@@ -9,9 +9,10 @@
  * #4: App icon shows busy indicator when agent becomes busy
  * #5: Mixed workspaces show mixed badge
  * #6: Deleting workspace clears stale badge entry
+ * #7: Badge disposed on app shutdown
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
@@ -29,6 +30,8 @@ import type {
 } from "../operations/update-agent-status";
 import { EVENT_WORKSPACE_DELETED, INTENT_DELETE_WORKSPACE } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../operations/delete-workspace";
+import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
+import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { createBadgeModule } from "./badge-module";
@@ -75,6 +78,19 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
     };
     ctx.emit(event);
     return { started: true };
+  }
+}
+
+/**
+ * Minimal shutdown operation that runs the "stop" hook point.
+ * Used to trigger app:shutdown/stop through the public dispatcher API.
+ */
+class MinimalStopOperation implements Operation<AppShutdownIntent, void> {
+  readonly id = APP_SHUTDOWN_OPERATION_ID;
+
+  async execute(ctx: OperationContext<AppShutdownIntent>): Promise<void> {
+    const { errors } = await ctx.hooks.collect("stop", { intent: ctx.intent });
+    if (errors.length > 0) throw errors[0]!;
   }
 }
 
@@ -137,7 +153,7 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());
 
-  const badgeModule = createBadgeModule(badgeManager);
+  const badgeModule = createBadgeModule(badgeManager, SILENT_LOGGER);
   const resolveModule = createMockResolveModule();
 
   wireModules([badgeModule, resolveModule], hookRegistry, dispatcher);
@@ -301,6 +317,41 @@ describe("BadgeModule Integration", () => {
 
       // Only idle workspace remains - should clear badge
       expect(appLayer).toHaveDockBadge("");
+    });
+  });
+
+  describe("badge disposed on app shutdown (#7)", () => {
+    it("clears badge when app shuts down", async () => {
+      const { dispatcher, appLayer } = createTestSetup();
+
+      // Set a busy badge first
+      await dispatcher.dispatch(
+        updateStatusIntent("/workspace/1", { status: "busy", counts: { idle: 0, busy: 1 } })
+      );
+      expect(appLayer).toHaveDockBadge("\u25CF");
+
+      // Register shutdown operation and dispatch
+      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new MinimalStopOperation());
+      await dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent);
+
+      // Badge should be cleared by dispose()
+      expect(appLayer).toHaveDockBadge("");
+    });
+
+    it("does not propagate errors from dispose (non-fatal)", async () => {
+      const { dispatcher, badgeManager } = createTestSetup();
+
+      // Make dispose() throw
+      vi.spyOn(badgeManager, "dispose").mockImplementation(() => {
+        throw new Error("dispose failed");
+      });
+
+      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new MinimalStopOperation());
+
+      // Should not throw - shutdown errors are non-fatal
+      await expect(
+        dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent)
+      ).resolves.not.toThrow();
     });
   });
 });
