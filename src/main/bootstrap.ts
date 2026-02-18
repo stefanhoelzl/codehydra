@@ -692,10 +692,6 @@ function wireDispatcher(
 } {
   // --- Workspace Index (replaces AppState project/workspace Maps for API boundary) ---
   const projectsById = new Map<string, { path: string; name: string }>();
-  const workspaceToProject = new Map<
-    string,
-    { projectId: ProjectId; projectName: string; projectPath: string }
-  >();
   const workspacesByKey = new Map<string, string>();
 
   function wsKey(projectId: string, workspaceName: string): string {
@@ -711,11 +707,6 @@ function wireDispatcher(
       [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
         const { projectId } = (event as ProjectClosedEvent).payload;
         projectsById.delete(projectId);
-        for (const [wsPath, info] of workspaceToProject) {
-          if (info.projectId === projectId) {
-            workspaceToProject.delete(wsPath);
-          }
-        }
         for (const key of workspacesByKey.keys()) {
           if (key.startsWith(projectId + "/")) {
             workspacesByKey.delete(key);
@@ -724,18 +715,11 @@ function wireDispatcher(
       },
       [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
         const p = (event as WorkspaceCreatedEvent).payload;
-        const proj = projectsById.get(p.projectId);
         const normalized = new Path(p.workspacePath).toString();
-        workspaceToProject.set(normalized, {
-          projectId: p.projectId,
-          projectName: proj?.name ?? "",
-          projectPath: p.projectPath,
-        });
         workspacesByKey.set(wsKey(p.projectId, p.workspaceName), normalized);
       },
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const p = (event as WorkspaceDeletedEvent).payload;
-        workspaceToProject.delete(new Path(p.workspacePath).toString());
         workspacesByKey.delete(wsKey(p.projectId, p.workspaceName));
       },
     },
