@@ -148,6 +148,25 @@ function createMockDeps(): BootstrapDeps {
     lifecycleRefsFn: () =>
       ({
         loggingService: { createLogger: () => createMockLogger() },
+        pluginServer: null,
+        codeServerManager: {
+          ensureRunning: vi.fn().mockResolvedValue(undefined),
+          port: vi.fn().mockReturnValue(9090),
+          getConfig: vi.fn().mockReturnValue({
+            runtimeDir: "/mock/runtime",
+            extensionsDir: "/mock/extensions",
+            userDataDir: "/mock/user-data",
+          }),
+          setPluginPort: vi.fn(),
+          stop: vi.fn().mockResolvedValue(undefined),
+        },
+        fileSystemLayer: {
+          mkdir: vi.fn().mockResolvedValue(undefined),
+        },
+        agentStatusManager: {
+          getEnvironmentVariables: vi.fn().mockReturnValue(null),
+        },
+        selectedAgentType: "opencode",
       }) as unknown as import("./bootstrap").LifecycleServiceRefs,
     getUIWebContentsFn: () => null,
     setupDeps: {

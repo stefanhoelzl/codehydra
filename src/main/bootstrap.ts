@@ -92,8 +92,6 @@ import type {
   OpenWorkspaceIntent,
   SetupHookInput,
   SetupHookResult,
-  FinalizeHookInput,
-  FinalizeHookResult,
   WorkspaceCreatedEvent,
 } from "./operations/open-workspace";
 import {
@@ -107,7 +105,6 @@ import type {
   WorkspaceDeletedEvent,
   ShutdownHookResult,
   ReleaseHookResult,
-  DeleteHookResult,
   DetectHookResult,
   FlushHookResult,
   FlushHookInput,
@@ -181,7 +178,6 @@ import type {
   AgentSelectionHookResult,
   SaveAgentHookInput,
   BinaryHookInput,
-  ExtensionsHookInput,
   SetupErrorEvent,
 } from "./operations/setup";
 import type { BadgeManager } from "./managers/badge-manager";
@@ -207,7 +203,7 @@ import type { HookContext } from "./intents/infrastructure/operation";
 import type { Intent, DomainEvent } from "./intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
-import { urlForWorkspace, urlForFolder, type IWorkspaceFileService } from "../services";
+import type { IWorkspaceFileService } from "../services";
 import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-handler";
 import type { DeletionProgressCallback } from "./operations/delete-workspace";
 import { getErrorMessage } from "../shared/error-utils";
@@ -227,6 +223,7 @@ import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
+import { createCodeServerModule } from "./modules/code-server-module";
 
 // =============================================================================
 // Constants
@@ -295,8 +292,6 @@ export interface LifecycleServiceRefs {
   readonly windowManager: import("./managers/window-manager").WindowManager;
   /** Wait for agent provider registration after server start */
   readonly waitForProvider: (workspacePath: string) => Promise<void>;
-  /** Update code-server port in AppState */
-  readonly updateCodeServerPort: (port: number) => void;
   /** Inject MCP server manager into AppState for onServerStopped cleanup */
   readonly setMcpServerManager: (
     manager: import("../services/mcp-server").McpServerManager
@@ -635,8 +630,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  // BinaryPreflightModule: "check-deps" hook -- checks if binaries need download
-  const binaryPreflightModule: IntentModule = {
+  // AgentBinaryPreflightModule: "check-deps" hook -- checks if agent binary needs download
+  const agentBinaryPreflightModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
         "check-deps": {
@@ -644,13 +639,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
             const { configuredAgent } = ctx as CheckDepsHookContext;
             const missingBinaries: import("../services/vscode-setup/types").BinaryType[] = [];
 
-            // Check code-server binary
-            const codeServerResult = await codeServerManager.preflight();
-            if (codeServerResult.success && codeServerResult.needsDownload) {
-              missingBinaries.push("code-server");
-            }
-
-            // Check agent binary (only if agent is already configured)
             if (configuredAgent) {
               const agentBinaryManager = getAgentBinaryManager(configuredAgent);
               const agentResult = await agentBinaryManager.preflight();
@@ -661,27 +649,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
             }
 
             return { missingBinaries };
-          },
-        },
-      },
-    },
-  };
-
-  // ExtensionPreflightModule: "check-deps" hook -- checks if extensions need install
-  const extensionPreflightModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        "check-deps": {
-          handler: async (): Promise<CheckDepsResult> => {
-            const result = await extensionManager.preflight();
-            if (result.success) {
-              return {
-                missingExtensions: result.missingExtensions,
-                outdatedExtensions: result.outdatedExtensions,
-              };
-            }
-            // Preflight failed -- return empty arrays; operation derives needsExtensions=false
-            return {};
           },
         },
       },
@@ -800,38 +767,43 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     emitProgress(status !== "running");
   };
 
-  // BinaryDownloadModule: "binary" hook -- downloads missing binaries
-  const binaryDownloadModule: IntentModule = {
+  // CodeServerModule: manages code-server lifecycle, extensions, and per-workspace files
+  const codeServerModule = createCodeServerModule({
+    codeServerManager,
+    extensionManager,
+    reportProgress: updateProgress,
+    logger: setupLogger,
+    getLifecycleDeps: () => {
+      const refs = deps.lifecycleRefsFn();
+      return {
+        pluginServer: refs.pluginServer,
+        codeServerManager: refs.codeServerManager,
+        fileSystemLayer: refs.fileSystemLayer,
+        configDataProvider: (workspacePath: string) => {
+          const env =
+            refs.agentStatusManager.getEnvironmentVariables(workspacePath as WorkspacePath) ?? null;
+          const agentType = refs.selectedAgentType;
+          return { env, agentType };
+        },
+        onPortChanged: (port: number) => {
+          deps.viewManagerFn().updateCodeServerPort(port);
+        },
+      };
+    },
+    getWorkspaceDeps: () => ({
+      workspaceFileService: deps.workspaceFileServiceFn(),
+      wrapperPath: deps.coreDepsFn().wrapperPath,
+    }),
+  });
+
+  // AgentBinaryDownloadModule: "binary" hook -- downloads agent binary only
+  const agentBinaryDownloadModule: IntentModule = {
     hooks: {
       [SETUP_OPERATION_ID]: {
         binary: {
           handler: async (ctx: HookContext) => {
             const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
-
-            // Download code-server if missing
-            if (missingBinaries.includes("code-server")) {
-              updateProgress("vscode", "running", "Downloading...");
-              try {
-                await codeServerManager.downloadBinary((p) => {
-                  if (p.phase === "downloading" && p.totalBytes) {
-                    const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
-                    updateProgress("vscode", "running", "Downloading...", undefined, pct);
-                  } else if (p.phase === "extracting") {
-                    updateProgress("vscode", "running", "Extracting...");
-                  }
-                });
-                updateProgress("vscode", "done");
-              } catch (error) {
-                updateProgress("vscode", "failed", undefined, getErrorMessage(error));
-                throw new SetupError(
-                  `Failed to download code-server: ${getErrorMessage(error)}`,
-                  "BINARY_DOWNLOAD_FAILED"
-                );
-              }
-            } else {
-              updateProgress("vscode", "done");
-            }
 
             // Get the agent type from context (set by ConfigCheckModule or ConfigSaveModule)
             const agentType = hookCtx.selectedAgent ?? hookCtx.configuredAgent;
@@ -871,66 +843,15 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  // ExtensionInstallModule: "extensions" hook -- installs missing/outdated extensions
-  const extensionInstallModule: IntentModule = {
-    hooks: {
-      [SETUP_OPERATION_ID]: {
-        extensions: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as ExtensionsHookInput;
-            const missingExtensions = hookCtx.missingExtensions ?? [];
-            const outdatedExtensions = hookCtx.outdatedExtensions ?? [];
-
-            const extensionsToInstall = [...missingExtensions, ...outdatedExtensions];
-            if (extensionsToInstall.length === 0) {
-              updateProgress("setup", "done");
-              return;
-            }
-
-            updateProgress("setup", "running", "Installing extensions...");
-
-            // Clean outdated extensions before reinstalling
-            if (outdatedExtensions.length > 0) {
-              try {
-                await extensionManager.cleanOutdated(outdatedExtensions);
-              } catch (error) {
-                updateProgress("setup", "failed", undefined, getErrorMessage(error));
-                throw new SetupError(
-                  `Failed to clean outdated extensions: ${getErrorMessage(error)}`,
-                  "EXTENSION_INSTALL_FAILED"
-                );
-              }
-            }
-
-            // Install extensions
-            try {
-              await extensionManager.install(extensionsToInstall, (message) => {
-                updateProgress("setup", "running", message);
-              });
-              updateProgress("setup", "done");
-            } catch (error) {
-              updateProgress("setup", "failed", undefined, getErrorMessage(error));
-              throw new SetupError(
-                `Failed to install extensions: ${getErrorMessage(error)}`,
-                "EXTENSION_INSTALL_FAILED"
-              );
-            }
-          },
-        },
-      },
-    },
-  };
-
   // Wire all startup modules (check hooks on app-start, work hooks on setup)
   wireModules(
     [
       configCheckModule,
-      binaryPreflightModule,
-      extensionPreflightModule,
+      codeServerModule,
+      agentBinaryPreflightModule,
       rendererSetupModule,
       configSaveModule,
-      binaryDownloadModule,
-      extensionInstallModule,
+      agentBinaryDownloadModule,
     ],
     hookRegistry,
     dispatcher
@@ -956,14 +877,12 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       hookRegistry,
       dispatcher,
       deps.globalWorktreeProviderFn(),
-      baseDeps,
       deps.viewManagerFn(),
       deps.gitClientFn(),
       deps.pathProviderFn(),
       deps.projectStoreFn(),
       deps.logger,
       deps.keepFilesServiceFn(),
-      deps.workspaceFileServiceFn(),
       deps.emitDeletionProgressFn(),
       deps.killTerminalsCallbackFn(),
       deps.workspaceLockHandlerFn(),
@@ -1050,14 +969,12 @@ function wireDispatcher(
   hookRegistry: HookRegistry,
   dispatcher: Dispatcher,
   globalProvider: GitWorktreeProvider,
-  coreDeps: CoreModuleDeps,
   viewManager: import("./managers/view-manager.interface").IViewManager,
   gitClient: import("../services").IGitClient,
   pathProvider: import("../services").PathProvider,
   projectStore: import("../services").ProjectStore,
   logger: Logger,
   keepFilesService: IKeepFilesService,
-  workspaceFileService: IWorkspaceFileService,
   emitDeletionProgress: DeletionProgressCallback,
   killTerminalsCallback: KillTerminalsCallback | undefined,
   workspaceLockHandler: WorkspaceLockHandler | undefined,
@@ -1116,9 +1033,6 @@ function wireDispatcher(
       },
     },
   };
-
-  // Mutable code-server port (initially 0, updated by codeServerLifecycleModule after start)
-  let codeServerPort = coreDeps.codeServerPort;
 
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
@@ -1314,48 +1228,6 @@ function wireDispatcher(
     },
   };
 
-  // CodeServerModule: "finalize" hook -- creates .code-workspace file, returns workspaceUrl
-  const codeServerModule: IntentModule = {
-    hooks: {
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        finalize: {
-          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
-            const finalizeCtx = ctx as FinalizeHookInput;
-            try {
-              const workspacePathObj = new Path(finalizeCtx.workspacePath);
-              const projectWorkspacesDir = workspacePathObj.dirname;
-              const envVarsArray = Object.entries(finalizeCtx.envVars).map(([name, value]) => ({
-                name,
-                value,
-              }));
-              const agentSettings: Record<string, unknown> = {
-                "claudeCode.useTerminal": true,
-                "claudeCode.claudeProcessWrapper": coreDeps.wrapperPath,
-                "claudeCode.environmentVariables": envVarsArray,
-              };
-              const workspaceFilePath = await workspaceFileService.ensureWorkspaceFile(
-                workspacePathObj,
-                projectWorkspacesDir,
-                agentSettings
-              );
-              return {
-                workspaceUrl: urlForWorkspace(codeServerPort, workspaceFilePath.toString()),
-              };
-            } catch (error) {
-              logger.warn("Failed to ensure workspace file, using folder URL", {
-                workspacePath: finalizeCtx.workspacePath,
-                error: error instanceof Error ? error.message : String(error),
-              });
-              return {
-                workspaceUrl: urlForFolder(codeServerPort, finalizeCtx.workspacePath),
-              };
-            }
-          },
-        },
-      },
-    },
-  };
-
   // ---------------------------------------------------------------------------
   // Create-workspace event subscriber modules
   // ---------------------------------------------------------------------------
@@ -1535,34 +1407,6 @@ function wireDispatcher(
     },
   };
 
-  const deleteCodeServerModule: IntentModule = {
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            try {
-              const workspacePath = new Path(payload.workspacePath);
-              const workspaceName = workspacePath.basename;
-              const projectWorkspacesDir = workspacePath.dirname;
-              await workspaceFileService.deleteWorkspaceFile(workspaceName, projectWorkspacesDir);
-              return {};
-            } catch (error) {
-              if (payload.force) {
-                logger.warn("CodeServerModule: error in force mode (ignored)", {
-                  error: getErrorMessage(error),
-                });
-                return {};
-              }
-              throw error;
-            }
-          },
-        },
-      },
-    },
-  };
-
   const deleteIpcBridge: IntentModule = {
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
@@ -1680,86 +1524,6 @@ function wireDispatcher(
   // ---------------------------------------------------------------------------
 
   const lifecycleLogger = lifecycleRefs.loggingService.createLogger("lifecycle");
-
-  // CodeServerLifecycleModule: start → start PluginServer (graceful), ensure dirs,
-  // start CodeServerManager, update ViewManager port. stop → stop CodeServerManager, close PluginServer.
-  const codeServerLifecycleModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            const refs = lifecycleRefs;
-
-            // Start PluginServer BEFORE code-server (graceful degradation)
-            let pluginPort: number | undefined;
-            if (refs.pluginServer) {
-              try {
-                pluginPort = await refs.pluginServer.start();
-                lifecycleLogger.info("PluginServer started", { port: pluginPort });
-
-                // Wire config data provider
-                refs.pluginServer.onConfigData((workspacePath) => {
-                  const env =
-                    lifecycleRefs.agentStatusManager.getEnvironmentVariables(
-                      workspacePath as import("../shared/ipc").WorkspacePath
-                    ) ?? null;
-                  const agentType = lifecycleRefs.selectedAgentType;
-                  return { env, agentType };
-                });
-
-                // Pass pluginPort to CodeServerManager so extensions can connect
-                refs.codeServerManager.setPluginPort(pluginPort);
-              } catch (error) {
-                const message = error instanceof Error ? error.message : "Unknown error";
-                lifecycleLogger.warn("PluginServer start failed", { error: message });
-                pluginPort = undefined;
-              }
-            }
-
-            // Ensure required directories exist
-            const config = refs.codeServerManager.getConfig();
-            await Promise.all([
-              refs.fileSystemLayer.mkdir(config.runtimeDir),
-              refs.fileSystemLayer.mkdir(config.extensionsDir),
-              refs.fileSystemLayer.mkdir(config.userDataDir),
-            ]);
-
-            // Start code-server
-            await refs.codeServerManager.ensureRunning();
-            const port = refs.codeServerManager.port()!;
-
-            // Update code-server port everywhere
-            viewManager.updateCodeServerPort(port);
-            codeServerPort = port;
-            lifecycleRefs.updateCodeServerPort(port);
-
-            return { codeServerPort: port };
-          },
-        },
-      },
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              // Stop code-server
-              await lifecycleRefs.codeServerManager.stop();
-
-              // Close PluginServer AFTER code-server (extensions disconnect first)
-              if (lifecycleRefs.pluginServer) {
-                await lifecycleRefs.pluginServer.close();
-              }
-            } catch (error) {
-              lifecycleLogger.error(
-                "CodeServer lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
 
   // AgentLifecycleModule: start → wire status→dispatcher. stop → dispose ServerManager,
   // unsubscribe, dispose AgentStatusManager.
@@ -2200,14 +1964,12 @@ function wireDispatcher(
       // Open-workspace hook modules (kept inline)
       keepFilesModule,
       agentModule,
-      codeServerModule,
       viewModule,
       // Delete-workspace modules
       idempotencyModule,
       deleteViewModule,
       deleteAgentModule,
       deleteWindowsLockModule,
-      deleteCodeServerModule,
       deleteIpcBridge,
       // Project modules: remote before local so RemoteProjectModule.close reads
       // the project config before LocalProjectModule.close removes the store entry.
@@ -2222,7 +1984,6 @@ function wireDispatcher(
       switchViewModule,
       windowTitleModule,
       // App lifecycle modules
-      codeServerLifecycleModule,
       agentLifecycleModule,
       badgeLifecycleModule,
       mcpLifecycleModule,
