@@ -2,7 +2,7 @@
 /**
  * Integration tests for update-agent-status operation through the Dispatcher.
  *
- * Tests verify the full dispatch pipeline: intent -> operation -> domain event emission.
+ * Tests verify the full dispatch pipeline: intent -> resolve hooks -> operation -> domain event emission.
  *
  * Test plan items covered:
  * #1: Status change produces domain event
@@ -11,13 +11,24 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { wireModules } from "../intents/infrastructure/wire";
 import {
   UpdateAgentStatusOperation,
+  UPDATE_AGENT_STATUS_OPERATION_ID,
   INTENT_UPDATE_AGENT_STATUS,
   EVENT_AGENT_STATUS_UPDATED,
 } from "./update-agent-status";
-import type { UpdateAgentStatusIntent, AgentStatusUpdatedEvent } from "./update-agent-status";
+import type {
+  UpdateAgentStatusIntent,
+  AgentStatusUpdatedEvent,
+  ResolveHookResult,
+  ResolveProjectHookResult,
+  ResolveHookInput,
+  ResolveProjectHookInput,
+} from "./update-agent-status";
 import type { DomainEvent } from "../intents/infrastructure/types";
+import type { IntentModule } from "../intents/infrastructure/module";
+import type { HookContext } from "../intents/infrastructure/operation";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
@@ -25,17 +36,49 @@ import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 // Test Setup
 // =============================================================================
 
+const TEST_PROJECT_ID = "test-project-id" as ProjectId;
+const TEST_PROJECT_PATH = "/projects/test";
+const TEST_WORKSPACE_NAME = "test-workspace" as WorkspaceName;
+
+/**
+ * Mock resolve module that provides workspace resolution for the
+ * update-agent-status operation.
+ */
+function createMockResolveModule(): IntentModule {
+  return {
+    hooks: {
+      [UPDATE_AGENT_STATUS_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            void (ctx as ResolveHookInput);
+            return {
+              projectPath: TEST_PROJECT_PATH,
+              workspaceName: TEST_WORKSPACE_NAME,
+            };
+          },
+        },
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            void (ctx as ResolveProjectHookInput);
+            return { projectId: TEST_PROJECT_ID };
+          },
+        },
+      },
+    },
+  };
+}
+
 function createTestSetup(): { dispatcher: Dispatcher } {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 
+  const resolveModule = createMockResolveModule();
+  wireModules([resolveModule], hookRegistry, dispatcher);
+
   return { dispatcher };
 }
-
-const TEST_PROJECT_ID = "test-project-id" as ProjectId;
-const TEST_WORKSPACE_NAME = "test-workspace" as WorkspaceName;
 
 function updateStatusIntent(
   workspacePath: string,
@@ -45,8 +88,6 @@ function updateStatusIntent(
     type: INTENT_UPDATE_AGENT_STATUS,
     payload: {
       workspacePath: workspacePath as WorkspacePath,
-      projectId: TEST_PROJECT_ID,
-      workspaceName: TEST_WORKSPACE_NAME,
       status,
     },
   };
@@ -121,6 +162,37 @@ describe("UpdateAgentStatus Operation", () => {
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
       expect(event.payload.status).toEqual(status);
+    });
+
+    it("silently returns when resolve hooks provide no projectPath", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+
+      // Wire a resolve module that returns empty (workspace not found)
+      const emptyResolveModule: IntentModule = {
+        hooks: {
+          [UPDATE_AGENT_STATUS_OPERATION_ID]: {
+            resolve: {
+              handler: async (): Promise<ResolveHookResult> => ({}),
+            },
+            "resolve-project": {
+              handler: async (): Promise<ResolveProjectHookResult> => ({}),
+            },
+          },
+        },
+      };
+      wireModules([emptyResolveModule], hookRegistry, dispatcher);
+
+      const receivedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_AGENT_STATUS_UPDATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 1 } };
+      await dispatcher.dispatch(updateStatusIntent("/unknown/workspace", status));
+
+      expect(receivedEvents).toHaveLength(0);
     });
   });
 });

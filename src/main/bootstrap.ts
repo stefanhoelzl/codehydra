@@ -46,26 +46,10 @@ import type {
   GetStatusHookResult,
   GetStatusHookInput,
 } from "./operations/get-workspace-status";
-import {
-  GetAgentSessionOperation,
-  GET_AGENT_SESSION_OPERATION_ID,
-  INTENT_GET_AGENT_SESSION,
-} from "./operations/get-agent-session";
-import type {
-  GetAgentSessionIntent,
-  GetAgentSessionHookInput,
-  GetAgentSessionHookResult,
-} from "./operations/get-agent-session";
-import {
-  RestartAgentOperation,
-  RESTART_AGENT_OPERATION_ID,
-  INTENT_RESTART_AGENT,
-} from "./operations/restart-agent";
-import type {
-  RestartAgentIntent,
-  RestartAgentHookInput,
-  RestartAgentHookResult,
-} from "./operations/restart-agent";
+import { GetAgentSessionOperation, INTENT_GET_AGENT_SESSION } from "./operations/get-agent-session";
+import type { GetAgentSessionIntent } from "./operations/get-agent-session";
+import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./operations/restart-agent";
+import type { RestartAgentIntent } from "./operations/restart-agent";
 import { SetModeOperation, INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent } from "./operations/set-mode";
 import {
@@ -75,16 +59,10 @@ import {
 import type { GetActiveWorkspaceIntent } from "./operations/get-active-workspace";
 import {
   OpenWorkspaceOperation,
-  OPEN_WORKSPACE_OPERATION_ID,
   INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
 } from "./operations/open-workspace";
-import type {
-  OpenWorkspaceIntent,
-  SetupHookInput,
-  SetupHookResult,
-  WorkspaceCreatedEvent,
-} from "./operations/open-workspace";
+import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "./operations/open-workspace";
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
@@ -135,15 +113,7 @@ import {
   INTENT_APP_START,
   APP_START_OPERATION_ID,
 } from "./operations/app-start";
-import type {
-  ShowUIHookResult,
-  StartHookResult,
-  ActivateHookContext,
-  ActivateHookResult,
-  CheckConfigResult,
-  CheckDepsHookContext,
-  CheckDepsResult,
-} from "./operations/app-start";
+import type { ShowUIHookResult, StartHookResult, ActivateHookResult } from "./operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -156,25 +126,12 @@ import {
   SETUP_OPERATION_ID,
   EVENT_SETUP_ERROR,
 } from "./operations/setup";
-import type {
-  AgentSelectionHookResult,
-  SaveAgentHookInput,
-  BinaryHookInput,
-  SetupErrorEvent,
-} from "./operations/setup";
+import type { SetupErrorEvent } from "./operations/setup";
 import type { BadgeManager } from "./managers/badge-manager";
 import type { IpcEventHandler } from "../services/platform/ipc";
-import { SetupError } from "../services/errors";
-import type { AgentBinaryType } from "../services/binary-download";
-import {
-  ApiIpcChannels as SetupIpcChannels,
-  type LifecycleAgentType,
-  type ShowAgentSelectionPayload,
-  type AgentSelectedPayload,
-} from "../shared/ipc";
+import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
 import { wireApiEvents } from "./ipc/api-handlers";
 import { wirePluginApi, type PluginApiRegistry } from "./api/wire-plugin-api";
-import type { UpdateAgentStatusIntent } from "./operations/update-agent-status";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import { wireModules } from "./intents/infrastructure/wire";
 import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
@@ -188,7 +145,6 @@ import type { WorkspaceLockHandler } from "../services/platform/workspace-lock-h
 import type { DeletionProgressCallback } from "./operations/delete-workspace";
 import { getErrorMessage } from "../shared/error-utils";
 import {
-  normalizeInitialPrompt,
   type ProjectId,
   type SetupRowId,
   type SetupRowProgress,
@@ -204,24 +160,11 @@ import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createCodeServerModule } from "./modules/code-server-module";
 import { createViewModule, type MountSignal } from "./modules/view-module";
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * Available agents for selection.
- */
-const AVAILABLE_AGENTS: readonly LifecycleAgentType[] = ["opencode", "claude"];
+import { createAgentModule } from "./modules/agent-module";
 
 // =============================================================================
 // Types
 // =============================================================================
-
-/**
- * Minimal interface for kill terminals callback.
- */
-export type KillTerminalsCallback = (workspacePath: string) => Promise<void>;
 
 /**
  * Lifecycle service references for app:start and app:shutdown modules.
@@ -240,14 +183,14 @@ export interface LifecycleServiceRefs {
   readonly agentStatusManager: import("../agents").AgentStatusManager;
   /** AgentServerManager instance */
   readonly serverManager: import("../agents").AgentServerManager;
+  /** Selected agent type */
+  readonly selectedAgentType: import("../agents").AgentType;
   /** TelemetryService instance */
   readonly telemetryService: import("../services/telemetry").TelemetryService | null;
   /** AutoUpdater instance (constructed but not started) */
   readonly autoUpdater: import("../services/auto-updater").AutoUpdater;
   /** Logging service for creating loggers */
   readonly loggingService: import("../services/logging").LoggingService;
-  /** Selected agent type */
-  readonly selectedAgentType: import("../agents").AgentType;
   /** Platform info for telemetry */
   readonly platformInfo: import("../services").PlatformInfo;
   /** Build info for telemetry */
@@ -268,8 +211,8 @@ export interface LifecycleServiceRefs {
   readonly getApi: () => ICodeHydraApi;
   /** Window manager for title updates */
   readonly windowManager: import("./managers/window-manager").WindowManager;
-  /** Wait for agent provider registration after server start */
-  readonly waitForProvider: (workspacePath: string) => Promise<void>;
+  /** Config data provider for PluginServer (agent env vars + type) */
+  readonly configDataProvider: import("../services/plugin-server/plugin-server").ConfigDataProvider;
 }
 
 /**
@@ -301,7 +244,9 @@ export interface BootstrapDeps {
   /** Deletion progress callback for emitting DeletionProgress to the renderer */
   readonly emitDeletionProgressFn: () => DeletionProgressCallback;
   /** Kill terminals callback (optional, only when PluginServer is available) */
-  readonly killTerminalsCallbackFn: () => KillTerminalsCallback | undefined;
+  readonly killTerminalsCallbackFn: () =>
+    | import("./modules/agent-module").KillTerminalsCallback
+    | undefined;
   /** Workspace lock handler for Windows file handle detection (optional) */
   readonly workspaceLockHandlerFn: () => WorkspaceLockHandler | undefined;
   /** Factory that returns the early-created dispatcher and hook registry */
@@ -544,121 +489,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     deps.setupDeps;
   const setupLogger = deps.logger;
 
-  // ConfigCheckModule: "check-config" hook -- loads config, returns configuredAgent
-  const configCheckModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        "check-config": {
-          handler: async (): Promise<CheckConfigResult> => {
-            const config = await configService.load();
-            return { configuredAgent: config.agent };
-          },
-        },
-      },
-    },
-  };
-
-  // AgentBinaryPreflightModule: "check-deps" hook -- checks if agent binary needs download
-  const agentBinaryPreflightModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        "check-deps": {
-          handler: async (ctx: HookContext): Promise<CheckDepsResult> => {
-            const { configuredAgent } = ctx as CheckDepsHookContext;
-            const missingBinaries: import("../services/vscode-setup/types").BinaryType[] = [];
-
-            if (configuredAgent) {
-              const agentBinaryManager = getAgentBinaryManager(configuredAgent);
-              const agentResult = await agentBinaryManager.preflight();
-              if (agentResult.success && agentResult.needsDownload) {
-                const binaryType = agentBinaryManager.getBinaryType() as AgentBinaryType;
-                missingBinaries.push(binaryType);
-              }
-            }
-
-            return { missingBinaries };
-          },
-        },
-      },
-    },
-  };
-
-  // RendererSetupModule: "agent-selection" hook -- shows agent selection UI, waits for response
-  // Also handles "activate" hook for app:start -- shows main view
-  const rendererSetupModule: IntentModule = {
-    hooks: {
-      [SETUP_OPERATION_ID]: {
-        "agent-selection": {
-          handler: async (): Promise<AgentSelectionHookResult> => {
-            const webContents = deps.getUIWebContentsFn();
-
-            if (!webContents || webContents.isDestroyed()) {
-              throw new SetupError("UI not available for agent selection", "TIMEOUT");
-            }
-
-            setupLogger.debug("Showing agent selection dialog");
-
-            // Create a promise that resolves when the renderer responds
-            const agentPromise = new Promise<LifecycleAgentType>((resolve) => {
-              const handleAgentSelected: IpcEventHandler = (_event, ...args) => {
-                deps.ipcLayer.removeListener(
-                  SetupIpcChannels.LIFECYCLE_AGENT_SELECTED,
-                  handleAgentSelected
-                );
-                const payload = args[0] as AgentSelectedPayload;
-                resolve(payload.agent);
-              };
-
-              deps.ipcLayer.on(SetupIpcChannels.LIFECYCLE_AGENT_SELECTED, handleAgentSelected);
-            });
-
-            // Send IPC event to show agent selection
-            const payload: ShowAgentSelectionPayload = {
-              agents: AVAILABLE_AGENTS,
-            };
-            webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION, payload);
-
-            // Wait for response
-            const selectedAgent = await agentPromise;
-            setupLogger.info("Agent selected", { agent: selectedAgent });
-
-            return { selectedAgent };
-          },
-        },
-      },
-    },
-  };
-
-  // ConfigSaveModule: "save-agent" hook -- saves agent selection to config
-  const configSaveModule: IntentModule = {
-    hooks: {
-      [SETUP_OPERATION_ID]: {
-        "save-agent": {
-          handler: async (ctx: HookContext) => {
-            const { selectedAgent } = ctx as SaveAgentHookInput;
-
-            if (!selectedAgent) {
-              throw new SetupError(
-                "No agent selected in save-agent hook",
-                "AGENT_SELECTION_REQUIRED"
-              );
-            }
-
-            try {
-              await configService.setAgent(selectedAgent);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              throw new SetupError(
-                `Failed to save agent selection: ${message}`,
-                "CONFIG_SAVE_FAILED"
-              );
-            }
-          },
-        },
-      },
-    },
-  };
-
   // Progress tracking for setup screen
   const progressState: Record<SetupRowId, SetupRowProgress> = {
     vscode: { id: "vscode", status: "pending" },
@@ -707,22 +537,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
         pluginServer: refs.pluginServer,
         codeServerManager: refs.codeServerManager,
         fileSystemLayer: refs.fileSystemLayer,
-        configDataProvider: (workspacePath: string) => {
-          const providerEnv =
-            refs.agentStatusManager.getEnvironmentVariables(workspacePath as WorkspacePath) ?? null;
-          const env = providerEnv ? { ...providerEnv } : null;
-          // Add bridge port for OpenCode wrapper notifications (live-lookup path)
-          if (env && refs.selectedAgentType === "opencode") {
-            const bridgePort = (
-              refs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager
-            ).getBridgePort();
-            if (bridgePort !== null) {
-              env.CODEHYDRA_BRIDGE_PORT = String(bridgePort);
-            }
-          }
-          const agentType = refs.selectedAgentType;
-          return { env, agentType };
-        },
+        configDataProvider: refs.configDataProvider,
         onPortChanged: (port: number) => {
           deps.viewManagerFn().updateCodeServerPort(port);
         },
@@ -734,66 +549,32 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     }),
   });
 
-  // AgentBinaryDownloadModule: "binary" hook -- downloads agent binary only
-  const agentBinaryDownloadModule: IntentModule = {
-    hooks: {
-      [SETUP_OPERATION_ID]: {
-        binary: {
-          handler: async (ctx: HookContext) => {
-            const hookCtx = ctx as BinaryHookInput;
-            const missingBinaries = hookCtx.missingBinaries ?? [];
-
-            // Get the agent type from context (set by ConfigCheckModule or ConfigSaveModule)
-            const agentType = hookCtx.selectedAgent ?? hookCtx.configuredAgent;
-            if (agentType) {
-              const agentBinaryManager = getAgentBinaryManager(agentType);
-              const binaryType = agentBinaryManager.getBinaryType();
-
-              // Download agent binary if missing
-              if (missingBinaries.includes(binaryType)) {
-                updateProgress("agent", "running", "Downloading...");
-                try {
-                  await agentBinaryManager.downloadBinary((p) => {
-                    if (p.phase === "downloading" && p.totalBytes) {
-                      const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
-                      updateProgress("agent", "running", "Downloading...", undefined, pct);
-                    } else if (p.phase === "extracting") {
-                      updateProgress("agent", "running", "Extracting...");
-                    }
-                  });
-                  updateProgress("agent", "done");
-                } catch (error) {
-                  updateProgress("agent", "failed", undefined, getErrorMessage(error));
-                  throw new SetupError(
-                    `Failed to download ${binaryType}: ${getErrorMessage(error)}`,
-                    "BINARY_DOWNLOAD_FAILED"
-                  );
-                }
-              } else {
-                updateProgress("agent", "done");
-              }
-            } else {
-              updateProgress("agent", "done");
-            }
-          },
-        },
-      },
+  // AgentModule: manages agent lifecycle, setup, per-workspace hooks, status tracking.
+  // Consolidates configCheckModule, agentBinaryPreflightModule, rendererSetupModule,
+  // configSaveModule, agentBinaryDownloadModule, agentLifecycleModule, agentModule,
+  // deleteAgentModule, and agentStatusModule into a single extracted module.
+  const agentModule = createAgentModule({
+    configService,
+    getAgentBinaryManager,
+    ipcLayer: deps.ipcLayer,
+    getUIWebContentsFn: deps.getUIWebContentsFn,
+    reportProgress: updateProgress,
+    logger: setupLogger,
+    getLifecycleDeps: () => {
+      const refs = deps.lifecycleRefsFn();
+      return {
+        agentStatusManager: refs.agentStatusManager,
+        serverManager: refs.serverManager,
+        selectedAgentType: refs.selectedAgentType,
+        loggingService: refs.loggingService,
+        dispatcher: refs.dispatcher,
+        killTerminalsCallback: deps.killTerminalsCallbackFn(),
+      };
     },
-  };
+  });
 
   // Wire all startup modules (check hooks on app-start, work hooks on setup)
-  wireModules(
-    [
-      configCheckModule,
-      codeServerModule,
-      agentBinaryPreflightModule,
-      rendererSetupModule,
-      configSaveModule,
-      agentBinaryDownloadModule,
-    ],
-    hookRegistry,
-    dispatcher
-  );
+  wireModules([codeServerModule, agentModule], hookRegistry, dispatcher);
 
   // 14. Services started flag
   let servicesStarted = false;
@@ -810,7 +591,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     const baseDeps = deps.coreDepsFn();
 
     // Wire remaining operations first to get the workspace index resolver
-    const workspaceResolver = wireDispatcher(
+    const { workspaceResolver } = wireDispatcher(
       registry,
       hookRegistry,
       dispatcher,
@@ -822,7 +603,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       deps.logger,
       deps.keepFilesServiceFn(),
       deps.emitDeletionProgressFn(),
-      deps.killTerminalsCallbackFn(),
       deps.workspaceLockHandlerFn(),
       deps.setTitleFn(),
       deps.titleVersionFn(),
@@ -915,14 +695,18 @@ function wireDispatcher(
   logger: Logger,
   keepFilesService: IKeepFilesService,
   emitDeletionProgress: DeletionProgressCallback,
-  killTerminalsCallback: KillTerminalsCallback | undefined,
   workspaceLockHandler: WorkspaceLockHandler | undefined,
   setTitle: (title: string) => void,
   titleVersion: string | undefined,
   badgeManager: BadgeManager,
   lifecycleRefs: LifecycleServiceRefs,
   mountSignal: MountSignal
-): (projectId: ProjectId, workspaceName: import("../shared/api/types").WorkspaceName) => string {
+): {
+  workspaceResolver: (
+    projectId: ProjectId,
+    workspaceName: import("../shared/api/types").WorkspaceName
+  ) => string;
+} {
   // --- Workspace Index (replaces AppState project/workspace Maps for API boundary) ---
   const projectsById = new Map<string, { path: string; name: string }>();
   const workspaceToProject = new Map<
@@ -1058,46 +842,6 @@ function wireDispatcher(
     },
   };
 
-  const agentStatusModule: IntentModule = {
-    hooks: {
-      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
-            const { workspacePath } = ctx as GetStatusHookInput;
-            return {
-              agentStatus: lifecycleRefs.agentStatusManager.getStatus(
-                workspacePath as WorkspacePath
-              ),
-            };
-          },
-        },
-      },
-      [GET_AGENT_SESSION_OPERATION_ID]: {
-        get: {
-          handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
-            const { workspacePath } = ctx as GetAgentSessionHookInput;
-            const session =
-              lifecycleRefs.agentStatusManager.getSession(workspacePath as WorkspacePath) ?? null;
-            return { session };
-          },
-        },
-      },
-      [RESTART_AGENT_OPERATION_ID]: {
-        restart: {
-          handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
-            const { workspacePath } = ctx as RestartAgentHookInput;
-            const result = await lifecycleRefs.serverManager.restartServer(workspacePath);
-            if (result.success) {
-              return { port: result.port };
-            } else {
-              throw new Error(result.error);
-            }
-          },
-        },
-      },
-    },
-  };
-
   // ---------------------------------------------------------------------------
   // Open-workspace hook modules
   // ---------------------------------------------------------------------------
@@ -1105,114 +849,9 @@ function wireDispatcher(
   // KeepFilesModule: "setup" hook -- copies .keepfiles to workspace (best-effort)
   const keepFilesModule = createKeepFilesModule({ keepFilesService, logger });
 
-  // AgentModule: "setup" hook -- starts agent server, sets initial prompt, gets env vars (fatal)
-  const agentModule: IntentModule = {
-    hooks: {
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        setup: {
-          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
-            const setupCtx = ctx as SetupHookInput;
-            const intent = ctx.intent as OpenWorkspaceIntent;
-            const workspacePath = setupCtx.workspacePath;
-
-            // 1. Start agent server
-            await lifecycleRefs.serverManager.startServer(workspacePath);
-
-            // 2. Wait for provider registration (handleServerStarted runs async)
-            await lifecycleRefs.waitForProvider(workspacePath);
-
-            // 3. Set initial prompt if provided (must happen after startServer)
-            if (intent.payload.initialPrompt && lifecycleRefs.serverManager.setInitialPrompt) {
-              const normalizedPrompt = normalizeInitialPrompt(intent.payload.initialPrompt);
-              await lifecycleRefs.serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
-            }
-
-            // 4. Get environment variables from agent provider
-            const agentProvider = lifecycleRefs.agentStatusManager.getProvider(
-              workspacePath as WorkspacePath
-            );
-            const envVars: Record<string, string> = {
-              ...(agentProvider?.getEnvironmentVariables() ?? {}),
-            };
-
-            // 5. Add bridge port for OpenCode wrapper notifications
-            if (lifecycleRefs.selectedAgentType === "opencode") {
-              const bridgePort = (
-                lifecycleRefs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager
-              ).getBridgePort();
-              if (bridgePort !== null) {
-                envVars.CODEHYDRA_BRIDGE_PORT = String(bridgePort);
-              }
-            }
-
-            return { envVars };
-          },
-        },
-      },
-    },
-  };
-
   // ---------------------------------------------------------------------------
   // Delete-workspace hook modules
   // ---------------------------------------------------------------------------
-
-  const agentServerName =
-    lifecycleRefs.selectedAgentType === "claude" ? "Claude Code hook" : "OpenCode";
-
-  const deleteAgentModule: IntentModule = {
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        shutdown: {
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            try {
-              // Kill terminals (best-effort even in normal mode)
-              if (killTerminalsCallback) {
-                try {
-                  await killTerminalsCallback(payload.workspacePath);
-                } catch (error) {
-                  logger.warn("Kill terminals failed", {
-                    workspacePath: payload.workspacePath,
-                    error: getErrorMessage(error),
-                  });
-                }
-              }
-
-              // Stop server
-              let serverError: string | undefined;
-              const stopResult = await lifecycleRefs.serverManager.stopServer(
-                payload.workspacePath
-              );
-              if (!stopResult.success) {
-                serverError = stopResult.error ?? "Failed to stop server";
-                if (!payload.force) {
-                  throw new Error(serverError);
-                }
-              }
-
-              // Clear TUI tracking
-              lifecycleRefs.agentStatusManager.clearTuiTracking(
-                payload.workspacePath as WorkspacePath
-              );
-
-              return serverError
-                ? { serverName: agentServerName, error: serverError }
-                : { serverName: agentServerName };
-            } catch (error) {
-              if (payload.force) {
-                logger.warn("AgentModule: error in force mode (ignored)", {
-                  error: getErrorMessage(error),
-                });
-                return { serverName: agentServerName, error: getErrorMessage(error) };
-              }
-              throw error;
-            }
-          },
-        },
-      },
-    },
-  };
 
   const deleteWindowsLockModule: IntentModule = {
     hooks: {
@@ -1352,69 +991,32 @@ function wireDispatcher(
 
   const lifecycleLogger = lifecycleRefs.loggingService.createLogger("lifecycle");
 
-  // AgentLifecycleModule: start → wire status→dispatcher. activate → wire onWorkspaceReady,
-  // configure MCP. stop → dispose ServerManager, unsubscribe, dispose AgentStatusManager.
-  let agentStatusUnsubscribeFn: Unsubscribe | null = null;
-  let wrapperReadyCleanupFn: Unsubscribe | null = null;
-  const agentLifecycleModule: IntentModule = {
+  // WrapperReadyViewModule: activate → wire onWorkspaceReady to setWorkspaceLoaded.
+  // stop → cleanup callback.
+  // NOTE: This module stays inline for Phase 8 (ViewModule) to absorb.
+  let wrapperReadyViewCleanupFn: Unsubscribe | null = null;
+  const wrapperReadyViewModule: IntentModule = {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            // Wire agent status changes through the intent dispatcher
-            agentStatusUnsubscribeFn = lifecycleRefs.agentStatusManager.onStatusChanged(
-              (workspacePath, status) => {
-                // Resolve project for this workspace path via workspace index
-                const info = workspaceToProject.get(new Path(workspacePath).toString());
-                if (!info) return; // Unknown workspace — skip dispatch
-
-                const projectId = info.projectId;
-                const workspaceName = extractWorkspaceName(workspacePath);
-
-                void lifecycleRefs.dispatcher.dispatch({
-                  type: INTENT_UPDATE_AGENT_STATUS,
-                  payload: { workspacePath, projectId, workspaceName, status },
-                } as UpdateAgentStatusIntent);
-              }
-            );
-            return {};
-          },
-        },
         activate: {
-          handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-            const { mcpPort } = ctx as ActivateHookContext;
-
-            // Register callback for wrapper ready (bridge server notification)
+          handler: async (): Promise<ActivateHookResult> => {
             if (lifecycleRefs.selectedAgentType === "claude") {
               const claudeServerManager =
                 lifecycleRefs.serverManager as import("../agents/claude/server-manager").ClaudeCodeServerManager;
               if (claudeServerManager.onWorkspaceReady) {
-                wrapperReadyCleanupFn = claudeServerManager.onWorkspaceReady((workspacePath) => {
-                  viewManager.setWorkspaceLoaded(workspacePath);
-                });
+                wrapperReadyViewCleanupFn = claudeServerManager.onWorkspaceReady(
+                  (workspacePath) => {
+                    viewManager.setWorkspaceLoaded(workspacePath);
+                  }
+                );
               }
             } else if (lifecycleRefs.selectedAgentType === "opencode") {
               const opencodeManager =
                 lifecycleRefs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager;
-              wrapperReadyCleanupFn = opencodeManager.onWorkspaceReady((workspacePath) => {
+              wrapperReadyViewCleanupFn = opencodeManager.onWorkspaceReady((workspacePath) => {
                 viewManager.setWorkspaceLoaded(workspacePath);
-                lifecycleRefs.agentStatusManager.markActive(workspacePath as WorkspacePath);
               });
             }
-
-            // Configure server manager to connect to MCP
-            if (mcpPort !== null) {
-              if (lifecycleRefs.selectedAgentType === "claude") {
-                const claudeManager =
-                  lifecycleRefs.serverManager as import("../agents/claude/server-manager").ClaudeCodeServerManager;
-                claudeManager.setMcpConfig({ port: mcpPort });
-              } else {
-                const opencodeManager =
-                  lifecycleRefs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager;
-                opencodeManager.setMcpConfig({ port: mcpPort });
-              }
-            }
-
             return {};
           },
         },
@@ -1423,26 +1025,13 @@ function wireDispatcher(
         stop: {
           handler: async () => {
             try {
-              // Cleanup wrapper ready callback
-              if (wrapperReadyCleanupFn) {
-                wrapperReadyCleanupFn();
-                wrapperReadyCleanupFn = null;
+              if (wrapperReadyViewCleanupFn) {
+                wrapperReadyViewCleanupFn();
+                wrapperReadyViewCleanupFn = null;
               }
-
-              // Dispose ServerManager (stops all servers)
-              await lifecycleRefs.serverManager.dispose();
-
-              // Cleanup agent status subscription
-              if (agentStatusUnsubscribeFn) {
-                agentStatusUnsubscribeFn();
-                agentStatusUnsubscribeFn = null;
-              }
-
-              // Dispose AgentStatusManager
-              lifecycleRefs.agentStatusManager.dispose();
             } catch (error) {
               lifecycleLogger.error(
-                "Agent lifecycle shutdown failed (non-fatal)",
+                "WrapperReadyView shutdown failed (non-fatal)",
                 {},
                 error instanceof Error ? error : undefined
               );
@@ -1638,13 +1227,10 @@ function wireDispatcher(
       badgeModule,
       metadataModule,
       workspaceStatusModule,
-      agentStatusModule,
       // Open-workspace hook modules (kept inline)
       keepFilesModule,
-      agentModule,
       // Delete-workspace modules
       idempotencyModule,
-      deleteAgentModule,
       deleteWindowsLockModule,
       deleteIpcBridge,
       // Project modules: remote before local so RemoteProjectModule.close reads
@@ -1658,7 +1244,7 @@ function wireDispatcher(
       // Workspace:switch modules
       windowTitleModule,
       // App lifecycle modules
-      agentLifecycleModule,
+      wrapperReadyViewModule,
       badgeLifecycleModule,
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
@@ -2016,14 +1602,16 @@ function wireDispatcher(
   );
 
   // Return workspace resolver function for CoreModule
-  return (
-    projectId: ProjectId,
-    workspaceName: import("../shared/api/types").WorkspaceName
-  ): string => {
-    const path = workspacesByKey.get(wsKey(projectId, workspaceName));
-    if (!path) {
-      throw new Error(`Workspace not found: ${workspaceName} in project ${projectId}`);
-    }
-    return path;
+  return {
+    workspaceResolver: (
+      projectId: ProjectId,
+      workspaceName: import("../shared/api/types").WorkspaceName
+    ): string => {
+      const path = workspacesByKey.get(wsKey(projectId, workspaceName));
+      if (!path) {
+        throw new Error(`Workspace not found: ${workspaceName} in project ${projectId}`);
+      }
+      return path;
+    },
   };
 }

@@ -1,13 +1,15 @@
 /**
- * UpdateAgentStatusOperation - Trivial operation that emits an agent:status-updated domain event.
+ * UpdateAgentStatusOperation - Resolves workspace context and emits agent:status-updated.
  *
- * No hooks -- this operation simply relays status changes from AgentStatusManager
- * through the intent dispatcher so downstream event subscribers (IpcEventBridge, BadgeModule)
- * can react to status changes.
+ * Follows the standard two-step resolution pattern:
+ * 1. "resolve" — gitWorktreeWorkspaceModule provides projectPath + workspaceName
+ * 2. "resolve-project" — localProjectModule provides projectId
+ *
+ * If resolution is incomplete (unknown workspace), silently returns without emitting.
  */
 
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
@@ -17,8 +19,6 @@ import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 export interface UpdateAgentStatusPayload {
   readonly workspacePath: WorkspacePath;
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
   readonly status: AggregatedAgentStatus;
 }
 
@@ -28,6 +28,31 @@ export interface UpdateAgentStatusIntent extends Intent<void> {
 }
 
 export const INTENT_UPDATE_AGENT_STATUS = "agent:update-status" as const;
+
+// =============================================================================
+// Hook Types
+// =============================================================================
+
+/** Input context for "resolve" handlers. */
+export interface ResolveHookInput extends HookContext {
+  readonly workspacePath: WorkspacePath;
+}
+
+/** Per-handler result for "resolve" hook point. */
+export interface ResolveHookResult {
+  readonly projectPath?: string;
+  readonly workspaceName?: WorkspaceName;
+}
+
+/** Input context for "resolve-project" handlers. */
+export interface ResolveProjectHookInput extends HookContext {
+  readonly projectPath: string;
+}
+
+/** Per-handler result for "resolve-project" hook point. */
+export interface ResolveProjectHookResult {
+  readonly projectId?: ProjectId;
+}
 
 // =============================================================================
 // Event Types
@@ -59,12 +84,49 @@ export class UpdateAgentStatusOperation implements Operation<UpdateAgentStatusIn
   async execute(ctx: OperationContext<UpdateAgentStatusIntent>): Promise<void> {
     const { payload } = ctx.intent;
 
+    // 1. resolve — get projectPath + workspaceName from workspacePath
+    const resolveCtx: ResolveHookInput = {
+      intent: ctx.intent,
+      workspacePath: payload.workspacePath,
+    };
+    const { results: resolveResults } = await ctx.hooks.collect<ResolveHookResult>(
+      "resolve",
+      resolveCtx
+    );
+
+    let projectPath: string | undefined;
+    let workspaceName: WorkspaceName | undefined;
+    for (const result of resolveResults) {
+      if (result.projectPath !== undefined) projectPath = result.projectPath;
+      if (result.workspaceName !== undefined) workspaceName = result.workspaceName;
+    }
+
+    if (!projectPath || !workspaceName) return;
+
+    // 2. resolve-project — get projectId from projectPath
+    const resolveProjectCtx: ResolveProjectHookInput = {
+      intent: ctx.intent,
+      projectPath,
+    };
+    const { results: resolveProjectResults } = await ctx.hooks.collect<ResolveProjectHookResult>(
+      "resolve-project",
+      resolveProjectCtx
+    );
+
+    let projectId: ProjectId | undefined;
+    for (const result of resolveProjectResults) {
+      if (result.projectId !== undefined) projectId = result.projectId;
+    }
+
+    if (!projectId) return;
+
+    // 3. Emit domain event with fully resolved context
     const event: AgentStatusUpdatedEvent = {
       type: EVENT_AGENT_STATUS_UPDATED,
       payload: {
         workspacePath: payload.workspacePath,
-        projectId: payload.projectId,
-        workspaceName: payload.workspaceName,
+        projectId,
+        workspaceName,
         status: payload.status,
       },
     };

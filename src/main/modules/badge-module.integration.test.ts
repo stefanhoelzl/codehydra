@@ -17,12 +17,20 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
 import {
   UpdateAgentStatusOperation,
+  UPDATE_AGENT_STATUS_OPERATION_ID,
   INTENT_UPDATE_AGENT_STATUS,
 } from "../operations/update-agent-status";
-import type { UpdateAgentStatusIntent } from "../operations/update-agent-status";
+import type {
+  UpdateAgentStatusIntent,
+  ResolveHookResult,
+  ResolveProjectHookResult,
+  ResolveHookInput,
+  ResolveProjectHookInput,
+} from "../operations/update-agent-status";
 import { EVENT_WORKSPACE_DELETED, INTENT_DELETE_WORKSPACE } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../operations/delete-workspace";
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
+import type { IntentModule } from "../intents/infrastructure/module";
 import { createBadgeModule } from "./badge-module";
 import { BadgeManager } from "../managers/badge-manager";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
@@ -80,6 +88,35 @@ interface TestSetup {
   badgeManager: BadgeManager;
 }
 
+/**
+ * Mock resolve module that provides workspace resolution for the
+ * update-agent-status operation (replaces the old payload fields).
+ * Uses workspacePath as-is to derive projectPath and workspaceName.
+ */
+function createMockResolveModule(): IntentModule {
+  return {
+    hooks: {
+      [UPDATE_AGENT_STATUS_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const { workspacePath } = ctx as ResolveHookInput;
+            return {
+              projectPath: "/projects/test",
+              workspaceName: workspacePath.split("/").pop() as WorkspaceName,
+            };
+          },
+        },
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            void (ctx as ResolveProjectHookInput);
+            return { projectId: "test-project" as ProjectId };
+          },
+        },
+      },
+    },
+  };
+}
+
 function createTestSetup(): TestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin" });
   const appLayer = createAppLayerMock({ platform: "darwin" });
@@ -101,8 +138,9 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());
 
   const badgeModule = createBadgeModule(badgeManager);
+  const resolveModule = createMockResolveModule();
 
-  wireModules([badgeModule], hookRegistry, dispatcher);
+  wireModules([badgeModule, resolveModule], hookRegistry, dispatcher);
 
   return { dispatcher, appLayer, badgeManager };
 }
@@ -115,8 +153,6 @@ function updateStatusIntent(
     type: INTENT_UPDATE_AGENT_STATUS,
     payload: {
       workspacePath: workspacePath as WorkspacePath,
-      projectId: "test-project" as ProjectId,
-      workspaceName: workspacePath.split("/").pop() as WorkspaceName,
       status,
     },
   };

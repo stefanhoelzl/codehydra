@@ -49,6 +49,11 @@ import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   type ResolveWorkspaceHookInput as GetStatusResolveWorkspaceInput,
 } from "../operations/get-workspace-status";
+import {
+  UPDATE_AGENT_STATUS_OPERATION_ID,
+  type ResolveHookInput as UpdateAgentStatusResolveInput,
+  type ResolveHookResult as UpdateAgentStatusResolveResult,
+} from "../operations/update-agent-status";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
@@ -398,6 +403,29 @@ export function createGitWorktreeWorkspaceModule(
             const { projectPath, workspaceName } = ctx as GetMetadataResolveWorkspaceInput;
             const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
             return workspacePath ? { workspacePath } : {};
+          },
+        },
+      },
+
+      // update-agent-status -> resolve: find project + workspace name from workspace path
+      [UPDATE_AGENT_STATUS_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<UpdateAgentStatusResolveResult> => {
+            const { workspacePath } = ctx as UpdateAgentStatusResolveInput;
+            const normalizedPath = new Path(workspacePath).toString();
+
+            for (const [projectKey, wsList] of workspaces) {
+              for (const ws of wsList) {
+                if (ws.path.toString() === normalizedPath) {
+                  return {
+                    projectPath: projectKey,
+                    workspaceName: extractWorkspaceName(ws.path.toString()),
+                  };
+                }
+              }
+            }
+
+            return {};
           },
         },
       },

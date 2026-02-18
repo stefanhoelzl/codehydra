@@ -81,6 +81,23 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. The ar
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+### AgentModule
+
+`AgentModule` (`src/main/modules/agent-module.ts`) is the consolidated lifecycle owner for all agent concerns. It is a factory function (`createAgentModule`) returning an `IntentModule` with hooks across multiple operations:
+
+| Operation              | Hook Points                                       | Responsibility                                                                          |
+| ---------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `app:start`            | `check-config`, `check-deps`, `start`, `activate` | Config check, binary preflight, server callback wiring, status subscription, MCP config |
+| `app:shutdown`         | `stop`                                            | Dispose ServerManager, AgentStatusManager, cleanup callbacks                            |
+| `app:setup`            | `agent-selection`, `save-agent`, `binary`         | Agent selection UI, config persistence, binary download                                 |
+| `open-workspace`       | `setup`                                           | Start server, wait for provider, set initial prompt, get env vars                       |
+| `delete-workspace`     | `shutdown`                                        | Kill terminals, stop server, clear TUI tracking                                         |
+| `get-workspace-status` | `get`                                             | Return agent status                                                                     |
+| `get-agent-session`    | `get`                                             | Return session info                                                                     |
+| `restart-agent`        | `restart`                                         | Restart agent server                                                                    |
+
+Internal closure state (moved from `AppState`): `handleServerStarted()`, `waitForProvider()`, `serverStartedPromises`, server callback wiring.
+
 ### File Structure
 
 ```
@@ -98,6 +115,8 @@ src/agents/
     setup-info.ts       # ClaudeCodeSetupInfo
     server-manager.ts   # ClaudeCodeServerManager (shared HTTP server)
     provider.ts         # ClaudeCodeProvider
+src/main/modules/
+  agent-module.ts       # AgentModule (consolidated lifecycle owner)
 ```
 
 ---
