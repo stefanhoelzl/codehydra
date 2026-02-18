@@ -38,14 +38,9 @@ import { GetMetadataOperation, INTENT_GET_METADATA } from "./operations/get-meta
 import type { GetMetadataIntent } from "./operations/get-metadata";
 import {
   GetWorkspaceStatusOperation,
-  GET_WORKSPACE_STATUS_OPERATION_ID,
   INTENT_GET_WORKSPACE_STATUS,
 } from "./operations/get-workspace-status";
-import type {
-  GetWorkspaceStatusIntent,
-  GetStatusHookResult,
-  GetStatusHookInput,
-} from "./operations/get-workspace-status";
+import type { GetWorkspaceStatusIntent } from "./operations/get-workspace-status";
 import { GetAgentSessionOperation, INTENT_GET_AGENT_SESSION } from "./operations/get-agent-session";
 import type { GetAgentSessionIntent } from "./operations/get-agent-session";
 import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./operations/restart-agent";
@@ -87,7 +82,6 @@ import {
 } from "./operations/close-project";
 import type {
   CloseProjectIntent,
-  CloseHookInput,
   CloseHookResult,
   ProjectClosedEvent,
 } from "./operations/close-project";
@@ -816,21 +810,6 @@ function wireDispatcher(
 
   const metadataModule = createMetadataModule({ globalProvider });
 
-  // Workspace status hook handler module (get hook only — resolve handled by extracted modules)
-  const workspaceStatusModule: IntentModule = {
-    hooks: {
-      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
-            const { workspacePath } = ctx as GetStatusHookInput;
-            const isDirty = await globalProvider.isDirty(new Path(workspacePath));
-            return { isDirty };
-          },
-        },
-      },
-    },
-  };
-
   // ---------------------------------------------------------------------------
   // Open-workspace hook modules
   // ---------------------------------------------------------------------------
@@ -882,21 +861,6 @@ function wireDispatcher(
               }
             }
             return { otherProjectsExist: otherExists };
-          },
-        },
-      },
-    },
-  };
-
-  // ProjectWorktreeCloseModule: "close" hook -- unregister project from global git provider
-  const projectWorktreeCloseModule: IntentModule = {
-    hooks: {
-      [CLOSE_PROJECT_OPERATION_ID]: {
-        close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath } = ctx as CloseHookInput;
-            globalProvider.unregisterProject(new Path(projectPath));
-            return {};
           },
         },
       },
@@ -1096,7 +1060,6 @@ function wireDispatcher(
       ipcEventBridge,
       badgeModule,
       metadataModule,
-      workspaceStatusModule,
       // Open-workspace hook modules (kept inline)
       keepFilesModule,
       // Delete-workspace modules
@@ -1110,7 +1073,6 @@ function wireDispatcher(
       gitWorktreeWorkspaceModule,
       // Project:close modules
       projectCloseIndexModule,
-      projectWorktreeCloseModule,
       // Workspace:switch modules
       windowTitleModule,
       // App lifecycle modules
