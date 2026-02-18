@@ -72,7 +72,6 @@ import {
 import type {
   DeleteWorkspaceIntent,
   WorkspaceDeletedEvent,
-  ShutdownHookResult,
   ReleaseHookResult,
   DetectHookResult,
   FlushHookResult,
@@ -120,12 +119,7 @@ import {
   APP_SHUTDOWN_OPERATION_ID,
 } from "./operations/app-shutdown";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
-import {
-  SetupOperation,
-  INTENT_SETUP,
-  SETUP_OPERATION_ID,
-  EVENT_SETUP_ERROR,
-} from "./operations/setup";
+import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
 import type { SetupErrorEvent } from "./operations/setup";
 import type { BadgeManager } from "./managers/badge-manager";
 import type { IpcEventHandler } from "../services/platform/ipc";
