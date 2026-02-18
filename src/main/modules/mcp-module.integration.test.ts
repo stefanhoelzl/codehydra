@@ -6,7 +6,7 @@
  * - workspace:created event → mcpServerManager.registerWorkspace()
  * - workspace:deleted event → mcpServerManager.unregisterWorkspace()
  * - onFirstRequest → dispatches workspace:mcp-attached intent → event subscribers
- * - workspace:mcp-attached event → viewManager.setWorkspaceLoaded() + agentStatusManager.markActive()
+ * - workspace:mcp-attached event → viewManager.setWorkspaceLoaded() (markActive removed)
  * - app:shutdown / stop → dispose MCP server, cleanup callbacks
  * - workspace:delete / shutdown → unregister workspace from MCP
  * - Agent server configured with MCP port
@@ -105,10 +105,22 @@ function createMockAgentStatusManager(): { markActive: ReturnType<typeof vi.fn> 
 
 function createMockAgentServerManager(): {
   setMcpConfig: ReturnType<typeof vi.fn>;
+  getBridgePort: ReturnType<typeof vi.fn>;
+  onWorkspaceReady: ReturnType<typeof vi.fn>;
+  capturedWorkspaceReadyCallback: ((workspacePath: string) => void) | null;
 } {
-  return {
+  const mock: ReturnType<typeof createMockAgentServerManager> = {
     setMcpConfig: vi.fn(),
+    getBridgePort: vi.fn().mockReturnValue(15000),
+    capturedWorkspaceReadyCallback: null,
+    onWorkspaceReady: vi.fn().mockImplementation((cb: (wp: string) => void) => {
+      mock.capturedWorkspaceReadyCallback = cb;
+      return () => {
+        mock.capturedWorkspaceReadyCallback = null;
+      };
+    }),
   };
+  return mock;
 }
 
 // =============================================================================
@@ -293,7 +305,8 @@ describe("McpModule Integration", () => {
       await vi.waitFor(() => {
         expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/test");
       });
-      expect(agentStatusManager.markActive).toHaveBeenCalledWith("/workspaces/test");
+      // markActive is no longer called from EVENT_MCP_ATTACHED — now handled by onWorkspaceReady
+      expect(agentStatusManager.markActive).not.toHaveBeenCalled();
     });
 
     it("emits workspace:mcp-attached event observable by external subscribers", async () => {
@@ -536,6 +549,104 @@ describe("McpModule Integration", () => {
 
       capturedReadyCallback!("/workspaces/claude-ws");
       expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/claude-ws");
+    });
+  });
+
+  describe("OpenCode-specific: onWorkspaceReady", () => {
+    it("calls setWorkspaceLoaded and markActive when OpenCode wrapper signals ready", async () => {
+      const { dispatcher, agentServerManager, viewManager, agentStatusManager } =
+        createTestSetup("opencode");
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(agentServerManager.onWorkspaceReady).toHaveBeenCalled();
+      expect(agentServerManager.capturedWorkspaceReadyCallback).not.toBeNull();
+
+      agentServerManager.capturedWorkspaceReadyCallback!("/workspaces/oc-ws");
+      expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/oc-ws");
+      expect(agentStatusManager.markActive).toHaveBeenCalledWith("/workspaces/oc-ws");
+    });
+  });
+
+  describe("workspace:open / setup hook", () => {
+    it("contributes CODEHYDRA_BRIDGE_PORT env var for OpenCode", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      const mcpServerManager = createMockMcpServerManager();
+      const agentServerManager = createMockAgentServerManager();
+
+      dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+
+      const mcpModule = createMcpModule({
+        mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
+        viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
+        agentStatusManager:
+          createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
+        serverManager: agentServerManager as unknown as McpModuleDeps["serverManager"],
+        selectedAgentType: "opencode",
+        dispatcher,
+        logger: SILENT_LOGGER,
+        setMcpServerManager: vi.fn(),
+      });
+
+      wireModules([mcpModule], hookRegistry, dispatcher);
+
+      // Call the setup hook directly through the hook registry
+      const setupCtx = {
+        intent: { type: "workspace:open", payload: {} },
+        workspacePath: "/workspaces/test-ws",
+        projectPath: "/projects/test",
+      };
+      const hooks = hookRegistry.resolve("open-workspace");
+      const { results } = await hooks.collect("setup", setupCtx);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({ envVars: { CODEHYDRA_BRIDGE_PORT: "15000" } });
+    });
+
+    it("returns empty result for Claude agent type", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      const mcpServerManager = createMockMcpServerManager();
+
+      dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+
+      const claudeServerManager = {
+        setMcpConfig: vi.fn(),
+        onWorkspaceReady: vi.fn().mockReturnValue(() => {}),
+      };
+
+      const mcpModule = createMcpModule({
+        mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
+        viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
+        agentStatusManager:
+          createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
+        serverManager: claudeServerManager as unknown as McpModuleDeps["serverManager"],
+        selectedAgentType: "claude",
+        dispatcher,
+        logger: SILENT_LOGGER,
+        setMcpServerManager: vi.fn(),
+      });
+
+      wireModules([mcpModule], hookRegistry, dispatcher);
+
+      const setupCtx = {
+        intent: { type: "workspace:open", payload: {} },
+        workspacePath: "/workspaces/test-ws",
+        projectPath: "/projects/test",
+      };
+      const hooks = hookRegistry.resolve("open-workspace");
+      const { results } = await hooks.collect("setup", setupCtx);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({});
     });
   });
 });

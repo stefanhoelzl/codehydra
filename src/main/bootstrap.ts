@@ -773,8 +773,18 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
         codeServerManager: refs.codeServerManager,
         fileSystemLayer: refs.fileSystemLayer,
         configDataProvider: (workspacePath: string) => {
-          const env =
+          const providerEnv =
             refs.agentStatusManager.getEnvironmentVariables(workspacePath as WorkspacePath) ?? null;
+          const env = providerEnv ? { ...providerEnv } : null;
+          // Add bridge port for OpenCode wrapper notifications (live-lookup path)
+          if (env && refs.selectedAgentType === "opencode") {
+            const bridgePort = (
+              refs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager
+            ).getBridgePort();
+            if (bridgePort !== null) {
+              env.CODEHYDRA_BRIDGE_PORT = String(bridgePort);
+            }
+          }
           const agentType = refs.selectedAgentType;
           return { env, agentType };
         },

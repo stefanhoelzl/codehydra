@@ -12,10 +12,60 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { request } from "node:http";
 
 // Exit codes
 const EXIT_ENV_ERROR = 1;
 const EXIT_SPAWN_FAILED = 2;
+
+/**
+ * Send a hook notification to the bridge server.
+ * Fire-and-forget: does not wait for response.
+ * Silent on error - bridge server may not be available.
+ *
+ * @param hookName - Name of the hook
+ */
+async function notifyHook(hookName: "WrapperStart"): Promise<void> {
+  const bridgePort = process.env.CODEHYDRA_BRIDGE_PORT;
+  const workspacePath = process.env.CODEHYDRA_WORKSPACE_PATH;
+
+  if (!bridgePort || !workspacePath) {
+    return;
+  }
+
+  const payload = JSON.stringify({ workspacePath });
+
+  return new Promise((resolve) => {
+    const req = request(
+      {
+        hostname: "127.0.0.1",
+        port: parseInt(bridgePort, 10),
+        path: `/hook/${hookName}`,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+        timeout: 2000,
+      },
+      () => {
+        resolve();
+      }
+    );
+
+    req.on("error", () => {
+      resolve(); // Silent failure
+    });
+
+    req.on("timeout", () => {
+      req.destroy();
+      resolve();
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
 
 /**
  * Main entry point for the wrapper script.
@@ -68,14 +118,17 @@ async function main(): Promise<never> {
     args.push("--session", sessionId);
   }
 
-  // 7. Spawn opencode binary
+  // 7. Notify wrapper start (must complete before spawnSync blocks event loop)
+  await notifyHook("WrapperStart");
+
+  // 8. Spawn opencode binary
   // Note: .cmd files on Windows require shell:true to execute
   const result = spawnSync(binaryPath, args, {
     stdio: "inherit",
     shell: binaryPath.endsWith(".cmd"),
   });
 
-  // 8. Handle result
+  // 9. Handle result
   if (result.error) {
     console.error(`Error: Failed to start opencode: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
@@ -92,3 +145,5 @@ if (!process.env.VITEST) {
     process.exit(EXIT_ENV_ERROR);
   });
 }
+
+export { notifyHook };

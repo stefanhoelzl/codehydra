@@ -884,4 +884,156 @@ describe("OpenWorkspace Operation", () => {
       );
     });
   });
+
+  describe("env var accumulation from multiple setup modules (#19)", () => {
+    it("merges envVars from multiple setup hooks", async () => {
+      // Add a second setup module that contributes additional env vars
+      const extraEnvModule: IntentModule = {
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            setup: {
+              handler: async (): Promise<SetupHookResult> => {
+                return { envVars: { BRIDGE_PORT: "15000" } };
+              },
+            },
+          },
+        },
+      };
+
+      // Re-create setup with the extra module
+      const projectId = generateProjectId(PROJECT_ROOT);
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
+      dispatcher.registerOperation(
+        INTENT_SWITCH_WORKSPACE,
+        new SwitchWorkspaceOperation(extractWorkspaceName, (path: string) =>
+          generateProjectId(path)
+        )
+      );
+
+      // Minimal switch modules
+      const switchResolveProjectModule: IntentModule = {
+        hooks: {
+          [SWITCH_WORKSPACE_OPERATION_ID]: {
+            "resolve-project": {
+              handler: async (): Promise<SwitchResolveProjectHookResult> => {
+                return { projectPath: PROJECT_ROOT, projectName: "test" };
+              },
+            },
+          },
+        },
+      };
+      const switchResolveWorkspaceModule: IntentModule = {
+        hooks: {
+          [SWITCH_WORKSPACE_OPERATION_ID]: {
+            "resolve-workspace": {
+              handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+                const { workspaceName } = ctx as ResolveWorkspaceHookInput;
+                return { workspacePath: `/workspaces/${workspaceName}` };
+              },
+            },
+          },
+        },
+      };
+      const switchViewModule: IntentModule = {
+        hooks: {
+          [SWITCH_WORKSPACE_OPERATION_ID]: {
+            activate: {
+              handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+                const { workspacePath } = ctx as ActivateHookInput;
+                return { resolvedPath: workspacePath };
+              },
+            },
+          },
+        },
+      };
+      const resolveProjectModule: IntentModule = {
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            "resolve-project": {
+              handler: async (): Promise<ResolveProjectHookResult> => {
+                return { projectPath: PROJECT_ROOT };
+              },
+            },
+          },
+        },
+      };
+      const fetchBasesModule: IntentModule = {
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            "fetch-bases": {
+              handler: async () => ({
+                bases: [{ name: "main", isRemote: false }],
+              }),
+            },
+          },
+        },
+      };
+      const worktreeModule: IntentModule = {
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            create: {
+              handler: async (): Promise<CreateHookResult> => ({
+                workspacePath: WORKSPACE_PATH,
+                branch: WORKSPACE_BRANCH,
+                metadata: WORKSPACE_METADATA,
+              }),
+            },
+          },
+        },
+      };
+      // Agent module contributes AGENT_PORT
+      const agentModule: IntentModule = {
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            setup: {
+              handler: async (): Promise<SetupHookResult> => {
+                return { envVars: { AGENT_PORT: "9090" } };
+              },
+            },
+          },
+        },
+      };
+      // Finalize module captures envVars for verification
+      let capturedEnvVars: Record<string, string> = {};
+      const codeServerModule: IntentModule = {
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            finalize: {
+              handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+                capturedEnvVars = (ctx as FinalizeHookInput).envVars;
+                return { workspaceUrl: WORKSPACE_URL };
+              },
+            },
+          },
+        },
+      };
+
+      wireModules(
+        [
+          switchResolveProjectModule,
+          switchResolveWorkspaceModule,
+          switchViewModule,
+          resolveProjectModule,
+          fetchBasesModule,
+          worktreeModule,
+          agentModule,
+          extraEnvModule,
+          codeServerModule,
+        ],
+        hookRegistry,
+        dispatcher
+      );
+
+      await dispatcher.dispatch(createIntent(projectId));
+
+      // Both modules' envVars should be merged
+      expect(capturedEnvVars).toEqual({
+        AGENT_PORT: "9090",
+        BRIDGE_PORT: "15000",
+      });
+    });
+  });
 });

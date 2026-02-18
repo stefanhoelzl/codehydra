@@ -4,11 +4,12 @@
  * Subscribes to:
  * - workspace:created: registers workspace with MCP server manager
  * - workspace:deleted: unregisters workspace from MCP server manager (safety net)
- * - workspace:mcp-attached: TEMP - calls viewManager.setWorkspaceLoaded() + agentStatusManager.markActive()
- *   (moves to ViewModule Phase 8b and AgentModule Phase 7c)
+ * - workspace:mcp-attached: TEMP - calls viewManager.setWorkspaceLoaded()
+ *   (moves to ViewModule Phase 8b)
  *
  * Hook handlers:
  * - app:start / start: start MCP server, wire callbacks, configure agent ServerManager
+ * - workspace:open / setup: contribute bridge port env vars (OpenCode only)
  * - workspace:delete / shutdown: unregister workspace before agent server stops
  * - app:shutdown / stop: dispose MCP server, cleanup callbacks
  */
@@ -22,8 +23,8 @@ import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent, ShutdownHookResult } from "../operations/delete-workspace";
-import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
-import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
+import { EVENT_WORKSPACE_CREATED, OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
+import type { WorkspaceCreatedEvent, SetupHookResult } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../operations/delete-workspace";
 import type { WorkspaceDeletedEvent } from "../operations/delete-workspace";
 import { INTENT_MCP_ATTACHED, EVENT_MCP_ATTACHED } from "../operations/mcp-attached";
@@ -76,10 +77,10 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
         deps.mcpServerManager.unregisterWorkspace(payload.workspacePath);
       },
       [EVENT_MCP_ATTACHED]: (event: DomainEvent) => {
-        // TEMP: Direct calls until ViewModule (Phase 8b) and AgentModule (Phase 7c) own these
+        // TEMP: Direct call until ViewModule (Phase 8b) owns this
+        // markActive() removed: now handled by bridge server onWorkspaceReady callbacks
         const { workspacePath } = (event as McpAttachedEvent).payload;
         deps.viewManager.setWorkspaceLoaded(workspacePath);
-        deps.agentStatusManager.markActive(workspacePath as WorkspacePath);
       },
     },
     hooks: {
@@ -100,14 +101,20 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
               deps.dispatcher.dispatch(intent);
             });
 
-            // Register callback for wrapper start (Claude Code only)
-            if (deps.selectedAgentType === "claude" && deps.serverManager) {
+            // Register callback for wrapper start (bridge server notification)
+            if (deps.selectedAgentType === "claude") {
               const claudeServerManager = deps.serverManager as ClaudeCodeServerManager;
               if (claudeServerManager.onWorkspaceReady) {
                 wrapperReadyCleanupFn = claudeServerManager.onWorkspaceReady((workspacePath) => {
                   deps.viewManager.setWorkspaceLoaded(workspacePath);
                 });
               }
+            } else if (deps.selectedAgentType === "opencode") {
+              const opencodeManager = deps.serverManager as OpenCodeServerManager;
+              wrapperReadyCleanupFn = opencodeManager.onWorkspaceReady((workspacePath) => {
+                deps.viewManager.setWorkspaceLoaded(workspacePath);
+                deps.agentStatusManager.markActive(workspacePath as WorkspacePath);
+              });
             }
 
             // Configure server manager to connect to MCP
@@ -127,6 +134,21 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
             deps.setMcpServerManager(deps.mcpServerManager);
 
             return { mcpPort };
+          },
+        },
+      },
+      [OPEN_WORKSPACE_OPERATION_ID]: {
+        setup: {
+          handler: async (): Promise<SetupHookResult> => {
+            if (deps.selectedAgentType !== "opencode") {
+              return {};
+            }
+            const opencodeManager = deps.serverManager as OpenCodeServerManager;
+            const bridgePort = opencodeManager.getBridgePort();
+            if (bridgePort === null) {
+              return {};
+            }
+            return { envVars: { CODEHYDRA_BRIDGE_PORT: String(bridgePort) } };
           },
         },
       },

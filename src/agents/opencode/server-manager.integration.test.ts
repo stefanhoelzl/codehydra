@@ -9,6 +9,7 @@
  * - AgentStatusManager receives start/stop events correctly
  */
 
+import { request as httpRequest } from "http";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
 import { AgentStatusManager, OpenCodeProvider } from "./status-manager";
@@ -326,6 +327,84 @@ describe("OpenCodeServerManager integration", () => {
       } finally {
         await shortTimeoutManager.dispose();
       }
+    });
+  });
+
+  describe("bridge server", () => {
+    it("starts lazily on first startServer and exposes bridge port", async () => {
+      expect(serverManager.getBridgePort()).toBeNull();
+
+      await serverManager.startServer("/workspace/feature-a");
+
+      // Bridge port is OS-assigned (port 0), so just check it's a valid port
+      const bridgePort = serverManager.getBridgePort();
+      expect(bridgePort).not.toBeNull();
+      expect(bridgePort).toBeGreaterThan(0);
+    });
+
+    it("reuses bridge server across multiple workspaces", async () => {
+      await serverManager.startServer("/workspace/feature-a");
+      const bridgePort1 = serverManager.getBridgePort();
+
+      await serverManager.startServer("/workspace/feature-b");
+      const bridgePort2 = serverManager.getBridgePort();
+
+      expect(bridgePort1).toBe(bridgePort2);
+    });
+
+    it("fires onWorkspaceReady callback when WrapperStart notification received", async () => {
+      const readyCallback = vi.fn();
+      serverManager.onWorkspaceReady(readyCallback);
+
+      await serverManager.startServer("/workspace/feature-a");
+
+      const bridgePort = serverManager.getBridgePort()!;
+      const payload = JSON.stringify({ workspacePath: "/workspace/feature-a" });
+
+      // Send WrapperStart notification to bridge server
+      await new Promise<void>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            hostname: "127.0.0.1",
+            port: bridgePort,
+            path: "/hook/WrapperStart",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(payload),
+            },
+          },
+          (res) => {
+            let body = "";
+            res.on("data", (chunk: Buffer) => {
+              body += chunk.toString();
+            });
+            res.on("end", () => {
+              try {
+                const parsed = JSON.parse(body) as { success: boolean };
+                expect(parsed.success).toBe(true);
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            });
+          }
+        );
+        req.on("error", reject);
+        req.write(payload);
+        req.end();
+      });
+
+      expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
+    });
+
+    it("cleans up bridge server on dispose", async () => {
+      await serverManager.startServer("/workspace/feature-a");
+      expect(serverManager.getBridgePort()).not.toBeNull();
+
+      await serverManager.dispose();
+
+      expect(serverManager.getBridgePort()).toBeNull();
     });
   });
 

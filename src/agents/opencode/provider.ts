@@ -92,6 +92,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     return {
       CODEHYDRA_OPENCODE_PORT: String(session.port),
       CODEHYDRA_OPENCODE_SESSION_ID: session.sessionId,
+      CODEHYDRA_WORKSPACE_PATH: this.workspacePath,
     };
   }
 

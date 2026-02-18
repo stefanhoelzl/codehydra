@@ -232,8 +232,13 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
 
     if (setupErrors.length > 0) throw setupErrors[0]!;
 
-    const setup = mergeHookResults(setupResults, "setup");
-    const envVars = setup.envVars ?? {};
+    // Accumulate env vars from all setup hook results (multiple modules can contribute)
+    const envVars: Record<string, string> = {};
+    for (const result of setupResults) {
+      if (result.envVars) {
+        Object.assign(envVars, result.envVars);
+      }
+    }
 
     // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
