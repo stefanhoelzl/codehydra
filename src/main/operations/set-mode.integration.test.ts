@@ -28,6 +28,7 @@ import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import type { UIMode } from "../../shared/ipc";
+import { SILENT_LOGGER } from "../../services/logging";
 
 // =============================================================================
 // Mock ApiRegistry for IpcEventBridge
@@ -111,9 +112,15 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
   const mockApiRegistry = createMockApiRegistry();
   const modules: IntentModule[] = [setModeModule];
   if (opts?.withIpcEventBridge) {
-    const ipcEventBridge = createIpcEventBridge(
-      mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry
-    );
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry,
+      getApi: () => {
+        throw new Error("not wired");
+      },
+      getUIWebContents: () => null,
+      pluginServer: null,
+      logger: SILENT_LOGGER,
+    });
     modules.push(ipcEventBridge);
   }
 

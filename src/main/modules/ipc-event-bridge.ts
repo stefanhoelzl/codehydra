@@ -1,22 +1,34 @@
 /**
- * IpcEventBridge - Bridges domain events to the ApiRegistry event system.
+ * IpcEventBridge - Bridges domain events to the ApiRegistry event system
+ * and manages IPC lifecycle (API event wiring, plugin API).
  *
- * This is an IntentModule that subscribes to domain events emitted by operations
- * and forwards them to ApiRegistry.emit() for IPC notification to the renderer.
- *
- * Temporary bridge between old (ApiRegistry events) and new (domain events)
- * patterns. Will be removed when the old module system is fully replaced.
+ * This is an IntentModule that:
+ * 1. Subscribes to domain events and forwards them to ApiRegistry.emit() for IPC
+ * 2. On app:start, wires API events to IPC and sets up the Plugin API
+ * 3. On app:shutdown, cleans up event subscriptions
+ * 4. Manages plugin workspace registration on workspace created/deleted events
  */
 
+import type { WebContents } from "electron";
 import type { IntentModule, EventDeclarations } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { IApiRegistry } from "../api/registry-types";
+import type { ICodeHydraApi, Unsubscribe } from "../../shared/api/interfaces";
+import type { Logger } from "../../services/logging";
+import type { PluginServer } from "../../services/plugin-server";
+import type { StartHookResult } from "../operations/app-start";
+import { APP_START_OPERATION_ID } from "../operations/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
+import { wireApiEvents } from "../ipc/api-handlers";
+import { wirePluginApi, type PluginApiRegistry } from "../api/wire-plugin-api";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations/set-metadata";
 import { EVENT_METADATA_CHANGED } from "../operations/set-metadata";
 import type { ModeChangedPayload, ModeChangedEvent } from "../operations/set-mode";
 import { EVENT_MODE_CHANGED } from "../operations/set-mode";
 import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
+import type { WorkspaceDeletedEvent } from "../operations/delete-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../operations/delete-workspace";
 import type { ProjectOpenedEvent } from "../operations/open-project";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
 import type { ProjectClosedEvent } from "../operations/close-project";
@@ -28,12 +40,30 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { WorkspaceStatus } from "../../shared/api/types";
 
 /**
- * Create an IpcEventBridge module that forwards domain events to the API registry.
- *
- * @param apiRegistry - The API registry to emit events on
- * @returns IntentModule with event subscriptions
+ * Dependencies for the IpcEventBridge module.
  */
-export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
+export interface IpcEventBridgeDeps {
+  readonly apiRegistry: IApiRegistry;
+  readonly getApi: () => ICodeHydraApi;
+  readonly getUIWebContents: () => WebContents | null;
+  readonly pluginServer: PluginServer | null;
+  readonly logger: Logger;
+}
+
+/**
+ * Create an IpcEventBridge module that forwards domain events to the API registry
+ * and manages IPC lifecycle (API event wiring, plugin API).
+ *
+ * @param deps - Module dependencies
+ * @returns IntentModule with event subscriptions and lifecycle hooks
+ */
+export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
+  const { apiRegistry } = deps;
+
+  // Closure state for lifecycle management
+  let apiEventCleanupFn: Unsubscribe | null = null;
+  let pluginApiRegistry: PluginApiRegistry | null = null;
+
   const events: EventDeclarations = {
     [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
       const payload = (event as MetadataChangedEvent).payload as MetadataChangedPayload;
@@ -65,6 +95,16 @@ export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
         ...(p.initialPrompt && { hasInitialPrompt: true }),
         ...(p.keepInBackground && { keepInBackground: true }),
       });
+      pluginApiRegistry?.registerWorkspace(p.workspacePath, p.projectId, p.workspaceName);
+    },
+    [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+      const payload = (event as WorkspaceDeletedEvent).payload;
+      apiRegistry.emit("workspace:removed", {
+        projectId: payload.projectId,
+        workspaceName: payload.workspaceName,
+        path: payload.workspacePath,
+      });
+      pluginApiRegistry?.unregisterWorkspace(payload.workspacePath);
     },
     [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
       const p = (event as ProjectOpenedEvent).payload;
@@ -118,5 +158,40 @@ export function createIpcEventBridge(apiRegistry: IApiRegistry): IntentModule {
     },
   };
 
-  return { events };
+  return {
+    events,
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        start: {
+          handler: async (): Promise<StartHookResult> => {
+            const api = deps.getApi();
+            apiEventCleanupFn = wireApiEvents(api, deps.getUIWebContents);
+            if (deps.pluginServer) {
+              pluginApiRegistry = wirePluginApi(deps.pluginServer, api, deps.logger);
+            }
+            return {};
+          },
+        },
+      },
+      [APP_SHUTDOWN_OPERATION_ID]: {
+        stop: {
+          handler: async () => {
+            try {
+              if (apiEventCleanupFn) {
+                apiEventCleanupFn();
+                apiEventCleanupFn = null;
+              }
+              pluginApiRegistry = null;
+            } catch (error) {
+              deps.logger.error(
+                "IpcBridge lifecycle shutdown failed (non-fatal)",
+                {},
+                error instanceof Error ? error : undefined
+              );
+            }
+          },
+        },
+      },
+    },
+  };
 }
