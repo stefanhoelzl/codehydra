@@ -102,7 +102,7 @@ import {
   INTENT_APP_START,
   APP_START_OPERATION_ID,
 } from "./operations/app-start";
-import type { ShowUIHookResult, StartHookResult, ActivateHookResult } from "./operations/app-start";
+import type { ShowUIHookResult, StartHookResult } from "./operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -880,57 +880,6 @@ function wireDispatcher(
 
   const lifecycleLogger = lifecycleRefs.loggingService.createLogger("lifecycle");
 
-  // WrapperReadyViewModule: activate → wire onWorkspaceReady to setWorkspaceLoaded.
-  // stop → cleanup callback.
-  // NOTE: This module stays inline for Phase 8 (ViewModule) to absorb.
-  let wrapperReadyViewCleanupFn: Unsubscribe | null = null;
-  const wrapperReadyViewModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
-            if (lifecycleRefs.selectedAgentType === "claude") {
-              const claudeServerManager =
-                lifecycleRefs.serverManager as import("../agents/claude/server-manager").ClaudeCodeServerManager;
-              if (claudeServerManager.onWorkspaceReady) {
-                wrapperReadyViewCleanupFn = claudeServerManager.onWorkspaceReady(
-                  (workspacePath) => {
-                    viewManager.setWorkspaceLoaded(workspacePath);
-                  }
-                );
-              }
-            } else if (lifecycleRefs.selectedAgentType === "opencode") {
-              const opencodeManager =
-                lifecycleRefs.serverManager as import("../agents/opencode/server-manager").OpenCodeServerManager;
-              wrapperReadyViewCleanupFn = opencodeManager.onWorkspaceReady((workspacePath) => {
-                viewManager.setWorkspaceLoaded(workspacePath);
-              });
-            }
-            return {};
-          },
-        },
-      },
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            try {
-              if (wrapperReadyViewCleanupFn) {
-                wrapperReadyViewCleanupFn();
-                wrapperReadyViewCleanupFn = null;
-              }
-            } catch (error) {
-              lifecycleLogger.error(
-                "WrapperReadyView shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
-          },
-        },
-      },
-    },
-  };
-
   const telemetryLifecycleModule = createTelemetryModule({
     telemetryService: lifecycleRefs.telemetryService,
     platformInfo: lifecycleRefs.platformInfo,
@@ -1076,7 +1025,6 @@ function wireDispatcher(
       // Workspace:switch modules
       windowTitleModule,
       // App lifecycle modules
-      wrapperReadyViewModule,
       telemetryLifecycleModule,
       autoUpdaterLifecycleModule,
       ipcBridgeLifecycleModule,
