@@ -2,7 +2,7 @@
  * ViewModule - Manages workspace views, UI modes, loading states, mount coordination,
  * and shell layer disposal.
  *
- * Consolidates 10 inline bootstrap modules into a single extracted module:
+ * Consolidates 11 inline bootstrap modules into a single extracted module:
  * - earlySetModeModule (set-mode/set hook)
  * - appStartUIModule (app-start/show-ui hook)
  * - setupUIModule (setup/show-ui + setup/hide-ui hooks)
@@ -13,6 +13,7 @@
  * - projectViewModule (project:opened event)
  * - viewLifecycleModule (app-start/activate + app-shutdown/stop hooks)
  * - mountModule (app-start/activate hook)
+ * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
  *
  * Internal state: cachedActiveRef, loadingChangeCleanupFn, mountSignal.
  */
@@ -40,6 +41,7 @@ import type {
 import type { DeleteWorkspaceIntent, ShutdownHookResult } from "../operations/delete-workspace";
 import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
 import type { ProjectOpenedEvent } from "../operations/open-project";
+import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../operations/set-mode";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
@@ -50,6 +52,7 @@ import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
+import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import { ApiIpcChannels } from "../../shared/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../../shared/ipc";
 import { getErrorMessage } from "../../shared/error-utils";
@@ -332,6 +335,14 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         for (let i = 1; i < workspaces.length; i++) {
           viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
         }
+      },
+
+      // -------------------------------------------------------------------
+      // agent:status-updated → clear loading screen (idempotent)
+      // -------------------------------------------------------------------
+      [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
+        const payload = (event as AgentStatusUpdatedEvent).payload;
+        viewManager.setWorkspaceLoaded(payload.workspacePath);
       },
     },
   };

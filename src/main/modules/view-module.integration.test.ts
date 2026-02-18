@@ -3,7 +3,7 @@
  * Integration tests for ViewModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
- * Covers all 10 absorbed inline modules:
+ * Covers all 11 absorbed inline modules:
  * - earlySetModeModule (set-mode/set)
  * - appStartUIModule (app-start/show-ui)
  * - setupUIModule (setup/show-ui + hide-ui)
@@ -14,6 +14,7 @@
  * - projectViewModule (project:opened event)
  * - viewLifecycleModule (app-start/activate + app-shutdown/stop)
  * - mountModule (app-start/activate)
+ * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -58,6 +59,8 @@ import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../operations/op
 import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
 import type { ProjectOpenedEvent } from "../operations/open-project";
+import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
+import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createViewModule, type ViewModuleDeps, type MountSignal } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
@@ -691,7 +694,42 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 13: app-start/activate → onLoadingChange wired, mountSignal.resolve set
+  // Test 13: agent:status-updated → setWorkspaceLoaded called
+  // -------------------------------------------------------------------------
+  describe("agent:status-updated event", () => {
+    it("calls setWorkspaceLoaded with workspace path", async () => {
+      const emitOp: Operation<Intent, void> = {
+        id: "emit-agent-status",
+        async execute(ctx: OperationContext<Intent>): Promise<void> {
+          const event: AgentStatusUpdatedEvent = {
+            type: EVENT_AGENT_STATUS_UPDATED,
+            payload: {
+              workspacePath: "/workspaces/ws1" as import("../../shared/ipc").WorkspacePath,
+              projectId: "test-project" as ProjectId,
+              workspaceName: "ws1" as WorkspaceName,
+              status: { status: "idle" } as import("../../shared/ipc").AggregatedAgentStatus,
+            },
+          };
+          ctx.emit(event);
+        },
+      };
+
+      const { dispatcher, viewManager } = createTestSetup({
+        intentType: "test:emit-agent-status",
+        operation: emitOp,
+      });
+
+      await dispatcher.dispatch({
+        type: "test:emit-agent-status",
+        payload: {},
+      });
+
+      expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/ws1");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 14: app-start/activate → onLoadingChange wired, mountSignal.resolve set
   // -------------------------------------------------------------------------
   describe("app-start/activate", () => {
     it("wires onLoadingChange and sets mountSignal.resolve", async () => {
@@ -726,7 +764,7 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 14: app-shutdown/stop → layers disposed
+  // Test 15: app-shutdown/stop → layers disposed
   // -------------------------------------------------------------------------
   describe("app-shutdown/stop", () => {
     it("disposes shell layers", async () => {
@@ -768,7 +806,7 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 15: app-shutdown/stop → loadingChange cleanup called
+  // Test 16: app-shutdown/stop → loadingChange cleanup called
   // -------------------------------------------------------------------------
   describe("app-shutdown/stop cleans up subscriptions", () => {
     it("calls loading change unsubscribe during shutdown", async () => {
