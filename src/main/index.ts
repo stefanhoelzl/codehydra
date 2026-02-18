@@ -515,7 +515,6 @@ async function createServicesAndWireDispatcher(): Promise<void> {
     agentStatusManager: agentStatusManager!,
     serverManager: serverManager!,
     selectedAgentType: appState!.getAgentType(),
-    dispatcher: dispatcherInstance!,
     logger: loggingService.createLogger("mcp"),
     setMcpServerManager: (mgr) => appState!.setMcpServerManager(mgr),
   });

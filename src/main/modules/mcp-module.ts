@@ -4,8 +4,6 @@
  * Subscribes to:
  * - workspace:created: registers workspace with MCP server manager
  * - workspace:deleted: unregisters workspace from MCP server manager (safety net)
- * - workspace:mcp-attached: TEMP - calls viewManager.setWorkspaceLoaded()
- *   (moves to ViewModule Phase 8b)
  *
  * Hook handlers:
  * - app:start / start: start MCP server, wire callbacks, configure agent ServerManager
@@ -17,7 +15,6 @@
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { HookContext } from "../intents/infrastructure/operation";
-import type { IDispatcher } from "../intents/infrastructure/dispatcher";
 import type { StartHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
@@ -27,8 +24,6 @@ import { EVENT_WORKSPACE_CREATED, OPEN_WORKSPACE_OPERATION_ID } from "../operati
 import type { WorkspaceCreatedEvent, SetupHookResult } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../operations/delete-workspace";
 import type { WorkspaceDeletedEvent } from "../operations/delete-workspace";
-import { INTENT_MCP_ATTACHED, EVENT_MCP_ATTACHED } from "../operations/mcp-attached";
-import type { McpAttachedIntent, McpAttachedEvent } from "../operations/mcp-attached";
 import type { McpServerManager } from "../../services/mcp-server/mcp-server-manager";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { AgentStatusManager } from "../../agents/opencode/status-manager";
@@ -49,7 +44,6 @@ export interface McpModuleDeps {
   readonly agentStatusManager: AgentStatusManager;
   readonly serverManager: AgentServerManager;
   readonly selectedAgentType: AgentType;
-  readonly dispatcher: IDispatcher;
   readonly logger: Logger;
   readonly setMcpServerManager: (manager: McpServerManager) => void;
 }
@@ -59,7 +53,6 @@ export interface McpModuleDeps {
 // =============================================================================
 
 export function createMcpModule(deps: McpModuleDeps): IntentModule {
-  let mcpFirstRequestCleanupFn: Unsubscribe | null = null;
   let wrapperReadyCleanupFn: Unsubscribe | null = null;
 
   return {
@@ -76,12 +69,6 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
         const payload = (event as WorkspaceDeletedEvent).payload;
         deps.mcpServerManager.unregisterWorkspace(payload.workspacePath);
       },
-      [EVENT_MCP_ATTACHED]: (event: DomainEvent) => {
-        // TEMP: Direct call until ViewModule (Phase 8b) owns this
-        // markActive() removed: now handled by bridge server onWorkspaceReady callbacks
-        const { workspacePath } = (event as McpAttachedEvent).payload;
-        deps.viewManager.setWorkspaceLoaded(workspacePath);
-      },
     },
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -90,15 +77,6 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
             const mcpPort = await deps.mcpServerManager.start();
             deps.logger.info("MCP server started", {
               port: mcpPort,
-            });
-
-            // Register callback for first MCP request per workspace — dispatches domain event
-            mcpFirstRequestCleanupFn = deps.mcpServerManager.onFirstRequest((workspacePath) => {
-              const intent: McpAttachedIntent = {
-                type: INTENT_MCP_ATTACHED,
-                payload: { workspacePath },
-              };
-              deps.dispatcher.dispatch(intent);
             });
 
             // Register callback for wrapper start (bridge server notification)
@@ -166,10 +144,6 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
           handler: async () => {
             try {
               // Cleanup callbacks
-              if (mcpFirstRequestCleanupFn) {
-                mcpFirstRequestCleanupFn();
-                mcpFirstRequestCleanupFn = null;
-              }
               if (wrapperReadyCleanupFn) {
                 wrapperReadyCleanupFn();
                 wrapperReadyCleanupFn = null;

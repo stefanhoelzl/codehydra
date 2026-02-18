@@ -43,7 +43,7 @@ describe("AppState Integration", () => {
 
   describe("MCP server manager lifecycle", () => {
     it("injects and retrieves MCP server manager", () => {
-      const mockMcpManager = { clearFirstRequestTracking: vi.fn() };
+      const mockMcpManager = {};
 
       appState.setMcpServerManager(mockMcpManager as never);
 

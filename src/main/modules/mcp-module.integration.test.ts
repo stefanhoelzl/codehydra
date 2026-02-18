@@ -5,8 +5,6 @@
  * Tests verify the full pipeline:
  * - workspace:created event → mcpServerManager.registerWorkspace()
  * - workspace:deleted event → mcpServerManager.unregisterWorkspace()
- * - onFirstRequest → dispatches workspace:mcp-attached intent → event subscribers
- * - workspace:mcp-attached event → viewManager.setWorkspaceLoaded() (markActive removed)
  * - app:shutdown / stop → dispose MCP server, cleanup callbacks
  * - workspace:delete / shutdown → unregister workspace from MCP
  * - Agent server configured with MCP port
@@ -16,12 +14,6 @@ import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
-import {
-  McpAttachedOperation,
-  INTENT_MCP_ATTACHED,
-  EVENT_MCP_ATTACHED,
-} from "../operations/mcp-attached";
-import type { McpAttachedEvent } from "../operations/mcp-attached";
 import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../operations/open-workspace";
 import {
@@ -39,12 +31,9 @@ import {
 } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
-import type { DomainEvent } from "../intents/infrastructure/types";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { createMcpModule, type McpModuleDeps } from "./mcp-module";
 import { SILENT_LOGGER } from "../../services/logging";
-import type { McpRequestCallback } from "../../services/mcp-server/types";
-import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 // =============================================================================
 // Mock McpServerManager
@@ -55,28 +44,17 @@ interface MockMcpServerManager {
   dispose: ReturnType<typeof vi.fn>;
   registerWorkspace: ReturnType<typeof vi.fn>;
   unregisterWorkspace: ReturnType<typeof vi.fn>;
-  onFirstRequest: ReturnType<typeof vi.fn>;
   getPort: ReturnType<typeof vi.fn>;
-  /** Captured onFirstRequest callback for triggering in tests */
-  capturedFirstRequestCallback: McpRequestCallback | null;
 }
 
 function createMockMcpServerManager(port = 9999): MockMcpServerManager {
-  const mock: MockMcpServerManager = {
+  return {
     start: vi.fn().mockResolvedValue(port),
     dispose: vi.fn().mockResolvedValue(undefined),
     registerWorkspace: vi.fn(),
     unregisterWorkspace: vi.fn(),
     getPort: vi.fn().mockReturnValue(port),
-    capturedFirstRequestCallback: null,
-    onFirstRequest: vi.fn().mockImplementation((callback: McpRequestCallback): Unsubscribe => {
-      mock.capturedFirstRequestCallback = callback;
-      return () => {
-        mock.capturedFirstRequestCallback = null;
-      };
-    }),
   };
-  return mock;
 }
 
 // =============================================================================
@@ -207,7 +185,6 @@ function createTestSetup(agentType: "opencode" | "claude" = "opencode"): TestSet
   const setMcpServerManager = vi.fn();
 
   // Register operations
-  dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new MinimalOpenOperation());
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());
   dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
@@ -219,7 +196,6 @@ function createTestSetup(agentType: "opencode" | "claude" = "opencode"): TestSet
     agentStatusManager: agentStatusManager as unknown as McpModuleDeps["agentStatusManager"],
     serverManager: agentServerManager as unknown as McpModuleDeps["serverManager"],
     selectedAgentType: agentType,
-    dispatcher,
     logger: SILENT_LOGGER,
     setMcpServerManager,
   });
@@ -284,54 +260,6 @@ describe("McpModule Integration", () => {
     });
   });
 
-  describe("onFirstRequest dispatches workspace:mcp-attached intent", () => {
-    it("dispatches mcp-attached intent and triggers event subscribers", async () => {
-      const { dispatcher, mcpServerManager, viewManager, agentStatusManager } = createTestSetup();
-
-      // Start the app to wire callbacks
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      // Verify onFirstRequest was registered
-      expect(mcpServerManager.onFirstRequest).toHaveBeenCalled();
-      expect(mcpServerManager.capturedFirstRequestCallback).not.toBeNull();
-
-      // Trigger the first request callback
-      mcpServerManager.capturedFirstRequestCallback!("/workspaces/test");
-
-      // Allow the async dispatch to settle
-      await vi.waitFor(() => {
-        expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/test");
-      });
-      // markActive is no longer called from EVENT_MCP_ATTACHED — now handled by onWorkspaceReady
-      expect(agentStatusManager.markActive).not.toHaveBeenCalled();
-    });
-
-    it("emits workspace:mcp-attached event observable by external subscribers", async () => {
-      const { dispatcher, mcpServerManager } = createTestSetup();
-      const receivedEvents: DomainEvent[] = [];
-      dispatcher.subscribe(EVENT_MCP_ATTACHED, (event) => {
-        receivedEvents.push(event);
-      });
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      mcpServerManager.capturedFirstRequestCallback!("/workspaces/alpha");
-
-      await vi.waitFor(() => {
-        expect(receivedEvents).toHaveLength(1);
-      });
-      const event = receivedEvents[0] as McpAttachedEvent;
-      expect(event.type).toBe(EVENT_MCP_ATTACHED);
-      expect(event.payload.workspacePath).toBe("/workspaces/alpha");
-    });
-  });
-
   describe("app:start / start hook", () => {
     it("starts MCP server and returns port", async () => {
       const { dispatcher, mcpServerManager } = createTestSetup();
@@ -389,7 +317,6 @@ describe("McpModule Integration", () => {
       const d = new Dispatcher(hookRegistry);
 
       const msm = createMockMcpServerManager();
-      d.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
       d.registerOperation(
         INTENT_DELETE_WORKSPACE,
         new (class implements Operation<DeleteWorkspaceIntent, { started: true }> {
@@ -418,7 +345,6 @@ describe("McpModule Integration", () => {
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
         serverManager: createMockAgentServerManager() as unknown as McpModuleDeps["serverManager"],
         selectedAgentType: "opencode",
-        dispatcher: d,
         logger: SILENT_LOGGER,
         setMcpServerManager: vi.fn(),
       });
@@ -446,16 +372,6 @@ describe("McpModule Integration", () => {
 
   describe("app:shutdown / stop hook", () => {
     it("disposes MCP server and cleans up callbacks", async () => {
-      const { dispatcher, mcpServerManager } = createTestSetup();
-
-      // Start first to wire callbacks
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-      expect(mcpServerManager.onFirstRequest).toHaveBeenCalled();
-
-      // Now shutdown
       // Wire a quit module to prevent app.quit() error
       const quitModule: IntentModule = {
         hooks: {
@@ -468,7 +384,6 @@ describe("McpModule Integration", () => {
       const shutdownDispatcher = new Dispatcher(hookRegistry);
       shutdownDispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
       shutdownDispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
-      shutdownDispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
 
       const msm = createMockMcpServerManager();
       const mcpModule = createMcpModule({
@@ -478,7 +393,6 @@ describe("McpModule Integration", () => {
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
         serverManager: createMockAgentServerManager() as unknown as McpModuleDeps["serverManager"],
         selectedAgentType: "opencode",
-        dispatcher: shutdownDispatcher,
         logger: SILENT_LOGGER,
         setMcpServerManager: vi.fn(),
       });
@@ -498,8 +412,6 @@ describe("McpModule Integration", () => {
       } as AppShutdownIntent);
 
       expect(msm.dispose).toHaveBeenCalled();
-      // Callback was cleaned up (capturedFirstRequestCallback nulled by unsubscribe)
-      expect(msm.capturedFirstRequestCallback).toBeNull();
     });
   });
 
@@ -522,7 +434,6 @@ describe("McpModule Integration", () => {
         }),
       };
 
-      dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
       dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
 
       const mcpModule = createMcpModule({
@@ -532,7 +443,6 @@ describe("McpModule Integration", () => {
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
         serverManager: claudeServerManager as unknown as McpModuleDeps["serverManager"],
         selectedAgentType: "claude",
-        dispatcher,
         logger: SILENT_LOGGER,
         setMcpServerManager: vi.fn(),
       });
@@ -579,7 +489,6 @@ describe("McpModule Integration", () => {
       const mcpServerManager = createMockMcpServerManager();
       const agentServerManager = createMockAgentServerManager();
 
-      dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
       dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
 
       const mcpModule = createMcpModule({
@@ -589,7 +498,6 @@ describe("McpModule Integration", () => {
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
         serverManager: agentServerManager as unknown as McpModuleDeps["serverManager"],
         selectedAgentType: "opencode",
-        dispatcher,
         logger: SILENT_LOGGER,
         setMcpServerManager: vi.fn(),
       });
@@ -615,7 +523,6 @@ describe("McpModule Integration", () => {
 
       const mcpServerManager = createMockMcpServerManager();
 
-      dispatcher.registerOperation(INTENT_MCP_ATTACHED, new McpAttachedOperation());
       dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
 
       const claudeServerManager = {
@@ -630,7 +537,6 @@ describe("McpModule Integration", () => {
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
         serverManager: claudeServerManager as unknown as McpModuleDeps["serverManager"],
         selectedAgentType: "claude",
-        dispatcher,
         logger: SILENT_LOGGER,
         setMcpServerManager: vi.fn(),
       });

@@ -117,7 +117,6 @@ interface TestProject {
 interface TestAppState {
   projects: TestProject[];
   serverStopped: boolean;
-  mcpCleared: boolean;
   tuiCleared: boolean;
   removedWorkspaces: Array<{ projectPath: string; workspacePath: string }>;
   worktreeRemoved: boolean;
@@ -178,7 +177,6 @@ function createTestAppState(initial?: Partial<TestAppState>): {
       },
     ],
     serverStopped: false,
-    mcpCleared: false,
     tuiCleared: false,
     removedWorkspaces: [],
     worktreeRemoved: false,
@@ -210,11 +208,7 @@ function createTestAppState(initial?: Partial<TestAppState>): {
         return { success: true };
       }),
     }),
-    getMcpServerManager: vi.fn().mockReturnValue({
-      clearFirstRequestTracking: vi.fn().mockImplementation(() => {
-        state.mcpCleared = true;
-      }),
-    }),
+    getMcpServerManager: vi.fn().mockReturnValue({}),
     getAgentStatusManager: vi.fn().mockReturnValue({
       clearTuiTracking: vi.fn().mockImplementation(() => {
         state.tuiCleared = true;

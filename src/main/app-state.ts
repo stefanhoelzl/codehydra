@@ -104,10 +104,6 @@ export class AppState {
           this.agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
         }
       }
-      // Clear from MCP seen set so onFirstRequest fires again after restart
-      if (this.mcpServerManager) {
-        this.mcpServerManager.clearFirstRequestTracking(workspacePath);
-      }
     });
   }
 
