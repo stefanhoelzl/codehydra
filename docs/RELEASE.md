@@ -45,11 +45,11 @@ electron-builder automatically generates required metadata files:
 
 ### Code Signing
 
-| Platform | Requirement           | Impact                                    |
-| -------- | --------------------- | ----------------------------------------- |
-| macOS    | Required (Gatekeeper) | Unsigned apps show security warnings      |
-| Windows  | Recommended           | SmartScreen may warn on unsigned installs |
-| Linux    | Not required          | AppImages run without signatures          |
+| Platform | Requirement               | Impact                                                         |
+| -------- | ------------------------- | -------------------------------------------------------------- |
+| macOS    | Ad-hoc signed (rcodesign) | No Gatekeeper bypass; users right-click → Open on first launch |
+| Windows  | Recommended               | SmartScreen may warn on unsigned installs                      |
+| Linux    | Not required              | AppImages run without signatures                               |
 
 ### Behavior
 
