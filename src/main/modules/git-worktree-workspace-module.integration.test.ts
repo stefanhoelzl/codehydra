@@ -29,6 +29,12 @@ import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult } from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
+import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
+import type {
+  GetStatusHookInput,
+  GetStatusHookResult,
+  ResolveWorkspaceHookResult,
+} from "../operations/get-workspace-status";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
 import type { FetchBasesHookResult } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../../services/logging";
@@ -201,6 +207,55 @@ class MinimalFetchBasesOperation implements Operation<Intent, FetchBasesHookResu
   }
 }
 
+/** Result from get-workspace-status: resolve-workspace + get. */
+interface GetStatusResult {
+  readonly isDirty?: boolean;
+}
+
+/**
+ * Get-workspace-status operation: runs "resolve-workspace" then "get" hook points.
+ * Mirrors the real GetWorkspaceStatusOperation (minus resolve-project).
+ */
+class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
+  readonly id = GET_WORKSPACE_STATUS_OPERATION_ID;
+
+  async execute(ctx: OperationContext<Intent>): Promise<GetStatusResult> {
+    const payload = ctx.intent.payload as { projectPath: string; workspaceName: string };
+
+    // resolve-workspace
+    const resolveInput = {
+      intent: ctx.intent,
+      projectPath: payload.projectPath,
+      workspaceName: payload.workspaceName,
+    };
+    const { results: resolveResults } = await ctx.hooks.collect<ResolveWorkspaceHookResult>(
+      "resolve-workspace",
+      resolveInput
+    );
+    let workspacePath: string | undefined;
+    for (const r of resolveResults) {
+      if (r.workspacePath !== undefined) workspacePath = r.workspacePath;
+    }
+    if (!workspacePath) {
+      throw new Error(`Workspace not found: ${payload.workspaceName}`);
+    }
+
+    // get
+    const getInput: GetStatusHookInput = {
+      intent: ctx.intent,
+      workspacePath,
+    };
+    const { results, errors } = await ctx.hooks.collect<GetStatusHookResult>("get", getInput);
+    if (errors.length > 0) throw errors[0]!;
+
+    let isDirty = false;
+    for (const result of results) {
+      if (result.isDirty) isDirty = true;
+    }
+    return { isDirty };
+  }
+}
+
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -225,6 +280,7 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation("workspace:delete", new MinimalDeleteWorkspaceOperation());
   dispatcher.registerOperation("workspace:resolve", new MinimalResolveWorkspaceOperation());
   dispatcher.registerOperation("open-workspace", new MinimalFetchBasesOperation());
+  dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
 
   // Wire the module under test
   const module = createGitWorktreeWorkspaceModule(
@@ -288,6 +344,17 @@ async function dispatchFetchBases(
     type: "open-workspace",
     payload: { projectPath },
   } as Intent)) as FetchBasesHookResult;
+}
+
+async function dispatchGetStatus(
+  dispatcher: Dispatcher,
+  projectPath: string,
+  workspaceName: string
+): Promise<GetStatusResult> {
+  return (await dispatcher.dispatch({
+    type: "workspace:get-status",
+    payload: { projectPath, workspaceName },
+  } as Intent)) as GetStatusResult;
 }
 
 async function dispatchCreateWorkspace(
@@ -629,6 +696,43 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       expect(provider.defaultBase).toHaveBeenCalledWith(new Path(projectPath));
       expect(result.bases).toHaveLength(2);
       expect(result.defaultBaseBranch).toBe("origin/main");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // get-workspace-status -> get
+  // ---------------------------------------------------------------------------
+
+  describe("get-workspace-status -> get", () => {
+    it("calls isDirty and returns result", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = "/projects/my-app";
+
+      const ws = makeWorkspace("feature-1", projectPath);
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      provider.isDirty.mockResolvedValue(true);
+
+      const result = await dispatchGetStatus(dispatcher, projectPath, "feature-1");
+
+      expect(provider.isDirty).toHaveBeenCalledWith(ws.path);
+      expect(result.isDirty).toBe(true);
+    });
+
+    it("returns isDirty=false when workspace is clean", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = "/projects/my-app";
+
+      const ws = makeWorkspace("feature-1", projectPath);
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      provider.isDirty.mockResolvedValue(false);
+
+      const result = await dispatchGetStatus(dispatcher, projectPath, "feature-1");
+
+      expect(result.isDirty).toBe(false);
     });
   });
 });

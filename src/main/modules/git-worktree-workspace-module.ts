@@ -48,6 +48,8 @@ import {
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   type ResolveWorkspaceHookInput as GetStatusResolveWorkspaceInput,
+  type GetStatusHookInput,
+  type GetStatusHookResult,
 } from "../operations/get-workspace-status";
 import {
   UPDATE_AGENT_STATUS_OPERATION_ID,
@@ -385,13 +387,20 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // get-workspace-status -> resolve-workspace
+      // get-workspace-status -> resolve-workspace + get
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         "resolve-workspace": {
           handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
             const { projectPath, workspaceName } = ctx as GetStatusResolveWorkspaceInput;
             const workspacePath = resolveWorkspacePath(projectPath, workspaceName);
             return workspacePath ? { workspacePath } : {};
+          },
+        },
+        get: {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
+            const { workspacePath } = ctx as GetStatusHookInput;
+            const isDirty = await globalProvider.isDirty(new Path(workspacePath));
+            return { isDirty };
           },
         },
       },
