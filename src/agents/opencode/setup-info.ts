@@ -3,12 +3,9 @@
  * Provides version, binary paths, and config generation for OpenCode.
  */
 
-import { Path } from "../../services/platform/path";
+import type { Path } from "../../services/platform/path";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
-
-// Import the config template as a JSON object
-import mcpConfigTemplate from "./opencode.codehydra.json";
 
 /**
  * Current version of OpenCode to download.
@@ -88,12 +85,10 @@ export class OpenCodeSetupInfo implements AgentSetupInfo {
   readonly version = OPENCODE_VERSION;
   readonly wrapperEntryPoint = "agents/opencode-wrapper.cjs";
 
-  private readonly fileSystem: FileSystemLayer;
   private readonly platform: SupportedPlatform;
   private readonly arch: SupportedArch;
 
   constructor(deps: OpenCodeSetupInfoDeps) {
-    this.fileSystem = deps.fileSystem;
     this.platform = deps.platform;
     this.arch = deps.arch;
   }
@@ -135,32 +130,14 @@ export class OpenCodeSetupInfo implements AgentSetupInfo {
   }
 
   /**
-   * Generate config file with optional environment variable substitution.
-   *
-   * The template uses `{env:VAR_NAME}` syntax which can either be:
-   * 1. Substituted at generation time with values from the `variables` parameter
-   * 2. Left as-is for runtime substitution by OpenCode
-   *
-   * Currently, we copy the template as-is since OpenCode handles env var substitution.
-   *
-   * @param targetPath - Path where config file should be written
-   * @param variables - Variables to substitute (currently unused, for future flexibility)
+   * No-op for OpenCode. MCP config is passed inline via OPENCODE_CONFIG_CONTENT
+   * environment variable at spawn time (see OpenCodeServerManager.spawnServerOnPort).
    */
   async generateConfigFile(targetPath: Path, variables: Record<string, string>): Promise<void> {
-    // Use imported template directly
-    let content = JSON.stringify(mcpConfigTemplate, null, 2);
-
-    // Substitute any provided variables (pattern: {env:VAR_NAME})
-    for (const [key, value] of Object.entries(variables)) {
-      const pattern = `{env:${key}}`;
-      content = content.replace(new RegExp(pattern.replace(/[{}]/g, "\\$&"), "g"), value);
-    }
-
-    // Ensure target directory exists
-    await this.fileSystem.mkdir(targetPath.dirname);
-
-    // Write config file
-    await this.fileSystem.writeFile(targetPath, content);
+    void targetPath;
+    void variables;
+    // OpenCode uses inline config via OPENCODE_CONFIG_CONTENT env var.
+    // No file generation needed.
   }
 }
 

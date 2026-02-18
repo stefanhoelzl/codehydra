@@ -34,7 +34,6 @@ import type { AgentStatusManager } from "../../agents/opencode/status-manager";
 import type { AgentServerManager, AgentType } from "../../agents/types";
 import type { ClaudeCodeServerManager } from "../../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../../agents/opencode/server-manager";
-import type { PathProvider } from "../../services/platform/path-provider";
 import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { WorkspacePath } from "../../shared/ipc";
 import type { Logger } from "../../services/logging";
@@ -45,7 +44,6 @@ import type { Logger } from "../../services/logging";
 
 export interface McpModuleDeps {
   readonly mcpServerManager: McpServerManager;
-  readonly pathProvider: PathProvider;
   readonly viewManager: IViewManager;
   readonly agentStatusManager: AgentStatusManager;
   readonly serverManager: AgentServerManager;
@@ -91,7 +89,6 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
             const mcpPort = await deps.mcpServerManager.start();
             deps.logger.info("MCP server started", {
               port: mcpPort,
-              configPath: deps.pathProvider.opencodeConfig.toString(),
             });
 
             // Register callback for first MCP request per workspace — dispatches domain event
@@ -122,7 +119,6 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
             } else if (deps.serverManager) {
               const opencodeManager = deps.serverManager as OpenCodeServerManager;
               opencodeManager.setMcpConfig({
-                configPath: deps.pathProvider.opencodeConfig.toString(),
                 port: deps.mcpServerManager.getPort()!,
               });
             }

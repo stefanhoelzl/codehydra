@@ -2,7 +2,6 @@
  * MCP Server Manager.
  *
  * Manages the lifecycle of the MCP server including port allocation and cleanup.
- * The MCP config file is written during VS Code setup, not at runtime.
  */
 
 import type { PortManager } from "../platform/network";
@@ -30,11 +29,10 @@ export interface McpServerManagerConfig {
  * Responsibilities:
  * - Allocate a dynamic port for the MCP server
  * - Start/stop the MCP server
- * - Provide the config path (from PathProvider) and port for OpenCodeServerManager
+ * - Provide the port for OpenCodeServerManager
  */
 export class McpServerManager implements IDisposable {
   private readonly portManager: PortManager;
-  private readonly pathProvider: PathProvider;
   private readonly api: ICoreApi;
   private readonly logger: Logger;
   private readonly serverFactory: McpServerFactory;
@@ -56,8 +54,8 @@ export class McpServerManager implements IDisposable {
     logger?: Logger,
     config?: McpServerManagerConfig
   ) {
+    void pathProvider; // Kept in constructor signature for backward compatibility
     this.portManager = portManager;
-    this.pathProvider = pathProvider;
     this.api = api;
     this.logger = logger ?? SILENT_LOGGER;
     this.serverFactory = config?.serverFactory ?? createDefaultMcpServer;
@@ -66,8 +64,7 @@ export class McpServerManager implements IDisposable {
   /**
    * Start the MCP server.
    *
-   * Allocates a port and starts the server. The config file is written during
-   * VS Code setup, not at runtime.
+   * Allocates a port and starts the server.
    *
    * @returns The port the server is listening on
    * @throws Error if server fails to start
@@ -98,7 +95,6 @@ export class McpServerManager implements IDisposable {
 
       this.logger.info("Manager started", {
         port: this.port,
-        configPath: this.pathProvider.opencodeConfig.toString(),
       });
 
       return this.port;

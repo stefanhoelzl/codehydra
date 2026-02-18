@@ -24,7 +24,6 @@ export interface MockPathProviderOptions {
   setupMarkerPath?: Path | string;
   electronDataDir?: Path | string;
   binDir?: Path | string;
-  opencodeConfig?: Path | string;
 
   // Shared paths
   vscodeAssetsDir?: Path | string;
@@ -141,10 +140,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     ),
     electronDataDir: ensurePath(overrides?.electronDataDir, `${dataRootDir.toString()}/electron`),
     binDir: ensurePath(overrides?.binDir, `${dataRootDir.toString()}/bin`),
-    opencodeConfig: ensurePath(
-      overrides?.opencodeConfig,
-      `${dataRootDir.toString()}/opencode/opencode.codehydra.json`
-    ),
 
     // Shared paths
     vscodeAssetsDir: ensurePath(overrides?.vscodeAssetsDir, "/mock/assets"),

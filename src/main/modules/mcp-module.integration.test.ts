@@ -46,8 +46,6 @@ import { SILENT_LOGGER } from "../../services/logging";
 import type { McpRequestCallback } from "../../services/mcp-server/types";
 import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import type { Path } from "../../services/platform/path";
-
 // =============================================================================
 // Mock McpServerManager
 // =============================================================================
@@ -110,16 +108,6 @@ function createMockAgentServerManager(): {
 } {
   return {
     setMcpConfig: vi.fn(),
-  };
-}
-
-// =============================================================================
-// Mock PathProvider
-// =============================================================================
-
-function createMockPathProvider(): { opencodeConfig: { toString: () => string } } {
-  return {
-    opencodeConfig: { toString: () => "/mock/opencode.config.json" } as unknown as Path,
   };
 }
 
@@ -204,7 +192,6 @@ function createTestSetup(agentType: "opencode" | "claude" = "opencode"): TestSet
   const viewManager = createMockViewManager();
   const agentStatusManager = createMockAgentStatusManager();
   const agentServerManager = createMockAgentServerManager();
-  const pathProvider = createMockPathProvider();
   const setMcpServerManager = vi.fn();
 
   // Register operations
@@ -216,7 +203,6 @@ function createTestSetup(agentType: "opencode" | "claude" = "opencode"): TestSet
 
   const mcpModule = createMcpModule({
     mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
-    pathProvider: pathProvider as unknown as McpModuleDeps["pathProvider"],
     viewManager: viewManager as unknown as McpModuleDeps["viewManager"],
     agentStatusManager: agentStatusManager as unknown as McpModuleDeps["agentStatusManager"],
     serverManager: agentServerManager as unknown as McpModuleDeps["serverManager"],
@@ -354,7 +340,6 @@ describe("McpModule Integration", () => {
       } as AppStartIntent);
 
       expect(agentServerManager.setMcpConfig).toHaveBeenCalledWith({
-        configPath: "/mock/opencode.config.json",
         port: 9999,
       });
     });
@@ -415,7 +400,6 @@ describe("McpModule Integration", () => {
 
       const mcpModule = createMcpModule({
         mcpServerManager: msm as unknown as McpModuleDeps["mcpServerManager"],
-        pathProvider: createMockPathProvider() as unknown as McpModuleDeps["pathProvider"],
         viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
         agentStatusManager:
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
@@ -476,7 +460,6 @@ describe("McpModule Integration", () => {
       const msm = createMockMcpServerManager();
       const mcpModule = createMcpModule({
         mcpServerManager: msm as unknown as McpModuleDeps["mcpServerManager"],
-        pathProvider: createMockPathProvider() as unknown as McpModuleDeps["pathProvider"],
         viewManager: createMockViewManager() as unknown as McpModuleDeps["viewManager"],
         agentStatusManager:
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],
@@ -531,7 +514,6 @@ describe("McpModule Integration", () => {
 
       const mcpModule = createMcpModule({
         mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
-        pathProvider: createMockPathProvider() as unknown as McpModuleDeps["pathProvider"],
         viewManager: viewManager as unknown as McpModuleDeps["viewManager"],
         agentStatusManager:
           createMockAgentStatusManager() as unknown as McpModuleDeps["agentStatusManager"],

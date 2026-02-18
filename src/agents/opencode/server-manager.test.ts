@@ -486,13 +486,11 @@ describe("OpenCodeServerManager", () => {
   describe("MCP configuration", () => {
     it("setMcpConfig stores configuration", () => {
       manager.setMcpConfig({
-        configPath: "/test/mcp-config.json",
         port: 12345,
       });
 
       const config = manager.getMcpConfig();
       expect(config).toEqual({
-        configPath: "/test/mcp-config.json",
         port: 12345,
       });
     });
@@ -501,28 +499,38 @@ describe("OpenCodeServerManager", () => {
       expect(manager.getMcpConfig()).toBeNull();
     });
 
-    it("passes MCP env vars when config is set", async () => {
+    it("passes OPENCODE_CONFIG_CONTENT env var when config is set", async () => {
       manager.setMcpConfig({
-        configPath: "/test/mcp-config.json",
         port: 12345,
       });
 
       await manager.startServer("/workspace/feature-a");
 
       const spawned = mockProcessRunner.$.spawned(0);
-      expect(spawned.$.env?.OPENCODE_CONFIG).toBe("/test/mcp-config.json");
-      expect(spawned.$.env?.CODEHYDRA_WORKSPACE_PATH).toBe("/workspace/feature-a");
-      expect(spawned.$.env?.CODEHYDRA_MCP_PORT).toBe("12345");
+      const configContent = spawned.$.env?.OPENCODE_CONFIG_CONTENT;
+      expect(configContent).toBeDefined();
+
+      const parsed = JSON.parse(configContent!) as {
+        mcp: {
+          codehydra: {
+            type: string;
+            url: string;
+            headers: Record<string, string>;
+            enabled: boolean;
+          };
+        };
+      };
+      expect(parsed.mcp.codehydra.type).toBe("remote");
+      expect(parsed.mcp.codehydra.url).toBe("http://127.0.0.1:12345/mcp");
+      expect(parsed.mcp.codehydra.headers["X-Workspace-Path"]).toBe("/workspace/feature-a");
+      expect(parsed.mcp.codehydra.enabled).toBe(true);
     });
 
     it("does not pass env when MCP config not set", async () => {
       await manager.startServer("/workspace/feature-a");
 
       const spawned = mockProcessRunner.$.spawned(0);
-      // Verify no MCP-specific env vars
-      expect(spawned.$.env?.OPENCODE_CONFIG).toBeUndefined();
-      expect(spawned.$.env?.CODEHYDRA_WORKSPACE_PATH).toBeUndefined();
-      expect(spawned.$.env?.CODEHYDRA_MCP_PORT).toBeUndefined();
+      expect(spawned.$.env?.OPENCODE_CONFIG_CONTENT).toBeUndefined();
     });
   });
 });
