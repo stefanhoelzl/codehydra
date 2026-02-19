@@ -9,6 +9,7 @@
  * removed in favor of the @opencode-ai/sdk which handles SSE internally.
  */
 
+import { createServer } from "net";
 import type { Logger } from "../logging";
 import { getErrorMessage } from "../errors";
 
@@ -161,8 +162,6 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
 
   // PortManager implementation
   async findFreePort(): Promise<number> {
-    const { createServer } = await import("net");
-
     return new Promise((resolve, reject) => {
       const server = createServer();
       server.listen(0, () => {
@@ -180,8 +179,6 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
   }
 
   async isPortAvailable(port: number): Promise<boolean> {
-    const { createServer } = await import("net");
-
     return new Promise((resolve) => {
       const server = createServer();
       server.once("error", (err: NodeJS.ErrnoException) => {

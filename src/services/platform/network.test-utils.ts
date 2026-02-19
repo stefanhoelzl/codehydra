@@ -15,6 +15,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "http";
+import { createConnection } from "net";
 import { delay } from "@shared/test-fixtures";
 
 // ============================================================================
@@ -235,8 +236,6 @@ export async function waitForPort(port: number, timeoutMs?: number): Promise<voi
  * @returns true if port is accepting connections
  */
 async function isPortOpen(port: number): Promise<boolean> {
-  const { createConnection } = await import("net");
-
   return new Promise((resolve) => {
     const socket = createConnection({ port, host: "127.0.0.1" }, () => {
       socket.destroy();

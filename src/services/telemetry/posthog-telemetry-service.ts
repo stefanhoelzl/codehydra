@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { PostHog } from "posthog-node";
 import type {
   TelemetryService,
   TelemetryServiceDeps,
@@ -28,22 +29,11 @@ const MAX_STACK_FRAMES = 10;
 /** Maximum stack string length */
 const MAX_STACK_LENGTH = 2000;
 
-/** Cached PostHog constructor for lazy loading */
-let PostHogConstructor: typeof import("posthog-node").PostHog | null = null;
-
 /**
  * Create the default PostHog client using posthog-node SDK.
- * Uses cached constructor to avoid repeated dynamic imports.
  */
-async function createDefaultPostHogClient(
-  apiKey: string,
-  options: { host: string }
-): Promise<PostHogClient> {
-  if (!PostHogConstructor) {
-    const posthogModule = await import("posthog-node");
-    PostHogConstructor = posthogModule.PostHog;
-  }
-  return new PostHogConstructor(apiKey, options);
+function createDefaultPostHogClient(apiKey: string, options: { host: string }): PostHogClient {
+  return new PostHog(apiKey, options);
 }
 
 /**

@@ -6,7 +6,15 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
-import { symlink, writeFile as nodeWriteFile, mkdir as nodeMkdir } from "node:fs/promises";
+import {
+  symlink,
+  writeFile as nodeWriteFile,
+  mkdir as nodeMkdir,
+  readFile as nodeReadFile,
+  chmod,
+  stat,
+  lstat,
+} from "node:fs/promises";
 import { DefaultFileSystemLayer } from "./filesystem";
 import { SILENT_LOGGER } from "../logging";
 import { FileSystemError } from "../errors";
@@ -447,7 +455,6 @@ describe("DefaultFileSystemLayer", () => {
       await fs.copyTree(srcPath, destPath);
 
       // Verify byte-for-byte
-      const { readFile: nodeReadFile } = await import("node:fs/promises");
       const destBuffer = await nodeReadFile(destPath);
       expect(Buffer.compare(destBuffer, binaryContent)).toBe(0);
     });
@@ -467,7 +474,6 @@ describe("DefaultFileSystemLayer", () => {
 
       await fs.copyTree(srcPath, destPath);
 
-      const { readFile: nodeReadFile } = await import("node:fs/promises");
       const destBuffer = await nodeReadFile(destPath);
       expect(Buffer.compare(destBuffer, pngHeader)).toBe(0);
     });
@@ -502,7 +508,6 @@ describe("DefaultFileSystemLayer", () => {
         await nodeWriteFile(srcPath, "#!/bin/bash\necho hello", "utf-8");
 
         // Make file executable
-        const { chmod, stat } = await import("node:fs/promises");
         await chmod(srcPath, 0o755);
 
         await fs.copyTree(srcPath, destPath);
@@ -533,7 +538,6 @@ describe("DefaultFileSystemLayer", () => {
         expect(await fs.readFile(join(destDir, "file.txt"))).toBe("content");
 
         // Verify symlink exists at destination (as a symlink)
-        const { lstat } = await import("node:fs/promises");
         const destLinkStat = await lstat(join(destDir, "link.txt"));
         expect(destLinkStat.isSymbolicLink()).toBe(true);
       }
@@ -586,7 +590,6 @@ describe("DefaultFileSystemLayer", () => {
         await fs.copyTree(linkPath, destPath);
 
         // Verify symlink was copied as symlink
-        const { lstat } = await import("node:fs/promises");
         const destStat = await lstat(destPath);
         expect(destStat.isSymbolicLink()).toBe(true);
       }
@@ -606,7 +609,6 @@ describe("DefaultFileSystemLayer", () => {
       await fs.makeExecutable(filePath);
 
       // Verify permissions include execute bits for all (owner, group, other)
-      const { stat } = await import("node:fs/promises");
       const stats = await stat(filePath);
       expect(stats.mode & 0o755).toBe(0o755);
     });

@@ -563,8 +563,7 @@ describe("SimpleGitClient", () => {
         await client.clone(sourceRepo.path, targetPath);
 
         // Verify it's a bare repo by checking for typical bare repo structure
-        const { readdir, stat } = await import("fs/promises");
-        const entries = await readdir(targetPath.toNative());
+        const entries = await fs.readdir(targetPath.toNative());
         // Bare repos have HEAD, config, objects, refs at root (not in .git subdir)
         expect(entries).toContain("HEAD");
         expect(entries).toContain("config");
@@ -574,7 +573,7 @@ describe("SimpleGitClient", () => {
         expect(entries).not.toContain(".git");
 
         // Verify HEAD exists (bare repos have it at root)
-        const headStat = await stat(nodePath.join(targetPath.toNative(), "HEAD"));
+        const headStat = await fs.stat(nodePath.join(targetPath.toNative(), "HEAD"));
         expect(headStat.isFile()).toBe(true);
       } finally {
         await sourceRepo.cleanup();

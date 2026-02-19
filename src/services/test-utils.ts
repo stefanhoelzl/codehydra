@@ -4,7 +4,7 @@
  * with automatic cleanup.
  */
 
-import { mkdtemp, rm, realpath } from "fs/promises";
+import { mkdtemp, rm, realpath, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { simpleGit } from "simple-git";
@@ -67,7 +67,6 @@ export async function createTestGitRepo(options: CreateTestGitRepoOptions = {}):
   await git.addConfig("user.name", "Test User");
 
   // Create initial commit (required for worktrees)
-  const { writeFile } = await import("fs/promises");
   await writeFile(join(path, "README.md"), "# Test Repository\n");
   await git.add("README.md");
   await git.commit("Initial commit");
@@ -162,8 +161,6 @@ export async function createTestGitRepoWithRemote(): Promise<TestRepoWithRemoteR
   const repoPath = join(parent, "repo");
   const remotePath = join(parent, "remote.git");
 
-  const { mkdir, writeFile } = await import("fs/promises");
-
   // Create bare remote first
   await mkdir(remotePath);
   const remoteGit = simpleGit(remotePath);
@@ -212,7 +209,6 @@ export async function createCommitInRemote(remotePath: string, message: string):
     await git.addConfig("user.email", "test@test.com");
     await git.addConfig("user.name", "Test User");
 
-    const { writeFile } = await import("fs/promises");
     const filename = `file-${Date.now()}.txt`;
     await writeFile(join(tempClone, filename), `Content: ${message}\n`);
     await git.add(filename);
