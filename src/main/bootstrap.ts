@@ -65,6 +65,7 @@ import {
 } from "./operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
+  DeleteWorkspacePayload,
   WorkspaceDeletedEvent,
   DeletionProgressCallback,
 } from "./operations/delete-workspace";
@@ -114,10 +115,11 @@ import type { BadgeManager } from "./managers/badge-manager";
 import type { IpcEventHandler } from "../services/platform/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
 import { wireModules } from "./intents/infrastructure/wire";
+import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
 import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
-import type { Intent, DomainEvent } from "./intents/infrastructure/types";
+import type { DomainEvent } from "./intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { IKeepFilesService } from "../services/keepfiles";
 import type { IWorkspaceFileService } from "../services";
@@ -307,27 +309,18 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // (e.g., quit from setup screen dispatches app:shutdown)
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-  // 5. Shutdown idempotency interceptor: ensures only one app:shutdown execution proceeds.
-  // Uses a simple boolean flag (no completion event since the process exits).
-  let shutdownStarted = false;
-  const shutdownIdempotencyModule: IntentModule = {
-    interceptors: [
-      {
-        id: "shutdown-idempotency",
-        order: 0,
-        async before(intent: Intent): Promise<Intent | null> {
-          if (intent.type !== INTENT_APP_SHUTDOWN) {
-            return intent;
-          }
-          if (shutdownStarted) {
-            return null; // Block duplicate
-          }
-          shutdownStarted = true;
-          return intent;
-        },
-      },
-    ],
-  };
+  // 5. Consolidated idempotency module: blocks duplicate dispatches for shutdown, setup, and
+  // delete-workspace intents. Wired early so it applies to all subsequent dispatches.
+  const idempotencyModule = createIdempotencyModule([
+    { intentType: INTENT_APP_SHUTDOWN },
+    { intentType: INTENT_SETUP, resetOn: EVENT_SETUP_ERROR },
+    {
+      intentType: INTENT_DELETE_WORKSPACE,
+      getKey: (p) => (p as DeleteWorkspacePayload).workspacePath,
+      resetOn: EVENT_WORKSPACE_DELETED,
+      isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
+    },
+  ]);
 
   // 6. Quit hook module: calls app.quit() after all stop hooks complete
   const quitModule: IntentModule = {
@@ -342,7 +335,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  wireModules([shutdownIdempotencyModule, quitModule], hookRegistry, dispatcher);
+  wireModules([idempotencyModule, quitModule], hookRegistry, dispatcher);
 
   // 7. Register lifecycle.quit IPC handler - dispatches app:shutdown
   registry.register(
@@ -357,36 +350,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     { ipc: ApiIpcChannels.LIFECYCLE_QUIT }
   );
 
-  // 8. Setup idempotency interceptor to prevent concurrent setup attempts
-  // Note: Flag is only reset on error (via setup:error event handler) to allow retry.
-  // On success, setup completes and no reset is needed (app won't restart setup).
-  let setupInProgress = false;
-  const setupIdempotencyModule: IntentModule = {
-    interceptors: [
-      {
-        id: "setup-idempotency",
-        order: 0,
-        async before(intent: Intent): Promise<Intent | null> {
-          if (intent.type !== INTENT_SETUP) {
-            return intent;
-          }
-          if (setupInProgress) {
-            return null; // Block concurrent setup
-          }
-          setupInProgress = true;
-          return intent;
-        },
-      },
-    ],
-    events: {
-      [EVENT_SETUP_ERROR]: () => {
-        setupInProgress = false;
-      },
-    },
-  };
-  wireModules([setupIdempotencyModule], hookRegistry, dispatcher);
-
-  // 9. Wire module for app-start operation - handles the "wire" hook point
+  // 8. Wire module for app-start operation - handles the "wire" hook point
   // Uses late-binding via closure because the actual function is passed from index.ts.
   let startServicesFn: (() => Promise<void>) | null = null;
   const appStartWireModule: IntentModule = {
@@ -403,7 +367,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  // 10. Wire IPC event bridge early so it receives domain events during setup
+  // 9. Wire IPC event bridge early so it receives domain events during setup
   // (e.g., setup:error fires before the "wire" hook completes).
   // Lifecycle deps (getApi, pluginServer) are late-bound via closures/getters
   // since the bridge's start/stop hooks only run after services are created.
@@ -418,7 +382,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   });
   wireModules([ipcEventBridge], hookRegistry, dispatcher);
 
-  // 11. RetryModule: "show-ui" hook on app-start -- returns waitForRetry
+  // 10. RetryModule: "show-ui" hook on app-start -- returns waitForRetry
   // waitForRetry returns a promise that resolves when the renderer sends lifecycle:retry IPC
   const retryModule: IntentModule = {
     hooks: {
@@ -443,7 +407,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   wireModules([appStartWireModule, retryModule], hookRegistry, dispatcher);
 
-  // 12. Register AppStartOperation and SetupOperation immediately (before UI loads)
+  // 11. Register AppStartOperation and SetupOperation immediately (before UI loads)
   // app:start is dispatched first in index.ts, so both must be registered early
   // Hook modules will be wired when setup dependencies are available
   dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
@@ -461,7 +425,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   });
   wireModules([viewModule], hookRegistry, dispatcher);
 
-  // 13. Wire setup hook modules (these run during app:setup, before startServices)
+  // 12. Wire setup hook modules (these run during app:setup, before startServices)
   const { configService, codeServerManager, getAgentBinaryManager, extensionManager } =
     deps.setupDeps;
   const setupLogger = deps.logger;
@@ -553,7 +517,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // Wire all startup modules (check hooks on app-start, work hooks on setup)
   wireModules([codeServerModule, agentModule], hookRegistry, dispatcher);
 
-  // 14. Services started flag
+  // 13. Services started flag
   let servicesStarted = false;
 
   /**
@@ -746,44 +710,6 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
   // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
-  // Idempotency module (interceptor + event handler, wired via wireModules below)
-  const inProgressDeletions = new Set<string>();
-  const idempotencyModule: IntentModule = {
-    interceptors: [
-      {
-        id: "idempotency",
-        order: 0,
-        async before(intent: Intent): Promise<Intent | null> {
-          if (intent.type !== INTENT_DELETE_WORKSPACE) {
-            return intent;
-          }
-          const deleteIntent = intent as DeleteWorkspaceIntent;
-          const workspacePath = deleteIntent.payload.workspacePath;
-
-          // Force always passes through
-          if (deleteIntent.payload.force) {
-            inProgressDeletions.add(workspacePath);
-            return intent;
-          }
-
-          // Block if already in progress
-          if (inProgressDeletions.has(workspacePath)) {
-            return null;
-          }
-
-          inProgressDeletions.add(workspacePath);
-          return intent;
-        },
-      },
-    ],
-    events: {
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        inProgressDeletions.delete(payload.workspacePath);
-      },
-    },
-  };
-
   const metadataModule = createMetadataModule({ globalProvider });
 
   // ---------------------------------------------------------------------------
@@ -900,7 +826,7 @@ function wireDispatcher(
   };
 
   // Wire BadgeModule and hook handler modules
-  // Note: shutdownIdempotencyModule, quitModule, and ipcEventBridge are wired early in initializeBootstrap()
+  // Note: idempotencyModule, quitModule, and ipcEventBridge are wired early in initializeBootstrap()
   const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
   wireModules(
     [
@@ -911,7 +837,6 @@ function wireDispatcher(
       // Open-workspace hook modules (kept inline)
       keepFilesModule,
       // Delete-workspace modules
-      idempotencyModule,
       deleteWindowsLockModule,
       // Project modules: remote before local so RemoteProjectModule.close reads
       // the project config before LocalProjectModule.close removes the store entry.

@@ -22,8 +22,7 @@ import {
 } from "./app-shutdown";
 import type { AppShutdownIntent } from "./app-shutdown";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import type { Intent } from "../intents/infrastructure/types";
+import { createIdempotencyModule } from "../intents/infrastructure/idempotency-module";
 
 // =============================================================================
 // Test Setup
@@ -48,28 +47,6 @@ function createDisposalState(): DisposalState {
     viewsDestroyed: false,
     badgeDisposed: false,
     autoUpdaterDisposed: false,
-  };
-}
-
-/**
- * Creates a shutdown idempotency interceptor (same pattern as the real one).
- * Uses a simple boolean flag to block duplicate app:shutdown intents.
- */
-function createShutdownIdempotencyInterceptor(): IntentInterceptor {
-  let shutdownStarted = false;
-  return {
-    id: "shutdown-idempotency",
-    order: 0,
-    async before(intent: Intent): Promise<Intent | null> {
-      if (intent.type !== INTENT_APP_SHUTDOWN) {
-        return intent;
-      }
-      if (shutdownStarted) {
-        return null; // Block duplicate
-      }
-      shutdownStarted = true;
-      return intent;
-    },
   };
 }
 
@@ -223,9 +200,7 @@ function createTestSetup(
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
   if (options?.withIdempotency) {
-    const idempotencyModule: IntentModule = {
-      interceptors: [createShutdownIdempotencyInterceptor()],
-    };
+    const idempotencyModule = createIdempotencyModule([{ intentType: INTENT_APP_SHUTDOWN }]);
     wireModules([idempotencyModule, ...modules], hookRegistry, dispatcher);
   } else {
     wireModules(modules, hookRegistry, dispatcher);

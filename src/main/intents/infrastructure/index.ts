@@ -31,3 +31,7 @@ export type { IntentModule, HookDeclarations, EventDeclarations } from "./module
 
 // Wire
 export { wireModules } from "./wire";
+
+// Idempotency
+export type { IdempotencyRule } from "./idempotency-module";
+export { createIdempotencyModule } from "./idempotency-module";
