@@ -178,7 +178,7 @@ describe("DefaultNetworkLayer boundary tests", () => {
 
       await new Promise<void>((resolve, reject) => {
         server.on("error", reject);
-        server.listen(port, () => {
+        server.listen(port, "127.0.0.1", () => {
           server.close(() => resolve());
         });
       });
