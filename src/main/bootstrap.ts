@@ -112,7 +112,6 @@ import {
 } from "./operations/app-shutdown";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
-import type { BadgeManager } from "./managers/badge-manager";
 import type { IpcEventHandler } from "../services/platform/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
 import { wireModules } from "./intents/infrastructure/wire";
@@ -147,56 +146,6 @@ import { createAgentModule } from "./modules/agent-module";
 // =============================================================================
 // Types
 // =============================================================================
-
-/**
- * Lifecycle service references for app:start and app:shutdown modules.
- *
- * Most fields are set at construction time in index.ts. Agent-specific
- * fields (agentStatusManager, serverManager, selectedAgentType) are
- * lazy getters populated by AgentModule during its "start" hook.
- */
-export interface LifecycleServiceRefs {
-  /** PluginServer instance (may be null if not needed) */
-  readonly pluginServer: import("../services/plugin-server").PluginServer | null;
-  /** CodeServerManager instance (constructed but not started) */
-  readonly codeServerManager: import("../services").CodeServerManager;
-  /** FileSystemLayer for directory creation */
-  readonly fileSystemLayer: import("../services").FileSystemLayer;
-  /** AgentStatusManager instance (lazy: set by AgentModule start hook) */
-  readonly agentStatusManager: import("../agents").AgentStatusManager;
-  /** AgentServerManager instance (lazy: set by AgentModule start hook) */
-  readonly serverManager: import("../agents").AgentServerManager;
-  /** Selected agent type (lazy: set by AgentModule start hook) */
-  readonly selectedAgentType: import("../agents").AgentType;
-  /** TelemetryService instance */
-  readonly telemetryService: import("../services/telemetry").TelemetryService | null;
-  /** AutoUpdater instance (constructed but not started) */
-  readonly autoUpdater: import("../services/auto-updater").AutoUpdater;
-  /** Logging service for creating loggers */
-  readonly loggingService: import("../services/logging").LoggingService;
-  /** Platform info for telemetry */
-  readonly platformInfo: import("../services").PlatformInfo;
-  /** Build info for telemetry */
-  readonly buildInfo: import("../services").BuildInfo;
-  /** Path provider */
-  readonly pathProvider: import("../services").PathProvider;
-  /** ConfigService for plugin onConfigData */
-  readonly configService: import("../services/config/config-service").ConfigService;
-  /** Dispatcher instance for agent status wiring */
-  readonly dispatcher: Dispatcher;
-  /** ViewLayer for dispose */
-  readonly viewLayer: import("../services/shell/view").ViewLayer | null;
-  /** WindowLayer for dispose */
-  readonly windowLayer: import("../services/shell/window").WindowLayerInternal | null;
-  /** SessionLayer for dispose */
-  readonly sessionLayer: import("../services/shell/session").SessionLayer | null;
-  /** Lazy getter for ICodeHydraApi (available after wireDispatcher completes) */
-  readonly getApi: () => ICodeHydraApi;
-  /** Window manager for title updates */
-  readonly windowManager: import("./managers/window-manager").WindowManager;
-  /** Config data provider for PluginServer (agent env vars + type) */
-  readonly configDataProvider: import("../services/plugin-server/plugin-server").ConfigDataProvider;
-}
 
 /**
  * Dependencies required to create and start the registry-based API.
@@ -240,8 +189,28 @@ export interface BootstrapDeps {
   readonly titleVersionFn: () => string | undefined;
   /** BadgeManager factory (created in index.ts, passed down) */
   readonly badgeManagerFn: () => import("./managers/badge-manager").BadgeManager;
-  /** Lifecycle service references for app:start/shutdown modules */
-  readonly lifecycleRefsFn: () => LifecycleServiceRefs;
+  /** Lazy getter for ICodeHydraApi (set after initializeBootstrap returns) */
+  readonly getApiFn: () => ICodeHydraApi;
+  /** PluginServer instance (may be null if not needed) */
+  readonly pluginServer: import("../services/plugin-server").PluginServer | null;
+  /** LoggingService for creating loggers */
+  readonly loggingService: import("../services/logging").LoggingService;
+  /** TelemetryService instance */
+  readonly telemetryService: import("../services/telemetry").TelemetryService | null;
+  /** Platform info for telemetry */
+  readonly platformInfo: import("../services").PlatformInfo;
+  /** Build info for telemetry */
+  readonly buildInfo: import("../services").BuildInfo;
+  /** AutoUpdater instance */
+  readonly autoUpdater: import("../services/auto-updater").AutoUpdater;
+  /** Lazy getter for AgentStatusManager (set by AgentModule start hook) */
+  readonly agentStatusManagerFn: () => import("../agents").AgentStatusManager;
+  /** Runtime CodeServerManager instance */
+  readonly codeServerManager: import("../services").CodeServerManager;
+  /** FileSystemLayer for directory creation */
+  readonly fileSystemLayer: import("../services").FileSystemLayer;
+  /** Lazy getter for ConfigDataProvider (depends on agent fields from start hook) */
+  readonly configDataProviderFn: () => import("../services/plugin-server/plugin-server").ConfigDataProvider;
   /** ViewLayer for shell layer disposal (nullable for testing) */
   readonly viewLayer: import("../services/shell/view").ViewLayer | null;
   /** WindowLayer for shell layer disposal (nullable for testing) */
@@ -369,11 +338,9 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // since the bridge's start/stop hooks only run after services are created.
   const ipcEventBridge = createIpcEventBridge({
     apiRegistry: registry,
-    getApi: () => deps.lifecycleRefsFn().getApi(),
+    getApi: () => deps.getApiFn(),
     getUIWebContents: () => deps.getUIWebContentsFn(),
-    get pluginServer() {
-      return deps.lifecycleRefsFn().pluginServer;
-    },
+    pluginServer: deps.pluginServer,
     logger,
   });
 
@@ -467,18 +434,15 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     extensionManager,
     reportProgress: updateProgress,
     logger: setupLogger,
-    getLifecycleDeps: () => {
-      const refs = deps.lifecycleRefsFn();
-      return {
-        pluginServer: refs.pluginServer,
-        codeServerManager: refs.codeServerManager,
-        fileSystemLayer: refs.fileSystemLayer,
-        configDataProvider: refs.configDataProvider,
-        onPortChanged: (port: number) => {
-          deps.viewManagerFn().updateCodeServerPort(port);
-        },
-      };
-    },
+    getLifecycleDeps: () => ({
+      pluginServer: deps.pluginServer,
+      codeServerManager: deps.codeServerManager,
+      fileSystemLayer: deps.fileSystemLayer,
+      configDataProvider: deps.configDataProviderFn(),
+      onPortChanged: (port: number) => {
+        deps.viewManagerFn().updateCodeServerPort(port);
+      },
+    }),
     getWorkspaceDeps: () => ({
       workspaceFileService: deps.workspaceFileServiceFn(),
       wrapperPath: deps.coreDepsFn().wrapperPath,
@@ -494,7 +458,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     getUIWebContentsFn: deps.getUIWebContentsFn,
     reportProgress: updateProgress,
     logger: setupLogger,
-    loggingService: deps.lifecycleRefsFn().loggingService,
+    loggingService: deps.loggingService,
     dispatcher,
     killTerminalsCallback: deps.killTerminalsCallbackFn(),
     serverManagerDeps: deps.serverManagerDeps,
@@ -504,24 +468,78 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // Wire all startup modules (check hooks on app-start, work hooks on setup)
   wireModules([codeServerModule, agentModule], hookRegistry, dispatcher);
 
-  // 13. Wire remaining operations and create CoreModule
+  // 13. Create hook modules (previously created inside wireDispatcher)
+  const globalProvider = deps.globalWorktreeProviderFn();
+  const pathProvider = deps.pathProviderFn();
+  const projectStore = deps.projectStoreFn();
+  const lifecycleLogger = deps.loggingService.createLogger("lifecycle");
+
+  const metadataModule = createMetadataModule({ globalProvider });
+  const keepFilesModule = createKeepFilesModule({
+    keepFilesService: deps.keepFilesServiceFn(),
+    logger: deps.logger,
+  });
+  const deleteWindowsLockModule = createWindowsFileLockModule({
+    workspaceLockHandler: deps.workspaceLockHandlerFn(),
+    logger: deps.logger,
+  });
+  const windowTitleModule = createWindowTitleModule(deps.setTitleFn(), deps.titleVersionFn());
+  const telemetryLifecycleModule = createTelemetryModule({
+    telemetryService: deps.telemetryService,
+    platformInfo: deps.platformInfo,
+    buildInfo: deps.buildInfo,
+    configService: deps.setupDeps.configService,
+    logger: lifecycleLogger,
+  });
+  const autoUpdaterLifecycleModule = createAutoUpdaterModule({
+    autoUpdater: deps.autoUpdater,
+    dispatcher,
+    logger: lifecycleLogger,
+  });
+  const localProjectModule = createLocalProjectModule({ projectStore, globalProvider });
+  const remoteProjectModule = createRemoteProjectModule({
+    projectStore,
+    gitClient: deps.gitClientFn(),
+    pathProvider,
+    logger: lifecycleLogger,
+  });
+  const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
+    globalProvider,
+    pathProvider,
+    deps.logger
+  );
+  const badgeModule = createBadgeModule(deps.badgeManagerFn(), lifecycleLogger);
+  const agentStatusScorer = (workspacePath: WorkspacePath): number => {
+    const status = deps.agentStatusManagerFn().getStatus(workspacePath);
+    if (status === undefined || status.status === "none") return 2;
+    if (status.status === "busy") return 1;
+    return 0;
+  };
+
+  const hookModules: IntentModule[] = [
+    badgeModule,
+    metadataModule,
+    keepFilesModule,
+    deleteWindowsLockModule,
+    remoteProjectModule,
+    localProjectModule,
+    gitWorktreeWorkspaceModule,
+    windowTitleModule,
+    telemetryLifecycleModule,
+    autoUpdaterLifecycleModule,
+  ];
+
+  // 14. Wire remaining operations and create CoreModule
   const { workspaceResolver } = wireDispatcher(
     registry,
     hookRegistry,
     dispatcher,
-    deps.globalWorktreeProviderFn(),
-    deps.gitClientFn(),
-    deps.pathProviderFn(),
-    deps.projectStoreFn(),
+    globalProvider,
     deps.logger,
-    deps.keepFilesServiceFn(),
     deps.emitDeletionProgressFn(),
-    deps.workspaceLockHandlerFn(),
-    deps.setTitleFn(),
-    deps.titleVersionFn(),
-    deps.badgeManagerFn(),
-    deps.lifecycleRefsFn(),
-    mountSignal
+    agentStatusScorer,
+    mountSignal,
+    hookModules
   );
 
   const baseDeps = deps.coreDepsFn();
@@ -581,18 +599,11 @@ function wireDispatcher(
   hookRegistry: HookRegistry,
   dispatcher: Dispatcher,
   globalProvider: GitWorktreeProvider,
-  gitClient: import("../services").IGitClient,
-  pathProvider: import("../services").PathProvider,
-  projectStore: import("../services").ProjectStore,
   logger: Logger,
-  keepFilesService: IKeepFilesService,
   emitDeletionProgress: DeletionProgressCallback,
-  workspaceLockHandler: WorkspaceLockHandler | undefined,
-  setTitle: (title: string) => void,
-  titleVersion: string | undefined,
-  badgeManager: BadgeManager,
-  lifecycleRefs: LifecycleServiceRefs,
-  mountSignal: MountSignal
+  agentStatusScorer: (workspacePath: WorkspacePath) => number,
+  mountSignal: MountSignal,
+  hookModules: IntentModule[]
 ): {
   workspaceResolver: (
     projectId: ProjectId,
@@ -647,14 +658,6 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
-  // SwitchWorkspaceOperation: needs extractWorkspaceName, generateProjectId, and agent status scorer
-  // for the auto-select algorithm (used when the active workspace is deleted).
-  const agentStatusScorer = (workspacePath: WorkspacePath): number => {
-    const status = lifecycleRefs.agentStatusManager.getStatus(workspacePath);
-    if (status === undefined || status.status === "none") return 2;
-    if (status.status === "busy") return 1;
-    return 0; // idle or mixed
-  };
   dispatcher.registerOperation(
     INTENT_SWITCH_WORKSPACE,
     new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId, agentStatusScorer)
@@ -663,30 +666,7 @@ function wireDispatcher(
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
   // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
-  const metadataModule = createMetadataModule({ globalProvider });
-
-  // ---------------------------------------------------------------------------
-  // Open-workspace hook modules
-  // ---------------------------------------------------------------------------
-
-  // KeepFilesModule: "setup" hook -- copies .keepfiles to workspace (best-effort)
-  const keepFilesModule = createKeepFilesModule({ keepFilesService, logger });
-
-  // ---------------------------------------------------------------------------
-  // Delete-workspace hook modules
-  // ---------------------------------------------------------------------------
-
-  const deleteWindowsLockModule = createWindowsFileLockModule({ workspaceLockHandler, logger });
-
-  // ---------------------------------------------------------------------------
-  // Project:open modules
-  // ---------------------------------------------------------------------------
-
   const inProgressOpens = new Set<string>();
-
-  // ---------------------------------------------------------------------------
-  // Project:close hook modules
-  // ---------------------------------------------------------------------------
 
   // ProjectCloseIndexModule: "close" hook -- checks if other projects exist via workspace index
   const projectCloseIndexModule: IntentModule = {
@@ -709,51 +689,6 @@ function wireDispatcher(
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Workspace:switch hook modules
-  // ---------------------------------------------------------------------------
-
-  // WindowTitleModule: event subscriber on workspace:switched and update:available
-  const windowTitleModule = createWindowTitleModule(setTitle, titleVersion);
-
-  // ---------------------------------------------------------------------------
-  // App lifecycle modules (app:start and app:shutdown hooks)
-  // ---------------------------------------------------------------------------
-
-  const lifecycleLogger = lifecycleRefs.loggingService.createLogger("lifecycle");
-
-  const telemetryLifecycleModule = createTelemetryModule({
-    telemetryService: lifecycleRefs.telemetryService,
-    platformInfo: lifecycleRefs.platformInfo,
-    buildInfo: lifecycleRefs.buildInfo,
-    configService: lifecycleRefs.configService,
-    logger: lifecycleLogger,
-  });
-
-  const autoUpdaterLifecycleModule = createAutoUpdaterModule({
-    autoUpdater: lifecycleRefs.autoUpdater,
-    dispatcher: lifecycleRefs.dispatcher,
-    logger: lifecycleLogger,
-  });
-
-  // Project modules: activate → load saved project configs, populate state, return paths.
-  // LocalProjectModule is sole project state owner for ALL projects.
-  // RemoteProjectModule handles filesystem concerns (clone on open, delete on close).
-  const localProjectModule = createLocalProjectModule({
-    projectStore,
-    globalProvider,
-  });
-  const remoteProjectModule = createRemoteProjectModule({
-    projectStore,
-    gitClient,
-    pathProvider,
-    logger: lifecycleLogger,
-  });
-  const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
-    globalProvider,
-    pathProvider,
-    logger
-  );
   // Deferred for the "loaded" hook point: resolved after all initial project:open dispatches
   // complete. lifecycle.ready awaits this so the renderer receives project:opened events
   // (via Electron IPC FIFO ordering) before setLoaded() fires.
@@ -778,33 +713,10 @@ function wireDispatcher(
     },
   };
 
-  // Wire BadgeModule and hook handler modules
-  // Note: shutdownIdempotencyModule, quitModule, and ipcEventBridge are wired early in initializeBootstrap()
-  const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
+  // Wire hook modules: index first (receives events before others), then passed modules,
+  // then close index and loaded signal
   wireModules(
-    [
-      // Workspace index (must be first to receive events before other modules)
-      indexModule,
-      badgeModule,
-      metadataModule,
-      // Open-workspace hook modules (kept inline)
-      keepFilesModule,
-      // Delete-workspace modules
-      deleteWindowsLockModule,
-      // Project modules: remote before local so RemoteProjectModule.close reads
-      // the project config before LocalProjectModule.close removes the store entry.
-      remoteProjectModule,
-      localProjectModule,
-      gitWorktreeWorkspaceModule,
-      // Project:close modules
-      projectCloseIndexModule,
-      // Workspace:switch modules
-      windowTitleModule,
-      // App lifecycle modules
-      telemetryLifecycleModule,
-      autoUpdaterLifecycleModule,
-      loadedSignalModule,
-    ],
+    [indexModule, ...hookModules, projectCloseIndexModule, loadedSignalModule],
     hookRegistry,
     dispatcher
   );
