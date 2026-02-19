@@ -122,13 +122,31 @@ function createMockDeps(): BootstrapDeps {
       logger: createMockLogger(),
     },
     onAgentInitialized: vi.fn(),
-    lifecycleRefsFn: () =>
-      ({
-        loggingService: { createLogger: () => createMockLogger() },
-        configService: {
-          load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
-        },
-      }) as unknown as import("./bootstrap").LifecycleServiceRefs,
+    pluginServer: null,
+    getApiFn: () => {
+      throw new Error("not initialized");
+    },
+    loggingService: { createLogger: () => createMockLogger() } as never,
+    telemetryService: null,
+    platformInfo: { platform: "linux", arch: "x64" } as never,
+    buildInfo: {
+      version: "1.0.0",
+      isDevelopment: true,
+      isPackaged: false,
+      appPath: "/app",
+    } as never,
+    autoUpdater: {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      onUpdateAvailable: vi.fn().mockReturnValue(() => {}),
+    } as never,
+    agentStatusManagerFn: () => ({ getStatus: vi.fn() }) as never,
+    codeServerManager: {
+      ensureRunning: vi.fn().mockResolvedValue(undefined),
+      port: vi.fn().mockReturnValue(9090),
+    } as never,
+    fileSystemLayer: { mkdir: vi.fn().mockResolvedValue(undefined) } as never,
+    configDataProviderFn: () => vi.fn().mockReturnValue({ env: null, agentType: null }),
     viewLayer: null,
     windowLayer: null,
     sessionLayer: null,

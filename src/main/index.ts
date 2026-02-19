@@ -62,7 +62,7 @@ import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
 import { registerLogHandlers } from "./ipc";
-import { initializeBootstrap, type BootstrapResult, type LifecycleServiceRefs } from "./bootstrap";
+import { initializeBootstrap, type BootstrapResult } from "./bootstrap";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { wireModules } from "./intents/infrastructure/wire";
@@ -212,7 +212,6 @@ let selectedAgentTypeValue: AgentType | null = null;
 let codeServerManager: CodeServerManager | null = null;
 let agentStatusManager: AgentStatusManager | null = null;
 let badgeManager: BadgeManager | null = null;
-let serverManager: AgentServerManager | null = null;
 let mcpServerManager: McpServerManager | null = null;
 let codeHydraApi: ICodeHydraApi | null = null;
 
@@ -563,7 +562,6 @@ async function bootstrap(): Promise<void> {
     agentStatusManager: AgentStatusManager;
     selectedAgentType: AgentType;
   }) => {
-    serverManager = services.serverManager;
     agentStatusManager = services.agentStatusManager;
     selectedAgentTypeValue = services.selectedAgentType;
   };
@@ -693,52 +691,30 @@ async function bootstrap(): Promise<void> {
     },
     // Callback for AgentModule to publish agent services
     onAgentInitialized,
-    // Lifecycle service references for app:start/shutdown modules
-    // Agent-specific fields use lazy getters (set by AgentModule start hook)
-    lifecycleRefsFn: (): LifecycleServiceRefs => ({
-      pluginServer,
-      codeServerManager: codeServerManager!,
-      fileSystemLayer,
-      // Lazy getters: set by AgentModule during start hook
-      get agentStatusManager() {
-        return agentStatusManager!;
-      },
-      get serverManager() {
-        return serverManager!;
-      },
-      get selectedAgentType() {
-        return selectedAgentTypeValue!;
-      },
-      telemetryService,
-      autoUpdater: autoUpdater!,
-      loggingService,
-      platformInfo,
-      buildInfo,
-      pathProvider,
-      configService: configService!,
-      dispatcher,
-      viewLayer,
-      windowLayer,
-      sessionLayer,
-      get getApi() {
-        return () => {
-          if (!codeHydraApi) {
-            throw new Error("API not initialized");
-          }
-          return codeHydraApi;
-        };
-      },
-      windowManager: windowManager!,
-      get configDataProvider(): ConfigDataProvider {
-        return (workspacePath: string) => {
-          const env =
-            agentStatusManager
-              ?.getProvider(workspacePath as import("../shared/ipc").WorkspacePath)
-              ?.getEnvironmentVariables() ?? null;
-          return { env, agentType: selectedAgentTypeValue! };
-        };
-      },
-    }),
+    pluginServer,
+    getApiFn: () => {
+      if (!codeHydraApi) {
+        throw new Error("API not initialized");
+      }
+      return codeHydraApi;
+    },
+    loggingService,
+    telemetryService,
+    platformInfo,
+    buildInfo,
+    autoUpdater: autoUpdater!,
+    agentStatusManagerFn: () => agentStatusManager!,
+    codeServerManager: codeServerManager!,
+    fileSystemLayer,
+    configDataProviderFn: (): ConfigDataProvider => {
+      return (workspacePath: string) => {
+        const env =
+          agentStatusManager
+            ?.getProvider(workspacePath as import("../shared/ipc").WorkspacePath)
+            ?.getEnvironmentVariables() ?? null;
+        return { env, agentType: selectedAgentTypeValue! };
+      };
+    },
     // Shell layers for ViewModule (available immediately from bootstrap)
     viewLayer,
     windowLayer,
@@ -884,7 +860,6 @@ async function cleanup(): Promise<void> {
   codeServerManager = null;
   agentStatusManager = null;
   badgeManager = null;
-  serverManager = null;
   mcpServerManager = null;
   dispatcherInstance = null;
   hookRegistryInstance = null;
