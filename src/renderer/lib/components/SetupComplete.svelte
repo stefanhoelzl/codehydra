@@ -31,7 +31,7 @@
   </span>
   <p>Setup complete!</p>
   <p class="hint">
-    Press <vscode-badge>Alt+X</vscode-badge> for keyboard shortcuts
+    Tip: <vscode-badge>Alt+X</vscode-badge> for keyboard shortcuts
   </p>
 </div>
 

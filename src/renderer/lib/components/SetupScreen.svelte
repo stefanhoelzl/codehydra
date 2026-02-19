@@ -153,7 +153,7 @@
     <p class="subtitle">{subtitle}</p>
   {/if}
   <p class="hint">
-    Press <vscode-badge>Alt+X</vscode-badge> for keyboard shortcuts
+    Tip: <vscode-badge>Alt+X</vscode-badge> for keyboard shortcuts
   </p>
 
   {#if !hideProgress}
