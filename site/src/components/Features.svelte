@@ -219,6 +219,10 @@
         Linux
       </span>
       <span class="platform-badge">
+        <img src="{base}macos.svg" alt="" class="platform-icon" aria-hidden="true" />
+        macOS
+      </span>
+      <span class="platform-badge">
         <img src="{base}windows.svg" alt="" class="platform-icon" aria-hidden="true" />
         Windows
       </span>
