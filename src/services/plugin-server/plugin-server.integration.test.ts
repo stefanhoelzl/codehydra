@@ -69,11 +69,8 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
         receivedConfig = config;
       });
 
-      // Register onConfigData callback
-      server.onConfigData(() => ({
-        env: null,
-        agentType: "opencode",
-      }));
+      // Store workspace config before client connects
+      server.setWorkspaceConfig("/test/workspace", {}, "opencode");
 
       // Connect and wait
       await waitForConnect(client);
@@ -95,11 +92,12 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
         receivedConfig = config;
       });
 
-      // Register onConfigData callback with env vars
-      server.onConfigData(() => ({
-        env: { TEST_VAR: "test-value", ANOTHER_VAR: "another" },
-        agentType: null,
-      }));
+      // Store workspace config with env vars
+      server.setWorkspaceConfig(
+        "/test/workspace",
+        { TEST_VAR: "test-value", ANOTHER_VAR: "another" },
+        "opencode"
+      );
 
       await waitForConnect(client);
       await delay(100);
@@ -108,7 +106,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
       expect(receivedConfig!.env).toEqual({ TEST_VAR: "test-value", ANOTHER_VAR: "another" });
     });
 
-    it("sends config with null env when not available", async () => {
+    it("sends config with null env when no config stored", async () => {
       let receivedConfig: PluginConfig | null = null;
       const client = createClient("/test/workspace");
 
@@ -116,10 +114,7 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
         receivedConfig = config;
       });
 
-      server.onConfigData(() => ({
-        env: null,
-        agentType: null,
-      }));
+      // No config stored for this workspace
 
       await waitForConnect(client);
       await delay(100);
@@ -143,11 +138,9 @@ describe("PluginServer (integration)", { timeout: TEST_TIMEOUT }, () => {
         config2 = config;
       });
 
-      // Register onConfigData that returns different env for different workspaces
-      server.onConfigData((workspacePath) => ({
-        env: { WORKSPACE: workspacePath },
-        agentType: "opencode",
-      }));
+      // Store different configs for each workspace
+      server.setWorkspaceConfig("/workspace/one", { WORKSPACE: "/workspace/one" }, "opencode");
+      server.setWorkspaceConfig("/workspace/two", { WORKSPACE: "/workspace/two" }, "opencode");
 
       // Connect both clients
       await Promise.all([waitForConnect(client1), waitForConnect(client2)]);

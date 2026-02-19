@@ -631,7 +631,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
               }
             }
 
-            return { envVars };
+            return { envVars, agentType };
           },
         },
       },
