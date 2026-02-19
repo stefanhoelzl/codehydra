@@ -499,7 +499,14 @@ export class DeleteWorkspaceOperation implements Operation<
     const { results: releaseResults, errors: releaseCollectErrors } =
       await ctx.hooks.collect<ReleaseHookResult>("release", pipelineCtx);
     const release = mergeRelease(releaseResults, releaseCollectErrors);
-    this.emitPipelineProgress(payload, resolvedWorkspacePath, { shutdown, release });
+    this.emitPipelineProgress(
+      payload,
+      resolvedWorkspacePath,
+      { shutdown, release },
+      false,
+      false,
+      "cleanup-workspace"
+    );
 
     // --- Delete ---
     const { results: deleteResults, errors: deleteCollectErrors } =
