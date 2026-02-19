@@ -21,7 +21,6 @@ import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
 import type { PluginServer } from "../../services/plugin-server/plugin-server";
 import type { Logger } from "../../services/logging/types";
-import type { SetupRowId, SetupRowStatus } from "../../shared/api/types";
 import type { CheckDepsResult, StartHookResult } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
 import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
@@ -39,17 +38,6 @@ import { SetupError, getErrorMessage } from "../../services/errors";
 // =============================================================================
 // Dependency Interfaces
 // =============================================================================
-
-/**
- * Progress reporter callback for setup screen rows.
- */
-export type SetupProgressReporter = (
-  id: SetupRowId,
-  status: SetupRowStatus,
-  message?: string,
-  error?: string,
-  progress?: number
-) => void;
 
 /**
  * Dependencies resolved when lifecycle hooks execute (after startServices).
@@ -78,10 +66,9 @@ export interface CodeServerWorkspaceDeps {
  * Split into eager (available at creation) and lazy (resolved at hook execution).
  */
 export interface CodeServerModuleDeps {
-  // Eager: available at creation time (initializeBootstrap scope)
+  // Eager: available at creation time
   readonly codeServerManager: Pick<CodeServerManager, "preflight" | "downloadBinary">;
   readonly extensionManager: Pick<ExtensionManager, "preflight" | "install" | "cleanOutdated">;
-  readonly reportProgress: SetupProgressReporter;
   readonly logger: Logger;
 
   // Lazy: resolved when lifecycle hooks execute (after startServices)
@@ -100,7 +87,7 @@ export interface CodeServerModuleDeps {
  * and per-workspace .code-workspace files.
  */
 export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule {
-  const { codeServerManager, extensionManager, reportProgress, logger } = deps;
+  const { codeServerManager, extensionManager, logger } = deps;
 
   // Internal state: port set by start hook, read by finalize hook
   let codeServerPort = 0;
@@ -215,28 +202,29 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
           handler: async (ctx: HookContext) => {
             const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
+            const { report } = hookCtx;
 
             if (missingBinaries.includes("code-server")) {
-              reportProgress("vscode", "running", "Downloading...");
+              report("vscode", "running", "Downloading...");
               try {
                 await codeServerManager.downloadBinary((p) => {
                   if (p.phase === "downloading" && p.totalBytes) {
                     const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
-                    reportProgress("vscode", "running", "Downloading...", undefined, pct);
+                    report("vscode", "running", "Downloading...", undefined, pct);
                   } else if (p.phase === "extracting") {
-                    reportProgress("vscode", "running", "Extracting...");
+                    report("vscode", "running", "Extracting...");
                   }
                 });
-                reportProgress("vscode", "done");
+                report("vscode", "done");
               } catch (error) {
-                reportProgress("vscode", "failed", undefined, getErrorMessage(error));
+                report("vscode", "failed", undefined, getErrorMessage(error));
                 throw new SetupError(
                   `Failed to download code-server: ${getErrorMessage(error)}`,
                   "BINARY_DOWNLOAD_FAILED"
                 );
               }
             } else {
-              reportProgress("vscode", "done");
+              report("vscode", "done");
             }
           },
         },
@@ -249,21 +237,22 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             const hookCtx = ctx as ExtensionsHookInput;
             const missingExtensions = hookCtx.missingExtensions ?? [];
             const outdatedExtensions = hookCtx.outdatedExtensions ?? [];
+            const { report } = hookCtx;
 
             const extensionsToInstall = [...missingExtensions, ...outdatedExtensions];
             if (extensionsToInstall.length === 0) {
-              reportProgress("setup", "done");
+              report("setup", "done");
               return;
             }
 
-            reportProgress("setup", "running", "Installing extensions...");
+            report("setup", "running", "Installing extensions...");
 
             // Clean outdated extensions before reinstalling
             if (outdatedExtensions.length > 0) {
               try {
                 await extensionManager.cleanOutdated(outdatedExtensions);
               } catch (error) {
-                reportProgress("setup", "failed", undefined, getErrorMessage(error));
+                report("setup", "failed", undefined, getErrorMessage(error));
                 throw new SetupError(
                   `Failed to clean outdated extensions: ${getErrorMessage(error)}`,
                   "EXTENSION_INSTALL_FAILED"
@@ -274,11 +263,11 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             // Install extensions
             try {
               await extensionManager.install(extensionsToInstall, (message) => {
-                reportProgress("setup", "running", message);
+                report("setup", "running", message);
               });
-              reportProgress("setup", "done");
+              report("setup", "done");
             } catch (error) {
-              reportProgress("setup", "failed", undefined, getErrorMessage(error));
+              report("setup", "failed", undefined, getErrorMessage(error));
               throw new SetupError(
                 `Failed to install extensions: ${getErrorMessage(error)}`,
                 "EXTENSION_INSTALL_FAILED"

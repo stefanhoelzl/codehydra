@@ -65,12 +65,30 @@ import { registerLogHandlers } from "./ipc";
 import { initializeBootstrap } from "./bootstrap";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
+import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
+import { createViewModule } from "./modules/view-module";
+import { createCodeServerModule } from "./modules/code-server-module";
+import { createAgentModule } from "./modules/agent-module";
+import { createMetadataModule } from "./modules/metadata-module";
+import { createKeepFilesModule } from "./modules/keepfiles-module";
+import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
+import { createWindowTitleModule } from "./modules/window-title-module";
+import { createTelemetryModule } from "./modules/telemetry-module";
+import { createAutoUpdaterModule } from "./modules/auto-updater-module";
+import { createLocalProjectModule } from "./modules/local-project-module";
+import { createRemoteProjectModule } from "./modules/remote-project-module";
+import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
+import { createBadgeModule } from "./modules/badge-module";
+import { createMcpModule } from "./modules/mcp-module";
 import { INTENT_SET_MODE } from "./operations/set-mode";
 import type { SetModeIntent } from "./operations/set-mode";
 import { INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
+import { INTENT_DELETE_WORKSPACE, EVENT_WORKSPACE_DELETED } from "./operations/delete-workspace";
+import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./operations/delete-workspace";
 import { INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
+import { INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { ConfigAgentType } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
@@ -491,19 +509,130 @@ async function bootstrap(): Promise<void> {
     nodePath.join(pathProvider.scriptsRuntimeDir.toNative(), "blocking-processes.ps1")
   );
 
-  // 8. Initialize bootstrap with API registry and all modules
+  // 8. Create factory modules at the composition root
+  // Modules are created here where their deps already exist as local variables.
+  // Bootstrap receives pre-created modules instead of raw service deps.
   const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
-  const bootstrapResult = initializeBootstrap({
-    logger: loggingService.createLogger("api"),
-    ipcLayer,
-    app,
+  const apiLogger = loggingService.createLogger("api");
+  const lifecycleLogger = loggingService.createLogger("lifecycle");
+
+  const { module: viewModule, mountSignal } = createViewModule({
     viewManager,
+    logger: apiLogger,
+    viewLayer,
+    windowLayer,
+    sessionLayer,
+  });
+
+  const codeServerModule = createCodeServerModule({
+    codeServerManager: setupCodeServerManager,
+    extensionManager: setupExtensionManager,
+    logger: apiLogger,
+    getLifecycleDeps: () => ({
+      pluginServer,
+      codeServerManager,
+      fileSystemLayer,
+      onPortChanged: (port: number) => {
+        viewManagerRef.updateCodeServerPort(port);
+      },
+    }),
+    getWorkspaceDeps: () => ({
+      workspaceFileService,
+      wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
+    }),
+  });
+
+  const agentModule = createAgentModule({
+    configService,
+    getAgentBinaryManager,
+    ipcLayer,
+    getUIWebContentsFn: () => viewManager?.getUIWebContents() ?? null,
+    logger: apiLogger,
+    loggingService,
+    dispatcher,
+    killTerminalsCallback: async (workspacePath: string) => {
+      await pluginServer.sendExtensionHostShutdown(workspacePath);
+    },
+    agentServerManagers,
+    agentStatusManager,
+  });
+
+  const metadataModule = createMetadataModule({
+    globalProvider: globalWorktreeProvider,
+  });
+  const keepFilesModule = createKeepFilesModule({
+    keepFilesService,
+    logger: apiLogger,
+  });
+  const deleteWindowsLockModule = createWindowsFileLockModule({
+    workspaceLockHandler,
+    logger: apiLogger,
+  });
+  const windowTitleModule = createWindowTitleModule(
+    (title: string) => windowManager?.setTitle(title),
+    buildInfo.gitBranch ?? buildInfo.version
+  );
+  const telemetryLifecycleModule = createTelemetryModule({
+    telemetryService,
+    platformInfo,
+    buildInfo,
+    configService,
+    logger: lifecycleLogger,
+  });
+  const autoUpdaterLifecycleModule = createAutoUpdaterModule({
+    autoUpdater,
+    dispatcher,
+    logger: lifecycleLogger,
+  });
+  const localProjectModule = createLocalProjectModule({
+    projectStore,
+    globalProvider: globalWorktreeProvider,
+  });
+  const remoteProjectModule = createRemoteProjectModule({
+    projectStore,
     gitClient,
     pathProvider,
-    projectStore,
+    logger: lifecycleLogger,
+  });
+  const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
     globalWorktreeProvider,
-    keepFilesService,
-    workspaceFileService,
+    pathProvider,
+    apiLogger
+  );
+  const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
+  const mcpModule = createMcpModule({
+    mcpServerManager,
+    logger: lifecycleLogger,
+  });
+  const idempotencyModule = createIdempotencyModule([
+    { intentType: INTENT_APP_SHUTDOWN },
+    { intentType: INTENT_SETUP, resetOn: EVENT_SETUP_ERROR },
+    {
+      intentType: INTENT_DELETE_WORKSPACE,
+      getKey: (p) => {
+        const { projectId, workspaceName } = p as DeleteWorkspacePayload;
+        return `${projectId}/${workspaceName}`;
+      },
+      resetOn: EVENT_WORKSPACE_DELETED,
+      isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
+    },
+  ]);
+
+  // 9. Initialize bootstrap with API registry and pre-created modules
+  const bootstrapResult = initializeBootstrap({
+    logger: apiLogger,
+    ipcLayer,
+    app,
+    hookRegistry,
+    dispatcher,
+    getApiFn: () => {
+      if (!codeHydraApi) {
+        throw new Error("API not initialized");
+      }
+      return codeHydraApi;
+    },
+    pluginServer,
+    getUIWebContentsFn: () => viewManager?.getUIWebContents() ?? null,
     emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => {
       try {
         viewManagerRef
@@ -513,62 +642,35 @@ async function bootstrap(): Promise<void> {
         // Log but don't throw - deletion continues even if UI disconnected
       }
     },
-    killTerminalsCallback: async (workspacePath: string) => {
-      await pluginServer.sendExtensionHostShutdown(workspacePath);
-    },
-    workspaceLockHandler,
-    hookRegistry,
-    dispatcher,
-    setTitle: (title: string) => windowManager?.setTitle(title),
-    titleVersion: buildInfo.gitBranch ?? buildInfo.version,
-    badgeManager,
-    agentServerManagers,
     agentStatusManager,
-    mcpServerManager,
-    pluginServer,
-    getApiFn: () => {
-      if (!codeHydraApi) {
-        throw new Error("API not initialized");
-      }
-      return codeHydraApi;
-    },
-    loggingService,
-    telemetryService,
-    platformInfo,
-    buildInfo,
-    autoUpdater,
-    codeServerManager,
-    fileSystemLayer,
-    viewLayer,
-    windowLayer,
-    sessionLayer,
-    getUIWebContentsFn: () => viewManager?.getUIWebContents() ?? null,
+    globalWorktreeProvider,
     wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
     dialog,
-    setupDeps: {
-      configService,
-      codeServerManager: setupCodeServerManager,
-      getAgentBinaryManager,
-      extensionManager: setupExtensionManager,
-    },
+    modules: [
+      idempotencyModule,
+      viewModule,
+      codeServerModule,
+      agentModule,
+      badgeModule,
+      metadataModule,
+      keepFilesModule,
+      deleteWindowsLockModule,
+      remoteProjectModule,
+      localProjectModule,
+      gitWorktreeWorkspaceModule,
+      windowTitleModule,
+      telemetryLifecycleModule,
+      autoUpdaterLifecycleModule,
+      mcpModule,
+    ],
+    mountSignal,
   });
 
   // Get the typed API interface (all methods are now registered)
   codeHydraApi = bootstrapResult.getInterface();
 
-  // Wire lifecycle:setup-progress events to IPC immediately (before UI loads)
-  bootstrapResult.registry.on("lifecycle:setup-progress", (payload) => {
-    const webContents = viewManager?.getUIWebContents();
-    if (webContents && !webContents.isDestroyed()) {
-      webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
-    }
-  });
-  bootstrapResult.registry.on("lifecycle:setup-error", (payload) => {
-    const webContents = viewManager?.getUIWebContents();
-    if (webContents && !webContents.isDestroyed()) {
-      webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, payload);
-    }
-  });
+  // Note: lifecycle:setup-progress and lifecycle:setup-error are handled by
+  // IpcEventBridge domain event subscriptions (wired during wireModules in bootstrap).
 
   // 8. Load UI layer HTML
   // Renderer starts in "initializing" mode and waits for IPC events

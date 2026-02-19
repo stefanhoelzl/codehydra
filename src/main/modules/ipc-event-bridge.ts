@@ -37,9 +37,10 @@ import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
-import { EVENT_SETUP_ERROR } from "../operations/setup";
-import type { SetupErrorEvent } from "../operations/setup";
+import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../operations/setup";
+import type { SetupErrorEvent, SetupProgressEvent } from "../operations/setup";
 import type { SetupErrorPayload } from "../../shared/ipc";
+import { ApiIpcChannels } from "../../shared/ipc";
 import type { WorkspaceStatus } from "../../shared/api/types";
 
 /**
@@ -129,13 +130,23 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         });
       }
     },
+    [EVENT_SETUP_PROGRESS]: (event: DomainEvent) => {
+      const payload = (event as SetupProgressEvent).payload;
+      const webContents = deps.getUIWebContents();
+      if (webContents && !webContents.isDestroyed()) {
+        webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
+      }
+    },
     [EVENT_SETUP_ERROR]: (event: DomainEvent) => {
       const { message, code } = (event as SetupErrorEvent).payload;
       const payload: SetupErrorPayload = {
         message,
         ...(code !== undefined && { code }),
       };
-      apiRegistry.emit("lifecycle:setup-error", payload);
+      const webContents = deps.getUIWebContents();
+      if (webContents && !webContents.isDestroyed()) {
+        webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, payload);
+      }
     },
     [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
       const {

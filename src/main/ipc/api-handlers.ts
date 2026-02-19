@@ -130,18 +130,8 @@ export function wireApiEvents(
     })
   );
 
-  // Lifecycle events
-  unsubscribers.push(
-    api.on("lifecycle:setup-progress", (event) => {
-      send(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, event);
-    })
-  );
-
-  unsubscribers.push(
-    api.on("lifecycle:setup-error", (event) => {
-      send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, event);
-    })
-  );
+  // Note: lifecycle:setup-progress and lifecycle:setup-error are handled by
+  // IpcEventBridge domain event subscriptions (active before wireApiEvents is called).
 
   // Return cleanup function
   return () => {

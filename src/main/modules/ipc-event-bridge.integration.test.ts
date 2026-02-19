@@ -58,7 +58,7 @@ import { createIpcEventBridge, type IpcEventBridgeDeps } from "./ipc-event-bridg
 import type { IApiRegistry } from "../api/registry-types";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
-import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
+import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
 import { SILENT_LOGGER } from "../../services/logging";
@@ -669,9 +669,16 @@ describe("IpcEventBridge - lifecycle", () => {
 // =============================================================================
 
 describe("IpcEventBridge - setup:error", () => {
+  function createMockWebContents(): {
+    send: ReturnType<typeof vi.fn>;
+    isDestroyed: ReturnType<typeof vi.fn>;
+  } {
+    return { send: vi.fn(), isDestroyed: vi.fn().mockReturnValue(false) };
+  }
+
   function createSetupErrorTestSetup(): {
     dispatcher: Dispatcher;
-    mockApiRegistry: MockApiRegistry;
+    mockWebContents: ReturnType<typeof createMockWebContents>;
   } {
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
@@ -679,12 +686,14 @@ describe("IpcEventBridge - setup:error", () => {
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 
     const mockApiRegistry = createMockApiRegistry();
+    const mockWebContents = createMockWebContents();
     const ipcEventBridge = createIpcEventBridge({
       apiRegistry: mockApiRegistry as unknown as IApiRegistry,
       getApi: () => {
         throw new Error("getApi not available in setup-error test");
       },
-      getUIWebContents: () => null,
+      getUIWebContents: () =>
+        mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
       pluginServer: null,
       logger: SILENT_LOGGER,
     });
@@ -704,11 +713,11 @@ describe("IpcEventBridge - setup:error", () => {
 
     wireModules([ipcEventBridge, failingSetupHook], hookRegistry, dispatcher);
 
-    return { dispatcher, mockApiRegistry };
+    return { dispatcher, mockWebContents };
   }
 
-  it("emits lifecycle:setup-error when setup operation fails", async () => {
-    const { dispatcher, mockApiRegistry } = createSetupErrorTestSetup();
+  it("sends lifecycle:setup-error to webContents when setup operation fails", async () => {
+    const { dispatcher, mockWebContents } = createSetupErrorTestSetup();
 
     const intent: SetupIntent = {
       type: INTENT_SETUP,
@@ -718,12 +727,9 @@ describe("IpcEventBridge - setup:error", () => {
     // SetupOperation throws after emitting the error event
     await expect(dispatcher.dispatch(intent)).rejects.toThrow("Download failed");
 
-    expect(mockApiRegistry.events).toEqual([
-      {
-        channel: "lifecycle:setup-error",
-        data: { message: "Download failed" },
-      },
-    ]);
+    expect(mockWebContents.send).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
+      message: "Download failed",
+    });
   });
 
   it("includes error code when present", async () => {
@@ -733,12 +739,14 @@ describe("IpcEventBridge - setup:error", () => {
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 
     const mockApiRegistry = createMockApiRegistry();
+    const mockWebContents = createMockWebContents();
     const ipcEventBridge = createIpcEventBridge({
       apiRegistry: mockApiRegistry as unknown as IApiRegistry,
       getApi: () => {
         throw new Error("getApi not available in setup-error test");
       },
-      getUIWebContents: () => null,
+      getUIWebContents: () =>
+        mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
       pluginServer: null,
       logger: SILENT_LOGGER,
     });
@@ -761,11 +769,9 @@ describe("IpcEventBridge - setup:error", () => {
     const intent: SetupIntent = { type: INTENT_SETUP, payload: {} };
     await expect(dispatcher.dispatch(intent)).rejects.toThrow("Network timeout");
 
-    expect(mockApiRegistry.events).toEqual([
-      {
-        channel: "lifecycle:setup-error",
-        data: { message: "Network timeout", code: "ETIMEDOUT" },
-      },
-    ]);
+    expect(mockWebContents.send).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
+      message: "Network timeout",
+      code: "ETIMEDOUT",
+    });
   });
 });

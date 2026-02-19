@@ -18,7 +18,7 @@
 
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { ConfigAgentType } from "../../shared/api/types";
+import type { ConfigAgentType, SetupRowId, SetupRowStatus } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
 
 // =============================================================================
@@ -76,6 +76,7 @@ export interface BinaryHookInput extends HookContext {
   readonly selectedAgent?: ConfigAgentType;
   readonly configuredAgent?: ConfigAgentType | null;
   readonly missingBinaries?: readonly BinaryType[];
+  readonly report: SetupProgressReporter;
 }
 
 /**
@@ -84,11 +85,39 @@ export interface BinaryHookInput extends HookContext {
 export interface ExtensionsHookInput extends HookContext {
   readonly missingExtensions?: readonly string[];
   readonly outdatedExtensions?: readonly string[];
+  readonly report: SetupProgressReporter;
 }
 
 // =============================================================================
 // Domain Events
 // =============================================================================
+
+export const EVENT_SETUP_PROGRESS = "setup:progress" as const;
+
+export interface SetupProgressPayload {
+  readonly id: SetupRowId;
+  readonly status: SetupRowStatus;
+  readonly message?: string;
+  readonly error?: string;
+  readonly progress?: number;
+}
+
+export interface SetupProgressEvent {
+  readonly type: typeof EVENT_SETUP_PROGRESS;
+  readonly payload: SetupProgressPayload;
+}
+
+/**
+ * Progress reporter callback for setup screen rows.
+ * Injected into hook contexts by SetupOperation.execute().
+ */
+export type SetupProgressReporter = (
+  id: SetupRowId,
+  status: SetupRowStatus,
+  message?: string,
+  error?: string,
+  progress?: number
+) => void;
 
 export const EVENT_SETUP_ERROR = "setup:error" as const;
 
@@ -147,9 +176,22 @@ export class SetupOperation implements Operation<SetupIntent, void> {
         }
       }
 
+      // Create progress reporter that emits domain events
+      const report: SetupProgressReporter = (id, status, message?, error?, progress?) => {
+        const progressPayload: SetupProgressPayload = {
+          id,
+          status,
+          ...(message !== undefined && { message }),
+          ...(error !== undefined && { error }),
+          ...(progress !== undefined && { progress }),
+        };
+        ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: progressPayload });
+      };
+
       // Hook 4: "binary" -- Update binary progress (downloads if needed)
       const binaryInput: BinaryHookInput = {
         intent: ctx.intent,
+        report,
         ...(selectedAgent !== undefined && { selectedAgent }),
         ...(payload.configuredAgent !== undefined && { configuredAgent: payload.configuredAgent }),
         ...(payload.missingBinaries !== undefined && { missingBinaries: payload.missingBinaries }),
@@ -162,6 +204,7 @@ export class SetupOperation implements Operation<SetupIntent, void> {
       // Hook 5: "extensions" -- Update extension progress (installs if needed)
       const extensionsInput: ExtensionsHookInput = {
         intent: ctx.intent,
+        report,
         ...(payload.missingExtensions !== undefined && {
           missingExtensions: payload.missingExtensions,
         }),

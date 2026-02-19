@@ -400,7 +400,6 @@ function createMockDeps(): AgentModuleDeps {
       isDestroyed: vi.fn().mockReturnValue(false),
       send: vi.fn(),
     }),
-    reportProgress: vi.fn(),
     logger: SILENT_LOGGER,
     loggingService: {
       createLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
@@ -579,6 +578,7 @@ describe("AgentModule", () => {
 
   describe("binary download", () => {
     it("downloads agent binary when missing", async () => {
+      const reportMock = vi.fn();
       const { deps, dispatcher } = createTestSetup();
       const mockBinaryManager = {
         preflight: vi.fn(),
@@ -591,16 +591,18 @@ describe("AgentModule", () => {
         new MinimalBinaryOperation({
           selectedAgent: "opencode",
           missingBinaries: ["opencode"],
+          report: reportMock,
         })
       );
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(mockBinaryManager.downloadBinary).toHaveBeenCalled();
-      expect(deps.reportProgress).toHaveBeenCalledWith("agent", "done");
+      expect(reportMock).toHaveBeenCalledWith("agent", "done");
     });
 
     it("skips download when binary is not missing", async () => {
+      const reportMock = vi.fn();
       const { deps, dispatcher } = createTestSetup();
       const mockBinaryManager = {
         preflight: vi.fn(),
@@ -613,16 +615,18 @@ describe("AgentModule", () => {
         new MinimalBinaryOperation({
           selectedAgent: "opencode",
           missingBinaries: [],
+          report: reportMock,
         })
       );
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(mockBinaryManager.downloadBinary).not.toHaveBeenCalled();
-      expect(deps.reportProgress).toHaveBeenCalledWith("agent", "done");
+      expect(reportMock).toHaveBeenCalledWith("agent", "done");
     });
 
     it("reports progress during download and handles error", async () => {
+      const reportMock = vi.fn();
       const { deps, dispatcher } = createTestSetup();
       const mockBinaryManager = {
         preflight: vi.fn(),
@@ -635,16 +639,12 @@ describe("AgentModule", () => {
         new MinimalBinaryOperation({
           selectedAgent: "opencode",
           missingBinaries: ["opencode"],
+          report: reportMock,
         })
       );
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(deps.reportProgress).toHaveBeenCalledWith(
-        "agent",
-        "failed",
-        undefined,
-        "network error"
-      );
+      expect(reportMock).toHaveBeenCalledWith("agent", "failed", undefined, "network error");
     });
   });
 
