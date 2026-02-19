@@ -9,13 +9,19 @@ import { describe, it, expect, vi } from "vitest";
 import { initializeBootstrap } from "./bootstrap";
 import type { BootstrapDeps } from "./bootstrap";
 import { createMockLogger } from "../services/logging";
-import type { IKeepFilesService } from "../services/keepfiles";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
-import type { IViewManager } from "./managers/view-manager.interface";
-import type { WorkspaceName } from "../shared/api/types";
 import { generateProjectId } from "../shared/api/id-utils";
+import { createViewModule } from "./modules/view-module";
+import { createCodeServerModule } from "./modules/code-server-module";
+import { createAgentModule } from "./modules/agent-module";
+import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
+import { INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
+import { INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
+import { INTENT_DELETE_WORKSPACE, EVENT_WORKSPACE_DELETED } from "./operations/delete-workspace";
+import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./operations/delete-workspace";
+import type { WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
 // Test Constants
@@ -29,46 +35,6 @@ const TEST_WORKSPACE_NAME = "feature" as WorkspaceName;
 // =============================================================================
 // Mock Factories
 // =============================================================================
-
-function createMockViewManager(): IViewManager {
-  const modeChangeHandlers: Array<(event: { mode: string; previousMode: string }) => void> = [];
-  return {
-    getUIViewHandle: vi.fn(),
-    getUIWebContents: vi.fn().mockReturnValue(null),
-    sendToUI: vi.fn(),
-    createWorkspaceView: vi.fn(),
-    destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
-    getWorkspaceView: vi.fn(),
-    updateBounds: vi.fn(),
-    setActiveWorkspace: vi.fn(),
-    getActiveWorkspacePath: vi.fn().mockReturnValue(TEST_WORKSPACE_PATH),
-    focusActiveWorkspace: vi.fn(),
-    focusUI: vi.fn(),
-    setMode: vi.fn(),
-    getMode: vi.fn().mockReturnValue("workspace"),
-    onModeChange: vi.fn((handler) => {
-      modeChangeHandlers.push(handler);
-      return () => {
-        const idx = modeChangeHandlers.indexOf(handler);
-        if (idx >= 0) modeChangeHandlers.splice(idx, 1);
-      };
-    }),
-    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
-    updateCodeServerPort: vi.fn(),
-    isWorkspaceLoading: vi.fn().mockReturnValue(false),
-    setWorkspaceLoaded: vi.fn(),
-    onLoadingChange: vi.fn().mockReturnValue(() => {}),
-    preloadWorkspaceUrl: vi.fn(),
-    // Test helper for emitting mode changes
-    _emitModeChange: (event: { mode: string; previousMode: string }) => {
-      for (const handler of modeChangeHandlers) {
-        handler(event);
-      }
-    },
-  } as unknown as IViewManager & {
-    _emitModeChange: (event: { mode: string; previousMode: string }) => void;
-  };
-}
 
 function createMockGlobalWorktreeProvider(): import("../services/git/git-worktree-provider").GitWorktreeProvider {
   return {
@@ -87,119 +53,9 @@ function createMockDispatcher(): { hookRegistry: HookRegistry; dispatcher: Dispa
   return { hookRegistry, dispatcher };
 }
 
-function createMockKeepFilesService(): IKeepFilesService {
+function createMockCodeServerLifecycleDeps() {
   return {
-    copyToWorkspace: async () => ({
-      configExists: false,
-      copiedCount: 0,
-      skippedCount: 0,
-      errors: [],
-    }),
-  };
-}
-
-function createMockDeps(): BootstrapDeps {
-  const { hookRegistry, dispatcher } = createMockDispatcher();
-  return {
-    logger: createMockLogger(),
-    ipcLayer: createBehavioralIpcLayer(),
-    app: { quit: vi.fn() },
-    viewManager: createMockViewManager(),
-    gitClient: {
-      clone: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services").IGitClient,
-    pathProvider: {
-      projectsDir: "/test/projects",
-      remotesDir: "/test/remotes",
-      getProjectWorkspacesDir: vi.fn().mockImplementation((projectPath: unknown) => {
-        const pathStr = typeof projectPath === "string" ? projectPath : String(projectPath);
-        return { toString: () => `${pathStr}/workspaces` };
-      }),
-    } as unknown as import("../services").PathProvider,
-    projectStore: {
-      findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      getProjectConfig: vi.fn().mockResolvedValue(undefined),
-      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
-      loadAllProjectConfigs: vi.fn().mockResolvedValue([]),
-      removeProject: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services").ProjectStore,
-    globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-    keepFilesService: createMockKeepFilesService(),
-    workspaceFileService: {
-      deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
-    } as unknown as import("../services").IWorkspaceFileService,
-    emitDeletionProgress: vi.fn(),
-    killTerminalsCallback: undefined,
-    workspaceLockHandler: undefined,
-    hookRegistry,
-    dispatcher,
-    setTitle: vi.fn(),
-    titleVersion: "test",
-    badgeManager: {
-      updateBadge: vi.fn(),
-    } as unknown as import("./managers/badge-manager").BadgeManager,
-    agentServerManagers: {
-      claude: {
-        dispose: vi.fn().mockResolvedValue(undefined),
-        startServer: vi.fn().mockResolvedValue(undefined),
-        stopServer: vi.fn().mockResolvedValue({ success: true }),
-        restartServer: vi.fn().mockResolvedValue({ success: true, port: 0 }),
-        onServerStarted: vi.fn().mockReturnValue(() => {}),
-        onServerStopped: vi.fn().mockReturnValue(() => {}),
-        setMarkActiveHandler: vi.fn(),
-        setMcpConfig: vi.fn(),
-      } as never,
-      opencode: {
-        dispose: vi.fn().mockResolvedValue(undefined),
-        startServer: vi.fn().mockResolvedValue(undefined),
-        stopServer: vi.fn().mockResolvedValue({ success: true }),
-        restartServer: vi.fn().mockResolvedValue({ success: true, port: 0 }),
-        onServerStarted: vi.fn().mockReturnValue(() => {}),
-        onServerStopped: vi.fn().mockReturnValue(() => {}),
-        setMarkActiveHandler: vi.fn(),
-        setMcpConfig: vi.fn(),
-      } as never,
-    },
-    agentStatusManager: {
-      getStatus: vi.fn(),
-      getEnvironmentVariables: vi.fn().mockReturnValue(null),
-      onStatusChanged: vi.fn().mockReturnValue(() => {}),
-      markActive: vi.fn(),
-      dispose: vi.fn(),
-    } as never,
-    mcpServerManager: {
-      start: vi.fn().mockResolvedValue(9999),
-      stop: vi.fn().mockResolvedValue(undefined),
-      dispose: vi.fn().mockResolvedValue(undefined),
-      registerWorkspace: vi.fn(),
-      unregisterWorkspace: vi.fn(),
-      getPort: vi.fn().mockReturnValue(null),
-    } as never,
     pluginServer: null,
-    getApiFn: () =>
-      ({
-        on: vi.fn().mockReturnValue(() => {}),
-        lifecycle: {},
-        projects: {},
-        workspaces: {},
-        ui: {},
-        dispose: vi.fn(),
-      }) as never,
-    loggingService: { createLogger: () => createMockLogger() } as never,
-    telemetryService: null,
-    platformInfo: { platform: "linux", arch: "x64" } as never,
-    buildInfo: {
-      version: "1.0.0",
-      isDevelopment: true,
-      isPackaged: false,
-      appPath: "/app",
-    } as never,
-    autoUpdater: {
-      start: vi.fn(),
-      dispose: vi.fn(),
-      onUpdateAvailable: vi.fn().mockReturnValue(() => {}),
-    } as never,
     codeServerManager: {
       ensureRunning: vi.fn().mockResolvedValue(undefined),
       port: vi.fn().mockReturnValue(9090),
@@ -214,34 +70,44 @@ function createMockDeps(): BootstrapDeps {
     fileSystemLayer: {
       mkdir: vi.fn().mockResolvedValue(undefined),
     } as never,
-    viewLayer: null,
-    windowLayer: null,
-    sessionLayer: null,
+    onPortChanged: () => {},
+  };
+}
+
+function createMockDeps(): BootstrapDeps {
+  const { hookRegistry, dispatcher } = createMockDispatcher();
+  return {
+    logger: createMockLogger(),
+    ipcLayer: createBehavioralIpcLayer(),
+    app: { quit: vi.fn() },
+    hookRegistry,
+    dispatcher,
+    getApiFn: () =>
+      ({
+        on: vi.fn().mockReturnValue(() => {}),
+        lifecycle: {},
+        projects: {},
+        workspaces: {},
+        ui: {},
+        dispose: vi.fn(),
+      }) as never,
+    pluginServer: null,
     getUIWebContentsFn: () => null,
+    emitDeletionProgress: vi.fn(),
+    agentStatusManager: {
+      getStatus: vi.fn(),
+      getEnvironmentVariables: vi.fn().mockReturnValue(null),
+      onStatusChanged: vi.fn().mockReturnValue(() => {}),
+      markActive: vi.fn(),
+      dispose: vi.fn(),
+    } as never,
+    globalWorktreeProvider: createMockGlobalWorktreeProvider(),
     wrapperPath: "/mock/bin/claude",
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
-    setupDeps: {
-      configService: {
-        load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
-        save: vi.fn().mockResolvedValue(undefined),
-        setAgent: vi.fn().mockResolvedValue(undefined),
-      } as unknown as import("../services/config/config-service").ConfigService,
-      codeServerManager: {
-        preflight: vi.fn().mockResolvedValue({ needsDownload: false }),
-        downloadBinary: vi.fn().mockResolvedValue(undefined),
-      } as unknown as import("../services").CodeServerManager,
-      getAgentBinaryManager: () =>
-        ({
-          preflight: vi.fn().mockResolvedValue({ needsDownload: false }),
-          downloadBinary: vi.fn().mockResolvedValue(undefined),
-        }) as unknown as import("../services/binary-download").AgentBinaryManager,
-      extensionManager: {
-        preflight: vi.fn().mockResolvedValue({ needsInstall: false, missing: [], outdated: [] }),
-        install: vi.fn().mockResolvedValue(undefined),
-      } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
-    },
+    modules: [],
+    mountSignal: { resolve: null },
   };
 }
 
@@ -315,7 +181,16 @@ describe("bootstrap.quit.flow", () => {
   it("second lifecycle.quit is idempotent (shutdown only runs once)", async () => {
     const appQuit = vi.fn();
     const ipcLayer = createBehavioralIpcLayer();
-    const deps: BootstrapDeps = { ...createMockDeps(), app: { quit: appQuit }, ipcLayer };
+    const { hookRegistry, dispatcher } = createMockDispatcher();
+    const idempotencyModule = createIdempotencyModule([{ intentType: INTENT_APP_SHUTDOWN }]);
+    const deps: BootstrapDeps = {
+      ...createMockDeps(),
+      app: { quit: appQuit },
+      ipcLayer,
+      hookRegistry,
+      dispatcher,
+      modules: [idempotencyModule],
+    };
     const result = initializeBootstrap(deps);
 
     // First quit
@@ -521,8 +396,56 @@ describe("bootstrap.error.propagation", () => {
 // =============================================================================
 
 /**
+ * Helper: creates a mock IViewManager for setup tests.
+ * Switches getUIWebContents to return null after onLoadingChange is called
+ * (which happens in the activate handler before the mount check).
+ */
+function createSetupViewManager(mockWebContents: unknown) {
+  const modeChangeHandlers: Array<(event: { mode: string; previousMode: string }) => void> = [];
+  let inActivateHandler = false;
+
+  return {
+    getUIViewHandle: vi.fn(),
+    getUIWebContents: vi.fn().mockImplementation(() => {
+      if (inActivateHandler) return null;
+      return mockWebContents as import("electron").WebContents;
+    }),
+    sendToUI: vi.fn(),
+    createWorkspaceView: vi.fn(),
+    destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
+    getWorkspaceView: vi.fn(),
+    updateBounds: vi.fn(),
+    setActiveWorkspace: vi.fn(),
+    getActiveWorkspacePath: vi.fn().mockReturnValue(TEST_WORKSPACE_PATH),
+    focusActiveWorkspace: vi.fn(),
+    focusUI: vi.fn(),
+    setMode: vi.fn(),
+    getMode: vi.fn().mockReturnValue("workspace"),
+    onModeChange: vi.fn((handler: (event: { mode: string; previousMode: string }) => void) => {
+      modeChangeHandlers.push(handler);
+      return () => {
+        const idx = modeChangeHandlers.indexOf(handler);
+        if (idx >= 0) modeChangeHandlers.splice(idx, 1);
+      };
+    }),
+    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
+    updateCodeServerPort: vi.fn(),
+    isWorkspaceLoading: vi.fn().mockReturnValue(false),
+    setWorkspaceLoaded: vi.fn(),
+    onLoadingChange: vi.fn().mockImplementation(() => {
+      inActivateHandler = true;
+      return () => {};
+    }),
+    preloadWorkspaceUrl: vi.fn(),
+  };
+}
+
+/**
  * Helper: creates deps with a captured dispatcher and mock webContents
- * for testing the full app:start → app:setup flow.
+ * for testing the full app:start -> app:setup flow.
+ *
+ * Creates real modules (viewModule, codeServerModule, agentModule, idempotencyModule)
+ * with mock services, matching the composition root pattern from index.ts.
  */
 function createSetupTestDeps(overrides?: {
   configAgent?: string | null;
@@ -551,76 +474,165 @@ function createSetupTestDeps(overrides?: {
     },
   };
 
-  const baseDeps = createMockDeps();
   const configAgent = overrides?.configAgent !== undefined ? overrides.configAgent : "opencode";
 
-  // Create a viewManager that returns the mock webContents for show-ui hooks
-  // but returns null for the mount handler in activate (to avoid blocking).
-  // ViewModule's activate handler calls onLoadingChange() before the mount check,
-  // so we use it as a signal to switch getUIWebContents to return null.
-  const setupViewManager = createMockViewManager();
-  let inActivateHandler = false;
-  (setupViewManager as unknown as Record<string, unknown>).onLoadingChange = vi
-    .fn()
-    .mockImplementation(() => {
-      inActivateHandler = true;
-      return () => {};
-    });
-  (setupViewManager as unknown as Record<string, unknown>).getUIWebContents = vi
-    .fn()
-    .mockImplementation(() => {
-      if (inActivateHandler) return null;
-      return mockWebContents as unknown as import("electron").WebContents;
-    });
+  // Create a viewManager for ViewModule
+  const setupViewManager = createSetupViewManager(mockWebContents);
 
   const setupHookRegistry = new HookRegistry();
   captured.dispatcher = new Dispatcher(setupHookRegistry);
 
-  const deps: BootstrapDeps = {
-    ...baseDeps,
-    ipcLayer: captured.ipcLayer,
-    viewManager: setupViewManager,
-    hookRegistry: setupHookRegistry,
-    dispatcher: captured.dispatcher,
-    getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
-    setupDeps: {
-      configService: {
-        load: vi.fn().mockResolvedValue({ agent: configAgent, versions: {} }),
-        save: vi.fn().mockResolvedValue(undefined),
-        setAgent: vi.fn().mockResolvedValue(undefined),
-      } as unknown as import("../services/config/config-service").ConfigService,
-      codeServerManager: {
-        preflight: vi.fn().mockResolvedValue({
-          success: true,
-          needsDownload: overrides?.codeServerNeedsDownload ?? false,
-        }),
-        downloadBinary: overrides?.downloadError
-          ? vi.fn().mockRejectedValue(overrides.downloadError)
-          : vi.fn().mockResolvedValue(undefined),
-      } as unknown as import("../services").CodeServerManager,
-      getAgentBinaryManager: () =>
-        ({
-          preflight: vi.fn().mockResolvedValue({
-            success: true,
-            needsDownload: overrides?.agentNeedsDownload ?? false,
-          }),
-          downloadBinary: overrides?.agentDownloadMock ?? vi.fn().mockResolvedValue(undefined),
-          getBinaryType: vi.fn().mockReturnValue("opencode"),
-        }) as unknown as import("../services/binary-download").AgentBinaryManager,
-      extensionManager: {
-        preflight: vi.fn().mockResolvedValue({
-          success: true,
-          needsInstall: overrides?.extensionNeedsInstall ?? false,
-          missingExtensions: overrides?.missingExtensions ?? [],
-          outdatedExtensions: overrides?.outdatedExtensions ?? [],
-        }),
-        install: vi.fn().mockResolvedValue(undefined),
-        cleanOutdated: vi.fn().mockResolvedValue(undefined),
-      } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
-    },
+  // --- Create mock services for setup modules ---
+  const mockConfigService = {
+    load: vi.fn().mockResolvedValue({ agent: configAgent, versions: {} }),
+    save: vi.fn().mockResolvedValue(undefined),
+    setAgent: vi.fn().mockResolvedValue(undefined),
   };
 
-  return { deps, captured, mockWebContents };
+  const mockSetupCodeServerManager = {
+    preflight: vi.fn().mockResolvedValue({
+      success: true,
+      needsDownload: overrides?.codeServerNeedsDownload ?? false,
+    }),
+    downloadBinary: overrides?.downloadError
+      ? vi.fn().mockRejectedValue(overrides.downloadError)
+      : vi.fn().mockResolvedValue(undefined),
+  };
+
+  const mockGetAgentBinaryManager = () =>
+    ({
+      preflight: vi.fn().mockResolvedValue({
+        success: true,
+        needsDownload: overrides?.agentNeedsDownload ?? false,
+      }),
+      downloadBinary: overrides?.agentDownloadMock ?? vi.fn().mockResolvedValue(undefined),
+      getBinaryType: vi.fn().mockReturnValue("opencode"),
+    }) as unknown as import("../services/binary-download").AgentBinaryManager;
+
+  const mockExtensionManager = {
+    preflight: vi.fn().mockResolvedValue({
+      success: true,
+      needsInstall: overrides?.extensionNeedsInstall ?? false,
+      missingExtensions: overrides?.missingExtensions ?? [],
+      outdatedExtensions: overrides?.outdatedExtensions ?? [],
+    }),
+    install: vi.fn().mockResolvedValue(undefined),
+    cleanOutdated: vi.fn().mockResolvedValue(undefined),
+  };
+
+  // --- Create real modules using factory functions ---
+  const { module: viewModule, mountSignal } = createViewModule({
+    viewManager: setupViewManager as never,
+    logger: createMockLogger(),
+    viewLayer: null,
+    windowLayer: null,
+    sessionLayer: null,
+  });
+
+  const codeServerModule = createCodeServerModule({
+    codeServerManager: mockSetupCodeServerManager as never,
+    extensionManager: mockExtensionManager as never,
+    logger: createMockLogger(),
+    getLifecycleDeps: () => createMockCodeServerLifecycleDeps(),
+    getWorkspaceDeps: () => ({
+      workspaceFileService: {} as never,
+      wrapperPath: "/mock/bin/claude",
+    }),
+  });
+
+  const agentModule = createAgentModule({
+    configService: mockConfigService as never,
+    getAgentBinaryManager: mockGetAgentBinaryManager,
+    ipcLayer: captured.ipcLayer,
+    getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
+    logger: createMockLogger(),
+    loggingService: { createLogger: () => createMockLogger() } as never,
+    dispatcher: captured.dispatcher,
+    killTerminalsCallback: undefined,
+    agentServerManagers: {
+      claude: {
+        dispose: vi.fn().mockResolvedValue(undefined),
+        startServer: vi.fn().mockResolvedValue(undefined),
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        restartServer: vi.fn().mockResolvedValue({ success: true, port: 0 }),
+        onServerStarted: vi.fn().mockReturnValue(() => {}),
+        onServerStopped: vi.fn().mockReturnValue(() => {}),
+        setMarkActiveHandler: vi.fn(),
+        setMcpConfig: vi.fn(),
+      } as never,
+      opencode: {
+        dispose: vi.fn().mockResolvedValue(undefined),
+        startServer: vi.fn().mockResolvedValue(undefined),
+        stopServer: vi.fn().mockResolvedValue({ success: true }),
+        restartServer: vi.fn().mockResolvedValue({ success: true, port: 0 }),
+        onServerStarted: vi.fn().mockReturnValue(() => {}),
+        onServerStopped: vi.fn().mockReturnValue(() => {}),
+        setMarkActiveHandler: vi.fn(),
+        setMcpConfig: vi.fn(),
+      } as never,
+    },
+    agentStatusManager: {
+      getStatus: vi.fn(),
+      getEnvironmentVariables: vi.fn().mockReturnValue(null),
+      onStatusChanged: vi.fn().mockReturnValue(() => {}),
+      markActive: vi.fn(),
+      dispose: vi.fn(),
+    } as never,
+  });
+
+  const idempotencyModule = createIdempotencyModule([
+    { intentType: INTENT_APP_SHUTDOWN },
+    { intentType: INTENT_SETUP, resetOn: EVENT_SETUP_ERROR },
+    {
+      intentType: INTENT_DELETE_WORKSPACE,
+      getKey: (p) => {
+        const { projectId, workspaceName } = p as DeleteWorkspacePayload;
+        return `${projectId}/${workspaceName}`;
+      },
+      resetOn: EVENT_WORKSPACE_DELETED,
+      isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
+    },
+  ]);
+
+  const deps: BootstrapDeps = {
+    logger: createMockLogger(),
+    ipcLayer: captured.ipcLayer,
+    app: { quit: vi.fn() },
+    hookRegistry: setupHookRegistry,
+    dispatcher: captured.dispatcher,
+    getApiFn: () =>
+      ({
+        on: vi.fn().mockReturnValue(() => {}),
+        lifecycle: {},
+        projects: {},
+        workspaces: {},
+        ui: {},
+        dispose: vi.fn(),
+      }) as never,
+    pluginServer: null,
+    getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
+    emitDeletionProgress: vi.fn(),
+    agentStatusManager: {
+      getStatus: vi.fn(),
+      getEnvironmentVariables: vi.fn().mockReturnValue(null),
+      onStatusChanged: vi.fn().mockReturnValue(() => {}),
+      markActive: vi.fn(),
+      dispose: vi.fn(),
+    } as never,
+    globalWorktreeProvider: createMockGlobalWorktreeProvider(),
+    wrapperPath: "/mock/bin/claude",
+    modules: [idempotencyModule, viewModule, codeServerModule, agentModule],
+    mountSignal,
+  };
+
+  const setupMocks = {
+    configService: mockConfigService,
+    codeServerManager: mockSetupCodeServerManager,
+    extensionManager: mockExtensionManager,
+    getAgentBinaryManager: mockGetAgentBinaryManager,
+  };
+
+  return { deps, captured, mockWebContents, setupMocks };
 }
 
 describe("bootstrap.setup.flow", () => {
@@ -699,11 +711,11 @@ describe("bootstrap.setup.flow", () => {
   it("#4: agent selection saved after user responds", async () => {
     vi.useFakeTimers();
     try {
-      const { deps, captured } = createSetupTestDeps({
+      const { deps, captured, setupMocks } = createSetupTestDeps({
         configAgent: null,
       });
 
-      const mockSetAgent = deps.setupDeps.configService.setAgent as ReturnType<typeof vi.fn>;
+      const mockSetAgent = setupMocks.configService.setAgent;
 
       initializeBootstrap(deps);
 
@@ -730,14 +742,14 @@ describe("bootstrap.setup.flow", () => {
 
   it("#5: downloads binaries when missing", async () => {
     const agentDownloadMock = vi.fn().mockResolvedValue(undefined);
-    const { deps, captured } = createSetupTestDeps({
+    const { deps, captured, setupMocks } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: true,
       agentNeedsDownload: true,
       agentDownloadMock,
     });
 
-    const mockCodeServerDownload = deps.setupDeps.codeServerManager.downloadBinary as ReturnType<
+    const mockCodeServerDownload = setupMocks.codeServerManager.downloadBinary as ReturnType<
       typeof vi.fn
     >;
 
@@ -751,13 +763,13 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#6: installs extensions when missing", async () => {
-    const { deps, captured } = createSetupTestDeps({
+    const { deps, captured, setupMocks } = createSetupTestDeps({
       configAgent: "opencode",
       extensionNeedsInstall: true,
       missingExtensions: ["test-ext-1", "test-ext-2"],
     });
 
-    const mockInstall = deps.setupDeps.extensionManager.install as ReturnType<typeof vi.fn>;
+    const mockInstall = setupMocks.extensionManager.install as ReturnType<typeof vi.fn>;
 
     initializeBootstrap(deps);
 
@@ -778,7 +790,7 @@ describe("bootstrap.setup.flow", () => {
 
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
-    // Find the sequence: show-setup → ... → show-starting (hide-ui hook)
+    // Find the sequence: show-setup -> ... -> show-starting (hide-ui hook)
     const channels = captured.webContentsSendCalls.map((c) => c.channel);
 
     const setupIdx = channels.indexOf("api:lifecycle:show-setup");
@@ -839,21 +851,13 @@ describe("bootstrap.setup.flow", () => {
     vi.useFakeTimers();
     try {
       const downloadError = new Error("Network timeout");
-      const { deps, captured } = createSetupTestDeps({
+      const { deps, captured, setupMocks } = createSetupTestDeps({
         configAgent: "opencode",
         codeServerNeedsDownload: true,
         downloadError,
       });
 
-      const result = initializeBootstrap(deps);
-
-      // Wire early subscriber (matches the pattern in index.ts)
-      result.registry.on("lifecycle:setup-error", (payload) => {
-        captured.webContentsSendCalls.push({
-          channel: "api:lifecycle:setup-error",
-          args: [payload],
-        });
-      });
+      initializeBootstrap(deps);
 
       // Dispatch will enter retry loop after setup failure.
       // Start the dispatch but don't await -- it will wait for retry IPC.
@@ -865,7 +869,7 @@ describe("bootstrap.setup.flow", () => {
       // Flush microtask queue so the error is emitted and retry loop starts
       await vi.advanceTimersByTimeAsync(0);
 
-      // Verify setup-error IPC was sent to renderer
+      // Verify setup-error IPC was sent to renderer via IpcEventBridge -> webContents.send
       const errorSent = captured.webContentsSendCalls.find(
         (c) => c.channel === "api:lifecycle:setup-error"
       );
@@ -873,9 +877,9 @@ describe("bootstrap.setup.flow", () => {
       expect((errorSent?.args[0] as { message: string }).message).toContain("Network timeout");
 
       // Fix the download mock so retry succeeds, then trigger retry
-      (
-        deps.setupDeps.codeServerManager.downloadBinary as ReturnType<typeof vi.fn>
-      ).mockResolvedValue(undefined);
+      (setupMocks.codeServerManager.downloadBinary as ReturnType<typeof vi.fn>).mockResolvedValue(
+        undefined
+      );
       captured.ipcLayer._emit("api:lifecycle:retry");
 
       // Now the dispatch should complete
@@ -904,7 +908,7 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#18: binary hook skipped when binaries present", async () => {
-    const { deps, captured } = createSetupTestDeps({
+    const { deps, captured, setupMocks } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: false,
       agentNeedsDownload: false,
@@ -912,7 +916,7 @@ describe("bootstrap.setup.flow", () => {
       missingExtensions: ["test-ext"],
     });
 
-    const mockDownloadBinary = deps.setupDeps.codeServerManager.downloadBinary as ReturnType<
+    const mockDownloadBinary = setupMocks.codeServerManager.downloadBinary as ReturnType<
       typeof vi.fn
     >;
 
@@ -935,44 +939,130 @@ describe("bootstrap.setup.progress", () => {
     const mockAgentDownloadBinary = vi.fn().mockResolvedValue(undefined);
     const mockInstall = vi.fn().mockResolvedValue(undefined);
 
-    const baseDeps = createMockDeps();
     const progressHookRegistry = new HookRegistry();
-    const capturedDispatcher = new Dispatcher(progressHookRegistry);
-    const deps: BootstrapDeps = {
-      ...baseDeps,
-      hookRegistry: progressHookRegistry,
-      dispatcher: capturedDispatcher,
-      setupDeps: {
-        ...baseDeps.setupDeps,
-        codeServerManager: {
-          preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
-          downloadBinary: mockDownloadBinary,
-        } as unknown as import("../services").CodeServerManager,
-        getAgentBinaryManager: () =>
-          ({
-            preflight: vi
-              .fn()
-              .mockResolvedValue({ success: true, needsDownload: true, binaryType: "opencode" }),
-            downloadBinary: mockAgentDownloadBinary,
-            getBinaryType: vi.fn().mockReturnValue("opencode"),
-          }) as unknown as import("../services/binary-download").AgentBinaryManager,
-        extensionManager: {
-          preflight: vi.fn().mockResolvedValue({
-            success: true,
-            needsInstall: true,
-            missingExtensions: ["test-ext"],
-            outdatedExtensions: [],
-          }),
-          install: mockInstall,
-          cleanOutdated: vi.fn().mockResolvedValue(undefined),
-        } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
-      },
+    const progressDispatcher = new Dispatcher(progressHookRegistry);
+
+    const progressCodeServerManager = {
+      preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
+      downloadBinary: mockDownloadBinary,
     };
 
-    initializeBootstrap(deps);
+    const progressExtensionManager = {
+      preflight: vi.fn().mockResolvedValue({
+        success: true,
+        needsInstall: true,
+        missingExtensions: ["test-ext"],
+        outdatedExtensions: [],
+      }),
+      install: mockInstall,
+      cleanOutdated: vi.fn().mockResolvedValue(undefined),
+    };
 
-    // Dispatch app:start which triggers check → app:setup → binary/extensions hooks
-    const handle = capturedDispatcher.dispatch({
+    const progressGetAgentBinaryManager = () =>
+      ({
+        preflight: vi
+          .fn()
+          .mockResolvedValue({ success: true, needsDownload: true, binaryType: "opencode" }),
+        downloadBinary: mockAgentDownloadBinary,
+        getBinaryType: vi.fn().mockReturnValue("opencode"),
+      }) as unknown as import("../services/binary-download").AgentBinaryManager;
+
+    const mockWebContents = {
+      isDestroyed: () => false,
+      send: vi.fn(),
+    };
+
+    const progressViewManager = createSetupViewManager(mockWebContents);
+
+    const { module: viewModule, mountSignal } = createViewModule({
+      viewManager: progressViewManager as never,
+      logger: createMockLogger(),
+      viewLayer: null,
+      windowLayer: null,
+      sessionLayer: null,
+    });
+
+    const codeServerModule = createCodeServerModule({
+      codeServerManager: progressCodeServerManager as never,
+      extensionManager: progressExtensionManager as never,
+      logger: createMockLogger(),
+      getLifecycleDeps: () => createMockCodeServerLifecycleDeps(),
+      getWorkspaceDeps: () => ({
+        workspaceFileService: {} as never,
+        wrapperPath: "/mock/bin/claude",
+      }),
+    });
+
+    const agentModule = createAgentModule({
+      configService: {
+        load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
+        setAgent: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      getAgentBinaryManager: progressGetAgentBinaryManager,
+      ipcLayer: createBehavioralIpcLayer(),
+      getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
+      logger: createMockLogger(),
+      loggingService: { createLogger: () => createMockLogger() } as never,
+      dispatcher: progressDispatcher,
+      killTerminalsCallback: undefined,
+      agentServerManagers: {
+        claude: {
+          dispose: vi.fn().mockResolvedValue(undefined),
+          onServerStarted: vi.fn().mockReturnValue(() => {}),
+          onServerStopped: vi.fn().mockReturnValue(() => {}),
+          setMarkActiveHandler: vi.fn(),
+          setMcpConfig: vi.fn(),
+        } as never,
+        opencode: {
+          dispose: vi.fn().mockResolvedValue(undefined),
+          onServerStarted: vi.fn().mockReturnValue(() => {}),
+          onServerStopped: vi.fn().mockReturnValue(() => {}),
+          setMarkActiveHandler: vi.fn(),
+          setMcpConfig: vi.fn(),
+        } as never,
+      },
+      agentStatusManager: {
+        getStatus: vi.fn(),
+        onStatusChanged: vi.fn().mockReturnValue(() => {}),
+        markActive: vi.fn(),
+        dispose: vi.fn(),
+      } as never,
+    });
+
+    const progressDeps: BootstrapDeps = {
+      logger: createMockLogger(),
+      ipcLayer: createBehavioralIpcLayer(),
+      app: { quit: vi.fn() },
+      hookRegistry: progressHookRegistry,
+      dispatcher: progressDispatcher,
+      getApiFn: () =>
+        ({
+          on: vi.fn().mockReturnValue(() => {}),
+          lifecycle: {},
+          projects: {},
+          workspaces: {},
+          ui: {},
+          dispose: vi.fn(),
+        }) as never,
+      pluginServer: null,
+      getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
+      emitDeletionProgress: vi.fn(),
+      agentStatusManager: {
+        getStatus: vi.fn(),
+        onStatusChanged: vi.fn().mockReturnValue(() => {}),
+        markActive: vi.fn(),
+        dispose: vi.fn(),
+      } as never,
+      globalWorktreeProvider: createMockGlobalWorktreeProvider(),
+      wrapperPath: "/mock/bin/claude",
+      modules: [viewModule, codeServerModule, agentModule],
+      mountSignal,
+    };
+
+    initializeBootstrap(progressDeps);
+
+    // Dispatch app:start which triggers check -> app:setup -> binary/extensions hooks
+    const handle = progressDispatcher.dispatch({
       type: "app:start",
       payload: {},
     });
@@ -992,7 +1082,6 @@ describe("bootstrap.setup.progress", () => {
   it("emits setup-progress with percentage when download callback is invoked", async () => {
     vi.useFakeTimers();
     try {
-      const progressEvents: unknown[] = [];
       const mockDownloadBinary = vi.fn().mockImplementation(async (onProgress: unknown) => {
         // Advance past throttle window before calling progress
         vi.advanceTimersByTime(200);
@@ -1007,43 +1096,120 @@ describe("bootstrap.setup.progress", () => {
         }
       });
 
-      const baseDeps = createMockDeps();
       const pctHookRegistry = new HookRegistry();
       const capturedDispatcher = new Dispatcher(pctHookRegistry);
-      const deps: BootstrapDeps = {
-        ...baseDeps,
-        hookRegistry: pctHookRegistry,
-        dispatcher: capturedDispatcher,
-        setupDeps: {
-          ...baseDeps.setupDeps,
-          codeServerManager: {
-            preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
-            downloadBinary: mockDownloadBinary,
-          } as unknown as import("../services").CodeServerManager,
-          getAgentBinaryManager: () =>
-            ({
-              preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
-              downloadBinary: vi.fn().mockResolvedValue(undefined),
-              getBinaryType: vi.fn().mockReturnValue("opencode"),
-            }) as unknown as import("../services/binary-download").AgentBinaryManager,
-          extensionManager: {
-            preflight: vi.fn().mockResolvedValue({
-              success: true,
-              needsInstall: false,
-              missingExtensions: [],
-              outdatedExtensions: [],
-            }),
-            install: vi.fn().mockResolvedValue(undefined),
-          } as unknown as import("../services/vscode-setup/extension-manager").ExtensionManager,
+
+      const webContentsSendCalls: Array<{ channel: string; args: unknown[] }> = [];
+      const mockWebContents = {
+        isDestroyed: () => false,
+        send: (channel: string, ...args: unknown[]) => {
+          webContentsSendCalls.push({ channel, args });
         },
       };
 
-      const result = initializeBootstrap(deps);
-
-      // Subscribe to setup-progress events
-      result.registry.on("lifecycle:setup-progress", (event) => {
-        progressEvents.push(event);
+      const pctViewManager = createSetupViewManager(mockWebContents);
+      const { module: viewModule, mountSignal } = createViewModule({
+        viewManager: pctViewManager as never,
+        logger: createMockLogger(),
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
       });
+
+      const codeServerModule = createCodeServerModule({
+        codeServerManager: {
+          preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
+          downloadBinary: mockDownloadBinary,
+        } as never,
+        extensionManager: {
+          preflight: vi.fn().mockResolvedValue({
+            success: true,
+            needsInstall: false,
+            missingExtensions: [],
+            outdatedExtensions: [],
+          }),
+          install: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        logger: createMockLogger(),
+        getLifecycleDeps: () => createMockCodeServerLifecycleDeps(),
+        getWorkspaceDeps: () => ({
+          workspaceFileService: {} as never,
+          wrapperPath: "/mock/bin/claude",
+        }),
+      });
+
+      const agentModule = createAgentModule({
+        configService: {
+          load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
+          setAgent: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        getAgentBinaryManager: () =>
+          ({
+            preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
+            downloadBinary: vi.fn().mockResolvedValue(undefined),
+            getBinaryType: vi.fn().mockReturnValue("opencode"),
+          }) as unknown as import("../services/binary-download").AgentBinaryManager,
+        ipcLayer: createBehavioralIpcLayer(),
+        getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
+        logger: createMockLogger(),
+        loggingService: { createLogger: () => createMockLogger() } as never,
+        dispatcher: capturedDispatcher,
+        killTerminalsCallback: undefined,
+        agentServerManagers: {
+          claude: {
+            dispose: vi.fn().mockResolvedValue(undefined),
+            onServerStarted: vi.fn().mockReturnValue(() => {}),
+            onServerStopped: vi.fn().mockReturnValue(() => {}),
+            setMarkActiveHandler: vi.fn(),
+            setMcpConfig: vi.fn(),
+          } as never,
+          opencode: {
+            dispose: vi.fn().mockResolvedValue(undefined),
+            onServerStarted: vi.fn().mockReturnValue(() => {}),
+            onServerStopped: vi.fn().mockReturnValue(() => {}),
+            setMarkActiveHandler: vi.fn(),
+            setMcpConfig: vi.fn(),
+          } as never,
+        },
+        agentStatusManager: {
+          getStatus: vi.fn(),
+          onStatusChanged: vi.fn().mockReturnValue(() => {}),
+          markActive: vi.fn(),
+          dispose: vi.fn(),
+        } as never,
+      });
+
+      const deps: BootstrapDeps = {
+        logger: createMockLogger(),
+        ipcLayer: createBehavioralIpcLayer(),
+        app: { quit: vi.fn() },
+        hookRegistry: pctHookRegistry,
+        dispatcher: capturedDispatcher,
+        getApiFn: () =>
+          ({
+            on: vi.fn().mockReturnValue(() => {}),
+            lifecycle: {},
+            projects: {},
+            workspaces: {},
+            ui: {},
+            dispose: vi.fn(),
+          }) as never,
+        pluginServer: null,
+        getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
+        emitDeletionProgress: vi.fn(),
+        agentStatusManager: {
+          getStatus: vi.fn(),
+          onStatusChanged: vi.fn().mockReturnValue(() => {}),
+          markActive: vi.fn(),
+          dispose: vi.fn(),
+        } as never,
+        globalWorktreeProvider: createMockGlobalWorktreeProvider(),
+        wrapperPath: "/mock/bin/claude",
+        modules: [viewModule, codeServerModule, agentModule],
+        mountSignal,
+      };
+
+      initializeBootstrap(deps);
 
       const handle = capturedDispatcher.dispatch({
         type: "app:start",
@@ -1055,9 +1221,14 @@ describe("bootstrap.setup.progress", () => {
       await handle;
 
       // Find a progress event with percentage for vscode row
-      const withPercent = progressEvents.find((e) => {
-        const evt = e as { rows: Array<{ id: string; progress?: number }> };
-        return evt.rows.some((r) => r.id === "vscode" && r.progress === 50);
+      // Progress events are now sent via IpcEventBridge -> webContents.send
+      // Each event is a single row: { id, status, message?, progress? }
+      const progressCalls = webContentsSendCalls.filter(
+        (c) => c.channel === "api:lifecycle:setup-progress"
+      );
+      const withPercent = progressCalls.find((c) => {
+        const payload = c.args[0] as { id: string; progress?: number };
+        return payload.id === "vscode" && payload.progress === 50;
       });
       expect(withPercent).toBeDefined();
     } finally {
@@ -1082,7 +1253,7 @@ describe("bootstrap.lifecycle.ready", () => {
 
     const result = initializeBootstrap(deps);
 
-    // lifecycle.ready just resolves the mount promise — no events re-emitted
+    // lifecycle.ready just resolves the mount promise -- no events re-emitted
     const projectOpenedEvents: unknown[] = [];
     result.registry.on("project:opened", (event) => {
       projectOpenedEvents.push(event);
@@ -1090,7 +1261,7 @@ describe("bootstrap.lifecycle.ready", () => {
 
     await ipcLayer._invoke("api:lifecycle:ready", {});
 
-    // No event re-emission — events flow naturally from project:open dispatches
+    // No event re-emission -- events flow naturally from project:open dispatches
     expect(projectOpenedEvents).toHaveLength(0);
 
     await result.dispose();
@@ -1103,7 +1274,7 @@ describe("bootstrap.lifecycle.ready", () => {
 
     const result = initializeBootstrap(deps);
 
-    // Call twice — second call is a no-op (mountResolve is null)
+    // Call twice -- second call is a no-op (mountResolve is null)
     await ipcLayer._invoke("api:lifecycle:ready", {});
     await ipcLayer._invoke("api:lifecycle:ready", {});
 

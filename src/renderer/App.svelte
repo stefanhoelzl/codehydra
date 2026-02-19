@@ -21,7 +21,7 @@
 -->
 <script lang="ts">
   import * as api from "$lib/api";
-  import type { SetupRowProgress, SetupScreenProgress, ConfigAgentType } from "@shared/api/types";
+  import type { SetupRowProgress, SetupRowId, ConfigAgentType } from "@shared/api/types";
   import type {
     ShowAgentSelectionPayload,
     SetupErrorPayload,
@@ -66,8 +66,11 @@
   // Selected agent type (from initial getState or after user selection)
   let selectedAgent = $state<ConfigAgentType | null>(null);
 
-  // Setup progress state - array of row progress updates
-  let setupProgress = $state<SetupRowProgress[]>([]);
+  // Setup progress state - array of row progress updates, initialized with default rows
+  const DEFAULT_PROGRESS_ROWS: readonly SetupRowId[] = ["vscode", "agent", "setup"];
+  let setupProgress = $state<SetupRowProgress[]>(
+    DEFAULT_PROGRESS_ROWS.map((id) => ({ id, status: "pending" }))
+  );
 
   // Announcement message for screen readers (cleared after announcement)
   let announceMessage = $state<string>("");
@@ -106,11 +109,10 @@
   });
 
   // Subscribe to setup progress events from main process
-  // Updates row state during setup
+  // Each event is a per-row update; merge into local aggregated state
   $effect(() => {
-    const unsubProgress = api.on<SetupScreenProgress>("lifecycle:setup-progress", (progress) => {
-      // Event contains full row state array, replace entirely
-      setupProgress = [...progress.rows];
+    const unsubProgress = api.on<SetupRowProgress>("lifecycle:setup-progress", (row) => {
+      setupProgress = setupProgress.map((r) => (r.id === row.id ? row : r));
     });
     return () => {
       unsubProgress();
@@ -134,8 +136,8 @@
   $effect(() => {
     const unsub = api.on<void>("lifecycle:show-setup", () => {
       logger.debug("Showing setup screen");
-      // Clear any previous progress state when entering setup
-      setupProgress = [];
+      // Reset progress state when entering setup
+      setupProgress = DEFAULT_PROGRESS_ROWS.map((id) => ({ id, status: "pending" }));
       appMode = { type: "setup" };
     });
     return () => {
@@ -223,8 +225,8 @@
     logger.info("Agent selected", { agent });
     // Store selected agent for display in SetupScreen
     selectedAgent = agent;
-    // Clear any previous progress state
-    setupProgress = [];
+    // Reset progress state
+    setupProgress = DEFAULT_PROGRESS_ROWS.map((id) => ({ id, status: "pending" }));
     // Transition to setup mode while main process continues
     appMode = { type: "setup" };
     // Send IPC event to main process

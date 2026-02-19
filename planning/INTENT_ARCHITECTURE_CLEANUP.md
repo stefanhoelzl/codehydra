@@ -189,11 +189,11 @@ Largest module by hook count. Needs all other modules extracted first (to valida
 
 ### Phase 9: Cleanup
 
-| #   | Step                                  | Status  | Notes                                                                               |
-| --- | ------------------------------------- | ------- | ----------------------------------------------------------------------------------- |
-| 9a  | Delete `AppState` class               | done    | All concerns extracted to project/workspace modules, AgentModule, CodeServerModule. |
-| 9b  | Dissolve `LifecycleServiceRefs`       | pending | Each module declares specific deps. Remove the bag type.                            |
-| 9c  | Simplify `wireDispatcher()` signature | pending | No longer needs 16+ params. Modules are self-contained.                             |
+| #   | Step                            | Status | Notes                                                                               |
+| --- | ------------------------------- | ------ | ----------------------------------------------------------------------------------- |
+| 9a  | Delete `AppState` class         | done   | All concerns extracted to project/workspace modules, AgentModule, CodeServerModule. |
+| 9b  | Dissolve `LifecycleServiceRefs` | done   | Type removed; fields absorbed into `BootstrapDeps`.                                 |
+| 9c  | Simplify `BootstrapDeps`        | done   | 36→16 fields. Modules created at composition root (index.ts), passed as array.      |
 
 ---
 

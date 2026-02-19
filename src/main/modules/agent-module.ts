@@ -25,7 +25,6 @@ import type { IpcEventHandler } from "../../services/platform/ipc";
 import type { ConfigService } from "../../services/config/config-service";
 import type { AgentBinaryManager } from "../../services/binary-download";
 import type { AgentBinaryType } from "../../services/binary-download";
-import type { SetupRowId, SetupRowStatus } from "../../shared/api/types";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import type { AgentServerManager, AgentType } from "../../agents/types";
@@ -97,18 +96,6 @@ const AVAILABLE_AGENTS: readonly LifecycleAgentType[] = ["opencode", "claude"];
 // =============================================================================
 
 /**
- * Progress reporter callback for setup screen rows.
- * Re-exported from code-server-module for convenience.
- */
-export type SetupProgressReporter = (
-  id: SetupRowId,
-  status: SetupRowStatus,
-  message?: string,
-  error?: string,
-  progress?: number
-) => void;
-
-/**
  * Minimal kill terminals callback interface.
  */
 export type KillTerminalsCallback = (workspacePath: string) => Promise<void>;
@@ -121,7 +108,6 @@ export interface AgentModuleDeps {
   readonly getAgentBinaryManager: (type: ConfigAgentType) => AgentBinaryManager;
   readonly ipcLayer: Pick<import("../../services/platform/ipc").IpcLayer, "on" | "removeListener">;
   readonly getUIWebContentsFn: () => import("electron").WebContents | null;
-  readonly reportProgress: SetupProgressReporter;
   readonly logger: Logger;
   readonly loggingService: LoggingService;
   readonly dispatcher: Dispatcher;
@@ -144,7 +130,7 @@ export interface AgentModuleDeps {
  * setup, server management, status tracking, and per-workspace hooks.
  */
 export function createAgentModule(deps: AgentModuleDeps): IntentModule {
-  const { configService, getAgentBinaryManager, reportProgress, logger } = deps;
+  const { configService, getAgentBinaryManager, logger } = deps;
 
   // =========================================================================
   // Internal closure state
@@ -532,6 +518,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
           handler: async (ctx: HookContext) => {
             const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
+            const { report } = hookCtx;
 
             // Get the agent type from context (set by ConfigCheckModule or ConfigSaveModule)
             const agentType = hookCtx.selectedAgent ?? hookCtx.configuredAgent;
@@ -541,29 +528,29 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
 
               // Download agent binary if missing
               if (missingBinaries.includes(binaryType)) {
-                reportProgress("agent", "running", "Downloading...");
+                report("agent", "running", "Downloading...");
                 try {
                   await agentBinaryManager.downloadBinary((p) => {
                     if (p.phase === "downloading" && p.totalBytes) {
                       const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
-                      reportProgress("agent", "running", "Downloading...", undefined, pct);
+                      report("agent", "running", "Downloading...", undefined, pct);
                     } else if (p.phase === "extracting") {
-                      reportProgress("agent", "running", "Extracting...");
+                      report("agent", "running", "Extracting...");
                     }
                   });
-                  reportProgress("agent", "done");
+                  report("agent", "done");
                 } catch (error) {
-                  reportProgress("agent", "failed", undefined, getErrorMessage(error));
+                  report("agent", "failed", undefined, getErrorMessage(error));
                   throw new SetupError(
                     `Failed to download ${binaryType}: ${getErrorMessage(error)}`,
                     "BINARY_DOWNLOAD_FAILED"
                   );
                 }
               } else {
-                reportProgress("agent", "done");
+                report("agent", "done");
               }
             } else {
-              reportProgress("agent", "done");
+              report("agent", "done");
             }
           },
         },

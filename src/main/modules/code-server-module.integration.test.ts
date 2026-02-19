@@ -103,14 +103,17 @@ class MinimalStopOperation implements Operation<Intent, void> {
 class MinimalBinaryOperation implements Operation<Intent, void> {
   readonly id = SETUP_OPERATION_ID;
   private readonly hookInput: Partial<BinaryHookInput>;
+  readonly report: ReturnType<typeof vi.fn>;
 
   constructor(hookInput: Partial<BinaryHookInput> = {}) {
+    this.report = (hookInput.report as ReturnType<typeof vi.fn>) ?? vi.fn();
     this.hookInput = hookInput;
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
     const { errors } = await ctx.hooks.collect("binary", {
       intent: ctx.intent,
+      report: this.report,
       ...this.hookInput,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -120,14 +123,17 @@ class MinimalBinaryOperation implements Operation<Intent, void> {
 class MinimalExtensionsOperation implements Operation<Intent, void> {
   readonly id = SETUP_OPERATION_ID;
   private readonly hookInput: Partial<ExtensionsHookInput>;
+  readonly report: ReturnType<typeof vi.fn>;
 
   constructor(hookInput: Partial<ExtensionsHookInput> = {}) {
+    this.report = (hookInput.report as ReturnType<typeof vi.fn>) ?? vi.fn();
     this.hookInput = hookInput;
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
     const { errors } = await ctx.hooks.collect("extensions", {
       intent: ctx.intent,
+      report: this.report,
       ...this.hookInput,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -237,7 +243,6 @@ function createMockDeps(overrides?: {
       install: vi.fn().mockResolvedValue(undefined),
       cleanOutdated: vi.fn().mockResolvedValue(undefined),
     },
-    reportProgress: vi.fn(),
     logger: SILENT_LOGGER,
     getLifecycleDeps: () => lifecycleDeps,
     getWorkspaceDeps: () => workspaceDeps,
@@ -479,26 +484,25 @@ describe("CodeServerModule", () => {
     it("downloads code-server when missing", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(
-        "setup",
-        new MinimalBinaryOperation({ missingBinaries: ["code-server"] })
-      );
+      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(deps.codeServerManager.downloadBinary).toHaveBeenCalled();
-      expect(deps.reportProgress).toHaveBeenCalledWith("vscode", "done");
+      expect(op.report).toHaveBeenCalledWith("vscode", "done");
     });
 
     it("skips download when not missing", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("setup", new MinimalBinaryOperation({ missingBinaries: [] }));
+      const op = new MinimalBinaryOperation({ missingBinaries: [] });
+      dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(deps.codeServerManager.downloadBinary).not.toHaveBeenCalled();
-      expect(deps.reportProgress).toHaveBeenCalledWith("vscode", "done");
+      expect(op.report).toHaveBeenCalledWith("vscode", "done");
     });
 
     it("reports progress during download", async () => {
@@ -510,21 +514,13 @@ describe("CodeServerModule", () => {
         }
       );
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(
-        "setup",
-        new MinimalBinaryOperation({ missingBinaries: ["code-server"] })
-      );
+      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.reportProgress).toHaveBeenCalledWith(
-        "vscode",
-        "running",
-        "Downloading...",
-        undefined,
-        50
-      );
-      expect(deps.reportProgress).toHaveBeenCalledWith("vscode", "running", "Extracting...");
+      expect(op.report).toHaveBeenCalledWith("vscode", "running", "Downloading...", undefined, 50);
+      expect(op.report).toHaveBeenCalledWith("vscode", "running", "Extracting...");
     });
 
     it("throws SetupError on download failure", async () => {
@@ -533,18 +529,11 @@ describe("CodeServerModule", () => {
         new Error("network error")
       );
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(
-        "setup",
-        new MinimalBinaryOperation({ missingBinaries: ["code-server"] })
-      );
+      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(deps.reportProgress).toHaveBeenCalledWith(
-        "vscode",
-        "failed",
-        undefined,
-        "network error"
-      );
+      expect(op.report).toHaveBeenCalledWith("vscode", "failed", undefined, "network error");
     });
   });
 
@@ -556,24 +545,20 @@ describe("CodeServerModule", () => {
     it("installs missing extensions", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(
-        "setup",
-        new MinimalExtensionsOperation({ missingExtensions: ["ext.one"] })
-      );
+      const op = new MinimalExtensionsOperation({ missingExtensions: ["ext.one"] });
+      dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(deps.extensionManager.install).toHaveBeenCalledWith(["ext.one"], expect.any(Function));
-      expect(deps.reportProgress).toHaveBeenCalledWith("setup", "done");
+      expect(op.report).toHaveBeenCalledWith("setup", "done");
     });
 
     it("cleans and reinstalls outdated extensions", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(
-        "setup",
-        new MinimalExtensionsOperation({ outdatedExtensions: ["ext.old"] })
-      );
+      const op = new MinimalExtensionsOperation({ outdatedExtensions: ["ext.old"] });
+      dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -584,12 +569,13 @@ describe("CodeServerModule", () => {
     it("skips when no extensions need install", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("setup", new MinimalExtensionsOperation());
+      const op = new MinimalExtensionsOperation();
+      dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(deps.extensionManager.install).not.toHaveBeenCalled();
-      expect(deps.reportProgress).toHaveBeenCalledWith("setup", "done");
+      expect(op.report).toHaveBeenCalledWith("setup", "done");
     });
 
     it("throws SetupError on install failure", async () => {
@@ -598,18 +584,11 @@ describe("CodeServerModule", () => {
         new Error("install failed")
       );
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(
-        "setup",
-        new MinimalExtensionsOperation({ missingExtensions: ["ext.one"] })
-      );
+      const op = new MinimalExtensionsOperation({ missingExtensions: ["ext.one"] });
+      dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(deps.reportProgress).toHaveBeenCalledWith(
-        "setup",
-        "failed",
-        undefined,
-        "install failed"
-      );
+      expect(op.report).toHaveBeenCalledWith("setup", "failed", undefined, "install failed");
     });
 
     it("throws SetupError on clean failure", async () => {
@@ -618,10 +597,8 @@ describe("CodeServerModule", () => {
         new Error("clean failed")
       );
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(
-        "setup",
-        new MinimalExtensionsOperation({ outdatedExtensions: ["ext.old"] })
-      );
+      const op = new MinimalExtensionsOperation({ outdatedExtensions: ["ext.old"] });
+      dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
     });
