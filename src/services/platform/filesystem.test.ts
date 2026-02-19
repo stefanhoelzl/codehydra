@@ -13,6 +13,7 @@ import {
   writeFile as nodeWriteFile,
   mkdir as nodeMkdir,
   readFile as nodeReadFile,
+  stat,
 } from "node:fs/promises";
 import { DefaultFileSystemLayer } from "./filesystem";
 import { SILENT_LOGGER } from "../logging";
@@ -137,7 +138,6 @@ describe("DefaultFileSystemLayer.makeExecutable", () => {
     await fs.makeExecutable(filePath);
 
     // Verify permissions
-    const { stat } = await import("node:fs/promises");
     const stats = await stat(filePath);
     // Check that execute bits are set (owner, group, other)
     expect(stats.mode & 0o111).toBe(0o111);

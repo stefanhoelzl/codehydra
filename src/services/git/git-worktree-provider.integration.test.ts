@@ -9,6 +9,7 @@ import { GitWorktreeProvider } from "./git-worktree-provider";
 import { createMockGitClient } from "./git-client.state-mock";
 import { createFileSystemMock, directory } from "../platform/filesystem.state-mock";
 import { SILENT_LOGGER } from "../logging";
+import { WorkspaceError } from "../errors";
 import { Path } from "../platform/path";
 
 describe("GitWorktreeProvider integration", () => {
@@ -291,7 +292,6 @@ describe("GitWorktreeProvider integration", () => {
       );
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
-      const { WorkspaceError } = await import("../errors");
       try {
         await provider.setMetadata(workspace.path, "my_key", "value");
         expect.fail("Should have thrown");

@@ -4,6 +4,7 @@
  * These tests verify actual HTTP transport behavior using real SDK and HTTP.
  */
 
+import { createServer } from "node:net";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { McpServer, createDefaultMcpServer } from "./mcp-server";
 import type { ICoreApi } from "../../shared/api/interfaces";
@@ -16,7 +17,6 @@ import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-uti
  * Find a free port for testing.
  */
 async function findFreePort(): Promise<number> {
-  const { createServer } = await import("node:net");
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.listen(0, "127.0.0.1", () => {

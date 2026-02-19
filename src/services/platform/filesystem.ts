@@ -12,6 +12,7 @@
  * - This enables gradual migration to Path objects while maintaining backward compatibility
  */
 
+import { tmpdir } from "node:os";
 import { Path } from "./path";
 
 /** Type for paths accepted by FileSystemLayer (Path object or string) */
@@ -583,7 +584,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
   async mkdtemp(prefix: string): Promise<Path> {
     this.logger.debug("Mkdtemp", { prefix });
     try {
-      const tmpDir = await import("node:os").then((os) => os.tmpdir());
+      const tmpDir = tmpdir();
       const created = await fs.mkdtemp(`${tmpDir}/${prefix}`);
       this.logger.debug("Mkdtemp created", { path: created });
       return new Path(created);
