@@ -289,7 +289,7 @@
     color: var(--ch-foreground);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: clip;
     transition:
       width var(--ch-sidebar-transition, 150ms ease-out),
       box-shadow var(--ch-sidebar-transition, 150ms ease-out);
@@ -301,6 +301,7 @@
     width: var(--ch-sidebar-width, 250px);
     z-index: var(--ch-z-sidebar-expanded, 50);
     box-shadow: var(--ch-shadow);
+    overflow: hidden;
     overflow-y: auto;
   }
 
