@@ -787,7 +787,12 @@ async function bootstrap(): Promise<void> {
         { error: getErrorMessage(error) },
         error instanceof Error ? error : undefined
       );
-      // Error is already emitted to renderer via the setup error handler
+
+      if (dialogLayer) {
+        dialogLayer.showErrorBox("Startup Failed", getErrorMessage(error));
+      }
+
+      app.quit();
     });
 
   // 10. Open DevTools in development only
