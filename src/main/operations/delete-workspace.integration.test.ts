@@ -1257,6 +1257,12 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
       "in-progress"
     );
     expect(postShutdown.operations.find((op) => op.id === "kill-terminals")?.status).toBe("done");
+
+    // Post-release: cleanup-workspace still in-progress (delete hook about to run)
+    const postRelease = harness.progressCaptures[2]!;
+    expect(postRelease.operations.find((op) => op.id === "cleanup-workspace")?.status).toBe(
+      "in-progress"
+    );
   });
 
   it("test 26: retry loop emits in-progress for detecting-blockers, killing-blockers, and cleanup-workspace", async () => {
