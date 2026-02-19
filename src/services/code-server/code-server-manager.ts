@@ -347,8 +347,8 @@ export class CodeServerManager {
 
     // Build command arguments
     const args = [
-      "--port",
-      port.toString(),
+      "--bind-addr",
+      `127.0.0.1:${port}`,
       "--auth",
       "none",
       "--disable-workspace-trust",

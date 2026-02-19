@@ -480,8 +480,8 @@ describe("CodeServerManager (with full DI)", () => {
         {
           command: config.binaryPath,
           args: expect.arrayContaining([
-            "--port",
-            String(CODE_SERVER_PORT),
+            "--bind-addr",
+            `127.0.0.1:${CODE_SERVER_PORT}`,
             "--auth",
             "none",
           ]) as unknown as string[],
