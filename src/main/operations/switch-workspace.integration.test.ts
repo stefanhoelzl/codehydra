@@ -99,7 +99,7 @@ function createMockViewManager(initialActive: string | null = null): MockViewMan
 }
 
 // =============================================================================
-// Mock AppState for workspace resolution
+// Mock state for workspace resolution
 // =============================================================================
 
 interface WorkspaceEntry {

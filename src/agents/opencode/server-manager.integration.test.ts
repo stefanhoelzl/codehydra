@@ -1,8 +1,8 @@
 // @vitest-environment node
 /**
- * Integration tests for OpenCodeServerManager with AppState.
+ * Integration tests for OpenCodeServerManager with AgentModule.
  *
- * Tests the full lifecycle of OpenCode servers managed by AppState:
+ * Tests the full lifecycle of OpenCode servers managed by AgentModule:
  * - Server starts when workspace is added
  * - Server stops when workspace is removed
  * - All servers stop when project is closed
@@ -137,7 +137,7 @@ describe("OpenCodeServerManager integration", () => {
     });
 
     it("AgentStatusManager receives stop event via callback wiring", async () => {
-      // Wire callbacks like AppState does
+      // Wire callbacks like AgentModule does
       serverManager.onServerStopped((path) => {
         agentStatusManager.removeWorkspace(path as WorkspacePath);
       });

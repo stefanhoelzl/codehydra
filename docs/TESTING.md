@@ -109,7 +109,7 @@ describe("SimpleGitClient", () => {
 **Key characteristics**:
 
 - Tests behavior, not implementation ("when user does X, outcome is Y")
-- Real module interaction (AppState, ProjectStore, GitWorktreeProvider all run together)
+- Real module interaction (modules, ProjectStore, GitWorktreeProvider all run together)
 - Only mock boundaries (same interfaces tested by boundary tests)
 - **MUST be fast** - target <50ms per test, <2s per module
 
@@ -124,7 +124,7 @@ Traditional unit tests mock everything except the single module under test. This
 Integration tests solve this by:
 
 1. **Testing behavior** - "When user does X, outcome is Y"
-2. **Real module interaction** - AppState, ProjectStore, GitWorktreeProvider all run together
+2. **Real module interaction** - Modules, ProjectStore, GitWorktreeProvider all run together
 3. **Only mock boundaries** - The external system interfaces, not internal modules
 
 ---
@@ -259,7 +259,7 @@ Code change involves external system interface?
 
 | Condition                                     | Entry Point                        | Example                                 |
 | --------------------------------------------- | ---------------------------------- | --------------------------------------- |
-| Module is public API                          | `CodeHydraApi` or `LifecycleApi`   | AppState, ProjectStore                  |
+| Module is public API                          | `CodeHydraApi` or `LifecycleApi`   | ProjectStore, AgentModule               |
 | Module is internal service with complex state | Direct service                     | CodeServerManager, PluginServer         |
 | Module is Electron wrapper                    | Direct with mocked Electron APIs   | ViewManager, WindowManager              |
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog          |
@@ -1027,23 +1027,23 @@ Integration tests go through specific entry points, not arbitrary internal modul
 
 ### Main Process Entry Points
 
-| Entry Point          | What It Is               | Modules Exercised                                                                                        |
-| -------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `CodeHydraApi`       | Main application facade  | AppState, ProjectStore, GitWorktreeProvider, AgentStatusManager, OpenCodeServerManager, KeepFilesService |
-| `LifecycleApi`       | Setup/bootstrap facade   | VscodeSetupService, BinaryDownloadService, WrapperScriptGenerationService                                |
-| `CodeServerManager`  | Direct (not via API)     | Just CodeServerManager                                                                                   |
-| `PluginServer`       | Direct (not via API)     | Just PluginServer                                                                                        |
-| `McpServerManager`   | Direct (not via API)     | McpServerManager, McpServer                                                                              |
-| `ViewManager`        | Direct (mocked Electron) | Just ViewManager                                                                                         |
-| `WindowManager`      | Direct (mocked Electron) | Just WindowManager                                                                                       |
-| `BadgeManager`       | Direct (mocked Electron) | Just BadgeManager                                                                                        |
-| `ShortcutController` | Direct (mocked Electron) | Just ShortcutController                                                                                  |
+| Entry Point          | What It Is               | Modules Exercised                                                                              |
+| -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `CodeHydraApi`       | Main application facade  | ProjectStore, GitWorktreeProvider, AgentStatusManager, OpenCodeServerManager, KeepFilesService |
+| `LifecycleApi`       | Setup/bootstrap facade   | VscodeSetupService, BinaryDownloadService, WrapperScriptGenerationService                      |
+| `CodeServerManager`  | Direct (not via API)     | Just CodeServerManager                                                                         |
+| `PluginServer`       | Direct (not via API)     | Just PluginServer                                                                              |
+| `McpServerManager`   | Direct (not via API)     | McpServerManager, McpServer                                                                    |
+| `ViewManager`        | Direct (mocked Electron) | Just ViewManager                                                                               |
+| `WindowManager`      | Direct (mocked Electron) | Just WindowManager                                                                             |
+| `BadgeManager`       | Direct (mocked Electron) | Just BadgeManager                                                                              |
+| `ShortcutController` | Direct (mocked Electron) | Just ShortcutController                                                                        |
 
 ### Why Entry Points Matter
 
 Testing through `CodeHydraApi` means:
 
-- Multiple modules work together (AppState → GitWorktreeProvider → GitClient)
+- Multiple modules work together (ProjectStore → GitWorktreeProvider → GitClient)
 - State flows correctly between modules
 - Events are emitted properly
 - Error handling works across layers
@@ -1067,11 +1067,11 @@ Tests are organized by **entry point**, with subgroups for large entry points.
 
 **CodeHydraApi subgroups** (large API with multiple namespaces):
 
-| File                            | Namespace     | Modules Exercised                               |
-| ------------------------------- | ------------- | ----------------------------------------------- |
-| `project.integration.test.ts`   | IProjectApi   | AppState, ProjectStore                          |
-| `workspace.integration.test.ts` | IWorkspaceApi | AppState, GitWorktreeProvider, KeepFilesService |
-| `ui.integration.test.ts`        | IUIApi        | AppState, ViewManager                           |
+| File                            | Namespace     | Modules Exercised                     |
+| ------------------------------- | ------------- | ------------------------------------- |
+| `project.integration.test.ts`   | IProjectApi   | ProjectStore                          |
+| `workspace.integration.test.ts` | IWorkspaceApi | GitWorktreeProvider, KeepFilesService |
+| `ui.integration.test.ts`        | IUIApi        | ViewManager                           |
 
 ### Renderer Tests
 
@@ -1393,9 +1393,7 @@ Each module migration from unit tests to integration tests requires a **separate
 
 ## Unit Tests to Delete
 
-| File                | Test Count | Coverage Moved To       |
-| ------------------- | ---------- | ----------------------- |
-| `app-state.test.ts` | 25         | Integration tests #1-10 |
+(All unit tests have been migrated to integration tests and deleted.)
 
 ## Questions for User Review
 

@@ -2,7 +2,7 @@
  * AgentModule - Manages agent lifecycle, setup, per-workspace server management,
  * and status tracking.
  *
- * Consolidates nine inline bootstrap modules and AppState agent logic into a
+ * Consolidates nine inline bootstrap modules and agent lifecycle logic into a
  * single extracted module (Phase 7 of intent architecture cleanup):
  * - Config check (app:start / check-config)
  * - Agent binary preflight (app:start / check-deps)
@@ -15,7 +15,7 @@
  * - Agent status/session/restart queries
  *
  * Internal closure state: handleServerStarted, waitForProvider, serverStartedPromises,
- * agentStatusUnsubscribe (from AppState + agentLifecycleModule).
+ * agentStatusUnsubscribe (from agentLifecycleModule).
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -147,7 +147,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
   const { configService, getAgentBinaryManager, reportProgress, logger } = deps;
 
   // =========================================================================
-  // Internal closure state (from AppState)
+  // Internal closure state
   // =========================================================================
 
   /**
@@ -169,7 +169,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
   let selectedAgentTypeValue: AgentType | null = null;
 
   // =========================================================================
-  // Internal functions (from AppState)
+  // Internal functions
   // =========================================================================
 
   /**

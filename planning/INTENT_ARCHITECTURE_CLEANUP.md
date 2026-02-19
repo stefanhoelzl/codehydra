@@ -191,7 +191,7 @@ Largest module by hook count. Needs all other modules extracted first (to valida
 
 | #   | Step                                  | Status  | Notes                                                                               |
 | --- | ------------------------------------- | ------- | ----------------------------------------------------------------------------------- |
-| 9a  | Delete `AppState` class               | pending | All concerns extracted to project/workspace modules, AgentModule, CodeServerModule. |
+| 9a  | Delete `AppState` class               | done    | All concerns extracted to project/workspace modules, AgentModule, CodeServerModule. |
 | 9b  | Dissolve `LifecycleServiceRefs`       | pending | Each module declares specific deps. Remove the bag type.                            |
 | 9c  | Simplify `wireDispatcher()` signature | pending | No longer needs 16+ params. Modules are self-contained.                             |
 

@@ -2,7 +2,7 @@
  * Agent Status Manager - owns status aggregation and workspace lifecycle.
  * Manages OpenCode clients per workspace with direct port assignment.
  *
- * Ports are provided by OpenCodeServerManager via callbacks routed through AppState.
+ * Ports are provided by OpenCodeServerManager via callbacks routed through AgentModule.
  */
 
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
@@ -25,7 +25,7 @@ export type StatusChangedCallback = (
 
 /**
  * Agent Status Manager - aggregates status across all workspaces.
- * Receives port assignments from OpenCodeServerManager via AppState callbacks.
+ * Receives port assignments from OpenCodeServerManager via AgentModule callbacks.
  */
 export class AgentStatusManager implements IDisposable {
   private readonly providers = new Map<WorkspacePath, AgentProvider>();
@@ -47,7 +47,7 @@ export class AgentStatusManager implements IDisposable {
 
   /**
    * Get the SDK factory for creating providers.
-   * Used by AppState when creating OpenCodeProvider instances.
+   * Used by AgentModule when creating OpenCodeProvider instances.
    */
   getSdkFactory(): SdkClientFactory | undefined {
     return this.sdkFactory;
@@ -55,7 +55,7 @@ export class AgentStatusManager implements IDisposable {
 
   /**
    * Get the logger for creating providers.
-   * Used by AppState when creating OpenCodeProvider instances.
+   * Used by AgentModule when creating OpenCodeProvider instances.
    */
   getLogger(): Logger {
     return this.logger;
@@ -63,7 +63,7 @@ export class AgentStatusManager implements IDisposable {
 
   /**
    * Add an externally-created provider for a workspace.
-   * Called by AppState after creating and initializing the provider.
+   * Called by AgentModule after creating and initializing the provider.
    *
    * @param path - Workspace path
    * @param provider - Initialized AgentProvider (OpenCodeProvider or ClaudeCodeProvider)
@@ -96,7 +96,7 @@ export class AgentStatusManager implements IDisposable {
 
   /**
    * Get the provider for a workspace.
-   * Used by AppState to retrieve startup commands.
+   * Used by AgentModule to retrieve startup commands.
    */
   getProvider(path: WorkspacePath): AgentProvider | undefined {
     return this.providers.get(path);
@@ -104,7 +104,7 @@ export class AgentStatusManager implements IDisposable {
 
   /**
    * Remove a workspace from agent tracking.
-   * Called by AppState when OpenCodeServerManager reports server stopped.
+   * Called by AgentModule when OpenCodeServerManager reports server stopped.
    */
   removeWorkspace(path: WorkspacePath): void {
     const provider = this.providers.get(path);

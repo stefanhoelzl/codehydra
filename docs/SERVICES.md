@@ -462,7 +462,7 @@ The application uses dependency injection to abstract build mode detection and p
 2. In `bootstrap()`:
    - Pass `pathProvider` and `fileSystemLayer` to services via constructor DI
 3. In `startServices()` (construction phase):
-   - Construct all remaining services (CodeServerManager, AppState, agent services, etc.)
+   - Construct all remaining services (CodeServerManager, agent services, etc.)
    - No I/O -- constructors/factories only
 4. In `startServices()` (dispatch phase):
    - Wire intent dispatcher, get API, then dispatch `app:start`

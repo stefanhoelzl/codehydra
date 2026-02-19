@@ -599,7 +599,7 @@ function wireDispatcher(
     workspaceName: import("../shared/api/types").WorkspaceName
   ) => string;
 } {
-  // --- Workspace Index (replaces AppState project/workspace Maps for API boundary) ---
+  // --- Workspace Index (Maps for API boundary resolution) ---
   const projectsById = new Map<string, { path: string; name: string }>();
   const workspacesByKey = new Map<string, string>();
 
