@@ -53,7 +53,8 @@ export type LoggerName =
   | "workspace-file" // WorkspaceFileService - .code-workspace file management
   | "config" // ConfigService - application config
   | "telemetry" // TelemetryService - PostHog analytics
-  | "updater"; // AutoUpdater - auto-update service
+  | "updater" // AutoUpdater - auto-update service
+  | "agent"; // AgentServerManager / AgentStatusManager - agent lifecycle
 
 /**
  * Context data for log entries.

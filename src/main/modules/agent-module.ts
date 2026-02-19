@@ -32,7 +32,7 @@ import type { AgentServerManager, AgentType } from "../../agents/types";
 import type { LoggingService } from "../../services/logging";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Unsubscribe } from "../../shared/api/interfaces";
-import { AgentStatusManager, createAgentServerManager, type ServerManagerDeps } from "../../agents";
+import type { AgentStatusManager } from "../../agents";
 import type {
   CheckConfigResult,
   CheckDepsHookContext,
@@ -126,13 +126,13 @@ export interface AgentModuleDeps {
   readonly loggingService: LoggingService;
   readonly dispatcher: Dispatcher;
   readonly killTerminalsCallback: KillTerminalsCallback | undefined;
-  readonly serverManagerDeps: ServerManagerDeps;
-  /** Called when agent services are created during the start hook. */
-  readonly onAgentInitialized: (services: {
-    serverManager: AgentServerManager;
-    agentStatusManager: AgentStatusManager;
-    selectedAgentType: AgentType;
-  }) => void;
+  /** Pre-created agent server managers keyed by type */
+  readonly agentServerManagers: {
+    claude: AgentServerManager;
+    opencode: AgentServerManager;
+  };
+  /** AgentStatusManager instance (created upfront in bootstrap) */
+  readonly agentStatusManager: AgentStatusManager;
 }
 
 // =============================================================================
@@ -366,40 +366,20 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         // -------------------------------------------------------------------
         start: {
           handler: async (): Promise<StartHookResult> => {
-            // Load config to determine agent type
+            // Load config to determine agent type, then select the pre-created server manager
             const config = await configService.load();
             const agentType: AgentType = config.agent ?? "opencode";
 
-            // Create AgentStatusManager with agent-specific logger
-            const agentLoggerName = agentType === "claude" ? "claude" : "opencode";
-            const statusManager = new AgentStatusManager(
-              deps.loggingService.createLogger(agentLoggerName)
-            );
-
-            // Create AgentServerManager via factory
-            const smDeps: ServerManagerDeps = {
-              ...deps.serverManagerDeps,
-              logger: deps.loggingService.createLogger(agentLoggerName),
-            };
-            const sm = createAgentServerManager(agentType, smDeps);
-
-            // Store in closure state
-            serverManagerInstance = sm;
-            agentStatusManagerInstance = statusManager;
+            // Select the pre-created server manager for the configured agent type
+            serverManagerInstance = deps.agentServerManagers[agentType];
+            agentStatusManagerInstance = deps.agentStatusManager;
             selectedAgentTypeValue = agentType;
-
-            // Publish to index.ts so lifecycleRefs lazy getters resolve
-            deps.onAgentInitialized({
-              serverManager: sm,
-              agentStatusManager: statusManager,
-              selectedAgentType: agentType,
-            });
 
             // Wire server callbacks (onServerStarted / onServerStopped)
             wireServerCallbacks();
 
             // Wire agent status changes through the intent dispatcher
-            agentStatusUnsubscribeFn = statusManager.onStatusChanged(
+            agentStatusUnsubscribeFn = deps.agentStatusManager.onStatusChanged(
               (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => {
                 void deps.dispatcher.dispatch({
                   type: INTENT_UPDATE_AGENT_STATUS,
@@ -453,9 +433,9 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
                 serverStoppedCleanupFn = null;
               }
 
-              // Dispose ServerManager (stops all servers)
-              if (serverManagerInstance) {
-                await serverManagerInstance.dispose();
+              // Dispose both server managers (inactive one is a no-op, no resources allocated)
+              for (const sm of Object.values(deps.agentServerManagers)) {
+                await sm.dispose();
               }
 
               // Cleanup agent status subscription
@@ -465,9 +445,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
               }
 
               // Dispose AgentStatusManager
-              if (agentStatusManagerInstance) {
-                agentStatusManagerInstance.dispose();
-              }
+              deps.agentStatusManager.dispose();
             } catch (error) {
               logger.error(
                 "Agent lifecycle shutdown failed (non-fatal)",
