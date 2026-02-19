@@ -7,7 +7,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { initializeBootstrap } from "./bootstrap";
 import type { BootstrapDeps } from "./bootstrap";
-import type { CoreModuleDeps } from "./modules/core";
 import { createMockLogger } from "../services/logging";
 import type { IKeepFilesService } from "../services/keepfiles";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
@@ -38,17 +37,6 @@ function createMockViewManager(): IViewManager {
   } as unknown as IViewManager;
 }
 
-function createMockCoreDeps(): CoreModuleDeps {
-  return {
-    resolveWorkspace: vi.fn().mockReturnValue("/mock/workspace"),
-    codeServerPort: 0,
-    wrapperPath: "/mock/bin/claude",
-    dialog: {
-      showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
-    },
-  };
-}
-
 function createMockGlobalWorktreeProvider(): import("../services/git/git-worktree-provider").GitWorktreeProvider {
   return {
     setMetadata: vi.fn().mockResolvedValue(undefined),
@@ -57,12 +45,6 @@ function createMockGlobalWorktreeProvider(): import("../services/git/git-worktre
     unregisterProject: vi.fn(),
     ensureWorkspaceRegistered: vi.fn(),
   } as unknown as import("../services/git/git-worktree-provider").GitWorktreeProvider;
-}
-
-function createMockDispatcher(): ReturnType<BootstrapDeps["dispatcherFn"]> {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
-  return { hookRegistry, dispatcher };
 }
 
 function createMockKeepFilesService(): IKeepFilesService {
@@ -77,51 +59,68 @@ function createMockKeepFilesService(): IKeepFilesService {
 }
 
 function createMockDeps(): BootstrapDeps {
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
   return {
     logger: createMockLogger(),
     ipcLayer: createBehavioralIpcLayer(),
     app: { quit: vi.fn() },
-    coreDepsFn: () => createMockCoreDeps(),
-    viewManagerFn: () => createMockViewManager(),
-    gitClientFn: () =>
-      ({
-        clone: vi.fn().mockResolvedValue(undefined),
-      }) as unknown as import("../services").IGitClient,
-    pathProviderFn: () =>
-      ({
-        projectsDir: "/test/projects",
-        remotesDir: "/test/remotes",
-      }) as unknown as import("../services").PathProvider,
-    projectStoreFn: () =>
-      ({
-        findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
-        saveProject: vi.fn().mockResolvedValue(undefined),
-        getProjectConfig: vi.fn().mockResolvedValue(undefined),
-        deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
-      }) as unknown as import("../services").ProjectStore,
-    globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
-    keepFilesServiceFn: () => createMockKeepFilesService(),
-    workspaceFileServiceFn: () =>
-      ({
-        deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
-      }) as unknown as import("../services").IWorkspaceFileService,
-    emitDeletionProgressFn: () => vi.fn(),
-    killTerminalsCallbackFn: () => undefined,
-    workspaceLockHandlerFn: () => undefined,
-    dispatcherFn: createMockDispatcher,
-    setTitleFn: () => vi.fn(),
-    titleVersionFn: () => "test",
-    badgeManagerFn: () =>
-      ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
-    serverManagerDeps: {
-      processRunner: {} as never,
-      portManager: {} as never,
-      httpClient: {} as never,
-      pathProvider: {} as never,
-      fileSystem: {} as never,
-      logger: createMockLogger(),
+    viewManager: createMockViewManager(),
+    gitClient: {
+      clone: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../services").IGitClient,
+    pathProvider: {
+      projectsDir: "/test/projects",
+      remotesDir: "/test/remotes",
+    } as unknown as import("../services").PathProvider,
+    projectStore: {
+      findByRemoteUrl: vi.fn().mockResolvedValue(undefined),
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      getProjectConfig: vi.fn().mockResolvedValue(undefined),
+      deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../services").ProjectStore,
+    globalWorktreeProvider: createMockGlobalWorktreeProvider(),
+    keepFilesService: createMockKeepFilesService(),
+    workspaceFileService: {
+      deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../services").IWorkspaceFileService,
+    emitDeletionProgress: vi.fn(),
+    killTerminalsCallback: undefined,
+    workspaceLockHandler: undefined,
+    hookRegistry,
+    dispatcher,
+    setTitle: vi.fn(),
+    titleVersion: "test",
+    badgeManager: {
+      updateBadge: vi.fn(),
+    } as unknown as import("./managers/badge-manager").BadgeManager,
+    agentServerManagers: {
+      claude: {
+        dispose: vi.fn().mockResolvedValue(undefined),
+        onServerStarted: vi.fn().mockReturnValue(() => {}),
+        onServerStopped: vi.fn().mockReturnValue(() => {}),
+        setMarkActiveHandler: vi.fn(),
+      } as never,
+      opencode: {
+        dispose: vi.fn().mockResolvedValue(undefined),
+        onServerStarted: vi.fn().mockReturnValue(() => {}),
+        onServerStopped: vi.fn().mockReturnValue(() => {}),
+        setMarkActiveHandler: vi.fn(),
+      } as never,
     },
-    onAgentInitialized: vi.fn(),
+    agentStatusManager: {
+      getStatus: vi.fn(),
+      onStatusChanged: vi.fn().mockReturnValue(() => {}),
+      dispose: vi.fn(),
+    } as never,
+    mcpServerManager: {
+      start: vi.fn().mockResolvedValue(9999),
+      stop: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn().mockResolvedValue(undefined),
+      registerWorkspace: vi.fn(),
+      unregisterWorkspace: vi.fn(),
+      getPort: vi.fn().mockReturnValue(null),
+    } as never,
     pluginServer: null,
     getApiFn: () => {
       throw new Error("not initialized");
@@ -140,7 +139,6 @@ function createMockDeps(): BootstrapDeps {
       dispose: vi.fn(),
       onUpdateAvailable: vi.fn().mockReturnValue(() => {}),
     } as never,
-    agentStatusManagerFn: () => ({ getStatus: vi.fn() }) as never,
     codeServerManager: {
       ensureRunning: vi.fn().mockResolvedValue(undefined),
       port: vi.fn().mockReturnValue(9090),
@@ -150,6 +148,10 @@ function createMockDeps(): BootstrapDeps {
     windowLayer: null,
     sessionLayer: null,
     getUIWebContentsFn: () => null,
+    wrapperPath: "/mock/bin/claude",
+    dialog: {
+      showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
+    },
     setupDeps: {
       configService: {
         load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),

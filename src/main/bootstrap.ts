@@ -5,9 +5,8 @@
  * pattern from planning/API_REGISTRY_REFACTOR.md.
  *
  * The bootstrap flow:
- * initializeBootstrap() - Creates registry, lifecycle handlers, all operations + modules.
- * Agent services (ServerManager, AgentStatusManager) are created lazily during
- * the app:start "start" hook by AgentModule.
+ * initializeBootstrap() - Creates registry, lifecycle handlers, all operations + modules,
+ * wires a single consolidated set of hook modules, and registers API bridge handlers.
  */
 
 import { ApiRegistry } from "./api/registry";
@@ -140,8 +139,9 @@ import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createCodeServerModule } from "./modules/code-server-module";
-import { createViewModule, type MountSignal } from "./modules/view-module";
+import { createViewModule } from "./modules/view-module";
 import { createAgentModule } from "./modules/agent-module";
+import { createMcpModule } from "./modules/mcp-module";
 
 // =============================================================================
 // Types
@@ -157,38 +157,38 @@ export interface BootstrapDeps {
   readonly ipcLayer: IpcLayer;
   /** App interface for quit() */
   readonly app: { quit(): void };
-  /** Core module dependencies (provided after setup completes) */
-  readonly coreDepsFn: () => CoreModuleDeps;
-  /** View manager for workspace view lifecycle (provided after setup completes) */
-  readonly viewManagerFn: () => import("./managers/view-manager.interface").IViewManager;
-  /** Git client for clone operations (provided after setup completes) */
-  readonly gitClientFn: () => import("../services").IGitClient;
-  /** Path provider for directory paths (provided after setup completes) */
-  readonly pathProviderFn: () => import("../services").PathProvider;
-  /** Project store for project persistence (provided after setup completes) */
-  readonly projectStoreFn: () => import("../services").ProjectStore;
-  /** Global worktree provider for metadata operations (provided after setup completes) */
-  readonly globalWorktreeProviderFn: () => GitWorktreeProvider;
-  /** Factory for KeepFilesService (provided after setup completes) */
-  readonly keepFilesServiceFn: () => IKeepFilesService;
-  /** Factory for IWorkspaceFileService (provided after setup completes) */
-  readonly workspaceFileServiceFn: () => IWorkspaceFileService;
+  /** View manager for workspace view lifecycle */
+  readonly viewManager: import("./managers/view-manager.interface").IViewManager;
+  /** Git client for clone operations */
+  readonly gitClient: import("../services").IGitClient;
+  /** Path provider for directory paths */
+  readonly pathProvider: import("../services").PathProvider;
+  /** Project store for project persistence */
+  readonly projectStore: import("../services").ProjectStore;
+  /** Global worktree provider for metadata operations */
+  readonly globalWorktreeProvider: GitWorktreeProvider;
+  /** KeepFilesService for copying .keepfiles to new workspaces */
+  readonly keepFilesService: IKeepFilesService;
+  /** WorkspaceFileService for .code-workspace file management */
+  readonly workspaceFileService: IWorkspaceFileService;
   /** Deletion progress callback for emitting DeletionProgress to the renderer */
-  readonly emitDeletionProgressFn: () => DeletionProgressCallback;
+  readonly emitDeletionProgress: DeletionProgressCallback;
   /** Kill terminals callback (optional, only when PluginServer is available) */
-  readonly killTerminalsCallbackFn: () =>
+  readonly killTerminalsCallback:
     | import("./modules/agent-module").KillTerminalsCallback
     | undefined;
   /** Workspace lock handler for Windows file handle detection (optional) */
-  readonly workspaceLockHandlerFn: () => WorkspaceLockHandler | undefined;
-  /** Factory that returns the early-created dispatcher and hook registry */
-  readonly dispatcherFn: () => { hookRegistry: HookRegistry; dispatcher: Dispatcher };
-  /** Window title setter callback (provided after setup completes) */
-  readonly setTitleFn: () => (title: string) => void;
+  readonly workspaceLockHandler: WorkspaceLockHandler | undefined;
+  /** HookRegistry for wiring modules */
+  readonly hookRegistry: HookRegistry;
+  /** Dispatcher for intent dispatch */
+  readonly dispatcher: Dispatcher;
+  /** Window title setter callback */
+  readonly setTitle: (title: string) => void;
   /** Version suffix for window title (branch in dev, version in packaged) */
-  readonly titleVersionFn: () => string | undefined;
-  /** BadgeManager factory (created in index.ts, passed down) */
-  readonly badgeManagerFn: () => import("./managers/badge-manager").BadgeManager;
+  readonly titleVersion: string | undefined;
+  /** BadgeManager instance */
+  readonly badgeManager: import("./managers/badge-manager").BadgeManager;
   /** Lazy getter for ICodeHydraApi (set after initializeBootstrap returns) */
   readonly getApiFn: () => ICodeHydraApi;
   /** PluginServer instance (may be null if not needed) */
@@ -203,8 +203,15 @@ export interface BootstrapDeps {
   readonly buildInfo: import("../services").BuildInfo;
   /** AutoUpdater instance */
   readonly autoUpdater: import("../services/auto-updater").AutoUpdater;
-  /** Lazy getter for AgentStatusManager (set by AgentModule start hook) */
-  readonly agentStatusManagerFn: () => import("../agents").AgentStatusManager;
+  /** AgentStatusManager instance (created upfront in bootstrap) */
+  readonly agentStatusManager: import("../agents").AgentStatusManager;
+  /** Pre-created agent server managers keyed by type */
+  readonly agentServerManagers: {
+    claude: import("../agents").AgentServerManager;
+    opencode: import("../agents").AgentServerManager;
+  };
+  /** McpServerManager instance (created with lazy API factory) */
+  readonly mcpServerManager: import("../services/mcp-server/mcp-server-manager").McpServerManager;
   /** Runtime CodeServerManager instance */
   readonly codeServerManager: import("../services").CodeServerManager;
   /** FileSystemLayer for directory creation */
@@ -217,14 +224,10 @@ export interface BootstrapDeps {
   readonly sessionLayer: import("../services/shell/session").SessionLayer | null;
   /** Function to get UI webContents for setup IPC events */
   readonly getUIWebContentsFn: () => import("electron").WebContents | null;
-  /** ServerManagerDeps for AgentModule to create AgentServerManager in start hook */
-  readonly serverManagerDeps: import("../agents").ServerManagerDeps;
-  /** Callback for AgentModule to publish agent services after creation in start hook */
-  readonly onAgentInitialized: (services: {
-    serverManager: import("../agents").AgentServerManager;
-    agentStatusManager: import("../agents").AgentStatusManager;
-    selectedAgentType: import("../agents").AgentType;
-  }) => void;
+  /** Wrapper path for Claude Code wrapper script */
+  readonly wrapperPath: string;
+  /** Electron dialog for folder selection (optional) */
+  readonly dialog?: import("./modules/core/index").MinimalDialog;
   /** Setup dependencies for app:setup hook modules (available immediately) */
   readonly setupDeps: {
     /** ConfigService for config check/save modules */
@@ -259,9 +262,9 @@ export interface BootstrapResult {
 /**
  * Initialize the bootstrap with all modules and operations.
  *
- * Creates registry, registers lifecycle handlers, wires all operations (including
- * CoreModule and intent dispatcher). Agent services (ServerManager, AgentStatusManager)
- * are created lazily during the app:start "start" hook by AgentModule.
+ * Creates registry, registers lifecycle handlers, wires all operations and hook
+ * modules in a single consolidated wireModules call, then registers API bridge
+ * handlers in the registry.
  *
  * @param deps Bootstrap dependencies
  * @returns Bootstrap result with registry and interface getter
@@ -278,9 +281,9 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // 2. Track modules for disposal (reverse order)
   const modules: IApiModule[] = [];
 
-  // 3. Get dispatcher early for operation registration
+  // 3. Get dispatcher for operation registration
   // The dispatcher is created in index.ts bootstrap() before initializeBootstrap() is called
-  const { hookRegistry, dispatcher } = deps.dispatcherFn();
+  const { hookRegistry, dispatcher } = deps;
 
   // 4. Register app:shutdown early so it's available during setup
   // (e.g., quit from setup screen dispatches app:shutdown)
@@ -315,8 +318,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  wireModules([idempotencyModule, quitModule], hookRegistry, dispatcher);
-
   // 7. Register lifecycle.quit IPC handler - dispatches app:shutdown
   registry.register(
     "lifecycle.quit",
@@ -330,7 +331,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     { ipc: ApiIpcChannels.LIFECYCLE_QUIT }
   );
 
-  // 8. Wire IPC event bridge early so it receives domain events during setup
+  // 8. IPC event bridge: receives domain events during setup
   // (e.g., setup:error fires before the start hook completes).
   // Lifecycle deps (getApi, pluginServer) are late-bound via closures/getters
   // since the bridge's start/stop hooks only run after services are created.
@@ -365,8 +366,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  wireModules([ipcEventBridge, retryModule], hookRegistry, dispatcher);
-
   // 11. Register AppStartOperation and SetupOperation immediately (before UI loads)
   // app:start is dispatched first in index.ts, so both must be registered early
   // Hook modules will be wired when setup dependencies are available
@@ -374,16 +373,14 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
   dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
 
-  // Wire ViewModule early (set-mode, app-start UI, setup UI, view lifecycle, mount)
-  // Alt+X can fire before wireDispatcher completes, so set-mode must be wired here.
+  // ViewModule: set-mode, show-ui, mount
   const { module: viewModule, mountSignal } = createViewModule({
-    viewManager: deps.viewManagerFn(),
+    viewManager: deps.viewManager,
     logger: deps.logger,
     viewLayer: deps.viewLayer,
     windowLayer: deps.windowLayer,
     sessionLayer: deps.sessionLayer,
   });
-  wireModules([viewModule], hookRegistry, dispatcher);
 
   // 12. Wire setup hook modules (these run during app:setup)
   const { configService, codeServerManager, getAgentBinaryManager, extensionManager } =
@@ -437,12 +434,12 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       codeServerManager: deps.codeServerManager,
       fileSystemLayer: deps.fileSystemLayer,
       onPortChanged: (port: number) => {
-        deps.viewManagerFn().updateCodeServerPort(port);
+        deps.viewManager.updateCodeServerPort(port);
       },
     }),
     getWorkspaceDeps: () => ({
-      workspaceFileService: deps.workspaceFileServiceFn(),
-      wrapperPath: deps.coreDepsFn().wrapperPath,
+      workspaceFileService: deps.workspaceFileService,
+      wrapperPath: deps.wrapperPath,
     }),
   });
 
@@ -457,30 +454,27 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     logger: setupLogger,
     loggingService: deps.loggingService,
     dispatcher,
-    killTerminalsCallback: deps.killTerminalsCallbackFn(),
-    serverManagerDeps: deps.serverManagerDeps,
-    onAgentInitialized: deps.onAgentInitialized,
+    killTerminalsCallback: deps.killTerminalsCallback,
+    agentServerManagers: deps.agentServerManagers,
+    agentStatusManager: deps.agentStatusManager,
   });
 
-  // Wire all startup modules (check hooks on app-start, work hooks on setup)
-  wireModules([codeServerModule, agentModule], hookRegistry, dispatcher);
-
-  // 13. Create hook modules (previously created inside wireDispatcher)
-  const globalProvider = deps.globalWorktreeProviderFn();
-  const pathProvider = deps.pathProviderFn();
-  const projectStore = deps.projectStoreFn();
+  // 13. Create hook modules
+  const globalProvider = deps.globalWorktreeProvider;
+  const pathProvider = deps.pathProvider;
+  const projectStore = deps.projectStore;
   const lifecycleLogger = deps.loggingService.createLogger("lifecycle");
 
   const metadataModule = createMetadataModule({ globalProvider });
   const keepFilesModule = createKeepFilesModule({
-    keepFilesService: deps.keepFilesServiceFn(),
+    keepFilesService: deps.keepFilesService,
     logger: deps.logger,
   });
   const deleteWindowsLockModule = createWindowsFileLockModule({
-    workspaceLockHandler: deps.workspaceLockHandlerFn(),
+    workspaceLockHandler: deps.workspaceLockHandler,
     logger: deps.logger,
   });
-  const windowTitleModule = createWindowTitleModule(deps.setTitleFn(), deps.titleVersionFn());
+  const windowTitleModule = createWindowTitleModule(deps.setTitle, deps.titleVersion);
   const telemetryLifecycleModule = createTelemetryModule({
     telemetryService: deps.telemetryService,
     platformInfo: deps.platformInfo,
@@ -496,7 +490,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   const localProjectModule = createLocalProjectModule({ projectStore, globalProvider });
   const remoteProjectModule = createRemoteProjectModule({
     projectStore,
-    gitClient: deps.gitClientFn(),
+    gitClient: deps.gitClient,
     pathProvider,
     logger: lifecycleLogger,
   });
@@ -505,108 +499,18 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     pathProvider,
     deps.logger
   );
-  const badgeModule = createBadgeModule(deps.badgeManagerFn(), lifecycleLogger);
+  const badgeModule = createBadgeModule(deps.badgeManager, lifecycleLogger);
+  const mcpModule = createMcpModule({
+    mcpServerManager: deps.mcpServerManager,
+    logger: lifecycleLogger,
+  });
   const agentStatusScorer = (workspacePath: WorkspacePath): number => {
-    const status = deps.agentStatusManagerFn().getStatus(workspacePath);
+    const status = deps.agentStatusManager.getStatus(workspacePath);
     if (status === undefined || status.status === "none") return 2;
     if (status.status === "busy") return 1;
     return 0;
   };
 
-  const hookModules: IntentModule[] = [
-    badgeModule,
-    metadataModule,
-    keepFilesModule,
-    deleteWindowsLockModule,
-    remoteProjectModule,
-    localProjectModule,
-    gitWorktreeWorkspaceModule,
-    windowTitleModule,
-    telemetryLifecycleModule,
-    autoUpdaterLifecycleModule,
-  ];
-
-  // 14. Wire remaining operations and create CoreModule
-  const { workspaceResolver } = wireDispatcher(
-    registry,
-    hookRegistry,
-    dispatcher,
-    globalProvider,
-    deps.logger,
-    deps.emitDeletionProgressFn(),
-    agentStatusScorer,
-    mountSignal,
-    hookModules
-  );
-
-  const baseDeps = deps.coreDepsFn();
-  const coreDeps: CoreModuleDeps = {
-    ...baseDeps,
-    resolveWorkspace: workspaceResolver,
-  };
-  const coreModule = new CoreModule(registry, coreDeps);
-  modules.push(coreModule);
-
-  /**
-   * Get the typed API interface.
-   * Throws if not all methods are registered.
-   */
-  function getInterface(): ICodeHydraApi {
-    return registry.getInterface();
-  }
-
-  /**
-   * Dispose all modules and the registry.
-   * Modules are disposed in reverse order of creation.
-   */
-  async function dispose(): Promise<void> {
-    // Dispose modules in reverse order
-    for (let i = modules.length - 1; i >= 0; i--) {
-      const module = modules[i];
-      if (module) {
-        module.dispose();
-      }
-    }
-    modules.length = 0;
-
-    // Dispose registry
-    await registry.dispose();
-  }
-
-  return {
-    registry,
-    getInterface,
-    dispose,
-  };
-}
-
-// =============================================================================
-// Intent Dispatcher Wiring
-// =============================================================================
-
-/**
- * Wire all operations into the shared intent dispatcher and register
- * bridge handlers in the API registry.
- *
- * This is the single dispatcher for all intent-based operations
- * (metadata from Phase 1, plus Phase 2 operations).
- */
-function wireDispatcher(
-  registry: IApiRegistry,
-  hookRegistry: HookRegistry,
-  dispatcher: Dispatcher,
-  globalProvider: GitWorktreeProvider,
-  logger: Logger,
-  emitDeletionProgress: DeletionProgressCallback,
-  agentStatusScorer: (workspacePath: WorkspacePath) => number,
-  mountSignal: MountSignal,
-  hookModules: IntentModule[]
-): {
-  workspaceResolver: (
-    projectId: ProjectId,
-    workspaceName: import("../shared/api/types").WorkspaceName
-  ) => string;
-} {
   // --- Workspace Index (Maps for API boundary resolution) ---
   const projectsById = new Map<string, { path: string; name: string }>();
   const workspacesByKey = new Map<string, string>();
@@ -642,7 +546,7 @@ function wireDispatcher(
     },
   };
 
-  // Register operations
+  // Register remaining operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
@@ -651,7 +555,7 @@ function wireDispatcher(
   // Note: SetModeOperation is registered early in initializeBootstrap()
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  const deleteOp = new DeleteWorkspaceOperation(emitDeletionProgress);
+  const deleteOp = new DeleteWorkspaceOperation(deps.emitDeletionProgress);
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
@@ -710,15 +614,39 @@ function wireDispatcher(
     },
   };
 
-  // Wire hook modules: index first (receives events before others), then passed modules,
-  // then close index and loaded signal
+  // 14. Wire all hook modules in a single consolidated call
   wireModules(
-    [indexModule, ...hookModules, projectCloseIndexModule, loadedSignalModule],
+    [
+      idempotencyModule,
+      quitModule,
+      ipcEventBridge,
+      retryModule,
+      viewModule,
+      codeServerModule,
+      agentModule,
+      indexModule,
+      badgeModule,
+      metadataModule,
+      keepFilesModule,
+      deleteWindowsLockModule,
+      remoteProjectModule,
+      localProjectModule,
+      gitWorktreeWorkspaceModule,
+      windowTitleModule,
+      telemetryLifecycleModule,
+      autoUpdaterLifecycleModule,
+      projectCloseIndexModule,
+      loadedSignalModule,
+      mcpModule,
+    ],
     hookRegistry,
     dispatcher
   );
 
+  // ---------------------------------------------------------------------------
   // Register dispatcher bridge handlers in the API registry
+  // ---------------------------------------------------------------------------
+
   registry.register(
     "workspaces.create",
     async (payload: WorkspaceCreatePayload) => {
@@ -1052,17 +980,57 @@ function wireDispatcher(
     { ipc: ApiIpcChannels.LIFECYCLE_READY }
   );
 
-  // Return workspace resolver function for CoreModule
-  return {
-    workspaceResolver: (
-      projectId: ProjectId,
-      workspaceName: import("../shared/api/types").WorkspaceName
-    ): string => {
-      const path = workspacesByKey.get(wsKey(projectId, workspaceName));
-      if (!path) {
-        throw new Error(`Workspace not found: ${workspaceName} in project ${projectId}`);
+  // Workspace resolver function for CoreModule
+  const workspaceResolver = (
+    projectId: ProjectId,
+    workspaceName: import("../shared/api/types").WorkspaceName
+  ): string => {
+    const path = workspacesByKey.get(wsKey(projectId, workspaceName));
+    if (!path) {
+      throw new Error(`Workspace not found: ${workspaceName} in project ${projectId}`);
+    }
+    return path;
+  };
+
+  const coreDeps: CoreModuleDeps = {
+    resolveWorkspace: workspaceResolver,
+    codeServerPort: 0, // Updated by CodeServerLifecycleModule
+    wrapperPath: deps.wrapperPath,
+    ...(deps.dialog ? { dialog: deps.dialog } : {}),
+    ...(deps.pluginServer ? { pluginServer: deps.pluginServer } : {}),
+  };
+  const coreModule = new CoreModule(registry, coreDeps);
+  modules.push(coreModule);
+
+  /**
+   * Get the typed API interface.
+   * Throws if not all methods are registered.
+   */
+  function getInterface(): ICodeHydraApi {
+    return registry.getInterface();
+  }
+
+  /**
+   * Dispose all modules and the registry.
+   * Modules are disposed in reverse order of creation.
+   */
+  async function dispose(): Promise<void> {
+    // Dispose modules in reverse order
+    for (let i = modules.length - 1; i >= 0; i--) {
+      const module = modules[i];
+      if (module) {
+        module.dispose();
       }
-      return path;
-    },
+    }
+    modules.length = 0;
+
+    // Dispose registry
+    await registry.dispose();
+  }
+
+  return {
+    registry,
+    getInterface,
+    dispose,
   };
 }

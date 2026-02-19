@@ -32,7 +32,7 @@ export interface McpServerManagerConfig {
  */
 export class McpServerManager implements IDisposable {
   private readonly portManager: PortManager;
-  private readonly api: ICoreApi;
+  private readonly apiFactory: () => ICoreApi;
   private readonly logger: Logger;
   private readonly serverFactory: McpServerFactory;
 
@@ -45,13 +45,13 @@ export class McpServerManager implements IDisposable {
   constructor(
     portManager: PortManager,
     pathProvider: PathProvider,
-    api: ICoreApi,
+    apiFactory: () => ICoreApi,
     logger?: Logger,
     config?: McpServerManagerConfig
   ) {
     void pathProvider; // Kept in constructor signature for backward compatibility
     this.portManager = portManager;
-    this.api = api;
+    this.apiFactory = apiFactory;
     this.logger = logger ?? SILENT_LOGGER;
     this.serverFactory = config?.serverFactory ?? createDefaultMcpServer;
   }
@@ -76,7 +76,7 @@ export class McpServerManager implements IDisposable {
       this.logger.info("Allocated port", { port: this.port });
 
       // Create and start the MCP server
-      this.mcpServer = new McpServer(this.api, this.serverFactory, this.logger);
+      this.mcpServer = new McpServer(this.apiFactory(), this.serverFactory, this.logger);
 
       // Replay any registrations that arrived before the server started
       for (const identity of this.pendingRegistrations.values()) {
