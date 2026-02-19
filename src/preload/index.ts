@@ -53,8 +53,7 @@ contextBridge.exposeInMainWorld("api", {
         keepBranch?: boolean;
         skipSwitch?: boolean;
         force?: boolean;
-        unblock?: "kill" | "close" | "ignore";
-        isRetry?: boolean;
+        workspacePath?: string;
       }
     ): Promise<{ started: boolean }> =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_REMOVE, {

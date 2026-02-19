@@ -36,7 +36,11 @@ import type {
   OpenWorkspaceIntent,
 } from "../operations/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
-import type { DeleteWorkspaceIntent, ShutdownHookResult } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  DeletePipelineHookInput,
+  ShutdownHookResult,
+} from "../operations/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
 import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
 import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
@@ -206,9 +210,13 @@ class MinimalShutdownOperation implements Operation<DeleteWorkspaceIntent, Shutd
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<ShutdownHookResult> {
-    const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", {
+    const { payload } = ctx.intent;
+    const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-    });
+      projectPath: payload.projectPath ?? "",
+      workspacePath: payload.workspacePath ?? "",
+    };
+    const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
   }

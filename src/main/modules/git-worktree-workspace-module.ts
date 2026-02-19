@@ -27,7 +27,8 @@ import type {
 } from "../operations/open-workspace";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
-import type { DeleteHookResult } from "../operations/delete-workspace";
+import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
+import type { ResolveWorkspaceHookInput as DeleteResolveWorkspaceInput } from "../operations/delete-workspace";
 import type { DiscoverHookResult, DiscoverHookInput } from "../operations/open-project";
 import type { CloseHookInput } from "../operations/close-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
@@ -287,22 +288,22 @@ export function createGitWorktreeWorkspaceModule(
       [DELETE_WORKSPACE_OPERATION_ID]: {
         "resolve-workspace": {
           handler: async (ctx: HookContext): Promise<ResolveWorkspaceResult> => {
-            const intent = ctx.intent as DeleteWorkspaceIntent;
-            const { payload } = intent;
-            const workspacePath = resolveWorkspacePath(payload.projectPath, payload.workspaceName);
+            const { projectPath } = ctx as DeleteResolveWorkspaceInput;
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+            const workspacePath = resolveWorkspacePath(projectPath, payload.workspaceName);
             return workspacePath ? { workspacePath } : {};
           },
         },
         delete: {
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
-            const intent = ctx.intent as DeleteWorkspaceIntent;
-            const { payload } = intent;
+            const { projectPath, workspacePath } = ctx as DeletePipelineHookInput;
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             if (payload.removeWorktree) {
               try {
                 await globalProvider.removeWorkspace(
-                  new Path(payload.projectPath),
-                  new Path(payload.workspacePath),
+                  new Path(projectPath),
+                  new Path(workspacePath),
                   !payload.keepBranch
                 );
               } catch (error) {
@@ -310,14 +311,14 @@ export function createGitWorktreeWorkspaceModule(
                   logger.warn("WorktreeModule: error in force mode (ignored)", {
                     error: getErrorMessage(error),
                   });
-                  unregisterWorkspaceFromState(payload.projectPath, payload.workspacePath);
+                  unregisterWorkspaceFromState(projectPath, workspacePath);
                   return { error: getErrorMessage(error) };
                 }
                 throw error;
               }
             }
 
-            unregisterWorkspaceFromState(payload.projectPath, payload.workspacePath);
+            unregisterWorkspaceFromState(projectPath, workspacePath);
             return {};
           },
         },

@@ -42,8 +42,8 @@ import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-wo
 export interface DeleteWorkspacePayload {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
-  readonly projectPath: string;
+  readonly workspacePath?: string;
+  readonly projectPath?: string;
   readonly keepBranch: boolean;
   readonly force: boolean;
   /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
@@ -399,8 +399,8 @@ export class DeleteWorkspaceOperation implements Operation<
     };
 
     if (payload.force) {
-      let resolvedProjectPath = payload.projectPath;
-      let resolvedWorkspacePath = payload.workspacePath;
+      let resolvedProjectPath = payload.projectPath ?? "";
+      let resolvedWorkspacePath = payload.workspacePath ?? "";
       try {
         const result = await this.runPipeline(ctx);
         resolvedProjectPath = result.resolvedProjectPath;
@@ -432,6 +432,9 @@ export class DeleteWorkspaceOperation implements Operation<
 
     // --- Resolve Workspace ---
     const resolvedProjectPath = resolveProject.projectPath ?? payload.projectPath;
+    if (!resolvedProjectPath) {
+      throw new Error("resolve-project hook did not provide projectPath");
+    }
     const resolveWsCtx: ResolveWorkspaceHookInput = {
       intent: ctx.intent,
       projectPath: resolvedProjectPath,
@@ -441,6 +444,9 @@ export class DeleteWorkspaceOperation implements Operation<
     const resolveWorkspace = mergeResolveWorkspace(resolveWorkspaceResults, resolveWorkspaceErrors);
 
     const resolvedWorkspacePath = resolveWorkspace.workspacePath ?? payload.workspacePath;
+    if (!resolvedWorkspacePath) {
+      throw new Error("resolve-workspace hook did not provide workspacePath");
+    }
 
     // Build enriched context for downstream hooks
     const pipelineCtx: DeletePipelineHookInput = {

@@ -51,7 +51,11 @@ import type {
   SetupHookResult,
   OpenWorkspaceIntent,
 } from "../operations/open-workspace";
-import type { DeleteWorkspaceIntent, ShutdownHookResult } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  ShutdownHookResult,
+  DeletePipelineHookInput,
+} from "../operations/delete-workspace";
 import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
 import type {
   GetAgentSessionHookInput,
@@ -613,6 +617,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const lifecycle = deps.getLifecycleDeps();
             const serverName = agentServerNameFn(lifecycle.selectedAgentType);
@@ -621,10 +626,10 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
               // Kill terminals (best-effort even in normal mode)
               if (lifecycle.killTerminalsCallback) {
                 try {
-                  await lifecycle.killTerminalsCallback(payload.workspacePath);
+                  await lifecycle.killTerminalsCallback(workspacePath);
                 } catch (error) {
                   logger.warn("Kill terminals failed", {
-                    workspacePath: payload.workspacePath,
+                    workspacePath,
                     error: getErrorMessage(error),
                   });
                 }
@@ -632,7 +637,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
 
               // Stop server
               let serverError: string | undefined;
-              const stopResult = await lifecycle.serverManager.stopServer(payload.workspacePath);
+              const stopResult = await lifecycle.serverManager.stopServer(workspacePath);
               if (!stopResult.success) {
                 serverError = stopResult.error ?? "Failed to stop server";
                 if (!payload.force) {
@@ -641,7 +646,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
               }
 
               // Clear TUI tracking
-              lifecycle.agentStatusManager.clearTuiTracking(payload.workspacePath as WorkspacePath);
+              lifecycle.agentStatusManager.clearTuiTracking(workspacePath as WorkspacePath);
 
               return serverError ? { serverName, error: serverError } : { serverName };
             } catch (error) {

@@ -10,11 +10,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
-import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   type DeleteWorkspaceIntent,
+  type DeletePipelineHookInput,
   type ReleaseHookResult,
   type DetectHookResult,
   type FlushHookResult,
@@ -66,7 +67,12 @@ class ReleaseOperation implements Operation<Intent, ReleaseHookResult> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<ReleaseHookResult> {
-    const hookCtx: HookContext = { intent: ctx.intent };
+    const { payload } = ctx.intent as DeleteWorkspaceIntent;
+    const hookCtx: DeletePipelineHookInput = {
+      intent: ctx.intent,
+      projectPath: payload.projectPath ?? "",
+      workspacePath: payload.workspacePath ?? "",
+    };
     const { results, errors } = await ctx.hooks.collect<ReleaseHookResult>("release", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
@@ -80,7 +86,12 @@ class DetectOperation implements Operation<Intent, DetectHookResult> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<DetectHookResult> {
-    const hookCtx: HookContext = { intent: ctx.intent };
+    const { payload } = ctx.intent as DeleteWorkspaceIntent;
+    const hookCtx: DeletePipelineHookInput = {
+      intent: ctx.intent,
+      projectPath: payload.projectPath ?? "",
+      workspacePath: payload.workspacePath ?? "",
+    };
     const { results, errors } = await ctx.hooks.collect<DetectHookResult>("detect", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};

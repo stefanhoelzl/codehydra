@@ -253,6 +253,7 @@
     void api.workspaces.remove(activeDeletionState.projectId, activeDeletionState.workspaceName, {
       keepBranch: activeDeletionState.keepBranch,
       skipSwitch: true,
+      workspacePath: activeDeletionState.workspacePath,
     });
   }
 
@@ -262,6 +263,7 @@
     logger.debug("Dismissing deletion", { workspaceName: activeDeletionState.workspaceName });
     void api.workspaces.remove(activeDeletionState.projectId, activeDeletionState.workspaceName, {
       force: true,
+      workspacePath: activeDeletionState.workspacePath,
     });
     clearDeletion(activeDeletionState.workspacePath);
   }

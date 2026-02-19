@@ -66,6 +66,8 @@ export interface WorkspaceRemovePayload {
   readonly skipSwitch?: boolean;
   /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
   readonly force?: boolean;
+  /** Workspace path for retry/dismiss signaling. Provided by renderer on retry/dismiss only. */
+  readonly workspacePath?: string;
 }
 
 /** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata */

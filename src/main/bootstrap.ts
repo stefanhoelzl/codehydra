@@ -316,7 +316,10 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     { intentType: INTENT_SETUP, resetOn: EVENT_SETUP_ERROR },
     {
       intentType: INTENT_DELETE_WORKSPACE,
-      getKey: (p) => (p as DeleteWorkspacePayload).workspacePath,
+      getKey: (p) => {
+        const { projectId, workspaceName } = p as DeleteWorkspacePayload;
+        return `${projectId}/${workspaceName}`;
+      },
       resetOn: EVENT_WORKSPACE_DELETED,
       isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
     },
@@ -884,23 +887,14 @@ function wireDispatcher(
   registry.register(
     "workspaces.remove",
     async (payload: WorkspaceRemovePayload) => {
-      // Resolve workspace to get paths needed for intent payload via workspace index
-      const projectPath = projectsById.get(payload.projectId)?.path;
-      if (!projectPath) {
-        throw new Error(`Project not found: ${payload.projectId}`);
-      }
-      const workspacePath = workspacesByKey.get(wsKey(payload.projectId, payload.workspaceName));
-      if (!workspacePath) {
-        throw new Error(`Workspace not found: ${payload.workspaceName}`);
-      }
-
-      // If pipeline is waiting for user choice, signal it instead of dispatching new intent
-      if (deleteOp.hasPendingRetry(workspacePath)) {
+      // If pipeline is waiting for user choice, signal it instead of dispatching new intent.
+      // workspacePath is provided by the renderer on retry/dismiss calls only.
+      if (payload.workspacePath && deleteOp.hasPendingRetry(payload.workspacePath)) {
         if (payload.force) {
-          deleteOp.signalDismiss(workspacePath);
+          deleteOp.signalDismiss(payload.workspacePath);
           // Fall through to dispatch force intent after pipeline exits
         } else {
-          deleteOp.signalRetry(workspacePath);
+          deleteOp.signalRetry(payload.workspacePath);
           return { started: true };
         }
       }
@@ -910,8 +904,6 @@ function wireDispatcher(
         payload: {
           projectId: payload.projectId,
           workspaceName: payload.workspaceName,
-          workspacePath,
-          projectPath,
           keepBranch: payload.keepBranch ?? true,
           force: payload.force ?? false,
           removeWorktree: true,
@@ -1152,14 +1144,13 @@ function wireDispatcher(
       const basesResult = result as {
         bases: readonly { name: string; isRemote: boolean }[];
         defaultBaseBranch?: string;
+        projectPath: string;
       };
 
       // Fire-and-forget background update (same as old CoreModule pattern)
       void (async () => {
         try {
-          const projectPath = projectsById.get(payload.projectId)?.path;
-          if (!projectPath) return;
-          const projectRoot = new Path(projectPath);
+          const projectRoot = new Path(basesResult.projectPath);
           await globalProvider.updateBases(projectRoot);
           const updatedBases = await globalProvider.listBases(projectRoot);
           registry.emit("project:bases-updated", {

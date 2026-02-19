@@ -16,6 +16,7 @@ import type { WorkspaceLockHandler } from "../../services/platform/workspace-loc
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   type DeleteWorkspaceIntent,
+  type DeletePipelineHookInput,
   type ReleaseHookResult,
   type DetectHookResult,
   type FlushHookResult,
@@ -35,6 +36,7 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
           handler: async (ctx: HookContext): Promise<ReleaseHookResult> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             if (payload.force || !deps.workspaceLockHandler) {
@@ -44,11 +46,11 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
             // CWD-only scan: find and kill processes whose CWD is under workspace
             try {
               const cwdProcesses = await deps.workspaceLockHandler.detectCwd(
-                new Path(payload.workspacePath)
+                new Path(workspacePath)
               );
               if (cwdProcesses.length > 0) {
                 deps.logger.info("Killing CWD-blocking processes before deletion", {
-                  workspacePath: payload.workspacePath,
+                  workspacePath,
                   pids: cwdProcesses.map((p) => p.pid).join(","),
                 });
                 await deps.workspaceLockHandler.killProcesses(cwdProcesses.map((p) => p.pid));
@@ -63,16 +65,14 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
           handler: async (ctx: HookContext): Promise<DetectHookResult> => {
             if (!deps.workspaceLockHandler) return {};
 
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+            const { workspacePath } = ctx as DeletePipelineHookInput;
 
             try {
-              const detected = await deps.workspaceLockHandler.detect(
-                new Path(payload.workspacePath)
-              );
+              const detected = await deps.workspaceLockHandler.detect(new Path(workspacePath));
               return { blockingProcesses: detected };
             } catch (error) {
               deps.logger.warn("Detection failed", {
-                workspacePath: payload.workspacePath,
+                workspacePath,
                 error: getErrorMessage(error),
               });
               return { blockingProcesses: [] };

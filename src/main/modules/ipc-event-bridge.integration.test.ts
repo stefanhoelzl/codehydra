@@ -137,8 +137,8 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
       payload: {
         projectId: payload.projectId,
         workspaceName: payload.workspaceName,
-        workspacePath: payload.workspacePath,
-        projectPath: payload.projectPath,
+        workspacePath: payload.workspacePath ?? "",
+        projectPath: payload.projectPath ?? "",
       },
     };
     ctx.emit(event);

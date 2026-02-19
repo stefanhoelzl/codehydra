@@ -18,7 +18,7 @@ import type { StartHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
-import type { DeleteWorkspaceIntent, ShutdownHookResult } from "../operations/delete-workspace";
+import type { ShutdownHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../operations/delete-workspace";
@@ -71,8 +71,8 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            deps.mcpServerManager.unregisterWorkspace(payload.workspacePath);
+            const { workspacePath } = ctx as DeletePipelineHookInput;
+            deps.mcpServerManager.unregisterWorkspace(workspacePath);
             return {};
           },
         },

@@ -47,6 +47,7 @@ import type {
   WorkspaceDeletedEvent,
   DeletionProgressCallback,
   ShutdownHookResult,
+  DeletePipelineHookInput,
   ResolveProjectHookResult,
   ResolveWorkspaceHookResult,
   ResolveWorkspaceHookInput,
@@ -255,13 +256,14 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             // Track that skipSwitch is set
             if (!payload.skipSwitch) {
               // Not expected for project:close -- would indicate a bug
               viewManager.setActiveWorkspace(null, false);
             }
-            await viewManager.destroyWorkspaceView(payload.workspacePath);
+            await viewManager.destroyWorkspaceView(workspacePath);
             return {};
           },
         },
@@ -274,10 +276,10 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const serverManager = appState.getServerManager();
             if (serverManager) {
-              await serverManager.stopServer(payload.workspacePath);
+              await serverManager.stopServer(workspacePath);
             }
             return {};
           },

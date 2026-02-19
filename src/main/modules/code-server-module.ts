@@ -26,7 +26,7 @@ import type { CheckDepsResult, StartHookResult } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
 import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
-import type { DeleteHookResult } from "../operations/delete-workspace";
+import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
@@ -340,11 +340,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+            const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const workspace = deps.getWorkspaceDeps();
 
             try {
-              const workspacePath = new Path(payload.workspacePath);
+              const workspacePath = new Path(wsPath);
               const workspaceName = workspacePath.basename;
               const projectWorkspacesDir = workspacePath.dirname;
               await workspace.workspaceFileService.deleteWorkspaceFile(
