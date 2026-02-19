@@ -130,7 +130,7 @@ export interface PathProvider {
  * Computes paths based on BuildInfo (dev/prod mode) and PlatformInfo (OS/home).
  *
  * Path structure:
- * - Development: `./app-data/` (relative to process.cwd())
+ * - Development (isDevelopment=true): `./app-data/` (relative to process.cwd())
  * - Production Linux: `~/.local/share/codehydra/`
  * - Production macOS: `~/Library/Application Support/Codehydra/`
  * - Production Windows: `<home>/AppData/Roaming/Codehydra/`
@@ -298,7 +298,7 @@ export class DefaultPathProvider implements PathProvider {
    * Compute the data root directory based on build mode and platform.
    */
   private computeDataRootDir(buildInfo: BuildInfo, platformInfo: PlatformInfo): string {
-    if (!buildInfo.isPackaged) {
+    if (buildInfo.isDevelopment) {
       return join(process.cwd(), "app-data");
     }
 
