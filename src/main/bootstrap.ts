@@ -5,8 +5,9 @@
  * pattern from planning/API_REGISTRY_REFACTOR.md.
  *
  * The bootstrap flow:
- * 1. initializeBootstrap() - Creates registry + lifecycle handlers + early operations
- * 2. startServices() - Called when setup completes, creates remaining modules
+ * initializeBootstrap() - Creates registry, lifecycle handlers, all operations + modules.
+ * Agent services (ServerManager, AgentStatusManager) are created lazily during
+ * the app:start "start" hook by AgentModule.
  */
 
 import { ApiRegistry } from "./api/registry";
@@ -150,8 +151,9 @@ import { createAgentModule } from "./modules/agent-module";
 /**
  * Lifecycle service references for app:start and app:shutdown modules.
  *
- * These are constructed in index.ts before wireDispatcher() runs.
- * Modules capture them via closure and use them when hooks execute.
+ * Most fields are set at construction time in index.ts. Agent-specific
+ * fields (agentStatusManager, serverManager, selectedAgentType) are
+ * lazy getters populated by AgentModule during its "start" hook.
  */
 export interface LifecycleServiceRefs {
   /** PluginServer instance (may be null if not needed) */
@@ -160,11 +162,11 @@ export interface LifecycleServiceRefs {
   readonly codeServerManager: import("../services").CodeServerManager;
   /** FileSystemLayer for directory creation */
   readonly fileSystemLayer: import("../services").FileSystemLayer;
-  /** AgentStatusManager instance */
+  /** AgentStatusManager instance (lazy: set by AgentModule start hook) */
   readonly agentStatusManager: import("../agents").AgentStatusManager;
-  /** AgentServerManager instance */
+  /** AgentServerManager instance (lazy: set by AgentModule start hook) */
   readonly serverManager: import("../agents").AgentServerManager;
-  /** Selected agent type */
+  /** Selected agent type (lazy: set by AgentModule start hook) */
   readonly selectedAgentType: import("../agents").AgentType;
   /** TelemetryService instance */
   readonly telemetryService: import("../services/telemetry").TelemetryService | null;
@@ -248,6 +250,14 @@ export interface BootstrapDeps {
   readonly sessionLayer: import("../services/shell/session").SessionLayer | null;
   /** Function to get UI webContents for setup IPC events */
   readonly getUIWebContentsFn: () => import("electron").WebContents | null;
+  /** ServerManagerDeps for AgentModule to create AgentServerManager in start hook */
+  readonly serverManagerDeps: import("../agents").ServerManagerDeps;
+  /** Callback for AgentModule to publish agent services after creation in start hook */
+  readonly onAgentInitialized: (services: {
+    serverManager: import("../agents").AgentServerManager;
+    agentStatusManager: import("../agents").AgentStatusManager;
+    selectedAgentType: import("../agents").AgentType;
+  }) => void;
   /** Setup dependencies for app:setup hook modules (available immediately) */
   readonly setupDeps: {
     /** ConfigService for config check/save modules */
@@ -280,11 +290,11 @@ export interface BootstrapResult {
 // =============================================================================
 
 /**
- * Initialize the bootstrap with lifecycle handlers and early operations.
+ * Initialize the bootstrap with all modules and operations.
  *
- * This is the first phase of the two-phase startup:
- * 1. initializeBootstrap() - Creates registry, registers lifecycle.quit, wires app:shutdown
- * 2. startServices() - Called when setup completes, creates remaining modules
+ * Creates registry, registers lifecycle handlers, wires all operations (including
+ * CoreModule and intent dispatcher). Agent services (ServerManager, AgentStatusManager)
+ * are created lazily during the app:start "start" hook by AgentModule.
  *
  * @param deps Bootstrap dependencies
  * @returns Bootstrap result with registry and interface getter
@@ -353,25 +363,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     { ipc: ApiIpcChannels.LIFECYCLE_QUIT }
   );
 
-  // 8. Wire module for app-start operation - handles the "wire" hook point
-  // Uses late-binding via closure because the actual function is passed from index.ts.
-  let startServicesFn: (() => Promise<void>) | null = null;
-  const appStartWireModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        wire: {
-          handler: async () => {
-            if (startServicesFn) {
-              await startServicesFn();
-            }
-          },
-        },
-      },
-    },
-  };
-
-  // 9. Wire IPC event bridge early so it receives domain events during setup
-  // (e.g., setup:error fires before the "wire" hook completes).
+  // 8. Wire IPC event bridge early so it receives domain events during setup
+  // (e.g., setup:error fires before the start hook completes).
   // Lifecycle deps (getApi, pluginServer) are late-bound via closures/getters
   // since the bridge's start/stop hooks only run after services are created.
   const ipcEventBridge = createIpcEventBridge({
@@ -383,7 +376,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
     logger,
   });
-  wireModules([ipcEventBridge], hookRegistry, dispatcher);
 
   // 10. RetryModule: "show-ui" hook on app-start -- returns waitForRetry
   // waitForRetry returns a promise that resolves when the renderer sends lifecycle:retry IPC
@@ -408,7 +400,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  wireModules([appStartWireModule, retryModule], hookRegistry, dispatcher);
+  wireModules([ipcEventBridge, retryModule], hookRegistry, dispatcher);
 
   // 11. Register AppStartOperation and SetupOperation immediately (before UI loads)
   // app:start is dispatched first in index.ts, so both must be registered early
@@ -428,7 +420,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   });
   wireModules([viewModule], hookRegistry, dispatcher);
 
-  // 12. Wire setup hook modules (these run during app:setup, before startServices)
+  // 12. Wire setup hook modules (these run during app:setup)
   const { configService, codeServerManager, getAgentBinaryManager, extensionManager } =
     deps.setupDeps;
   const setupLogger = deps.logger;
@@ -494,9 +486,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   });
 
   // AgentModule: manages agent lifecycle, setup, per-workspace hooks, status tracking.
-  // Consolidates configCheckModule, agentBinaryPreflightModule, rendererSetupModule,
-  // configSaveModule, agentBinaryDownloadModule, agentLifecycleModule, agentModule,
-  // deleteAgentModule, and agentStatusModule into a single extracted module.
+  // Creates agent services (ServerManager, AgentStatusManager) during its start hook.
   const agentModule = createAgentModule({
     configService,
     getAgentBinaryManager,
@@ -504,72 +494,49 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     getUIWebContentsFn: deps.getUIWebContentsFn,
     reportProgress: updateProgress,
     logger: setupLogger,
-    getLifecycleDeps: () => {
-      const refs = deps.lifecycleRefsFn();
-      return {
-        agentStatusManager: refs.agentStatusManager,
-        serverManager: refs.serverManager,
-        selectedAgentType: refs.selectedAgentType,
-        loggingService: refs.loggingService,
-        dispatcher: refs.dispatcher,
-        killTerminalsCallback: deps.killTerminalsCallbackFn(),
-      };
-    },
+    loggingService: deps.lifecycleRefsFn().loggingService,
+    dispatcher,
+    killTerminalsCallback: deps.killTerminalsCallbackFn(),
+    serverManagerDeps: deps.serverManagerDeps,
+    onAgentInitialized: deps.onAgentInitialized,
   });
 
   // Wire all startup modules (check hooks on app-start, work hooks on setup)
   wireModules([codeServerModule, agentModule], hookRegistry, dispatcher);
 
-  // 13. Services started flag
-  let servicesStarted = false;
+  // 13. Wire remaining operations and create CoreModule
+  const { workspaceResolver } = wireDispatcher(
+    registry,
+    hookRegistry,
+    dispatcher,
+    deps.globalWorktreeProviderFn(),
+    deps.gitClientFn(),
+    deps.pathProviderFn(),
+    deps.projectStoreFn(),
+    deps.logger,
+    deps.keepFilesServiceFn(),
+    deps.emitDeletionProgressFn(),
+    deps.workspaceLockHandlerFn(),
+    deps.setTitleFn(),
+    deps.titleVersionFn(),
+    deps.badgeManagerFn(),
+    deps.lifecycleRefsFn(),
+    mountSignal
+  );
 
-  /**
-   * Start remaining services after setup completes.
-   * This creates CoreModule and wires the remaining intent operations.
-   * Note: SetupOperation was already registered in initializeBootstrap().
-   */
-  function startServices(): void {
-    if (servicesStarted) return;
-    servicesStarted = true;
-
-    const baseDeps = deps.coreDepsFn();
-
-    // Wire remaining operations first to get the workspace index resolver
-    const { workspaceResolver } = wireDispatcher(
-      registry,
-      hookRegistry,
-      dispatcher,
-      deps.globalWorktreeProviderFn(),
-      deps.gitClientFn(),
-      deps.pathProviderFn(),
-      deps.projectStoreFn(),
-      deps.logger,
-      deps.keepFilesServiceFn(),
-      deps.emitDeletionProgressFn(),
-      deps.workspaceLockHandlerFn(),
-      deps.setTitleFn(),
-      deps.titleVersionFn(),
-      deps.badgeManagerFn(),
-      deps.lifecycleRefsFn(),
-      mountSignal
-    );
-
-    // Create CoreModule with workspace index resolver wired in
-    const coreDeps: CoreModuleDeps = {
-      ...baseDeps,
-      resolveWorkspace: workspaceResolver,
-    };
-    const coreModule = new CoreModule(registry, coreDeps);
-    modules.push(coreModule);
-  }
+  const baseDeps = deps.coreDepsFn();
+  const coreDeps: CoreModuleDeps = {
+    ...baseDeps,
+    resolveWorkspace: workspaceResolver,
+  };
+  const coreModule = new CoreModule(registry, coreDeps);
+  modules.push(coreModule);
 
   /**
    * Get the typed API interface.
    * Throws if not all methods are registered.
    */
   function getInterface(): ICodeHydraApi {
-    // If services haven't started, only lifecycle methods are available
-    // This will throw with missing methods
     return registry.getInterface();
   }
 
@@ -591,28 +558,11 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     await registry.dispose();
   }
 
-  /**
-   * Set the wire hook handler function.
-   * This is called by index.ts to wire the async service creation.
-   * The handler is invoked during the "wire" hook point in SetupOperation.
-   */
-  function setBeforeAppStart(fn: () => Promise<void>): void {
-    startServicesFn = fn;
-  }
-
-  // Return bootstrap result with start function attached
-  const result: BootstrapResult & {
-    startServices: () => void;
-    setBeforeAppStart: (fn: () => Promise<void>) => void;
-  } = {
+  return {
     registry,
     getInterface,
     dispose,
-    startServices,
-    setBeforeAppStart,
   };
-
-  return result;
 }
 
 // =============================================================================
@@ -776,7 +726,7 @@ function wireDispatcher(
     telemetryService: lifecycleRefs.telemetryService,
     platformInfo: lifecycleRefs.platformInfo,
     buildInfo: lifecycleRefs.buildInfo,
-    selectedAgentType: lifecycleRefs.selectedAgentType,
+    configService: lifecycleRefs.configService,
     logger: lifecycleLogger,
   });
 
@@ -829,7 +779,7 @@ function wireDispatcher(
   };
 
   // Wire BadgeModule and hook handler modules
-  // Note: idempotencyModule, quitModule, and ipcEventBridge are wired early in initializeBootstrap()
+  // Note: shutdownIdempotencyModule, quitModule, and ipcEventBridge are wired early in initializeBootstrap()
   const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
   wireModules(
     [

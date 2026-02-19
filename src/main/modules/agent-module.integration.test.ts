@@ -5,9 +5,16 @@
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
  * Uses minimal test operations that exercise specific hook points, with
  * all dependencies mocked via vi.fn().
+ *
+ * The agent module's `start` hook creates AgentStatusManager and
+ * AgentServerManager internally using factory functions. We mock the
+ * `../../agents` module so the `start` hook uses our mock objects.
+ * Tests that need lifecycle state (activate, stop, workspace setup/shutdown,
+ * get-status, get-session, restart) first dispatch through a MinimalStartOperation
+ * to populate the module's internal closure state.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
@@ -50,14 +57,30 @@ import type {
 } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import type { RestartAgentHookInput, RestartAgentHookResult } from "../operations/restart-agent";
-import { createAgentModule, type AgentModuleDeps, type AgentLifecycleDeps } from "./agent-module";
+import { createAgentModule, type AgentModuleDeps } from "./agent-module";
 import { SILENT_LOGGER } from "../../services/logging";
+import type { LoggingService } from "../../services/logging";
 import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 import { SetupError } from "../../services/errors";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import { ApiIpcChannels } from "../../shared/ipc";
+import { AgentStatusManager, createAgentServerManager, createAgentProvider } from "../../agents";
 import type { AgentServerManager } from "../../agents/types";
+
+// =============================================================================
+// Mock the agents module so the start hook uses our mock objects
+// =============================================================================
+
+vi.mock("../../agents", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../agents")>();
+  return {
+    ...original,
+    AgentStatusManager: vi.fn(),
+    createAgentServerManager: vi.fn(),
+    createAgentProvider: vi.fn(),
+  };
+});
 
 // =============================================================================
 // Minimal Test Operations
@@ -114,7 +137,7 @@ class MinimalStartOperation implements Operation<Intent, StartHookResult> {
   }
 }
 
-class MinimalActivateOperation implements Operation<Intent, ActivateHookResult> {
+class MinimalStartAndActivateOperation implements Operation<Intent, ActivateHookResult> {
   readonly id = APP_START_OPERATION_ID;
   private readonly hookInput: Partial<ActivateHookContext>;
 
@@ -123,6 +146,9 @@ class MinimalActivateOperation implements Operation<Intent, ActivateHookResult> 
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<ActivateHookResult> {
+    // Run start first to populate closure state
+    await ctx.hooks.collect<StartHookResult>("start", { intent: ctx.intent });
+    // Then run activate
     const { results, errors } = await ctx.hooks.collect<ActivateHookResult>("activate", {
       intent: ctx.intent,
       ...this.hookInput,
@@ -329,27 +355,33 @@ function createMockAgentStatusManager() {
   };
 }
 
-function createMockLifecycleDeps(
-  agentType: "opencode" | "claude" = "opencode"
-): AgentLifecycleDeps {
-  return {
-    agentStatusManager:
-      createMockAgentStatusManager() as unknown as AgentLifecycleDeps["agentStatusManager"],
-    serverManager: createMockServerManager(
-      agentType
-    ) as unknown as AgentLifecycleDeps["serverManager"],
-    selectedAgentType: agentType,
-    loggingService: {
-      createLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
-    } as unknown as AgentLifecycleDeps["loggingService"],
-    dispatcher: new Dispatcher(new HookRegistry()),
-    killTerminalsCallback: vi.fn().mockResolvedValue(undefined),
-  };
+/**
+ * Configure the vi.mock'd constructors/factories to return our mock objects.
+ * Must be called before dispatching any operation that triggers the `start` hook.
+ */
+function setupAgentMocks(agentType: "opencode" | "claude" = "opencode") {
+  const mockSM = createMockServerManager(agentType);
+  const mockASM = createMockAgentStatusManager();
+
+  vi.mocked(AgentStatusManager).mockImplementation(function (this: AgentStatusManager) {
+    return mockASM as unknown as AgentStatusManager;
+  });
+  vi.mocked(createAgentServerManager).mockReturnValue(mockSM as unknown as AgentServerManager);
+  vi.mocked(createAgentProvider).mockReturnValue({
+    connect: vi.fn().mockResolvedValue(undefined),
+    fetchStatus: vi.fn().mockResolvedValue(undefined),
+    createSession: vi.fn().mockResolvedValue({ ok: true, value: { id: "sess-1" } }),
+    sendPrompt: vi.fn().mockResolvedValue({ ok: true }),
+    getEnvironmentVariables: vi.fn().mockReturnValue({ OPENCODE_PORT: "8080" }),
+  } as never);
+
+  return { mockSM, mockASM };
 }
 
-function createMockDeps(overrides?: { lifecycleDeps?: AgentLifecycleDeps }): AgentModuleDeps {
-  const lifecycleDeps = overrides?.lifecycleDeps ?? createMockLifecycleDeps();
+function createMockDeps(): AgentModuleDeps {
   const ipcLayer = createBehavioralIpcLayer();
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
 
   return {
     configService: {
@@ -368,7 +400,20 @@ function createMockDeps(overrides?: { lifecycleDeps?: AgentLifecycleDeps }): Age
     }),
     reportProgress: vi.fn(),
     logger: SILENT_LOGGER,
-    getLifecycleDeps: () => lifecycleDeps,
+    loggingService: {
+      createLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
+    } as unknown as LoggingService,
+    dispatcher,
+    killTerminalsCallback: vi.fn().mockResolvedValue(undefined),
+    serverManagerDeps: {
+      processRunner: {} as never,
+      portManager: {} as never,
+      httpClient: {} as never,
+      pathProvider: {} as never,
+      fileSystem: {} as never,
+      logger: SILENT_LOGGER,
+    },
+    onAgentInitialized: vi.fn(),
   };
 }
 
@@ -376,8 +421,8 @@ function createMockDeps(overrides?: { lifecycleDeps?: AgentLifecycleDeps }): Age
 // Test Setup
 // =============================================================================
 
-function createTestSetup(mockDeps?: AgentModuleDeps) {
-  const deps = mockDeps ?? createMockDeps();
+function createTestSetup() {
+  const deps = createMockDeps();
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   const module = createAgentModule(deps);
@@ -392,17 +437,20 @@ function createTestSetup(mockDeps?: AgentModuleDeps) {
 // =============================================================================
 
 describe("AgentModule", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   // ---------------------------------------------------------------------------
   // check-config
   // ---------------------------------------------------------------------------
 
   describe("check-config", () => {
     it("loads config and returns configuredAgent", async () => {
-      const deps = createMockDeps();
+      const { deps, dispatcher } = createTestSetup();
       (deps.configService.load as ReturnType<typeof vi.fn>).mockResolvedValue({
         agent: "claude",
       });
-      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalCheckConfigOperation());
 
       const result = (await dispatcher.dispatch({
@@ -421,14 +469,13 @@ describe("AgentModule", () => {
 
   describe("check-deps", () => {
     it("returns missingBinaries when agent binary needs download", async () => {
-      const deps = createMockDeps();
+      const { deps, dispatcher } = createTestSetup();
       const mockBinaryManager = {
         preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
         getBinaryType: vi.fn().mockReturnValue("opencode"),
         downloadBinary: vi.fn(),
       };
       (deps.getAgentBinaryManager as ReturnType<typeof vi.fn>).mockReturnValue(mockBinaryManager);
-      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(
         "app:start",
         new MinimalCheckDepsOperation({ configuredAgent: "opencode" })
@@ -444,8 +491,7 @@ describe("AgentModule", () => {
     });
 
     it("returns empty missingBinaries when no agent configured", async () => {
-      const deps = createMockDeps();
-      const { dispatcher } = createTestSetup(deps);
+      const { deps, dispatcher } = createTestSetup();
       dispatcher.registerOperation(
         "app:start",
         new MinimalCheckDepsOperation({ configuredAgent: null })
@@ -467,13 +513,12 @@ describe("AgentModule", () => {
 
   describe("agent-selection", () => {
     it("sends IPC to show selection and returns chosen agent", async () => {
-      const deps = createMockDeps();
+      const { deps, dispatcher } = createTestSetup();
       const mockWebContents = {
         isDestroyed: vi.fn().mockReturnValue(false),
         send: vi.fn(),
       };
       (deps.getUIWebContentsFn as ReturnType<typeof vi.fn>).mockReturnValue(mockWebContents);
-      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("setup", new MinimalAgentSelectionOperation());
 
       // Simulate user selecting "claude" after IPC is sent
@@ -505,8 +550,7 @@ describe("AgentModule", () => {
 
   describe("save-agent", () => {
     it("persists agent selection to config", async () => {
-      const deps = createMockDeps();
-      const { dispatcher } = createTestSetup(deps);
+      const { deps, dispatcher } = createTestSetup();
       dispatcher.registerOperation(
         "setup",
         new MinimalSaveAgentOperation({ selectedAgent: "claude" })
@@ -518,11 +562,10 @@ describe("AgentModule", () => {
     });
 
     it("throws SetupError when setAgent fails", async () => {
-      const deps = createMockDeps();
+      const { deps, dispatcher } = createTestSetup();
       (deps.configService.setAgent as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error("disk full")
       );
-      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(
         "setup",
         new MinimalSaveAgentOperation({ selectedAgent: "opencode" })
@@ -538,14 +581,13 @@ describe("AgentModule", () => {
 
   describe("binary download", () => {
     it("downloads agent binary when missing", async () => {
-      const deps = createMockDeps();
+      const { deps, dispatcher } = createTestSetup();
       const mockBinaryManager = {
         preflight: vi.fn(),
         getBinaryType: vi.fn().mockReturnValue("opencode"),
         downloadBinary: vi.fn().mockResolvedValue(undefined),
       };
       (deps.getAgentBinaryManager as ReturnType<typeof vi.fn>).mockReturnValue(mockBinaryManager);
-      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(
         "setup",
         new MinimalBinaryOperation({
@@ -561,14 +603,13 @@ describe("AgentModule", () => {
     });
 
     it("skips download when binary is not missing", async () => {
-      const deps = createMockDeps();
+      const { deps, dispatcher } = createTestSetup();
       const mockBinaryManager = {
         preflight: vi.fn(),
         getBinaryType: vi.fn().mockReturnValue("opencode"),
         downloadBinary: vi.fn(),
       };
       (deps.getAgentBinaryManager as ReturnType<typeof vi.fn>).mockReturnValue(mockBinaryManager);
-      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(
         "setup",
         new MinimalBinaryOperation({
@@ -584,14 +625,13 @@ describe("AgentModule", () => {
     });
 
     it("reports progress during download and handles error", async () => {
-      const deps = createMockDeps();
+      const { deps, dispatcher } = createTestSetup();
       const mockBinaryManager = {
         preflight: vi.fn(),
         getBinaryType: vi.fn().mockReturnValue("opencode"),
         downloadBinary: vi.fn().mockRejectedValue(new Error("network error")),
       };
       (deps.getAgentBinaryManager as ReturnType<typeof vi.fn>).mockReturnValue(mockBinaryManager);
-      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(
         "setup",
         new MinimalBinaryOperation({
@@ -616,81 +656,59 @@ describe("AgentModule", () => {
 
   describe("start", () => {
     it("wires status changes to dispatcher via onStatusChanged", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM, mockASM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       // Verify onStatusChanged was subscribed
-      expect(
-        (lifecycleDeps.agentStatusManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .onStatusChanged!
-      ).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockASM.onStatusChanged).toHaveBeenCalledWith(expect.any(Function));
 
       // Verify server callbacks were wired
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .onServerStarted!
-      ).toHaveBeenCalledWith(expect.any(Function));
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .onServerStopped!
-      ).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockSM.onServerStarted).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockSM.onServerStopped).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it("calls setMarkActiveHandler for opencode", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .setMarkActiveHandler!
-      ).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockSM.setMarkActiveHandler).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it("calls setMarkActiveHandler for claude", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("claude");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks("claude");
+      const { deps, dispatcher } = createTestSetup();
+      (deps.configService.load as ReturnType<typeof vi.fn>).mockResolvedValue({
+        agent: "claude",
+      });
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .setMarkActiveHandler!
-      ).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockSM.setMarkActiveHandler).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it("dispatches agent:update-status when status changes", async () => {
-      // Build deps first, then wire so lifecycle.dispatcher is the SAME dispatcher
-      const lifecycleDeps = createMockLifecycleDeps();
       // Capture the status callback
+      const { mockASM } = setupAgentMocks("opencode");
       let statusCallback: ((path: WorkspacePath, status: AggregatedAgentStatus) => void) | null =
         null;
-      (
-        lifecycleDeps.agentStatusManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).onStatusChanged!.mockImplementation(
+      mockASM.onStatusChanged.mockImplementation(
         (cb: (path: WorkspacePath, status: AggregatedAgentStatus) => void) => {
           statusCallback = cb;
           return vi.fn();
         }
       );
 
-      // Create module deps but override lifecycleDeps with a getter that
-      // returns our lifecycleDeps with the REAL dispatcher (set below)
+      // Create module deps with shared dispatcher
       const ipcLayer = createBehavioralIpcLayer();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-
-      // Point lifecycleDeps.dispatcher at the real dispatcher
-      (lifecycleDeps as unknown as Record<string, unknown>).dispatcher = dispatcher;
 
       const deps: AgentModuleDeps = {
         configService: {
@@ -706,7 +724,20 @@ describe("AgentModule", () => {
         getUIWebContentsFn: vi.fn().mockReturnValue(null),
         reportProgress: vi.fn(),
         logger: SILENT_LOGGER,
-        getLifecycleDeps: () => lifecycleDeps,
+        loggingService: {
+          createLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
+        } as unknown as LoggingService,
+        dispatcher,
+        killTerminalsCallback: vi.fn().mockResolvedValue(undefined),
+        serverManagerDeps: {
+          processRunner: {} as never,
+          portManager: {} as never,
+          httpClient: {} as never,
+          pathProvider: {} as never,
+          fileSystem: {} as never,
+          logger: SILENT_LOGGER,
+        },
+        onAgentInitialized: vi.fn(),
       };
 
       const module = createAgentModule(deps);
@@ -752,48 +783,45 @@ describe("AgentModule", () => {
 
   describe("activate", () => {
     it("calls setMcpConfig with mcpPort (OpenCode)", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalActivateOperation({ mcpPort: 5555 }));
+      const { mockSM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
+      dispatcher.registerOperation(
+        "app:start",
+        new MinimalStartAndActivateOperation({ mcpPort: 5555 })
+      );
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const serverManager = lifecycleDeps.serverManager as unknown as Record<
-        string,
-        ReturnType<typeof vi.fn>
-      >;
-      expect(serverManager.setMcpConfig).toHaveBeenCalledWith({ port: 5555 });
+      expect(mockSM.setMcpConfig).toHaveBeenCalledWith({ port: 5555 });
     });
 
     it("calls setMcpConfig with mcpPort (Claude)", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("claude");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalActivateOperation({ mcpPort: 5555 }));
+      const { mockSM } = setupAgentMocks("claude");
+      const { deps, dispatcher } = createTestSetup();
+      (deps.configService.load as ReturnType<typeof vi.fn>).mockResolvedValue({
+        agent: "claude",
+      });
+      dispatcher.registerOperation(
+        "app:start",
+        new MinimalStartAndActivateOperation({ mcpPort: 5555 })
+      );
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const serverManager = lifecycleDeps.serverManager as unknown as Record<
-        string,
-        ReturnType<typeof vi.fn>
-      >;
-      expect(serverManager.setMcpConfig).toHaveBeenCalledWith({ port: 5555 });
+      expect(mockSM.setMcpConfig).toHaveBeenCalledWith({ port: 5555 });
     });
 
     it("skips setMcpConfig when mcpPort is null", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalActivateOperation({ mcpPort: null }));
+      const { mockSM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
+      dispatcher.registerOperation(
+        "app:start",
+        new MinimalStartAndActivateOperation({ mcpPort: null })
+      );
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const serverManager = lifecycleDeps.serverManager as unknown as Record<
-        string,
-        ReturnType<typeof vi.fn>
-      >;
-      expect(serverManager.setMcpConfig).not.toHaveBeenCalled();
+      expect(mockSM.setMcpConfig).not.toHaveBeenCalled();
     });
   });
 
@@ -803,9 +831,14 @@ describe("AgentModule", () => {
 
   describe("workspace setup", () => {
     it("starts server, waits for provider, and returns envVars", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run workspace setup
       dispatcher.registerOperation(
         "workspace:open",
         new MinimalSetupOperation({
@@ -823,18 +856,20 @@ describe("AgentModule", () => {
         },
       } as OpenWorkspaceIntent)) as SetupHookResult;
 
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .startServer!
-      ).toHaveBeenCalledWith("/test/project/.worktrees/feature-1");
+      expect(mockSM.startServer).toHaveBeenCalledWith("/test/project/.worktrees/feature-1");
       expect(result.envVars).toBeDefined();
       expect(result.envVars!.OPENCODE_PORT).toBe("8080");
     });
 
     it("sets initial prompt when provided", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run workspace setup
       dispatcher.registerOperation(
         "workspace:open",
         new MinimalSetupOperation({
@@ -853,19 +888,21 @@ describe("AgentModule", () => {
         },
       } as OpenWorkspaceIntent);
 
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .setInitialPrompt!
-      ).toHaveBeenCalledWith(
+      expect(mockSM.setInitialPrompt).toHaveBeenCalledWith(
         "/test/project/.worktrees/feature-1",
         expect.objectContaining({ prompt: "Hello world" })
       );
     });
 
     it("adds bridge port for OpenCode", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run workspace setup
       dispatcher.registerOperation(
         "workspace:open",
         new MinimalSetupOperation({
@@ -884,6 +921,7 @@ describe("AgentModule", () => {
       } as OpenWorkspaceIntent)) as SetupHookResult;
 
       expect(result.envVars!.CODEHYDRA_BRIDGE_PORT).toBe("9999");
+      expect(mockSM.getBridgePort).toHaveBeenCalled();
     });
   });
 
@@ -893,9 +931,14 @@ describe("AgentModule", () => {
 
   describe("delete shutdown", () => {
     it("stops server and clears TUI tracking", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM, mockASM } = setupAgentMocks("opencode");
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run shutdown
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
       const result = (await dispatcher.dispatch({
@@ -911,24 +954,21 @@ describe("AgentModule", () => {
         },
       } as DeleteWorkspaceIntent)) as ShutdownHookResult;
 
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .stopServer!
-      ).toHaveBeenCalledWith("/test/project/.worktrees/feature-1");
-      expect(
-        (lifecycleDeps.agentStatusManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .clearTuiTracking!
-      ).toHaveBeenCalled();
+      expect(mockSM.stopServer).toHaveBeenCalledWith("/test/project/.worktrees/feature-1");
+      expect(mockASM.clearTuiTracking).toHaveBeenCalled();
       expect(result.serverName).toBeDefined();
     });
 
     it("continues on error in force mode", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      (
-        lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).stopServer!.mockResolvedValue({ success: false, error: "server crash" });
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks("opencode");
+      mockSM.stopServer = vi.fn().mockResolvedValue({ success: false, error: "server crash" });
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run shutdown
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
       const result = (await dispatcher.dispatch({
@@ -949,12 +989,15 @@ describe("AgentModule", () => {
     });
 
     it("throws on stop failure in non-force mode", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      (
-        lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).stopServer!.mockResolvedValue({ success: false, error: "server crash" });
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks("opencode");
+      mockSM.stopServer = vi.fn().mockResolvedValue({ success: false, error: "server crash" });
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run shutdown
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
       await expect(
@@ -974,9 +1017,14 @@ describe("AgentModule", () => {
     });
 
     it("calls killTerminalsCallback (best-effort)", async () => {
-      const lifecycleDeps = createMockLifecycleDeps("opencode");
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      setupAgentMocks("opencode");
+      const { deps, dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run shutdown
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
       await dispatcher.dispatch({
@@ -992,9 +1040,7 @@ describe("AgentModule", () => {
         },
       } as DeleteWorkspaceIntent);
 
-      expect(lifecycleDeps.killTerminalsCallback).toHaveBeenCalledWith(
-        "/test/project/.worktrees/feature-1"
-      );
+      expect(deps.killTerminalsCallback).toHaveBeenCalledWith("/test/project/.worktrees/feature-1");
     });
   });
 
@@ -1004,16 +1050,19 @@ describe("AgentModule", () => {
 
   describe("get workspace status", () => {
     it("returns agent status from agentStatusManager", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
+      const { mockASM } = setupAgentMocks();
       const expectedStatus: AggregatedAgentStatus = {
         status: "busy",
         counts: { idle: 0, busy: 2 },
       };
-      (
-        lifecycleDeps.agentStatusManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).getStatus!.mockReturnValue(expectedStatus);
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      mockASM.getStatus.mockReturnValue(expectedStatus);
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run get-status
       dispatcher.registerOperation(
         "workspace:get-status",
         new MinimalGetStatusOperation({
@@ -1036,12 +1085,15 @@ describe("AgentModule", () => {
 
   describe("get agent session", () => {
     it("returns session from agentStatusManager", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (
-        lifecycleDeps.agentStatusManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).getSession!.mockReturnValue({ port: 8080, sessionId: "sess-1" });
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockASM } = setupAgentMocks();
+      mockASM.getSession.mockReturnValue({ port: 8080, sessionId: "sess-1" });
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run get-session
       dispatcher.registerOperation(
         "agent:get-session",
         new MinimalGetSessionOperation({
@@ -1058,12 +1110,15 @@ describe("AgentModule", () => {
     });
 
     it("returns null when no session exists", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (
-        lifecycleDeps.agentStatusManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).getSession!.mockReturnValue(null);
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockASM } = setupAgentMocks();
+      mockASM.getSession.mockReturnValue(null);
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run get-session
       dispatcher.registerOperation(
         "agent:get-session",
         new MinimalGetSessionOperation({
@@ -1086,12 +1141,15 @@ describe("AgentModule", () => {
 
   describe("restart agent", () => {
     it("restarts server and returns port", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (
-        lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).restartServer!.mockResolvedValue({ success: true, port: 9090 });
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks();
+      mockSM.restartServer = vi.fn().mockResolvedValue({ success: true, port: 9090 });
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run restart
       dispatcher.registerOperation(
         "agent:restart",
         new MinimalRestartOperation({
@@ -1108,16 +1166,19 @@ describe("AgentModule", () => {
     });
 
     it("throws on restart failure", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (
-        lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).restartServer!.mockResolvedValue({
+      const { mockSM } = setupAgentMocks();
+      mockSM.restartServer = vi.fn().mockResolvedValue({
         success: false,
         error: "restart failed",
         serverStopped: false,
       });
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { dispatcher } = createTestSetup();
+
+      // Run start to populate closure state
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run restart
       dispatcher.registerOperation(
         "agent:restart",
         new MinimalRestartOperation({
@@ -1137,16 +1198,10 @@ describe("AgentModule", () => {
 
   describe("stop", () => {
     it("disposes serverManager and agentStatusManager", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const deps = createMockDeps({ lifecycleDeps });
+      const { mockSM, mockASM } = setupAgentMocks();
+      const { dispatcher } = createTestSetup();
 
-      // We need to wire start first so that cleanup callbacks exist
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      const module = createAgentModule(deps);
-      wireModules([module], hookRegistry, dispatcher);
-
-      // First run start to wire callbacks
+      // First run start to create agent services and wire callbacks
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1154,23 +1209,20 @@ describe("AgentModule", () => {
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
-      expect(
-        (lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .dispose!
-      ).toHaveBeenCalled();
-      expect(
-        (lifecycleDeps.agentStatusManager as unknown as Record<string, ReturnType<typeof vi.fn>>)
-          .dispose!
-      ).toHaveBeenCalled();
+      expect(mockSM.dispose).toHaveBeenCalled();
+      expect(mockASM.dispose).toHaveBeenCalled();
     });
 
     it("handles shutdown errors gracefully (non-fatal)", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (
-        lifecycleDeps.serverManager as unknown as Record<string, ReturnType<typeof vi.fn>>
-      ).dispose!.mockRejectedValue(new Error("dispose failed"));
-      const deps = createMockDeps({ lifecycleDeps });
-      const { dispatcher } = createTestSetup(deps);
+      const { mockSM } = setupAgentMocks();
+      mockSM.dispose = vi.fn().mockRejectedValue(new Error("dispose failed"));
+      const { dispatcher } = createTestSetup();
+
+      // First run start to create agent services
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Now run shutdown
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
 
       // Should not throw - shutdown errors are non-fatal

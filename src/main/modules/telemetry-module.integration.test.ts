@@ -31,7 +31,6 @@ import { createMockPlatformInfo } from "../../services/platform/platform-info.te
 import { SILENT_LOGGER } from "../../services/logging";
 import type { TelemetryService } from "../../services/telemetry/types";
 import type { Logger } from "../../services/logging/types";
-import type { AgentType } from "../../agents/types";
 
 // =============================================================================
 // Minimal Start Operation
@@ -112,7 +111,7 @@ interface TestSetup {
 
 function createTestSetup(overrides?: {
   telemetryService?: TelemetryService | null;
-  selectedAgentType?: AgentType;
+  configAgent?: string;
   logger?: Logger;
 }): TestSetup {
   const tracking = createTrackingTelemetryService();
@@ -124,7 +123,9 @@ function createTestSetup(overrides?: {
       overrides?.telemetryService !== undefined ? overrides.telemetryService : tracking.service,
     platformInfo,
     buildInfo,
-    selectedAgentType: overrides?.selectedAgentType ?? "opencode",
+    configService: {
+      load: async () => ({ agent: overrides?.configAgent ?? "opencode" }) as never,
+    },
     logger: overrides?.logger ?? SILENT_LOGGER,
   });
 

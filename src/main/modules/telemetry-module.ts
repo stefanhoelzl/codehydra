@@ -12,14 +12,14 @@ import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import type { TelemetryService } from "../../services/telemetry/types";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { BuildInfo } from "../../services/platform/build-info";
-import type { AgentType } from "../../agents/types";
+import type { ConfigService } from "../../services/config/config-service";
 import type { Logger } from "../../services/logging/types";
 
 interface TelemetryModuleDeps {
   readonly telemetryService: TelemetryService | null;
   readonly platformInfo: PlatformInfo;
   readonly buildInfo: BuildInfo;
-  readonly selectedAgentType: AgentType;
+  readonly configService: Pick<ConfigService, "load">;
   readonly logger: Logger;
 }
 
@@ -29,11 +29,12 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<StartHookResult> => {
+            const config = await deps.configService.load();
             deps.telemetryService?.capture("app_launched", {
               platform: deps.platformInfo.platform,
               arch: deps.platformInfo.arch,
               isDevelopment: deps.buildInfo.isDevelopment,
-              agent: deps.selectedAgentType,
+              agent: config.agent ?? "unknown",
             });
             return {};
           },

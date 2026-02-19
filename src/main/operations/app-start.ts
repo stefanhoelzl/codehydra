@@ -5,10 +5,9 @@
  * 1. "show-ui" - Show starting screen
  * 2. "check-config" - Load configuration (collect, isolated contexts)
  * 3. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 4. "wire" - Wire services (after setup completes if dispatched)
- * 5. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
+ * 4. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
  *              Telemetry, AutoUpdater, IpcBridge)
- * 6. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
+ * 5. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
  *
  * After "activate", dispatches project:open for each saved project path
  * (best-effort, skips invalid projects). The mount handler in activate
@@ -187,13 +186,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 4: "wire" -- Wire services (after setup completes)
-    const { errors: wireErrors } = await ctx.hooks.collect<void>("wire", hookCtx);
-    if (wireErrors.length > 0) {
-      throw wireErrors[0]!;
-    }
-
-    // Hook 5: "start" -- Start servers and wire services
+    // Hook 4: "start" -- Start servers and wire services
     const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
       "start",
       hookCtx
@@ -205,7 +198,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // Extract mcpPort from start results for activate handlers
     const mcpPort = startResults.find((r) => r.mcpPort !== undefined)?.mcpPort ?? null;
 
-    // Hook 6: "activate" -- Wire callbacks, gather project paths, mount renderer
+    // Hook 5: "activate" -- Wire callbacks, gather project paths, mount renderer
     const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort };
     const { results: activateResults, errors: activateErrors } =
       await ctx.hooks.collect<ActivateHookResult>("activate", activateCtx);
@@ -234,7 +227,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 7: "loaded" — Signal that initial project:open dispatches are complete.
+    // Hook 6: "loaded" — Signal that initial project:open dispatches are complete.
     // lifecycle.ready awaits this before returning to the renderer.
     await ctx.hooks.collect<void>("loaded", hookCtx);
   }

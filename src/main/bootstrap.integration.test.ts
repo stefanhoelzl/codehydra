@@ -136,6 +136,8 @@ function createMockDeps(): BootstrapDeps {
         saveProject: vi.fn().mockResolvedValue(undefined),
         getProjectConfig: vi.fn().mockResolvedValue(undefined),
         deleteProjectDirectory: vi.fn().mockResolvedValue(undefined),
+        loadAllProjectConfigs: vi.fn().mockResolvedValue([]),
+        removeProject: vi.fn().mockResolvedValue(undefined),
       }) as unknown as import("../services").ProjectStore,
     globalWorktreeProviderFn: () => createMockGlobalWorktreeProvider(),
     keepFilesServiceFn: () => createMockKeepFilesService(),
@@ -151,8 +153,18 @@ function createMockDeps(): BootstrapDeps {
     titleVersionFn: () => "test",
     badgeManagerFn: () =>
       ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
-    lifecycleRefsFn: () =>
-      ({
+    serverManagerDeps: {
+      processRunner: {} as never,
+      portManager: {} as never,
+      httpClient: {} as never,
+      pathProvider: {} as never,
+      fileSystem: {} as never,
+      logger: createMockLogger(),
+    },
+    onAgentInitialized: vi.fn(),
+    lifecycleRefsFn: () => {
+      const mockDispatcher = { dispatch: vi.fn().mockResolvedValue(undefined) };
+      return {
         loggingService: { createLogger: () => createMockLogger() },
         pluginServer: null,
         codeServerManager: {
@@ -183,17 +195,39 @@ function createMockDeps(): BootstrapDeps {
           onWorkspaceReady: vi.fn().mockReturnValue(() => {}),
         },
         selectedAgentType: "opencode",
-        dispatcher: { dispatch: vi.fn().mockResolvedValue(undefined) },
+        dispatcher: mockDispatcher,
         configDataProvider: vi.fn().mockReturnValue({ env: null, agentType: null }),
+        configService: {
+          load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
+        },
+        telemetryService: null,
+        platformInfo: { platform: "linux", arch: "x64" },
+        buildInfo: {
+          version: "1.0.0",
+          isDevelopment: true,
+          isPackaged: false,
+          appPath: "/app",
+        },
+        autoUpdater: {
+          start: vi.fn(),
+          dispose: vi.fn(),
+          onUpdateAvailable: vi.fn().mockReturnValue(() => {}),
+        },
+        pathProvider: { claudeCodeWrapperPath: { toString: () => "/mock/bin/claude" } },
+        windowManager: { setTitle: vi.fn() },
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
         getApi: () => ({
           on: vi.fn().mockReturnValue(() => {}),
+          lifecycle: {},
           projects: {},
           workspaces: {},
           ui: {},
-          lifecycle: {},
           dispose: vi.fn(),
         }),
-      }) as unknown as import("./bootstrap").LifecycleServiceRefs,
+      } as unknown as import("./bootstrap").LifecycleServiceRefs;
+    },
     viewLayer: null,
     windowLayer: null,
     sessionLayer: null,
@@ -228,18 +262,12 @@ function createMockDeps(): BootstrapDeps {
 describe("bootstrap.startup", () => {
   it("full startup with registry and modules", async () => {
     const deps = createMockDeps();
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
+    const result = initializeBootstrap(deps);
 
-    // Start services to register all modules
-    result.startServices();
-
-    // Get the complete API interface
+    // All modules are registered during initializeBootstrap
     const api = result.getInterface();
 
     // Verify all API groups are available
-    // Note: lifecycle.getState, lifecycle.setup removed in app:setup migration
     expect(api.lifecycle).toBeDefined();
     expect(api.lifecycle.ready).toBeTypeOf("function");
     expect(api.lifecycle.quit).toBeTypeOf("function");
@@ -269,24 +297,14 @@ describe("bootstrap.startup", () => {
 });
 
 describe("bootstrap.module.order", () => {
-  it("lifecycle registered before Core/UI", () => {
+  it("all modules registered during initializeBootstrap", () => {
     const deps = createMockDeps();
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
+    const result = initializeBootstrap(deps);
 
-    // Before startServices(), only lifecycle methods should be registered
-    // Calling getInterface() should throw because Core/UI are missing
-    expect(() => result.getInterface()).toThrow(/Missing method registrations/);
-
-    // Now start services
-    result.startServices();
-
-    // Now getInterface() should succeed
+    // wireDispatcher and CoreModule now run during initializeBootstrap,
+    // so getInterface() should succeed immediately
     expect(() => result.getInterface()).not.toThrow();
   });
-
-  // Note: doStartServices test removed - functionality migrated to app:setup intent
 });
 
 describe("bootstrap.quit.flow", () => {
@@ -337,11 +355,7 @@ describe("bootstrap.quit.flow", () => {
 describe("bootstrap.events.roundtrip", () => {
   it("events flow from modules to subscribers", async () => {
     const deps = createMockDeps();
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     // Subscribe to project:opened event
     const projectOpenedHandler = vi.fn();
@@ -397,11 +411,7 @@ describe("bootstrap.events.roundtrip", () => {
 describe("bootstrap.events.multiple", () => {
   it("multiple subscribers receive same event", () => {
     const deps = createMockDeps();
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     // Subscribe multiple handlers
     const handler1 = vi.fn();
@@ -425,11 +435,7 @@ describe("bootstrap.events.multiple", () => {
 describe("bootstrap.events.unsubscribe", () => {
   it("unsubscribed handlers do not receive events", () => {
     const deps = createMockDeps();
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     const handler = vi.fn();
     const unsubscribe = result.registry.on("project:opened", handler);
@@ -465,11 +471,7 @@ describe("bootstrap.events.unsubscribe", () => {
 
   it("unsubscribing one handler does not affect others", () => {
     const deps = createMockDeps();
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     const handler1 = vi.fn();
     const handler2 = vi.fn();
@@ -496,11 +498,7 @@ describe("bootstrap.events.unsubscribe", () => {
 describe("bootstrap.error.propagation", () => {
   it("handler errors are caught and do not affect other handlers", () => {
     const deps = createMockDeps();
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     const errorHandler = vi.fn().mockImplementation(() => {
       throw new Error("Handler error");
@@ -1097,10 +1095,7 @@ describe("bootstrap.lifecycle.ready", () => {
       ipcLayer,
     };
 
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     // lifecycle.ready just resolves the mount promise — no events re-emitted
     const projectOpenedEvents: unknown[] = [];
@@ -1121,10 +1116,7 @@ describe("bootstrap.lifecycle.ready", () => {
     const ipcLayer = createBehavioralIpcLayer();
     const deps: BootstrapDeps = { ...baseDeps, ipcLayer };
 
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     // Call twice — second call is a no-op (mountResolve is null)
     await ipcLayer._invoke("api:lifecycle:ready", {});
