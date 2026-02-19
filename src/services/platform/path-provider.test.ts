@@ -283,6 +283,21 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.scriptsDir.toString()).toBe("/dev/project/out/main/assets/scripts");
     });
 
+    it("uses ./app-data/ for packaged dev builds", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: true,
+        isPackaged: true,
+        appPath: "/opt/codehydra/resources/app.asar",
+        resourcesPath: "/opt/codehydra/resources",
+      });
+      const platformInfo = createMockPlatformInfo({ platform: "linux", homeDir: "/home/testuser" });
+      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+
+      // Packaged dev builds should still use ./app-data/ (not system paths)
+      expect(pathProvider.dataRootDir.toString()).toMatch(/app-data$/);
+      expect(pathProvider.projectsDir.toString()).toMatch(/app-data\/projects$/);
+    });
+
     it("ignores platform in development mode", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
 
