@@ -28,11 +28,11 @@ import type { AgentBinaryType } from "../../services/binary-download";
 import type { SetupRowId, SetupRowStatus } from "../../shared/api/types";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
-import type { AgentStatusManager } from "../../agents";
 import type { AgentServerManager, AgentType } from "../../agents/types";
 import type { LoggingService } from "../../services/logging";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Unsubscribe } from "../../shared/api/interfaces";
+import { AgentStatusManager, createAgentServerManager, type ServerManagerDeps } from "../../agents";
 import type {
   CheckConfigResult,
   CheckDepsHookContext,
@@ -123,21 +123,16 @@ export interface AgentModuleDeps {
   readonly getUIWebContentsFn: () => import("electron").WebContents | null;
   readonly reportProgress: SetupProgressReporter;
   readonly logger: Logger;
-
-  /** Lazy: resolved after startServices. */
-  readonly getLifecycleDeps: () => AgentLifecycleDeps;
-}
-
-/**
- * Dependencies resolved after startServices runs.
- */
-export interface AgentLifecycleDeps {
-  readonly agentStatusManager: AgentStatusManager;
-  readonly serverManager: AgentServerManager;
-  readonly selectedAgentType: AgentType;
   readonly loggingService: LoggingService;
   readonly dispatcher: Dispatcher;
   readonly killTerminalsCallback: KillTerminalsCallback | undefined;
+  readonly serverManagerDeps: ServerManagerDeps;
+  /** Called when agent services are created during the start hook. */
+  readonly onAgentInitialized: (services: {
+    serverManager: AgentServerManager;
+    agentStatusManager: AgentStatusManager;
+    selectedAgentType: AgentType;
+  }) => void;
 }
 
 // =============================================================================
@@ -168,6 +163,11 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
   let serverStartedCleanupFn: Unsubscribe | null = null;
   let serverStoppedCleanupFn: Unsubscribe | null = null;
 
+  /** Agent services created during the start hook (null before start). */
+  let serverManagerInstance: AgentServerManager | null = null;
+  let agentStatusManagerInstance: AgentStatusManager | null = null;
+  let selectedAgentTypeValue: AgentType | null = null;
+
   // =========================================================================
   // Internal functions (from AppState)
   // =========================================================================
@@ -190,13 +190,14 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
    * For OpenCode: sends initial prompt if provided.
    */
   async function handleServerStarted(
-    lifecycle: AgentLifecycleDeps,
     workspacePath: WorkspacePath,
     port: number,
     pendingPrompt: PendingPrompt | undefined
   ): Promise<void> {
     try {
-      const { agentStatusManager, serverManager, selectedAgentType } = lifecycle;
+      const agentStatusManager = agentStatusManagerInstance!;
+      const serverManager = serverManagerInstance!;
+      const selectedAgentType = selectedAgentTypeValue!;
 
       // Check if this is a restart (provider already exists from disconnect)
       if (agentStatusManager.hasProvider(workspacePath)) {
@@ -285,10 +286,11 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
   /**
    * Wire server callbacks (onServerStarted / onServerStopped) to
    * handleServerStarted / agentStatusManager methods.
-   * Called from the `start` hook after lazy deps are resolved.
+   * Called from the `start` hook after agent services are created.
    */
-  function wireServerCallbacks(lifecycle: AgentLifecycleDeps): void {
-    const { serverManager, agentStatusManager } = lifecycle;
+  function wireServerCallbacks(): void {
+    const serverManager = serverManagerInstance!;
+    const agentStatusManager = agentStatusManagerInstance!;
 
     // Wire markActive handler so both OpenCode and Claude Code call it
     serverManager.setMarkActiveHandler((wp) => agentStatusManager.markActive(wp as WorkspacePath));
@@ -299,12 +301,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
     serverStartedCleanupFn = serverManager.onServerStarted((workspacePath, port, ...args) => {
       const pendingPrompt = args[0] as PendingPrompt | undefined;
       // Store promise so callers can await provider registration via waitForProvider()
-      const promise = handleServerStarted(
-        lifecycle,
-        workspacePath as WorkspacePath,
-        port,
-        pendingPrompt
-      );
+      const promise = handleServerStarted(workspacePath as WorkspacePath, port, pendingPrompt);
       serverStartedPromises.set(workspacePath, promise);
     });
 
@@ -365,19 +362,46 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         },
 
         // -------------------------------------------------------------------
-        // app-start → start: wire status→dispatcher, wire server callbacks
+        // app-start → start: create agent services, wire callbacks
         // -------------------------------------------------------------------
         start: {
           handler: async (): Promise<StartHookResult> => {
-            const lifecycle = deps.getLifecycleDeps();
+            // Load config to determine agent type
+            const config = await configService.load();
+            const agentType: AgentType = config.agent ?? "opencode";
+
+            // Create AgentStatusManager with agent-specific logger
+            const agentLoggerName = agentType === "claude" ? "claude" : "opencode";
+            const statusManager = new AgentStatusManager(
+              deps.loggingService.createLogger(agentLoggerName)
+            );
+
+            // Create AgentServerManager via factory
+            const smDeps: ServerManagerDeps = {
+              ...deps.serverManagerDeps,
+              logger: deps.loggingService.createLogger(agentLoggerName),
+            };
+            const sm = createAgentServerManager(agentType, smDeps);
+
+            // Store in closure state
+            serverManagerInstance = sm;
+            agentStatusManagerInstance = statusManager;
+            selectedAgentTypeValue = agentType;
+
+            // Publish to index.ts so lifecycleRefs lazy getters resolve
+            deps.onAgentInitialized({
+              serverManager: sm,
+              agentStatusManager: statusManager,
+              selectedAgentType: agentType,
+            });
 
             // Wire server callbacks (onServerStarted / onServerStopped)
-            wireServerCallbacks(lifecycle);
+            wireServerCallbacks();
 
             // Wire agent status changes through the intent dispatcher
-            agentStatusUnsubscribeFn = lifecycle.agentStatusManager.onStatusChanged(
+            agentStatusUnsubscribeFn = statusManager.onStatusChanged(
               (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => {
-                void lifecycle.dispatcher.dispatch({
+                void deps.dispatcher.dispatch({
                   type: INTENT_UPDATE_AGENT_STATUS,
                   payload: { workspacePath, status },
                 } as UpdateAgentStatusIntent);
@@ -393,15 +417,16 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         activate: {
           handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
             const { mcpPort } = ctx as ActivateHookContext;
-            const lifecycle = deps.getLifecycleDeps();
+            const sm = serverManagerInstance!;
+            const agentType = selectedAgentTypeValue!;
 
             // Configure server manager to connect to MCP
             if (mcpPort !== null) {
-              if (lifecycle.selectedAgentType === "claude") {
-                const claudeManager = lifecycle.serverManager as ClaudeCodeServerManager;
+              if (agentType === "claude") {
+                const claudeManager = sm as ClaudeCodeServerManager;
                 claudeManager.setMcpConfig({ port: mcpPort });
               } else {
-                const opencodeManager = lifecycle.serverManager as OpenCodeServerManager;
+                const opencodeManager = sm as OpenCodeServerManager;
                 opencodeManager.setMcpConfig({ port: mcpPort });
               }
             }
@@ -417,7 +442,6 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            const lifecycleLogger = logger;
             try {
               // Cleanup server callbacks
               if (serverStartedCleanupFn) {
@@ -429,10 +453,10 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
                 serverStoppedCleanupFn = null;
               }
 
-              const lifecycle = deps.getLifecycleDeps();
-
               // Dispose ServerManager (stops all servers)
-              await lifecycle.serverManager.dispose();
+              if (serverManagerInstance) {
+                await serverManagerInstance.dispose();
+              }
 
               // Cleanup agent status subscription
               if (agentStatusUnsubscribeFn) {
@@ -441,9 +465,11 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
               }
 
               // Dispose AgentStatusManager
-              lifecycle.agentStatusManager.dispose();
+              if (agentStatusManagerInstance) {
+                agentStatusManagerInstance.dispose();
+              }
             } catch (error) {
-              lifecycleLogger.error(
+              logger.error(
                 "Agent lifecycle shutdown failed (non-fatal)",
                 {},
                 error instanceof Error ? error : undefined
@@ -575,31 +601,31 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
             const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as OpenWorkspaceIntent;
             const workspacePath = setupCtx.workspacePath;
-            const lifecycle = deps.getLifecycleDeps();
+            const sm = serverManagerInstance!;
+            const asm = agentStatusManagerInstance!;
+            const agentType = selectedAgentTypeValue!;
 
             // 1. Start agent server
-            await lifecycle.serverManager.startServer(workspacePath);
+            await sm.startServer(workspacePath);
 
             // 2. Wait for provider registration (handleServerStarted runs async)
             await waitForProvider(workspacePath);
 
             // 3. Set initial prompt if provided (must happen after startServer)
-            if (intent.payload.initialPrompt && lifecycle.serverManager.setInitialPrompt) {
+            if (intent.payload.initialPrompt && sm.setInitialPrompt) {
               const normalizedPrompt = normalizeInitialPrompt(intent.payload.initialPrompt);
-              await lifecycle.serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
+              await sm.setInitialPrompt(workspacePath, normalizedPrompt);
             }
 
             // 4. Get environment variables from agent provider
-            const agentProvider = lifecycle.agentStatusManager.getProvider(
-              workspacePath as WorkspacePath
-            );
+            const agentProvider = asm.getProvider(workspacePath as WorkspacePath);
             const envVars: Record<string, string> = {
               ...(agentProvider?.getEnvironmentVariables() ?? {}),
             };
 
             // 5. Add bridge port for OpenCode wrapper notifications
-            if (lifecycle.selectedAgentType === "opencode") {
-              const bridgePort = (lifecycle.serverManager as OpenCodeServerManager).getBridgePort();
+            if (agentType === "opencode") {
+              const bridgePort = (sm as OpenCodeServerManager).getBridgePort();
               if (bridgePort !== null) {
                 envVars.CODEHYDRA_BRIDGE_PORT = String(bridgePort);
               }
@@ -619,14 +645,16 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const lifecycle = deps.getLifecycleDeps();
-            const serverName = agentServerNameFn(lifecycle.selectedAgentType);
+            const sm = serverManagerInstance!;
+            const asm = agentStatusManagerInstance!;
+            const agentType = selectedAgentTypeValue!;
+            const serverName = agentServerNameFn(agentType);
 
             try {
               // Kill terminals (best-effort even in normal mode)
-              if (lifecycle.killTerminalsCallback) {
+              if (deps.killTerminalsCallback) {
                 try {
-                  await lifecycle.killTerminalsCallback(workspacePath);
+                  await deps.killTerminalsCallback(workspacePath);
                 } catch (error) {
                   logger.warn("Kill terminals failed", {
                     workspacePath,
@@ -637,7 +665,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
 
               // Stop server
               let serverError: string | undefined;
-              const stopResult = await lifecycle.serverManager.stopServer(workspacePath);
+              const stopResult = await sm.stopServer(workspacePath);
               if (!stopResult.success) {
                 serverError = stopResult.error ?? "Failed to stop server";
                 if (!payload.force) {
@@ -646,7 +674,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
               }
 
               // Clear TUI tracking
-              lifecycle.agentStatusManager.clearTuiTracking(workspacePath as WorkspacePath);
+              asm.clearTuiTracking(workspacePath as WorkspacePath);
 
               return serverError ? { serverName, error: serverError } : { serverName };
             } catch (error) {
@@ -669,9 +697,8 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const { workspacePath } = ctx as GetStatusHookInput;
-            const lifecycle = deps.getLifecycleDeps();
             return {
-              agentStatus: lifecycle.agentStatusManager.getStatus(workspacePath as WorkspacePath),
+              agentStatus: agentStatusManagerInstance!.getStatus(workspacePath as WorkspacePath),
             };
           },
         },
@@ -684,9 +711,8 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         get: {
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
             const { workspacePath } = ctx as GetAgentSessionHookInput;
-            const lifecycle = deps.getLifecycleDeps();
             const session =
-              lifecycle.agentStatusManager.getSession(workspacePath as WorkspacePath) ?? null;
+              agentStatusManagerInstance!.getSession(workspacePath as WorkspacePath) ?? null;
             return { session };
           },
         },
@@ -699,8 +725,7 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
         restart: {
           handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
             const { workspacePath } = ctx as RestartAgentHookInput;
-            const lifecycle = deps.getLifecycleDeps();
-            const result = await lifecycle.serverManager.restartServer(workspacePath);
+            const result = await serverManagerInstance!.restartServer(workspacePath);
             if (result.success) {
               return { port: result.port };
             } else {

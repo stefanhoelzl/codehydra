@@ -55,8 +55,7 @@ import {
   OPENCODE_VERSION,
 } from "../services/binary-download";
 import { ExtensionManager } from "../services/vscode-setup/extension-manager";
-import { AgentStatusManager, type AgentType, type AgentServerManager } from "../agents";
-import { ClaudeCodeServerManager } from "../agents/claude/server-manager";
+import type { AgentStatusManager, AgentType, AgentServerManager } from "../agents";
 import { PluginServer, type ConfigDataProvider } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { WindowManager } from "./managers/window-manager";
@@ -219,7 +218,7 @@ let codeHydraApi: ICodeHydraApi | null = null;
 
 /**
  * PluginServer for VS Code extension communication.
- * Started in startServices() before code-server.
+ * Created in bootstrap() before initializeBootstrap().
  */
 let pluginServer: PluginServer | null = null;
 
@@ -233,30 +232,19 @@ let processRunner: ExecaProcessRunner | null = null;
  * Bootstrap result containing API registry and modules.
  * Created in bootstrap() with initializeBootstrap().
  */
-let bootstrapResult:
-  | (BootstrapResult & {
-      startServices: () => void;
-      setBeforeAppStart: (fn: () => Promise<void>) => void;
-    })
-  | null = null;
+let bootstrapResult: BootstrapResult | null = null;
 
 /**
  * Dispatcher instance for the intent system.
- * Created in bootstrap() and used in createServicesAndWireDispatcher() for agent status dispatch.
+ * Created in bootstrap() and used for intent dispatch throughout the app lifecycle.
  */
 let dispatcherInstance: Dispatcher | null = null;
 
 /**
  * HookRegistry instance for the intent system.
- * Created in bootstrap() and used in createServicesAndWireDispatcher() for MCP module wiring.
+ * Created in bootstrap() and used for wiring lifecycle modules.
  */
 let hookRegistryInstance: HookRegistry | null = null;
-
-/**
- * Flag to track if services have been started.
- * Prevents double-initialization if createServicesAndWireDispatcher is called multiple times.
- */
-let servicesStarted = false;
 
 /**
  * DialogLayer for showing system dialogs.
@@ -297,7 +285,7 @@ let imageLayer: ImageLayer | null = null;
 
 /**
  * ConfigService for loading/saving agent selection.
- * Created in bootstrap(), used in startServices() to determine which agent to use.
+ * Created in bootstrap(), used by lifecycle modules for agent configuration.
  */
 let configService: import("../services/config/config-service").ConfigService | null = null;
 
@@ -309,211 +297,40 @@ let telemetryService: TelemetryService | null = null;
 
 /**
  * AutoUpdater for checking and applying updates.
- * Created in startServices() after configService is available.
+ * Created in bootstrap() before initializeBootstrap().
  */
 let autoUpdater: AutoUpdater | null = null;
 
 /**
  * GitClient for clone operations.
- * Created in startServices() for use in CoreModule.
+ * Created in bootstrap() for use in CoreModule.
  */
 let gitClient: import("../services").IGitClient | null = null;
 
 /**
  * ProjectStore for project configuration storage.
- * Created in startServices() for use in CoreModule.
+ * Created in bootstrap() for use in CoreModule.
  */
 let projectStore: import("../services").ProjectStore | null = null;
 
 /**
- * Global worktree provider. Created in startServices(), shared across all projects.
+ * Global worktree provider. Created in bootstrap(), shared across all projects.
  * Used by intent dispatcher for metadata operations.
  */
 let globalWorktreeProvider: GitWorktreeProvider | null = null;
 
 /**
  * WorkspaceFileService for .code-workspace file management.
- * Created in startServices(), used by intent dispatcher for delete operations.
+ * Created in bootstrap(), used by intent dispatcher for delete operations.
  */
 let workspaceFileService: import("../services").IWorkspaceFileService | null = null;
 
 /**
- * Starts all application services after setup completes.
- * This is the second phase of the two-phase startup:
- * bootstrap() → startServices()
- *
- * The function has two phases:
- * 1. Construction: Build all service instances (constructors/factories, no I/O)
- * 2. Dispatch: `app:start` intent runs hook-based startup via lifecycle modules
- *
- * CRITICAL: Called by the app:start intent's "wire" hook point BEFORE
- * returning the setup result to the renderer. This ensures IPC handlers
- * are registered before MainView mounts.
- */
-/**
- * Creates all service instances and wires the intent dispatcher.
- *
- * Called by the app:start intent's beforeAppStart callback after setup completes.
- * This function:
- * 1. Creates all service instances (PluginServer, CodeServerManager, etc.)
- * 2. Calls bootstrapResult.startServices() to wire the remaining intent operations
- * 3. Does NOT dispatch app:start (that's handled by the start intent flow)
- */
-async function createServicesAndWireDispatcher(): Promise<void> {
-  // Guard against double initialization
-  if (servicesStarted) return;
-  if (!windowManager || !viewManager) return;
-  servicesStarted = true;
-
-  // =========================================================================
-  // Phase 1: Construction (sync/factory calls, no I/O except config load)
-  // =========================================================================
-
-  // Load agent type from config (saved by user via agent selection dialog)
-  if (!configService) {
-    throw new Error(
-      "ConfigService not initialized - createServicesAndWireDispatcher called before bootstrap"
-    );
-  }
-  const appConfig = await configService.load();
-  const selectedAgentType: AgentType = appConfig.agent ?? "opencode";
-  selectedAgentTypeValue = selectedAgentType;
-
-  if (!processRunner) {
-    throw new Error(
-      "ProcessRunner not initialized - createServicesAndWireDispatcher called before bootstrap"
-    );
-  }
-
-  // Create shared network layer for all network operations
-  const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
-
-  // Construct PluginServer (start() moves to CodeServerLifecycleModule)
-  const pluginLogger = loggingService.createLogger("plugin");
-  const extensionLogger = loggingService.createLogger("extension");
-  pluginServer = new PluginServer(networkLayer, pluginLogger, {
-    isDevelopment: buildInfo.isDevelopment,
-    extensionLogger,
-  });
-
-  // Construct CodeServerManager (ensureRunning() moves to CodeServerLifecycleModule)
-  const config = createCodeServerConfig();
-  codeServerManager = new CodeServerManager(
-    config,
-    processRunner,
-    networkLayer,
-    networkLayer,
-    loggingService.createLogger("code-server")
-  );
-
-  // Create ProjectStore, GitClient, GitWorktreeProvider, WorkspaceFileService
-  projectStore = new ProjectStore(
-    pathProvider.projectsDir.toString(),
-    fileSystemLayer,
-    pathProvider.remotesDir.toString()
-  );
-  gitClient = new SimpleGitClient(loggingService.createLogger("git"));
-  globalWorktreeProvider = new GitWorktreeProvider(
-    gitClient,
-    fileSystemLayer,
-    loggingService.createLogger("worktree")
-  );
-  const workspaceFileConfig = createWorkspaceFileConfig();
-  workspaceFileService = new WorkspaceFileService(
-    fileSystemLayer,
-    workspaceFileConfig,
-    loggingService.createLogger("workspace-file")
-  );
-
-  // Create agent services
-  const agentLoggerName = selectedAgentType === "claude" ? "claude" : "opencode";
-  agentStatusManager = new AgentStatusManager(loggingService.createLogger(agentLoggerName));
-
-  if (selectedAgentType === "claude") {
-    serverManager = new ClaudeCodeServerManager({
-      portManager: networkLayer,
-      pathProvider,
-      fileSystem: fileSystemLayer,
-      logger: loggingService.createLogger("claude"),
-    });
-  } else {
-    const { OpenCodeServerManager } = await import("../agents/opencode/server-manager");
-    serverManager = new OpenCodeServerManager(
-      processRunner,
-      networkLayer,
-      networkLayer,
-      pathProvider,
-      loggingService.createLogger("opencode")
-    );
-  }
-
-  // Create BadgeManager
-  if (!imageLayer) {
-    throw new Error(
-      "ImageLayer not initialized - createServicesAndWireDispatcher called before bootstrap"
-    );
-  }
-  const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
-  badgeManager = new BadgeManager(
-    platformInfo,
-    appLayer,
-    imageLayer,
-    windowManager,
-    loggingService.createLogger("badge")
-  );
-
-  // Create AutoUpdater (start() moves to AutoUpdaterLifecycleModule)
-  autoUpdater = new AutoUpdater({
-    logger: loggingService.createLogger("updater"),
-    isDevelopment: buildInfo.isDevelopment,
-  });
-
-  // =========================================================================
-  // Phase 2: Wire dispatcher (CoreModule and remaining operations)
-  // =========================================================================
-
-  if (!bootstrapResult) {
-    throw new Error(
-      "Bootstrap not initialized - createServicesAndWireDispatcher called before bootstrap"
-    );
-  }
-
-  // Create remaining modules (CoreModule) and wire intent dispatcher
-  // Note: lifecycleRefsFn uses getters for late-bound references (codeHydraApi)
-  bootstrapResult.startServices();
-
-  // Get the typed API interface (all methods are now registered)
-  codeHydraApi = bootstrapResult.getInterface();
-
-  // Create McpServerManager now that API is available
-  mcpServerManager = new McpServerManager(
-    networkLayer,
-    pathProvider,
-    codeHydraApi,
-    loggingService.createLogger("mcp")
-  );
-
-  // Wire MCP module now that McpServerManager exists
-  // (must happen before app:start's "start" hook collects handlers)
-  const mcpModule = createMcpModule({
-    mcpServerManager,
-    logger: loggingService.createLogger("mcp"),
-  });
-  wireModules([mcpModule], hookRegistryInstance!, dispatcherInstance!);
-
-  // Note: app:start is NOT dispatched here - the start intent flow handles that after
-  // this callback returns. This function only creates services and wires the dispatcher.
-}
-
-// NOTE: Legacy setup handlers (registerSetupReadyHandler, registerSetupRetryAndQuitHandlers,
-// runSetupProcess, createSetupEmitters) have been removed. Setup is now handled entirely
-// through the intent dispatcher (lifecycle.quit dispatches app:shutdown).
-
-/**
  * Bootstraps the application.
  *
- * This is the first phase of the two-phase startup:
- * bootstrap() → startServices()
+ * Creates all services, wires the intent dispatcher, loads UI, and dispatches app:start.
+ * Agent services (ServerManager, AgentStatusManager) are created lazily during
+ * the app:start "start" hook by AgentModule.
  *
  * The initialization flow is:
  * 1. Initialize logging and disable application menu
@@ -573,7 +390,6 @@ async function bootstrap(): Promise<void> {
   });
 
   // 3. Create platform layers and setup services
-  // Note: Process tree provider is created lazily in startServices() using the factory
 
   // Store processRunner in module-level variable for reuse by CodeServerManager
   // Process runner uses platform-native tree killing (taskkill on Windows, process.kill on Unix)
@@ -688,16 +504,77 @@ async function bootstrap(): Promise<void> {
   // Capture viewManager for closure (TypeScript narrow refinement doesn't persist)
   const viewManagerRef = viewManager;
 
-  // 7. Initialize bootstrap with API registry and modules
-  // lifecycle.quit is registered immediately, CoreModule and intent dispatcher are created
-  // when startServices() calls bootstrapResult.startServices()
+  // 7. Create runtime services (non-agent, used by lifecycle modules)
+  // Agent services are created lazily by AgentModule during its start hook.
+  const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
+
+  const pluginLogger = loggingService.createLogger("plugin");
+  const extensionLogger = loggingService.createLogger("extension");
+  pluginServer = new PluginServer(networkLayer, pluginLogger, {
+    isDevelopment: buildInfo.isDevelopment,
+    extensionLogger,
+  });
+
+  const runtimeCodeServerConfig = createCodeServerConfig();
+  codeServerManager = new CodeServerManager(
+    runtimeCodeServerConfig,
+    processRunner,
+    networkLayer,
+    networkLayer,
+    loggingService.createLogger("code-server")
+  );
+
+  projectStore = new ProjectStore(
+    pathProvider.projectsDir.toString(),
+    fileSystemLayer,
+    pathProvider.remotesDir.toString()
+  );
+  gitClient = new SimpleGitClient(loggingService.createLogger("git"));
+  globalWorktreeProvider = new GitWorktreeProvider(
+    gitClient,
+    fileSystemLayer,
+    loggingService.createLogger("worktree")
+  );
+  const workspaceFileConfig = createWorkspaceFileConfig();
+  workspaceFileService = new WorkspaceFileService(
+    fileSystemLayer,
+    workspaceFileConfig,
+    loggingService.createLogger("workspace-file")
+  );
+
+  const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
+  badgeManager = new BadgeManager(
+    platformInfo,
+    appLayer,
+    imageLayer!,
+    windowManager,
+    loggingService.createLogger("badge")
+  );
+
+  autoUpdater = new AutoUpdater({
+    logger: loggingService.createLogger("updater"),
+    isDevelopment: buildInfo.isDevelopment,
+  });
+
+  // onAgentInitialized callback: AgentModule calls this during its start hook
+  // to publish agent services so lifecycleRefs lazy getters can resolve.
+  const onAgentInitialized = (services: {
+    serverManager: AgentServerManager;
+    agentStatusManager: AgentStatusManager;
+    selectedAgentType: AgentType;
+  }) => {
+    serverManager = services.serverManager;
+    agentStatusManager = services.agentStatusManager;
+    selectedAgentTypeValue = services.selectedAgentType;
+  };
+
+  // 8. Initialize bootstrap with API registry and all modules
   const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
   bootstrapResult = initializeBootstrap({
     logger: loggingService.createLogger("api"),
     ipcLayer,
     app,
-    // Core module deps - factory that captures module-level appState
-    // Called when bootstrapResult.startServices() runs in startServices()
+    // Core module deps
     coreDepsFn: (): CoreModuleDeps => {
       // Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
       // dialogLayer is guaranteed set by bootstrap() before startServices()
@@ -803,72 +680,65 @@ async function bootstrap(): Promise<void> {
     setTitleFn: () => (title: string) => windowManager?.setTitle(title),
     // Version suffix for window title (branch in dev, version in packaged)
     titleVersionFn: () => buildInfo.gitBranch ?? buildInfo.version,
-    // BadgeManager (created in startServices, passed to bootstrap for BadgeModule wiring)
-    badgeManagerFn: () => {
-      if (!badgeManager) {
-        throw new Error("BadgeManager not initialized - startServices called before bootstrap");
-      }
-      return badgeManager;
+    // BadgeManager
+    badgeManagerFn: () => badgeManager!,
+    // ServerManagerDeps for AgentModule to create AgentServerManager
+    serverManagerDeps: {
+      processRunner,
+      portManager: networkLayer,
+      httpClient: networkLayer,
+      pathProvider,
+      fileSystem: fileSystemLayer,
+      logger: loggingService.createLogger("app"),
     },
+    // Callback for AgentModule to publish agent services
+    onAgentInitialized,
     // Lifecycle service references for app:start/shutdown modules
-    // Uses getters for references that are set after wireDispatcher() runs
-    lifecycleRefsFn: (): LifecycleServiceRefs => {
-      if (!viewManager || !windowManager) {
-        throw new Error("Core services not initialized");
-      }
-      if (!agentStatusManager || !serverManager || !selectedAgentTypeValue) {
-        throw new Error("Agent services not initialized");
-      }
-      if (!codeServerManager || !autoUpdater || !badgeManager) {
-        throw new Error("Lifecycle services not initialized");
-      }
-
-      // Capture for getter closures
-      const agentStatusManagerRef = agentStatusManager;
-      const serverManagerRef = serverManager;
-      const selectedAgentTypeRef = selectedAgentTypeValue;
-      const codeServerManagerRef = codeServerManager;
-      const autoUpdaterRef = autoUpdater;
-      const windowManagerRef = windowManager;
-
-      // ConfigDataProvider for PluginServer (agent env vars + type)
-      const configDataProvider: ConfigDataProvider = (workspacePath: string) => {
-        const env =
-          agentStatusManagerRef
-            .getProvider(workspacePath as import("../shared/ipc").WorkspacePath)
-            ?.getEnvironmentVariables() ?? null;
-        return { env, agentType: selectedAgentTypeRef };
-      };
-
-      return {
-        pluginServer,
-        codeServerManager: codeServerManagerRef,
-        fileSystemLayer,
-        agentStatusManager: agentStatusManagerRef,
-        serverManager: serverManagerRef,
-        telemetryService,
-        autoUpdater: autoUpdaterRef,
-        loggingService,
-        selectedAgentType: selectedAgentTypeRef,
-        platformInfo,
-        buildInfo,
-        pathProvider,
-        configService: configService!,
-        dispatcher,
-        viewLayer,
-        windowLayer,
-        sessionLayer,
-        // Getter: codeHydraApi is set after bootstrapResult.getInterface()
-        getApi: () => {
+    // Agent-specific fields use lazy getters (set by AgentModule start hook)
+    lifecycleRefsFn: (): LifecycleServiceRefs => ({
+      pluginServer,
+      codeServerManager: codeServerManager!,
+      fileSystemLayer,
+      // Lazy getters: set by AgentModule during start hook
+      get agentStatusManager() {
+        return agentStatusManager!;
+      },
+      get serverManager() {
+        return serverManager!;
+      },
+      get selectedAgentType() {
+        return selectedAgentTypeValue!;
+      },
+      telemetryService,
+      autoUpdater: autoUpdater!,
+      loggingService,
+      platformInfo,
+      buildInfo,
+      pathProvider,
+      configService: configService!,
+      dispatcher,
+      viewLayer,
+      windowLayer,
+      sessionLayer,
+      get getApi() {
+        return () => {
           if (!codeHydraApi) {
-            throw new Error("API not initialized - accessed before startServices completes");
+            throw new Error("API not initialized");
           }
           return codeHydraApi;
-        },
-        windowManager: windowManagerRef,
-        configDataProvider,
-      };
-    },
+        };
+      },
+      windowManager: windowManager!,
+      get configDataProvider(): ConfigDataProvider {
+        return (workspacePath: string) => {
+          const env =
+            agentStatusManager
+              ?.getProvider(workspacePath as import("../shared/ipc").WorkspacePath)
+              ?.getEnvironmentVariables() ?? null;
+          return { env, agentType: selectedAgentTypeValue! };
+        };
+      },
+    }),
     // Shell layers for ViewModule (available immediately from bootstrap)
     viewLayer,
     windowLayer,
@@ -883,20 +753,27 @@ async function bootstrap(): Promise<void> {
       getAgentBinaryManager,
       extensionManager: setupExtensionManager,
     },
-  }) as BootstrapResult & {
-    startServices: () => void;
-    setBeforeAppStart: (fn: () => Promise<void>) => void;
-  };
+  });
 
-  // Note: IPC handlers for lifecycle.quit are registered by initializeBootstrap()
-  // No need to call registerLifecycleHandlers() separately
+  // Get the typed API interface (all methods are now registered)
+  codeHydraApi = bootstrapResult.getInterface();
 
-  // Wire the beforeAppStart callback - creates services then wires dispatcher
-  // Called by app:start intent after setup completes, before running start/activate hooks
-  bootstrapResult.setBeforeAppStart(createServicesAndWireDispatcher);
+  // Create McpServerManager now that API is available
+  mcpServerManager = new McpServerManager(
+    networkLayer,
+    pathProvider,
+    codeHydraApi,
+    loggingService.createLogger("mcp")
+  );
 
-  // Wire lifecycle events to IPC immediately (before UI loads)
-  // These are needed because setup runs before services are created
+  // Wire MCP module (must happen before app:start's "start" hook collects handlers)
+  const mcpModule = createMcpModule({
+    mcpServerManager,
+    logger: loggingService.createLogger("mcp"),
+  });
+  wireModules([mcpModule], hookRegistryInstance!, dispatcherInstance!);
+
+  // Wire lifecycle:setup-progress events to IPC immediately (before UI loads)
   bootstrapResult.registry.on("lifecycle:setup-progress", (payload) => {
     const webContents = viewManager?.getUIWebContents();
     if (webContents && !webContents.isDestroyed()) {
@@ -921,7 +798,7 @@ async function bootstrap(): Promise<void> {
 
   // 9. Dispatch app:start to orchestrate the startup flow
   // This shows the starting screen, checks if setup is needed, and dispatches app:setup if required.
-  // After setup (if any), it runs wire, start, and activate hooks to complete startup.
+  // After setup (if any), it runs start and activate hooks to complete startup.
   appLogger.info("Dispatching app:start");
   void dispatcherInstance!
     .dispatch({

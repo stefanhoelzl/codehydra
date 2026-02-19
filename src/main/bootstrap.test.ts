@@ -113,9 +113,21 @@ function createMockDeps(): BootstrapDeps {
     titleVersionFn: () => "test",
     badgeManagerFn: () =>
       ({ updateBadge: vi.fn() }) as unknown as import("./managers/badge-manager").BadgeManager,
+    serverManagerDeps: {
+      processRunner: {} as never,
+      portManager: {} as never,
+      httpClient: {} as never,
+      pathProvider: {} as never,
+      fileSystem: {} as never,
+      logger: createMockLogger(),
+    },
+    onAgentInitialized: vi.fn(),
     lifecycleRefsFn: () =>
       ({
         loggingService: { createLogger: () => createMockLogger() },
+        configService: {
+          load: vi.fn().mockResolvedValue({ agent: "opencode", versions: {} }),
+        },
       }) as unknown as import("./bootstrap").LifecycleServiceRefs,
     viewLayer: null,
     windowLayer: null,
@@ -165,23 +177,11 @@ describe("initializeBootstrap", () => {
     expect(result.dispose).toBeDefined();
   });
 
-  it("getInterface throws when not all methods are registered", () => {
+  it("registers all modules including core and ui", () => {
     const result = initializeBootstrap(deps);
 
-    // Only lifecycle methods are registered initially
-    // Core and UI methods are missing, so getInterface should throw
-    expect(() => result.getInterface()).toThrow(/Missing method registrations/);
-  });
-
-  it("startServices registers core and ui methods", () => {
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    // Start services to register remaining modules
-    result.startServices();
-
-    // Now all methods should be registered
+    // wireDispatcher and CoreModule now run during initializeBootstrap,
+    // so all methods should be registered immediately
     const api = result.getInterface();
     expect(api.lifecycle).toBeDefined();
     expect(api.projects).toBeDefined();
@@ -189,22 +189,8 @@ describe("initializeBootstrap", () => {
     expect(api.ui).toBeDefined();
   });
 
-  it("startServices is idempotent", () => {
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    // Calling startServices multiple times should not throw
-    result.startServices();
-    expect(() => result.startServices()).not.toThrow();
-  });
-
   it("dispose cleans up all modules", async () => {
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     // Get interface to verify it works before dispose
     const api = result.getInterface();
@@ -216,12 +202,7 @@ describe("initializeBootstrap", () => {
 
   it("registers IPC handlers for all modules", () => {
     // IPC handlers are registered automatically for all modules
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-
-    // This should not throw - modules register their IPC handlers
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     // Registry should have methods with IPC handlers
     expect(result.registry).toBeDefined();
@@ -236,10 +217,7 @@ describe("bootstrap event flow", () => {
   });
 
   it("allows subscribing to events via registry.on()", () => {
-    const result = initializeBootstrap(deps) as ReturnType<typeof initializeBootstrap> & {
-      startServices: () => void;
-    };
-    result.startServices();
+    const result = initializeBootstrap(deps);
 
     const handler = vi.fn();
     const unsubscribe = result.registry.on("project:opened", handler);
