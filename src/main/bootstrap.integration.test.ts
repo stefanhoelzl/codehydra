@@ -185,6 +185,14 @@ function createMockDeps(): BootstrapDeps {
         selectedAgentType: "opencode",
         dispatcher: { dispatch: vi.fn().mockResolvedValue(undefined) },
         configDataProvider: vi.fn().mockReturnValue({ env: null, agentType: null }),
+        getApi: () => ({
+          on: vi.fn().mockReturnValue(() => {}),
+          projects: {},
+          workspaces: {},
+          ui: {},
+          lifecycle: {},
+          dispose: vi.fn(),
+        }),
       }) as unknown as import("./bootstrap").LifecycleServiceRefs,
     viewLayer: null,
     windowLayer: null,
@@ -849,7 +857,15 @@ describe("bootstrap.setup.flow", () => {
         downloadError,
       });
 
-      initializeBootstrap(deps);
+      const result = initializeBootstrap(deps);
+
+      // Wire early subscriber (matches the pattern in index.ts)
+      result.registry.on("lifecycle:setup-error", (payload) => {
+        captured.webContentsSendCalls.push({
+          channel: "api:lifecycle:setup-error",
+          args: [payload],
+        });
+      });
 
       // Dispatch will enter retry loop after setup failure.
       // Start the dispatch but don't await -- it will wait for retry IPC.

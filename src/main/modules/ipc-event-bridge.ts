@@ -37,6 +37,9 @@ import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
+import { EVENT_SETUP_ERROR } from "../operations/setup";
+import type { SetupErrorEvent } from "../operations/setup";
+import type { SetupErrorPayload } from "../../shared/ipc";
 import type { WorkspaceStatus } from "../../shared/api/types";
 
 /**
@@ -125,6 +128,14 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
           path: payload.path,
         });
       }
+    },
+    [EVENT_SETUP_ERROR]: (event: DomainEvent) => {
+      const { message, code } = (event as SetupErrorEvent).payload;
+      const payload: SetupErrorPayload = {
+        message,
+        ...(code !== undefined && { code }),
+      };
+      apiRegistry.emit("lifecycle:setup-error", payload);
     },
     [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
       const {

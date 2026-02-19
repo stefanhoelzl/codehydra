@@ -137,6 +137,12 @@ export function wireApiEvents(
     })
   );
 
+  unsubscribers.push(
+    api.on("lifecycle:setup-error", (event) => {
+      send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, event);
+    })
+  );
+
   // Return cleanup function
   return () => {
     for (const unsubscribe of unsubscribers) {

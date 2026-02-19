@@ -29,7 +29,7 @@ import type {
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { Logger } from "../services/logging";
 import type { IpcLayer } from "../services/platform/ipc";
-import { ApiIpcChannels, type WorkspacePath, type SetupErrorPayload } from "../shared/ipc";
+import { ApiIpcChannels, type WorkspacePath } from "../shared/ipc";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { SetMetadataOperation, INTENT_SET_METADATA } from "./operations/set-metadata";
@@ -110,7 +110,6 @@ import {
 } from "./operations/app-shutdown";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
-import type { SetupErrorEvent } from "./operations/setup";
 import type { BadgeManager } from "./managers/badge-manager";
 import type { IpcEventHandler } from "../services/platform/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
@@ -245,7 +244,7 @@ export interface BootstrapDeps {
   readonly windowLayer: import("../services/shell/window").WindowLayerInternal | null;
   /** SessionLayer for shell layer disposal (nullable for testing) */
   readonly sessionLayer: import("../services/shell/session").SessionLayer | null;
-  /** Function to get UI webContents for setup error IPC events */
+  /** Function to get UI webContents for setup IPC events */
   readonly getUIWebContentsFn: () => import("electron").WebContents | null;
   /** Setup dependencies for app:setup hook modules (available immediately) */
   readonly setupDeps: {
@@ -362,9 +361,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // Note: Flag is only reset on error (via setup:error event handler) to allow retry.
   // On success, setup completes and no reset is needed (app won't restart setup).
   let setupInProgress = false;
-  const resetSetupInProgress = () => {
-    setupInProgress = false;
-  };
   const setupIdempotencyModule: IntentModule = {
     interceptors: [
       {
@@ -382,6 +378,11 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
         },
       },
     ],
+    events: {
+      [EVENT_SETUP_ERROR]: () => {
+        setupInProgress = false;
+      },
+    },
   };
   wireModules([setupIdempotencyModule], hookRegistry, dispatcher);
 
@@ -402,24 +403,20 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  // 10. Domain event handler for setup:error
-  // Resets idempotency flag and sends IPC to renderer
-  const setupErrorModule: IntentModule = {
-    events: {
-      [EVENT_SETUP_ERROR]: (event) => {
-        resetSetupInProgress();
-        const webContents = deps.getUIWebContentsFn();
-        if (webContents && !webContents.isDestroyed()) {
-          const { message, code } = (event as SetupErrorEvent).payload;
-          const payload: SetupErrorPayload = {
-            message,
-            ...(code !== undefined && { code }),
-          };
-          webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, payload);
-        }
-      },
+  // 10. Wire IPC event bridge early so it receives domain events during setup
+  // (e.g., setup:error fires before the "wire" hook completes).
+  // Lifecycle deps (getApi, pluginServer) are late-bound via closures/getters
+  // since the bridge's start/stop hooks only run after services are created.
+  const ipcEventBridge = createIpcEventBridge({
+    apiRegistry: registry,
+    getApi: () => deps.lifecycleRefsFn().getApi(),
+    getUIWebContents: () => deps.getUIWebContentsFn(),
+    get pluginServer() {
+      return deps.lifecycleRefsFn().pluginServer;
     },
-  };
+    logger,
+  });
+  wireModules([ipcEventBridge], hookRegistry, dispatcher);
 
   // 11. RetryModule: "show-ui" hook on app-start -- returns waitForRetry
   // waitForRetry returns a promise that resolves when the renderer sends lifecycle:retry IPC
@@ -444,7 +441,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     },
   };
 
-  wireModules([appStartWireModule, setupErrorModule, retryModule], hookRegistry, dispatcher);
+  wireModules([appStartWireModule, retryModule], hookRegistry, dispatcher);
 
   // 12. Register AppStartOperation and SetupOperation immediately (before UI loads)
   // app:start is dispatched first in index.ts, so both must be registered early
@@ -576,7 +573,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       hookRegistry,
       dispatcher,
       deps.globalWorktreeProviderFn(),
-      deps.viewManagerFn(),
       deps.gitClientFn(),
       deps.pathProviderFn(),
       deps.projectStoreFn(),
@@ -668,7 +664,6 @@ function wireDispatcher(
   hookRegistry: HookRegistry,
   dispatcher: Dispatcher,
   globalProvider: GitWorktreeProvider,
-  viewManager: import("./managers/view-manager.interface").IViewManager,
   gitClient: import("../services").IGitClient,
   pathProvider: import("../services").PathProvider,
   projectStore: import("../services").ProjectStore,
@@ -904,21 +899,13 @@ function wireDispatcher(
     },
   };
 
-  // Wire IpcEventBridge, BadgeModule, and hook handler modules
-  // Note: shutdownIdempotencyModule and quitModule are wired early in initializeBootstrap()
-  const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: registry,
-    getApi: () => lifecycleRefs.getApi(),
-    getUIWebContents: () => viewManager.getUIWebContents(),
-    pluginServer: lifecycleRefs.pluginServer,
-    logger: lifecycleLogger,
-  });
+  // Wire BadgeModule and hook handler modules
+  // Note: shutdownIdempotencyModule, quitModule, and ipcEventBridge are wired early in initializeBootstrap()
   const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
   wireModules(
     [
       // Workspace index (must be first to receive events before other modules)
       indexModule,
-      ipcEventBridge,
       badgeModule,
       metadataModule,
       // Open-workspace hook modules (kept inline)

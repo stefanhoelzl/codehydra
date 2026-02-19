@@ -52,6 +52,8 @@ import {
 } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import { SetupOperation, INTENT_SETUP } from "../operations/setup";
+import type { SetupIntent } from "../operations/setup";
 import { createIpcEventBridge, type IpcEventBridgeDeps } from "./ipc-event-bridge";
 import type { IApiRegistry } from "../api/registry-types";
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -659,5 +661,111 @@ describe("IpcEventBridge - lifecycle", () => {
         expect.any(Error)
       );
     });
+  });
+});
+
+// =============================================================================
+// setup:error → lifecycle:setup-error bridge tests
+// =============================================================================
+
+describe("IpcEventBridge - setup:error", () => {
+  function createSetupErrorTestSetup(): {
+    dispatcher: Dispatcher;
+    mockApiRegistry: MockApiRegistry;
+  } {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
+
+    const mockApiRegistry = createMockApiRegistry();
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: mockApiRegistry as unknown as IApiRegistry,
+      getApi: () => {
+        throw new Error("getApi not available in setup-error test");
+      },
+      getUIWebContents: () => null,
+      pluginServer: null,
+      logger: SILENT_LOGGER,
+    });
+
+    // Hook module that throws to trigger the setup:error domain event
+    const failingSetupHook: IntentModule = {
+      hooks: {
+        setup: {
+          "show-ui": {
+            handler: async () => {
+              throw new Error("Download failed");
+            },
+          },
+        },
+      },
+    };
+
+    wireModules([ipcEventBridge, failingSetupHook], hookRegistry, dispatcher);
+
+    return { dispatcher, mockApiRegistry };
+  }
+
+  it("emits lifecycle:setup-error when setup operation fails", async () => {
+    const { dispatcher, mockApiRegistry } = createSetupErrorTestSetup();
+
+    const intent: SetupIntent = {
+      type: INTENT_SETUP,
+      payload: {},
+    };
+
+    // SetupOperation throws after emitting the error event
+    await expect(dispatcher.dispatch(intent)).rejects.toThrow("Download failed");
+
+    expect(mockApiRegistry.events).toEqual([
+      {
+        channel: "lifecycle:setup-error",
+        data: { message: "Download failed" },
+      },
+    ]);
+  });
+
+  it("includes error code when present", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
+
+    const mockApiRegistry = createMockApiRegistry();
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: mockApiRegistry as unknown as IApiRegistry,
+      getApi: () => {
+        throw new Error("getApi not available in setup-error test");
+      },
+      getUIWebContents: () => null,
+      pluginServer: null,
+      logger: SILENT_LOGGER,
+    });
+
+    const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
+    const failingHook: IntentModule = {
+      hooks: {
+        setup: {
+          "show-ui": {
+            handler: async () => {
+              throw errorWithCode;
+            },
+          },
+        },
+      },
+    };
+
+    wireModules([ipcEventBridge, failingHook], hookRegistry, dispatcher);
+
+    const intent: SetupIntent = { type: INTENT_SETUP, payload: {} };
+    await expect(dispatcher.dispatch(intent)).rejects.toThrow("Network timeout");
+
+    expect(mockApiRegistry.events).toEqual([
+      {
+        channel: "lifecycle:setup-error",
+        data: { message: "Network timeout", code: "ETIMEDOUT" },
+      },
+    ]);
   });
 });

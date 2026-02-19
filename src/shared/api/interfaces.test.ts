@@ -24,7 +24,7 @@ import type {
   AgentSession,
   SetupScreenProgress,
 } from "./types";
-import type { UIMode, UIModeChangedEvent } from "../ipc";
+import type { UIMode, UIModeChangedEvent, SetupErrorPayload } from "../ipc";
 
 describe("IProjectApi Interface", () => {
   it("should have correct method signatures", () => {
@@ -241,10 +241,13 @@ describe("ApiEvents Interface", () => {
       "lifecycle:setup-progress": (event: SetupScreenProgress) => {
         void event;
       },
+      "lifecycle:setup-error": (event: SetupErrorPayload) => {
+        void event;
+      },
     };
 
     expect(handlers).toBeDefined();
-    expect(Object.keys(handlers)).toHaveLength(10);
+    expect(Object.keys(handlers)).toHaveLength(11);
   });
 });
 

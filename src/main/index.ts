@@ -895,12 +895,18 @@ async function bootstrap(): Promise<void> {
   // Called by app:start intent after setup completes, before running start/activate hooks
   bootstrapResult.setBeforeAppStart(createServicesAndWireDispatcher);
 
-  // Wire lifecycle:setup-progress events to IPC immediately (before UI loads)
-  // This is needed because setup runs before services are created
+  // Wire lifecycle events to IPC immediately (before UI loads)
+  // These are needed because setup runs before services are created
   bootstrapResult.registry.on("lifecycle:setup-progress", (payload) => {
     const webContents = viewManager?.getUIWebContents();
     if (webContents && !webContents.isDestroyed()) {
       webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
+    }
+  });
+  bootstrapResult.registry.on("lifecycle:setup-error", (payload) => {
+    const webContents = viewManager?.getUIWebContents();
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, payload);
     }
   });
 
