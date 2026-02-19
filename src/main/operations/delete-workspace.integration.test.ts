@@ -41,7 +41,7 @@ import type {
 } from "./delete-workspace";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { IViewManager } from "../managers/view-manager.interface";
-import type { AppState } from "../app-state";
+
 import type { IApiRegistry } from "../api/registry-types";
 import type { WorkspaceLockHandler } from "../../services/platform/workspace-lock-handler";
 import type { IWorkspaceFileService } from "../../services";
@@ -123,12 +123,18 @@ interface TestAppState {
 }
 
 /**
- * Mock AppState interface used in tests. Extends real AppState methods with
- * test-only methods that simulate removed production methods (getAllProjects,
- * getProject, unregisterWorkspace, findProjectForWorkspace). These are used
- * by inline hook modules that simulate the behavior of extracted production modules.
+ * Mock interface for test hooks that simulate agent and state interactions.
+ * Provides getServerManager/getAgentStatusManager (from AgentModule) plus
+ * test-only methods for project/workspace state simulation.
  */
-interface MockAppState extends AppState {
+interface MockAppState {
+  getServerManager: () => {
+    stopServer: (path: string) => Promise<{ success: boolean; error?: string }>;
+  } | null;
+  getAgentStatusManager: () => {
+    clearTuiTracking: (path: string) => void;
+    getStatus: (path: string) => { status: string };
+  } | null;
   getAllProjects: () => Promise<TestProject[]>;
   getProject: (path: string) => TestProject | undefined;
   unregisterWorkspace: (projectPath: string, workspacePath: string) => void;

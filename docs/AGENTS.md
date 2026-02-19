@@ -96,7 +96,7 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. The ar
 | `get-agent-session`    | `get`                                             | Return session info                                                                     |
 | `restart-agent`        | `restart`                                         | Restart agent server                                                                    |
 
-Internal closure state (moved from `AppState`): `handleServerStarted()`, `waitForProvider()`, `serverStartedPromises`, server callback wiring.
+Internal closure state: `handleServerStarted()`, `waitForProvider()`, `serverStartedPromises`, server callback wiring.
 
 ### File Structure
 

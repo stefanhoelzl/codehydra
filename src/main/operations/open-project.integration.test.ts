@@ -229,7 +229,7 @@ function createTestHarness(options?: {
 
   const cloneCalls: Array<{ url: string; path: string }> = [];
 
-  // Mock AppState methods used by hooks
+  // Mock state methods used by hooks
   const appState = {
     registerProject: vi.fn().mockImplementation(
       (project: {
@@ -271,7 +271,7 @@ function createTestHarness(options?: {
           projectPath,
           workspacePath: workspace.path.toString(),
         });
-        // Also add to the project's workspaces (matches real AppState behavior)
+        // Also add to the project's workspaces (matches real behavior)
         const project = projectState.registeredProjects.find(
           (p) => p.path === new Path(projectPath).toString()
         );
@@ -427,7 +427,7 @@ function createTestHarness(options?: {
     },
   };
 
-  // AppStateRegisterModule: registers project in AppState, caches defaultBaseBranch
+  // AppStateRegisterModule: registers project in state, caches defaultBaseBranch
   const appStateRegisterModule: IntentModule = {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {

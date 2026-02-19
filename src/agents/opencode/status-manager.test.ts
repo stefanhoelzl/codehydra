@@ -4,7 +4,7 @@
  *
  * Uses SDK behavioral mock for testing OpenCodeClient integration.
  * AgentStatusManager now receives ports directly from OpenCodeServerManager
- * via callbacks routed through AppState.
+ * via callbacks routed through AgentModule.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -25,7 +25,7 @@ import { SILENT_LOGGER } from "../../services/logging";
 
 /**
  * Helper to create and initialize a provider for testing.
- * Mirrors what AppState.handleServerStarted does.
+ * Mirrors what AgentModule's handleServerStarted does.
  */
 async function createAndInitializeProvider(
   port: number,

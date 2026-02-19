@@ -557,7 +557,7 @@ The application uses a registry-based API layer (`ApiRegistry`) where modules se
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           Services                                       │
-│  AppState, GitWorktreeProvider, AgentStatusManager, ViewManager, etc.   │
+│  GitWorktreeProvider, AgentStatusManager, ViewManager, etc.             │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -565,7 +565,6 @@ The application uses a registry-based API layer (`ApiRegistry`) where modules se
 
 | Component     | Owns                                             | Does NOT Own                       |
 | ------------- | ------------------------------------------------ | ---------------------------------- |
-| `AppState`    | Project/workspace state, provider registry       | Event emission, ID generation      |
 | `ApiRegistry` | Method registration, IPC auto-generation, events | Business logic (in modules)        |
 | `Modules`     | Business logic, ID resolution, event emission    | IPC serialization (auto-generated) |
 
@@ -1285,7 +1284,7 @@ type PluginResult<T> = { success: true; data: T } | { success: false; error: str
 The `wirePluginApi()` function in `src/main/index.ts` connects PluginServer to the CodeHydra API:
 
 ```typescript
-function wirePluginApi(pluginServer: PluginServer, api: ICodeHydraApi, appState: AppState): void {
+function wirePluginApi(pluginServer: PluginServer, api: ICodeHydraApi): void {
   pluginServer.onApiCall({
     getStatus: async (workspacePath) => {
       // 1. Resolve workspace path to projectId + workspaceName
