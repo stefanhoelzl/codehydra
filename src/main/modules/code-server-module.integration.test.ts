@@ -147,6 +147,7 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, Finaliz
       intent: ctx.intent,
       workspacePath: "/test/project/.worktrees/feature-1",
       envVars: { OPENCODE_PORT: "8080" },
+      agentType: "opencode" as const,
       ...this.hookInput,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -179,7 +180,8 @@ function createMockLifecycleDeps(): CodeServerLifecycleDeps {
     pluginServer: {
       start: vi.fn().mockResolvedValue(3456),
       close: vi.fn().mockResolvedValue(undefined),
-      onConfigData: vi.fn(),
+      setWorkspaceConfig: vi.fn(),
+      removeWorkspaceConfig: vi.fn(),
     } as unknown as CodeServerLifecycleDeps["pluginServer"],
     codeServerManager: {
       ensureRunning: vi.fn().mockResolvedValue(9090),
@@ -195,7 +197,6 @@ function createMockLifecycleDeps(): CodeServerLifecycleDeps {
     fileSystemLayer: {
       mkdir: vi.fn().mockResolvedValue(undefined),
     },
-    configDataProvider: vi.fn().mockReturnValue({ env: null, agentType: null }),
     onPortChanged: vi.fn(),
   };
 }
@@ -370,7 +371,7 @@ describe("CodeServerModule", () => {
       expect(lifecycleDeps.fileSystemLayer.mkdir).toHaveBeenCalledTimes(3);
     });
 
-    it("wires config data provider on PluginServer", async () => {
+    it("does not call setWorkspaceConfig during start (config pushed during finalize)", async () => {
       const lifecycleDeps = createMockLifecycleDeps();
       const deps = createMockDeps({ lifecycleDeps });
       const { dispatcher } = createTestSetup(deps);
@@ -378,9 +379,7 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(lifecycleDeps.pluginServer!.onConfigData).toHaveBeenCalledWith(
-        lifecycleDeps.configDataProvider
-      );
+      expect(lifecycleDeps.pluginServer!.setWorkspaceConfig).not.toHaveBeenCalled();
     });
 
     it("sets plugin port on CodeServerManager", async () => {
@@ -717,6 +716,46 @@ describe("CodeServerModule", () => {
       expect(result.workspaceUrl).toContain("9090");
       expect(result.workspaceUrl).toContain("folder=");
     });
+
+    it("calls setWorkspaceConfig on PluginServer during finalize", async () => {
+      const lifecycleDeps = createMockLifecycleDeps();
+      const workspaceDeps = createMockWorkspaceDeps();
+      const deps = createMockDeps({ lifecycleDeps, workspaceDeps });
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const module = createCodeServerModule(deps);
+      wireModules([module], hookRegistry, dispatcher);
+
+      // Start to set port
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Finalize with agentType
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalFinalizeOperation({
+          workspacePath: "/test/project/.worktrees/feature-1",
+          envVars: { OPENCODE_PORT: "8080" },
+          agentType: "opencode",
+        })
+      );
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectId: "test-12345678" as ProjectId,
+          workspaceName: "feature-1",
+          base: "main",
+        },
+      } as OpenWorkspaceIntent);
+
+      expect(lifecycleDeps.pluginServer!.setWorkspaceConfig).toHaveBeenCalledWith(
+        "/test/project/.worktrees/feature-1",
+        { OPENCODE_PORT: "8080" },
+        "opencode"
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -798,6 +837,31 @@ describe("CodeServerModule", () => {
           },
         } as DeleteWorkspaceIntent)
       ).rejects.toThrow("permission denied");
+    });
+
+    it("calls removeWorkspaceConfig on PluginServer during delete", async () => {
+      const lifecycleDeps = createMockLifecycleDeps();
+      const workspaceDeps = createMockWorkspaceDeps();
+      const deps = createMockDeps({ lifecycleDeps, workspaceDeps });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
+
+      await dispatcher.dispatch({
+        type: "workspace:delete",
+        payload: {
+          projectId: "test-12345678" as ProjectId,
+          workspaceName: "feature-1" as WorkspaceName,
+          workspacePath: "/test/project/.worktrees/feature-1",
+          projectPath: "/test/project",
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      } as DeleteWorkspaceIntent);
+
+      expect(lifecycleDeps.pluginServer!.removeWorkspaceConfig).toHaveBeenCalledWith(
+        "/test/project/.worktrees/feature-1"
+      );
     });
   });
 });

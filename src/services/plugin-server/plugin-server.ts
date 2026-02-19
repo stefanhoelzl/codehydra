@@ -28,6 +28,7 @@ import {
   type WorkspaceCreateRequest,
   type PluginConfig,
   type LogContext,
+  type AgentType,
   COMMAND_TIMEOUT_MS,
   SHUTDOWN_DISCONNECT_TIMEOUT_MS,
   validateSetMetadataRequest,
@@ -131,25 +132,6 @@ export interface ApiCallHandlers {
   create(workspacePath: string, request: WorkspaceCreateRequest): Promise<PluginResult<Workspace>>;
 }
 
-/** Agent type for terminal launching */
-type AgentType = "opencode" | "claude";
-
-/**
- * Provider for config data sent to extensions on connection.
- * Called when a workspace connects to get its startup configuration.
- */
-export interface ConfigDataProvider {
-  /**
-   * Get config data for a workspace.
-   * @param workspacePath - Normalized workspace path
-   * @returns Config data including env vars and agent type for terminal launching
-   */
-  (workspacePath: string): {
-    env: Record<string, string> | null;
-    agentType: AgentType | null;
-  };
-}
-
 // ============================================================================
 // PluginServer
 // ============================================================================
@@ -205,9 +187,13 @@ export class PluginServer {
   private readonly connections = new Map<string, TypedSocket>();
 
   /**
-   * Provider for config data sent to extensions on connection.
+   * Per-workspace config storage for env vars and agent type.
+   * Populated by CodeServerModule during finalize, cleaned up during delete.
    */
-  private configDataProvider: ConfigDataProvider | null = null;
+  private readonly workspaceConfigs = new Map<
+    string,
+    { env: Record<string, string>; agentType: AgentType }
+  >();
 
   /**
    * API call handlers registered via onApiCall().
@@ -340,26 +326,31 @@ export class PluginServer {
   }
 
   /**
-   * Register a provider for config data sent to extensions on connection.
+   * Store config data for a workspace.
+   * Called by CodeServerModule during finalize to push env vars and agent type.
    *
-   * The provider is called for each workspace connection to get:
-   * - env: Agent environment variables for terminal integration
-   * - agentCommand: VS Code command to open the agent terminal
-   *
-   * Only one provider can be registered at a time.
-   *
-   * @param provider - Function that returns config data for a workspace
-   *
-   * @example
-   * ```typescript
-   * server.onConfigData((workspacePath) => ({
-   *   env: { OPENCODE_PORT: "8080" },
-   *   agentCommand: "opencode.openTerminal"
-   * }));
-   * ```
+   * @param workspacePath - Workspace path (will be normalized)
+   * @param env - Environment variables for terminal integration
+   * @param agentType - Agent type for terminal launching
    */
-  onConfigData(provider: ConfigDataProvider): void {
-    this.configDataProvider = provider;
+  setWorkspaceConfig(
+    workspacePath: string,
+    env: Record<string, string>,
+    agentType: AgentType
+  ): void {
+    const normalized = new Path(workspacePath).toString();
+    this.workspaceConfigs.set(normalized, { env, agentType });
+  }
+
+  /**
+   * Remove stored config data for a workspace.
+   * Called by CodeServerModule during delete to clean up.
+   *
+   * @param workspacePath - Workspace path (will be normalized)
+   */
+  removeWorkspaceConfig(workspacePath: string): void {
+    const normalized = new Path(workspacePath).toString();
+    this.workspaceConfigs.delete(normalized);
   }
 
   /**
@@ -483,6 +474,7 @@ export class PluginServer {
       socket.disconnect(true);
     }
     this.connections.clear();
+    this.workspaceConfigs.clear();
 
     // Close Socket.IO server
     await new Promise<void>((resolve) => {
@@ -555,21 +547,10 @@ export class PluginServer {
         socketId: socket.id,
       });
 
-      // Get config data from provider
-      let env: Record<string, string> | null = null;
-      let agentType: AgentType | null = null;
-      if (this.configDataProvider) {
-        try {
-          const configData = this.configDataProvider(workspacePath);
-          env = configData.env;
-          agentType = configData.agentType;
-        } catch (error) {
-          this.logger.error("Config data provider error", {
-            workspace: workspacePath,
-            error: getErrorMessage(error),
-          });
-        }
-      }
+      // Get config data from per-workspace storage
+      const storedConfig = this.workspaceConfigs.get(workspacePath);
+      const env: Record<string, string> | null = storedConfig?.env ?? null;
+      const agentType: AgentType | null = storedConfig?.agentType ?? null;
 
       // Send config event with all startup data
       const config: PluginConfig = {

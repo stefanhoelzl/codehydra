@@ -209,8 +209,6 @@ export interface BootstrapDeps {
   readonly codeServerManager: import("../services").CodeServerManager;
   /** FileSystemLayer for directory creation */
   readonly fileSystemLayer: import("../services").FileSystemLayer;
-  /** Lazy getter for ConfigDataProvider (depends on agent fields from start hook) */
-  readonly configDataProviderFn: () => import("../services/plugin-server/plugin-server").ConfigDataProvider;
   /** ViewLayer for shell layer disposal (nullable for testing) */
   readonly viewLayer: import("../services/shell/view").ViewLayer | null;
   /** WindowLayer for shell layer disposal (nullable for testing) */
@@ -438,7 +436,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       pluginServer: deps.pluginServer,
       codeServerManager: deps.codeServerManager,
       fileSystemLayer: deps.fileSystemLayer,
-      configDataProvider: deps.configDataProviderFn(),
       onPortChanged: (port: number) => {
         deps.viewManagerFn().updateCodeServerPort(port);
       },

@@ -32,6 +32,7 @@ import type {
   InitialPrompt,
   NormalizedInitialPrompt,
 } from "../../shared/api/types";
+import type { AgentType } from "../../shared/plugin-protocol";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
@@ -140,12 +141,14 @@ export interface SetupHookInput extends HookContext {
 /** Result from the "setup" hook point. */
 export interface SetupHookResult {
   readonly envVars?: Record<string, string>;
+  readonly agentType?: AgentType;
 }
 
 /** Input context for the "finalize" hook point (enriched with create+setup results). */
 export interface FinalizeHookInput extends HookContext {
   readonly workspacePath: string;
   readonly envVars: Record<string, string>;
+  readonly agentType: AgentType | null;
 }
 
 /** Result from the "finalize" hook point. */
@@ -245,11 +248,20 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       }
     }
 
+    // Extract agentType from setup results (last one wins)
+    let agentType: AgentType | null = null;
+    for (const result of setupResults) {
+      if (result.agentType !== undefined) {
+        agentType = result.agentType;
+      }
+    }
+
     // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
       intent: ctx.intent,
       workspacePath,
       envVars,
+      agentType,
     };
     const { results: finalizeResults, errors: finalizeErrors } =
       await ctx.hooks.collect<FinalizeHookResult>("finalize", finalizeCtx);

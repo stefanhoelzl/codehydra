@@ -22,7 +22,7 @@ describe("PluginServer", () => {
   // Note: normalizeWorkspacePath tests moved to Path class tests (path.test.ts)
   // The PluginServer now uses Path internally for cross-platform normalization
 
-  describe("onConfigData", () => {
+  describe("setWorkspaceConfig / removeWorkspaceConfig", () => {
     let server: PluginServer;
     let mockPortManager: ReturnType<typeof createPortManagerMock>;
 
@@ -35,29 +35,28 @@ describe("PluginServer", () => {
       await server.close();
     });
 
-    it("accepts provider registration without throwing", () => {
-      // Should not throw when registering a config data provider
+    it("stores config without throwing", () => {
       expect(() =>
-        server.onConfigData(() => ({
-          env: null,
-          agentType: null,
-        }))
+        server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode")
       ).not.toThrow();
     });
 
-    it("allows provider to be replaced", () => {
-      server.onConfigData(() => ({
-        env: null,
-        agentType: null,
-      }));
+    it("allows config to be overwritten", () => {
+      server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode");
 
-      // Should not throw when replacing provider
       expect(() =>
-        server.onConfigData(() => ({
-          env: { TEST: "value" },
-          agentType: "opencode",
-        }))
+        server.setWorkspaceConfig("/test/workspace", { PORT: "9090" }, "claude")
       ).not.toThrow();
+    });
+
+    it("removes config without throwing", () => {
+      server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode");
+
+      expect(() => server.removeWorkspaceConfig("/test/workspace")).not.toThrow();
+    });
+
+    it("remove is idempotent for non-existent workspaces", () => {
+      expect(() => server.removeWorkspaceConfig("/nonexistent")).not.toThrow();
     });
   });
 

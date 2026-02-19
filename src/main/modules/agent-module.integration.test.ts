@@ -859,6 +859,7 @@ describe("AgentModule", () => {
       expect(mockSM.startServer).toHaveBeenCalledWith("/test/project/.worktrees/feature-1");
       expect(result.envVars).toBeDefined();
       expect(result.envVars!.OPENCODE_PORT).toBe("8080");
+      expect(result.agentType).toBe("opencode");
     });
 
     it("sets initial prompt when provided", async () => {

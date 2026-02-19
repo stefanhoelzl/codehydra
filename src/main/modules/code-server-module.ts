@@ -19,7 +19,7 @@ import type { CodeServerManager } from "../../services/code-server/code-server-m
 import type { ExtensionManager } from "../../services/vscode-setup/extension-manager";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
-import type { PluginServer, ConfigDataProvider } from "../../services/plugin-server/plugin-server";
+import type { PluginServer } from "../../services/plugin-server/plugin-server";
 import type { Logger } from "../../services/logging/types";
 import type { SetupRowId, SetupRowStatus } from "../../shared/api/types";
 import type { CheckDepsResult, StartHookResult } from "../operations/app-start";
@@ -61,7 +61,6 @@ export interface CodeServerLifecycleDeps {
     "ensureRunning" | "port" | "getConfig" | "setPluginPort" | "stop"
   >;
   readonly fileSystemLayer: Pick<FileSystemLayer, "mkdir">;
-  readonly configDataProvider: ConfigDataProvider;
   readonly onPortChanged: (port: number) => void;
 }
 
@@ -150,9 +149,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               try {
                 pluginPort = await lifecycle.pluginServer.start();
                 logger.info("PluginServer started", { port: pluginPort });
-
-                // Wire config data provider
-                lifecycle.pluginServer.onConfigData(lifecycle.configDataProvider);
 
                 // Pass pluginPort to CodeServerManager so extensions can connect
                 lifecycle.codeServerManager.setPluginPort(pluginPort);
@@ -301,6 +297,16 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             const finalizeCtx = ctx as FinalizeHookInput;
             const workspace = deps.getWorkspaceDeps();
 
+            // Push config to PluginServer so connecting extensions get env vars + agent type
+            const lifecycle = deps.getLifecycleDeps();
+            if (lifecycle.pluginServer && finalizeCtx.agentType) {
+              lifecycle.pluginServer.setWorkspaceConfig(
+                finalizeCtx.workspacePath,
+                finalizeCtx.envVars,
+                finalizeCtx.agentType
+              );
+            }
+
             try {
               const workspacePathObj = new Path(finalizeCtx.workspacePath);
               const projectWorkspacesDir = workspacePathObj.dirname;
@@ -343,6 +349,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const workspace = deps.getWorkspaceDeps();
+
+            // Clean up PluginServer config for this workspace
+            const lifecycle = deps.getLifecycleDeps();
+            if (lifecycle.pluginServer) {
+              lifecycle.pluginServer.removeWorkspaceConfig(wsPath);
+            }
 
             try {
               const workspacePath = new Path(wsPath);

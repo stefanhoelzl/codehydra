@@ -56,7 +56,7 @@ import {
 } from "../services/binary-download";
 import { ExtensionManager } from "../services/vscode-setup/extension-manager";
 import type { AgentStatusManager, AgentType, AgentServerManager } from "../agents";
-import { PluginServer, type ConfigDataProvider } from "../services/plugin-server";
+import { PluginServer } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
@@ -208,7 +208,6 @@ function createCodeServerConfig(): CodeServerConfig {
 // Global state
 let windowManager: WindowManager | null = null;
 let viewManager: ViewManager | null = null;
-let selectedAgentTypeValue: AgentType | null = null;
 let codeServerManager: CodeServerManager | null = null;
 let agentStatusManager: AgentStatusManager | null = null;
 let badgeManager: BadgeManager | null = null;
@@ -563,7 +562,6 @@ async function bootstrap(): Promise<void> {
     selectedAgentType: AgentType;
   }) => {
     agentStatusManager = services.agentStatusManager;
-    selectedAgentTypeValue = services.selectedAgentType;
   };
 
   // 8. Initialize bootstrap with API registry and all modules
@@ -706,15 +704,6 @@ async function bootstrap(): Promise<void> {
     agentStatusManagerFn: () => agentStatusManager!,
     codeServerManager: codeServerManager!,
     fileSystemLayer,
-    configDataProviderFn: (): ConfigDataProvider => {
-      return (workspacePath: string) => {
-        const env =
-          agentStatusManager
-            ?.getProvider(workspacePath as import("../shared/ipc").WorkspacePath)
-            ?.getEnvironmentVariables() ?? null;
-        return { env, agentType: selectedAgentTypeValue! };
-      };
-    },
     // Shell layers for ViewModule (available immediately from bootstrap)
     viewLayer,
     windowLayer,
@@ -861,7 +850,6 @@ async function cleanup(): Promise<void> {
   // Clear module-level references
   windowManager = null;
   viewManager = null;
-  selectedAgentTypeValue = null;
   codeServerManager = null;
   agentStatusManager = null;
   badgeManager = null;

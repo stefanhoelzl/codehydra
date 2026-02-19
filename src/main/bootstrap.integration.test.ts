@@ -208,7 +208,6 @@ function createMockDeps(): BootstrapDeps {
     fileSystemLayer: {
       mkdir: vi.fn().mockResolvedValue(undefined),
     } as never,
-    configDataProviderFn: () => vi.fn().mockReturnValue({ env: null, agentType: null }),
     viewLayer: null,
     windowLayer: null,
     sessionLayer: null,
