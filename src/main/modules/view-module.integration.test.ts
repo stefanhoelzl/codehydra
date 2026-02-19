@@ -54,7 +54,11 @@ import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../operations/delete-workspace";
-import type { DeleteWorkspaceIntent, ShutdownHookResult } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  DeletePipelineHookInput,
+  ShutdownHookResult,
+} from "../operations/delete-workspace";
 import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
@@ -209,9 +213,13 @@ class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
 class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, ShutdownHookResult> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<ShutdownHookResult> {
-    const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", {
+    const { payload } = ctx.intent;
+    const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-    });
+      projectPath: payload.projectPath ?? "",
+      workspacePath: payload.workspacePath ?? "",
+    };
+    const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     const merged: ShutdownHookResult = {};
     for (const r of results) {

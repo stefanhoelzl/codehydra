@@ -21,7 +21,11 @@ import {
   EVENT_WORKSPACE_DELETED,
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../operations/delete-workspace";
-import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  WorkspaceDeletedEvent,
+  DeletePipelineHookInput,
+} from "../operations/delete-workspace";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
 import {
@@ -95,8 +99,8 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
       payload: {
         projectId: payload.projectId,
         workspaceName: payload.workspaceName,
-        workspacePath: payload.workspacePath,
-        projectPath: payload.projectPath,
+        workspacePath: payload.workspacePath ?? "",
+        projectPath: payload.projectPath ?? "",
       },
     };
     ctx.emit(event);
@@ -225,14 +229,22 @@ describe("McpModule Integration", () => {
         new (class implements Operation<DeleteWorkspaceIntent, { started: true }> {
           readonly id = DELETE_WORKSPACE_OPERATION_ID;
           async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
-            await ctx.hooks.collect("shutdown", { intent: ctx.intent });
+            const { payload } = ctx.intent;
+            const workspacePath = payload.workspacePath ?? "";
+            const projectPath = payload.projectPath ?? "";
+            const pipelineCtx: DeletePipelineHookInput = {
+              intent: ctx.intent,
+              projectPath,
+              workspacePath,
+            };
+            await ctx.hooks.collect("shutdown", pipelineCtx);
             const event: WorkspaceDeletedEvent = {
               type: EVENT_WORKSPACE_DELETED,
               payload: {
-                projectId: ctx.intent.payload.projectId,
-                workspaceName: ctx.intent.payload.workspaceName,
-                workspacePath: ctx.intent.payload.workspacePath,
-                projectPath: ctx.intent.payload.projectPath,
+                projectId: payload.projectId,
+                workspaceName: payload.workspaceName,
+                workspacePath,
+                projectPath,
               },
             };
             ctx.emit(event);

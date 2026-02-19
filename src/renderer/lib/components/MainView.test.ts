@@ -1140,6 +1140,7 @@ describe("MainView component", () => {
         expect(mockApi.workspaces.remove).toHaveBeenCalledWith("test-project-12345678", "feature", {
           keepBranch: false, // from the stored progress
           skipSwitch: true, // retry keeps user on this workspace
+          workspacePath: "/test/.worktrees/feature", // for retry/dismiss signaling
         });
       });
     });
@@ -1200,6 +1201,7 @@ describe("MainView component", () => {
       await waitFor(() => {
         expect(mockApi.workspaces.remove).toHaveBeenCalledWith("test-project-12345678", "feature", {
           force: true,
+          workspacePath: "/test/.worktrees/feature", // for retry/dismiss signaling
         });
       });
 

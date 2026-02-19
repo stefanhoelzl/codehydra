@@ -38,7 +38,11 @@ import type {
   ActivateHookInput,
   WorkspaceSwitchedEvent,
 } from "../operations/switch-workspace";
-import type { DeleteWorkspaceIntent, ShutdownHookResult } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  ShutdownHookResult,
+  DeletePipelineHookInput,
+} from "../operations/delete-workspace";
 import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
 import type { ProjectOpenedEvent } from "../operations/open-project";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
@@ -235,12 +239,13 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
-            const isActive = viewManager.getActiveWorkspacePath() === payload.workspacePath;
+            const isActive = viewManager.getActiveWorkspacePath() === workspacePath;
 
             try {
-              await viewManager.destroyWorkspaceView(payload.workspacePath);
+              await viewManager.destroyWorkspaceView(workspacePath);
               return { ...(isActive && { wasActive: true }) };
             } catch (error) {
               if (payload.force) {

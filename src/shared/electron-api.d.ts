@@ -55,8 +55,7 @@ export interface Api {
         keepBranch?: boolean;
         skipSwitch?: boolean;
         force?: boolean;
-        unblock?: "kill" | "close" | "ignore";
-        isRetry?: boolean;
+        workspacePath?: string;
       }
     ): Promise<{ started: boolean }>;
     getStatus(projectId: string, workspaceName: string): Promise<WorkspaceStatus>;

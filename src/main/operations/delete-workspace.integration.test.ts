@@ -378,18 +378,18 @@ function createTestHarness(options?: {
             return intent;
           }
           const deleteIntent = intent as DeleteWorkspaceIntent;
-          const workspacePath = deleteIntent.payload.workspacePath;
+          const key = `${deleteIntent.payload.projectId}/${deleteIntent.payload.workspaceName}`;
 
           if (deleteIntent.payload.force) {
-            inProgressDeletions.add(workspacePath);
+            inProgressDeletions.add(key);
             return intent;
           }
 
-          if (inProgressDeletions.has(workspacePath)) {
+          if (inProgressDeletions.has(key)) {
             return null;
           }
 
-          inProgressDeletions.add(workspacePath);
+          inProgressDeletions.add(key);
           return intent;
         },
       },
@@ -397,7 +397,7 @@ function createTestHarness(options?: {
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
-        inProgressDeletions.delete(payload.workspacePath);
+        inProgressDeletions.delete(`${payload.projectId}/${payload.workspaceName}`);
       },
     },
   };
@@ -447,12 +447,13 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
-            const isActive = viewManager.getActiveWorkspacePath() === payload.workspacePath;
+            const isActive = viewManager.getActiveWorkspacePath() === workspacePath;
 
             try {
-              await viewManager.destroyWorkspaceView(payload.workspacePath);
+              await viewManager.destroyWorkspaceView(workspacePath);
               return { ...(isActive && { wasActive: true }) };
             } catch (error) {
               if (payload.force) {
@@ -477,15 +478,16 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
               if (killTerminalsCallback) {
                 try {
-                  await killTerminalsCallback(payload.workspacePath);
+                  await killTerminalsCallback(workspacePath);
                 } catch (error) {
                   logger.warn("Kill terminals failed", {
-                    workspacePath: payload.workspacePath,
+                    workspacePath,
                     error: getErrorMessage(error),
                   });
                 }
@@ -494,7 +496,7 @@ function createTestHarness(options?: {
               let serverError: string | undefined;
               const serverManager = appState.getServerManager();
               if (serverManager) {
-                const stopResult = await serverManager.stopServer(payload.workspacePath);
+                const stopResult = await serverManager.stopServer(workspacePath);
                 if (!stopResult.success) {
                   serverError = stopResult.error ?? "Failed to stop server";
                   if (!payload.force) {
@@ -505,7 +507,7 @@ function createTestHarness(options?: {
 
               const agentStatusManager = appState.getAgentStatusManager();
               if (agentStatusManager) {
-                agentStatusManager.clearTuiTracking(payload.workspacePath as WorkspacePath);
+                agentStatusManager.clearTuiTracking(workspacePath as WorkspacePath);
               }
 
               return serverError ? { error: serverError } : {};
@@ -529,6 +531,7 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
           handler: async (ctx: HookContext): Promise<ReleaseHookResult> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             if (payload.force || !workspaceLockHandler) {
@@ -537,9 +540,7 @@ function createTestHarness(options?: {
 
             // CWD-only scan: find and kill processes whose CWD is under workspace
             try {
-              const cwdProcesses = await workspaceLockHandler.detectCwd(
-                new Path(payload.workspacePath)
-              );
+              const cwdProcesses = await workspaceLockHandler.detectCwd(new Path(workspacePath));
               if (cwdProcesses.length > 0) {
                 await workspaceLockHandler.killProcesses(cwdProcesses.map((p) => p.pid));
               }
@@ -552,10 +553,10 @@ function createTestHarness(options?: {
         detect: {
           handler: async (ctx: HookContext): Promise<DetectHookResult> => {
             if (!workspaceLockHandler) return {};
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+            const { workspacePath } = ctx as DeletePipelineHookInput;
 
             try {
-              const detected = await workspaceLockHandler.detect(new Path(payload.workspacePath));
+              const detected = await workspaceLockHandler.detect(new Path(workspacePath));
               return { blockingProcesses: detected };
             } catch {
               return { blockingProcesses: [] };
@@ -616,10 +617,11 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+            const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
-              const workspacePath = new Path(payload.workspacePath);
+              const workspacePath = new Path(wsPath);
               const workspaceName = workspacePath.basename;
               const projectWorkspacesDir = workspacePath.dirname;
               await workspaceFileService.deleteWorkspaceFile(workspaceName, projectWorkspacesDir);
@@ -871,7 +873,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Manually mark workspace as in-progress (simulate concurrent dispatch)
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -888,7 +890,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace as in-progress
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
 
     const forceIntent = buildDeleteIntent({ force: true });
     const result = await harness.dispatcher.dispatch(forceIntent);
@@ -910,7 +912,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     await harness.dispatcher.dispatch(intent);
 
     // After completion, the in-progress flag should be cleared
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(`${PROJECT_ID}/${WORKSPACE_NAME}`)).toBe(false);
 
     // Should be able to dispatch again (e.g., for a new workspace with same path)
     // Reset state for second dispatch
@@ -928,7 +930,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace A as in-progress
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
 
     // Dispatch delete for workspace B -- should NOT be blocked
     const intentB = buildDeleteIntent({
@@ -1414,7 +1416,7 @@ describe("DeleteWorkspaceOperation.ipcHandler", () => {
     const harness = createTestHarness();
 
     // Simulate interceptor blocking by pre-adding to in-progress
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -1526,5 +1528,59 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     // Pipeline still runs with payload values as fallback
     // Server stopped (shutdown hook runs)
     expect(harness.testState.serverStopped).toBe(true);
+  });
+
+  it("test 27: deletion succeeds without paths in payload (resolve hooks provide them)", async () => {
+    const harness = createTestHarness();
+
+    // Build intent without paths (simulates bridge handler after refactor)
+    const intent: DeleteWorkspaceIntent = {
+      type: INTENT_DELETE_WORKSPACE,
+      payload: {
+        projectId: PROJECT_ID,
+        workspaceName: WORKSPACE_NAME,
+        keepBranch: true,
+        force: false,
+        removeWorktree: true,
+      },
+    };
+
+    const result = await harness.dispatcher.dispatch(intent);
+    expect(result).toEqual({ started: true });
+
+    // Resolve hooks populated paths from appState, pipeline ran successfully
+    expect(harness.testState.worktreeRemoved).toBe(true);
+    expect(harness.testState.removedWorkspaces).toContainEqual({
+      projectPath: PROJECT_PATH,
+      workspacePath: WORKSPACE_PATH,
+    });
+
+    // Progress used resolved paths
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.workspacePath).toBe(WORKSPACE_PATH);
+  });
+
+  it("test 28: throws when resolve hooks return nothing and payload has no paths", async () => {
+    // No projects to resolve from, and no paths in payload
+    const harness = createTestHarness({
+      initialProjects: [],
+    });
+
+    const intent: DeleteWorkspaceIntent = {
+      type: INTENT_DELETE_WORKSPACE,
+      payload: {
+        projectId: PROJECT_ID,
+        workspaceName: WORKSPACE_NAME,
+        keepBranch: true,
+        force: false,
+        removeWorktree: true,
+      },
+    };
+
+    // Force mode: operation should still emit event (with empty paths)
+    // Normal mode: operation should throw
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
+      "resolve-project hook did not provide projectPath"
+    );
   });
 });

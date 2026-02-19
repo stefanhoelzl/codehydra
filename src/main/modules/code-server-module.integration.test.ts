@@ -25,7 +25,11 @@ import type {
   OpenWorkspaceIntent,
 } from "../operations/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
-import type { DeleteWorkspaceIntent, DeleteHookResult } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  DeletePipelineHookInput,
+  DeleteHookResult,
+} from "../operations/delete-workspace";
 import {
   createCodeServerModule,
   type CodeServerModuleDeps,
@@ -154,9 +158,13 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<DeleteHookResult> {
-    const { results, errors } = await ctx.hooks.collect<DeleteHookResult>("delete", {
+    const { payload } = ctx.intent;
+    const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-    });
+      projectPath: payload.projectPath ?? "",
+      workspacePath: payload.workspacePath ?? "",
+    };
+    const { results, errors } = await ctx.hooks.collect<DeleteHookResult>("delete", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
   }

@@ -62,7 +62,11 @@ export interface OpenWorkspacePayload {
 
 export type OpenWorkspaceResult =
   | Workspace
-  | { bases: readonly { name: string; isRemote: boolean }[]; defaultBaseBranch?: string };
+  | {
+      bases: readonly { name: string; isRemote: boolean }[];
+      defaultBaseBranch?: string;
+      projectPath: string;
+    };
 
 export interface OpenWorkspaceIntent extends Intent<OpenWorkspaceResult> {
   readonly type: "workspace:open";
@@ -203,6 +207,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
         ...(fetchBases.defaultBaseBranch !== undefined && {
           defaultBaseBranch: fetchBases.defaultBaseBranch,
         }),
+        projectPath,
       };
     }
 

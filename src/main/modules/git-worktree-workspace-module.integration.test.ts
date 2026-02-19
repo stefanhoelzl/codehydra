@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
-import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import type { PathProvider } from "../../services/platform/path-provider";
@@ -26,8 +26,14 @@ import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent } from "../operations/open-workspace";
 import type { CreateHookInput, CreateHookResult } from "../operations/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
-import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
-import type { DeleteHookResult } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  DeletePipelineHookInput,
+} from "../operations/delete-workspace";
+import type {
+  DeleteHookResult,
+  ResolveWorkspaceHookInput as DeleteResolveWorkspaceInput,
+} from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
 import type {
@@ -137,19 +143,29 @@ class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<DeleteResult> {
-    // resolve-workspace
-    const resolveInput: HookContext = { intent: ctx.intent };
+    const { payload } = ctx.intent;
+
+    // resolve-workspace (enriched with projectPath from payload, matching real operation)
+    const resolveInput: DeleteResolveWorkspaceInput = {
+      intent: ctx.intent,
+      projectPath: payload.projectPath ?? "",
+    };
     const { results: resolveResults } = await ctx.hooks.collect<{ workspacePath?: string }>(
       "resolve-workspace",
       resolveInput
     );
     const resolved = resolveResults[0];
+    const resolvedWorkspacePath = resolved?.workspacePath ?? payload.workspacePath ?? "";
 
-    // delete
-    const deleteInput: HookContext = { intent: ctx.intent };
+    // delete (enriched with both paths, matching real operation's DeletePipelineHookInput)
+    const deleteInput: DeletePipelineHookInput = {
+      intent: ctx.intent,
+      projectPath: payload.projectPath ?? "",
+      workspacePath: resolvedWorkspacePath,
+    };
     const { results: deleteResults, errors: deleteErrors } =
       await ctx.hooks.collect<DeleteHookResult>("delete", deleteInput);
-    if (deleteErrors.length > 0 && !ctx.intent.payload.force) throw deleteErrors[0]!;
+    if (deleteErrors.length > 0 && !payload.force) throw deleteErrors[0]!;
 
     return {
       ...deleteResults[0],
