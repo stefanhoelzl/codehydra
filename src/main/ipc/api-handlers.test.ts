@@ -169,6 +169,8 @@ describe("wireApiEvents", () => {
     expect(mockApi.on).toHaveBeenCalledWith("workspace:status-changed", expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith("workspace:metadata-changed", expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith("ui:mode-changed", expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith("lifecycle:setup-progress", expect.any(Function));
+    expect(mockApi.on).toHaveBeenCalledWith("lifecycle:setup-error", expect.any(Function));
   });
 
   it("forwards project:opened events to webContents", () => {
@@ -203,6 +205,18 @@ describe("wireApiEvents", () => {
     expect(mockWebContents.send).toHaveBeenCalledWith("api:ui:mode-changed", {
       mode: "shortcut",
       previousMode: "workspace",
+    });
+  });
+
+  it("forwards lifecycle:setup-error events to webContents", () => {
+    wireApiEvents(mockApi, () => mockWebContents as never);
+
+    const handler = eventHandlers.get("lifecycle:setup-error");
+    handler?.({ message: "Download failed", code: "NETWORK_ERROR" });
+
+    expect(mockWebContents.send).toHaveBeenCalledWith("api:lifecycle:setup-error", {
+      message: "Download failed",
+      code: "NETWORK_ERROR",
     });
   });
 

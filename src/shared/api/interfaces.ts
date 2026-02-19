@@ -15,7 +15,7 @@ import type {
   AgentSession,
   SetupScreenProgress,
 } from "./types";
-import type { UIMode, UIModeChangedEvent } from "../ipc";
+import type { UIMode, UIModeChangedEvent, SetupErrorPayload } from "../ipc";
 import type { IDisposable, Unsubscribe } from "../types";
 
 // Re-export for consumers that import from this module
@@ -222,6 +222,7 @@ export interface ApiEvents {
   }) => void;
   "ui:mode-changed": (event: UIModeChangedEvent) => void;
   "lifecycle:setup-progress": (event: SetupScreenProgress) => void;
+  "lifecycle:setup-error": (event: SetupErrorPayload) => void;
 }
 
 // =============================================================================
