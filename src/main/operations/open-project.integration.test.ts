@@ -22,7 +22,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
@@ -646,26 +646,23 @@ function createTestHarness(options?: {
     },
   };
 
-  wireModules(
-    [
-      localResolveModule,
-      remoteResolveModule,
-      localRegisterModule,
-      appStateRegisterModule,
-      discoverModule,
-      resolveProjectModule,
-      worktreeModule,
-      codeServerModule,
-      stateModule,
-      viewModule,
-      projectViewModule,
-      switchResolveModule,
-      switchResolveProjectModule,
-      switchViewModule,
-    ],
-    hookRegistry,
-    dispatcher
-  );
+  for (const m of [
+    localResolveModule,
+    remoteResolveModule,
+    localRegisterModule,
+    appStateRegisterModule,
+    discoverModule,
+    resolveProjectModule,
+    worktreeModule,
+    codeServerModule,
+    stateModule,
+    viewModule,
+    projectViewModule,
+    switchResolveModule,
+    switchResolveProjectModule,
+    switchViewModule,
+  ])
+    dispatcher.registerModule(m);
 
   return {
     dispatcher,
@@ -849,11 +846,9 @@ describe("OpenProjectOperation", () => {
       },
     };
 
-    wireModules(
-      [alreadyOpenResolveModule, registerModule, discoverModule],
-      hookRegistry,
-      dispatcher
-    );
+    dispatcher.registerModule(alreadyOpenResolveModule);
+    dispatcher.registerModule(registerModule);
+    dispatcher.registerModule(discoverModule);
 
     const receivedEvents: DomainEvent[] = [];
     dispatcher.subscribe(EVENT_PROJECT_OPENED, (event) => {
@@ -972,7 +967,7 @@ describe("OpenProjectOperation", () => {
         },
       },
     };
-    wireModules([selectFolderModule], harness.hookRegistry, harness.dispatcher);
+    harness.dispatcher.registerModule(selectFolderModule);
 
     // Dispatch with NO path — triggers select-folder hook
     const intent: OpenProjectIntent = {
@@ -1006,7 +1001,7 @@ describe("OpenProjectOperation", () => {
       },
     };
 
-    wireModules([selectFolderModule], hookRegistry, dispatcher);
+    dispatcher.registerModule(selectFolderModule);
 
     const result = await dispatcher.dispatch({
       type: INTENT_OPEN_PROJECT,
@@ -1033,7 +1028,7 @@ describe("OpenProjectOperation", () => {
         },
       },
     };
-    wireModules([selectFolderModule], harness.hookRegistry, harness.dispatcher);
+    harness.dispatcher.registerModule(selectFolderModule);
 
     // Dispatch with a path — should skip select-folder
     const intent = buildOpenIntent({ path: new Path(PROJECT_PATH) });

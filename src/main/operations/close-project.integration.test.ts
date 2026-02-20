@@ -19,7 +19,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
@@ -424,22 +424,19 @@ function createTestHarness(options?: {
     },
   };
 
-  wireModules(
-    [
-      deleteResolveModule,
-      deleteResolveProjectModule,
-      deleteViewModule,
-      deleteAgentModule,
-      deleteStateModule,
-      projectResolveModule,
-      projectCloseViewModule,
-      projectLocalCloseModule,
-      projectRemoteCloseModule,
-      projectWorktreeCloseModule,
-    ],
-    hookRegistry,
-    dispatcher
-  );
+  for (const m of [
+    deleteResolveModule,
+    deleteResolveProjectModule,
+    deleteViewModule,
+    deleteAgentModule,
+    deleteStateModule,
+    projectResolveModule,
+    projectCloseViewModule,
+    projectLocalCloseModule,
+    projectRemoteCloseModule,
+    projectWorktreeCloseModule,
+  ])
+    dispatcher.registerModule(m);
 
   return { dispatcher, state, viewManager };
 }

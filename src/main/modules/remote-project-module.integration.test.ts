@@ -9,7 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import { SILENT_LOGGER } from "../../services/logging";
 import { createMockGitClient, gitClientMatchers } from "../../services/git/git-client.state-mock";
 import { createMockPathProvider } from "../../services/platform/path-provider.test-utils";
@@ -47,7 +47,7 @@ function createTestSetup() {
     logger: SILENT_LOGGER,
   });
 
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return { hookRegistry, fs, gitClient, pathProvider };
 }

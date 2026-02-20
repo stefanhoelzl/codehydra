@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import {
@@ -132,7 +132,7 @@ function createReleaseSetup(lockHandler: WorkspaceLockHandler | undefined, logge
     workspaceLockHandler: lockHandler,
     logger,
   });
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return dispatcher;
 }
@@ -146,7 +146,7 @@ function createDetectSetup(lockHandler: WorkspaceLockHandler | undefined, logger
     workspaceLockHandler: lockHandler,
     logger,
   });
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return dispatcher;
 }
@@ -164,7 +164,7 @@ function createFlushSetup(
     workspaceLockHandler: lockHandler,
     logger,
   });
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return dispatcher;
 }

@@ -28,7 +28,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import { createLocalProjectModule, type LocalProjectModuleDeps } from "./local-project-module";
 import {
   OPEN_PROJECT_OPERATION_ID,
@@ -114,7 +114,7 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
   const { deps, fs, globalProvider } = createMockDeps(fsOverrides);
 
   const module = createLocalProjectModule(deps);
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return {
     openHooks: hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID),

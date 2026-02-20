@@ -8,6 +8,7 @@
 import type { Intent, IntentResult, DomainEvent } from "./types";
 import type { Operation, OperationContext, DispatchFn } from "./operation";
 import type { IHookRegistry } from "./hook-registry";
+import type { IntentModule } from "./module";
 
 // =============================================================================
 // IntentHandle
@@ -104,6 +105,7 @@ export interface IDispatcher {
   ): IntentHandle<IntentResult<I>>;
   subscribe(eventType: string, handler: EventHandler): () => void;
   addInterceptor(interceptor: IntentInterceptor): void;
+  registerModule(module: IntentModule): void;
 }
 
 // =============================================================================
@@ -134,6 +136,26 @@ export class Dispatcher implements IDispatcher {
   addInterceptor(interceptor: IntentInterceptor): void {
     this.interceptors.push(interceptor);
     this.interceptors.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  registerModule(module: IntentModule): void {
+    if (module.hooks) {
+      for (const [operationId, hookPoints] of Object.entries(module.hooks)) {
+        for (const [hookPointId, handler] of Object.entries(hookPoints)) {
+          this.hookRegistry.register(operationId, hookPointId, handler);
+        }
+      }
+    }
+    if (module.events) {
+      for (const [eventType, handler] of Object.entries(module.events)) {
+        this.subscribe(eventType, handler);
+      }
+    }
+    if (module.interceptors) {
+      for (const interceptor of module.interceptors) {
+        this.addInterceptor(interceptor);
+      }
+    }
   }
 
   subscribe(eventType: string, handler: EventHandler): () => void {

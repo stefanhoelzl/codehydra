@@ -8,7 +8,6 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "./hook-registry";
 import { Dispatcher } from "./dispatcher";
-import { wireModules } from "./wire";
 import { createIdempotencyModule } from "./idempotency-module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext } from "./operation";
@@ -28,7 +27,7 @@ function setup(...args: Parameters<typeof createIdempotencyModule>): { dispatche
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   const mod = createIdempotencyModule(...args);
-  wireModules([mod], hookRegistry, dispatcher);
+  dispatcher.registerModule(mod);
   return { dispatcher };
 }
 

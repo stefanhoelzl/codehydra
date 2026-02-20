@@ -102,7 +102,6 @@ import { createQuitModule } from "./modules/quit-module";
 import { createRetryModule } from "./modules/retry-module";
 import { createLifecycleReadyModule } from "./modules/lifecycle-ready-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
-import type { IntentModule } from "./intents/infrastructure/module";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
@@ -554,52 +553,31 @@ const ipcEventBridge = createIpcEventBridge({
   deleteOp,
 });
 
-// 10. Wire all modules + get API interface
+// 10. Register all modules + get API interface
 
-const allModules: readonly IntentModule[] = [
-  idempotencyModule,
-  viewModule,
-  codeServerModule,
-  agentModule,
-  badgeModule,
-  metadataModule,
-  keepFilesModule,
-  deleteWindowsLockModule,
-  remoteProjectModule,
-  migrationModule,
-  localProjectModule,
-  gitWorktreeWorkspaceModule,
-  windowTitleModule,
-  telemetryLifecycleModule,
-  autoUpdaterLifecycleModule,
-  mcpModule,
-  electronReadyModule,
-  loggingModule,
-  scriptModule,
-  quitModule,
-  retryModule,
-  lifecycleReadyModule,
-  ipcEventBridge,
-];
-for (const mod of allModules) {
-  if (mod.hooks) {
-    for (const [operationId, hookPoints] of Object.entries(mod.hooks)) {
-      for (const [hookPointId, handler] of Object.entries(hookPoints)) {
-        hookRegistry.register(operationId, hookPointId, handler);
-      }
-    }
-  }
-  if (mod.events) {
-    for (const [eventType, handler] of Object.entries(mod.events)) {
-      dispatcher.subscribe(eventType, handler);
-    }
-  }
-  if (mod.interceptors) {
-    for (const interceptor of mod.interceptors) {
-      dispatcher.addInterceptor(interceptor);
-    }
-  }
-}
+dispatcher.registerModule(idempotencyModule);
+dispatcher.registerModule(viewModule);
+dispatcher.registerModule(codeServerModule);
+dispatcher.registerModule(agentModule);
+dispatcher.registerModule(badgeModule);
+dispatcher.registerModule(metadataModule);
+dispatcher.registerModule(keepFilesModule);
+dispatcher.registerModule(deleteWindowsLockModule);
+dispatcher.registerModule(remoteProjectModule);
+dispatcher.registerModule(migrationModule);
+dispatcher.registerModule(localProjectModule);
+dispatcher.registerModule(gitWorktreeWorkspaceModule);
+dispatcher.registerModule(windowTitleModule);
+dispatcher.registerModule(telemetryLifecycleModule);
+dispatcher.registerModule(autoUpdaterLifecycleModule);
+dispatcher.registerModule(mcpModule);
+dispatcher.registerModule(electronReadyModule);
+dispatcher.registerModule(loggingModule);
+dispatcher.registerModule(scriptModule);
+dispatcher.registerModule(quitModule);
+dispatcher.registerModule(retryModule);
+dispatcher.registerModule(lifecycleReadyModule);
+dispatcher.registerModule(ipcEventBridge);
 
 // Register lifecycle.ready handler (bridges mount signal + projects-loaded deferred)
 registry.register("lifecycle.ready", readyHandler, {

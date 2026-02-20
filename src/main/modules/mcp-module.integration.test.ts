@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
 import {
@@ -84,7 +84,7 @@ function createTestSetup(): TestSetup {
     logger: SILENT_LOGGER,
   });
 
-  wireModules([mcpModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(mcpModule);
 
   return {
     dispatcher,
@@ -132,7 +132,8 @@ describe("McpModule Integration", () => {
         logger: SILENT_LOGGER,
       });
 
-      wireModules([mcpModule, quitModule], hookRegistry, shutdownDispatcher);
+      shutdownDispatcher.registerModule(mcpModule);
+      shutdownDispatcher.registerModule(quitModule);
 
       // Start to wire callbacks
       await shutdownDispatcher.dispatch({

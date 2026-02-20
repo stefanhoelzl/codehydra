@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Dispatcher, IntentHandle } from "./dispatcher";
 import type { IntentInterceptor } from "./dispatcher";
 import { HookRegistry } from "./hook-registry";
+import type { IntentModule } from "./module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext, HookContext } from "./operation";
 
@@ -380,5 +381,145 @@ describe("Dispatcher", () => {
     // Now await the full result
     await handle;
     expect(operationFinished).toBe(true);
+  });
+
+  describe("registerModule", () => {
+    it("registers hooks from module", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const hookRan = vi.fn();
+
+      const testModule: IntentModule = {
+        hooks: {
+          "action-op": {
+            execute: {
+              handler: async () => {
+                hookRan();
+              },
+            },
+          },
+        },
+      };
+
+      dispatcher.registerModule(testModule);
+
+      const hooks = hookRegistry.resolve("action-op");
+      const ctx: HookContext = { intent: createActionIntent() };
+      await hooks.collect("execute", ctx);
+
+      expect(hookRan).toHaveBeenCalledOnce();
+    });
+
+    it("subscribes events from module", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const eventHandler = vi.fn();
+
+      const testModule: IntentModule = {
+        events: {
+          "test:completed": eventHandler,
+        },
+      };
+
+      dispatcher.registerModule(testModule);
+
+      const operation: Operation<Intent, void> = {
+        id: "action-op",
+        execute: async (ctx: OperationContext<Intent>) => {
+          ctx.emit({ type: "test:completed", payload: { id: "123" } });
+        },
+      };
+      dispatcher.registerOperation("test:action", operation);
+
+      await dispatcher.dispatch(createActionIntent());
+
+      expect(eventHandler).toHaveBeenCalledOnce();
+      expect(eventHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "test:completed",
+          payload: expect.objectContaining({ id: "123" }),
+        })
+      );
+    });
+
+    it("registers interceptors from module", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const operationExecuted = vi.fn();
+
+      const cancelInterceptor: IntentInterceptor = {
+        id: "cancel-all",
+        async before() {
+          return null;
+        },
+      };
+
+      const testModule: IntentModule = {
+        interceptors: [cancelInterceptor],
+      };
+
+      dispatcher.registerModule(testModule);
+
+      const operation: Operation<Intent, void> = {
+        id: "action-op",
+        execute: async () => {
+          operationExecuted();
+        },
+      };
+      dispatcher.registerOperation("test:action", operation);
+
+      const result = await dispatcher.dispatch(createActionIntent());
+
+      expect(result).toBeUndefined();
+      expect(operationExecuted).not.toHaveBeenCalled();
+    });
+
+    it("handles empty module", () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      const emptyModule: IntentModule = {};
+
+      expect(() => dispatcher.registerModule(emptyModule)).not.toThrow();
+    });
+
+    it("registers multiple modules in order", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const order: string[] = [];
+
+      const moduleA: IntentModule = {
+        hooks: {
+          "action-op": {
+            execute: {
+              handler: async () => {
+                order.push("module-a");
+              },
+            },
+          },
+        },
+      };
+
+      const moduleB: IntentModule = {
+        hooks: {
+          "action-op": {
+            execute: {
+              handler: async () => {
+                order.push("module-b");
+              },
+            },
+          },
+        },
+      };
+
+      dispatcher.registerModule(moduleA);
+      dispatcher.registerModule(moduleB);
+
+      const hooks = hookRegistry.resolve("action-op");
+      const ctx: HookContext = { intent: createActionIntent() };
+      await hooks.collect("execute", ctx);
+
+      expect(order).toEqual(["module-a", "module-b"]);
+    });
   });
 });

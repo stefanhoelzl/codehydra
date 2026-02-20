@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   SetModeOperation,
   SET_MODE_OPERATION_ID,
@@ -137,7 +137,7 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
     modules.push(ipcEventBridge);
   }
 
-  wireModules(modules, hookRegistry, dispatcher);
+  for (const m of modules) dispatcher.registerModule(m);
 
   return { dispatcher, viewManager, mockApiRegistry };
 }

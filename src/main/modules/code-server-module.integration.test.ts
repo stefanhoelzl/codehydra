@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
@@ -246,7 +246,7 @@ function createTestSetup(mockDeps?: CodeServerModuleDeps) {
   const dispatcher = new Dispatcher(hookRegistry);
   const module = createCodeServerModule(deps);
 
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return { deps, dispatcher, hookRegistry };
 }
@@ -624,7 +624,7 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       const module = createCodeServerModule(deps);
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       // Register start operation and run it to set port
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
@@ -673,7 +673,7 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       const module = createCodeServerModule(deps);
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       // Start to set port
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
@@ -707,7 +707,7 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       const module = createCodeServerModule(deps);
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       // Start to set port
       dispatcher.registerOperation("app:start", new MinimalStartOperation());

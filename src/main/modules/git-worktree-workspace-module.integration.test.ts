@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
@@ -303,7 +303,7 @@ function createTestSetup(): TestSetup {
     pathProvider,
     SILENT_LOGGER
   );
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return { dispatcher, provider, pathProvider };
 }

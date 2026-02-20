@@ -32,7 +32,7 @@ export type EventDeclarations = Readonly<Record<string, (event: DomainEvent) => 
 
 /**
  * A module that contributes hooks and/or event subscriptions to the intent system.
- * Modules are wired at bootstrap via `wireModules()`.
+ * Modules are registered at bootstrap via `dispatcher.registerModule()`.
  */
 export interface IntentModule {
   /** Hook contributions: operationId → hookPointId → HookHandler */

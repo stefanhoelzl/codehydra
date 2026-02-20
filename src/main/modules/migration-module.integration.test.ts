@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import { createMigrationModule, type MigrationModuleDeps } from "./migration-module";
 import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
@@ -62,7 +62,7 @@ function createTestSetup(
   };
 
   const module = createMigrationModule(deps);
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return {
     startHooks: hookRegistry.resolve(APP_START_OPERATION_ID),

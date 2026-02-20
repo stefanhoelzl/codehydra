@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
@@ -67,7 +67,7 @@ describe("ScriptModule Integration", () => {
       fileSystem: fileSystem as never,
       pathProvider: pathProvider as never,
     });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
       type: INTENT_APP_START,
@@ -128,7 +128,7 @@ describe("ScriptModule Integration", () => {
       fileSystem: fileSystem as never,
       pathProvider: pathProvider as never,
     });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
       type: INTENT_APP_START,

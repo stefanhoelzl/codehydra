@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
@@ -49,7 +49,7 @@ describe("LoggingModule Integration", () => {
     dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
     const module = createLoggingModule({ loggingService, registerLogHandlers });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
       type: INTENT_APP_START,

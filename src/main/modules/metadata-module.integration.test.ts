@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import { SetMetadataOperation, INTENT_SET_METADATA } from "../operations/set-metadata";
 import type {
   SetMetadataIntent,
@@ -143,7 +143,9 @@ function createTestSetup(): TestSetup {
   // Module under test
   const metadataModule = createMetadataModule({ globalProvider });
 
-  wireModules([resolveModule, resolveProjectModule, metadataModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(resolveProjectModule);
+  dispatcher.registerModule(metadataModule);
 
   return {
     dispatcher,

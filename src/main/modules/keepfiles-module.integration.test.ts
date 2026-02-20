@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import {
@@ -83,7 +83,7 @@ function createTestSetup(logger = SILENT_LOGGER): TestSetup {
     keepFilesService: keepFilesService as unknown as IKeepFilesService,
     logger,
   });
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return { dispatcher, keepFilesService };
 }

@@ -17,7 +17,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
@@ -442,7 +442,7 @@ function createTestSetup(overrides?: Partial<AgentModuleDeps>) {
   const dispatcher = new Dispatcher(hookRegistry);
   const module = createAgentModule(deps);
 
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return { deps, dispatcher, hookRegistry };
 }
@@ -753,7 +753,7 @@ describe("AgentModule", () => {
       );
 
       // Build a shared hookRegistry + dispatcher so the module's internal
-      // deps.dispatcher is the SAME instance used by wireModules / test.
+      // deps.dispatcher is the SAME instance used by dispatcher.registerModule / test.
       const hookRegistry = new HookRegistry();
       const sharedDispatcher = new Dispatcher(hookRegistry);
 
@@ -763,7 +763,7 @@ describe("AgentModule", () => {
         dispatcher: sharedDispatcher,
       } satisfies AgentModuleDeps;
       const module = createAgentModule(deps);
-      wireModules([module], hookRegistry, sharedDispatcher);
+      sharedDispatcher.registerModule(module);
 
       sharedDispatcher.registerOperation("app:start", new MinimalStartOperation());
 

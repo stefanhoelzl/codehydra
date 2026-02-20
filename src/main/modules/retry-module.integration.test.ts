@@ -9,7 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
@@ -55,7 +55,7 @@ describe("RetryModule Integration", () => {
     dispatcher.registerOperation(INTENT_APP_START, new MinimalShowUIOperation());
 
     const module = createRetryModule({ ipcLayer });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     return { dispatcher, ipcLayer };
   }
