@@ -57,12 +57,14 @@ import { SetupOperation, INTENT_SETUP } from "../operations/setup";
 import type { SetupIntent } from "../operations/setup";
 import { createIpcEventBridge, type IpcEventBridgeDeps } from "./ipc-event-bridge";
 import type { IApiRegistry } from "../api/registry-types";
+import { ApiRegistry } from "../api/registry";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
-import { SILENT_LOGGER } from "../../services/logging";
+import { createMockLogger, SILENT_LOGGER } from "../../services/logging";
+import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Mock ApiRegistry (behavioral mock with recorded events)
@@ -872,5 +874,97 @@ describe("IpcEventBridge - setup:error", () => {
       message: "Network timeout",
       code: "ETIMEDOUT",
     });
+  });
+});
+
+// =============================================================================
+// API handler tests (executeCommand + selectFolder)
+//
+// These use a real ApiRegistry + createBehavioralIpcLayer so we can invoke
+// the handlers registered by createIpcEventBridge via getInterface().
+// =============================================================================
+
+function createApiTestSetup(overrides?: { pluginServer?: IpcEventBridgeDeps["pluginServer"] }) {
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
+
+  const ipcLayer = createBehavioralIpcLayer();
+  const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer });
+
+  const ipcEventBridge = createIpcEventBridge({
+    apiRegistry: registry,
+    getApi: () => registry.getInterface(),
+    getUIWebContents: () => null,
+    pluginServer: overrides?.pluginServer ?? null,
+    logger: SILENT_LOGGER,
+    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    agentStatusManager: {
+      getStatus: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+    globalWorktreeProvider: {
+      listWorktrees: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+    deleteOp: {
+      hasPendingRetry: vi.fn().mockReturnValue(false),
+      signalDismiss: vi.fn(),
+      signalRetry: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["deleteOp"],
+  });
+
+  dispatcher.registerModule(ipcEventBridge);
+
+  // lifecycle.ready is registered outside the bridge in the composition root
+  registry.register("lifecycle.ready", async () => {}, {
+    ipc: ApiIpcChannels.LIFECYCLE_READY,
+  });
+
+  return {
+    api: registry.getInterface(),
+    dispose: () => registry.dispose(),
+  };
+}
+
+describe("IpcEventBridge - executeCommand", () => {
+  it("delegates to pluginServer.sendCommand and returns data", async () => {
+    const mockPluginServer = {
+      sendCommand: vi.fn().mockResolvedValue({ success: true, data: { result: 42 } }),
+    };
+    const { api, dispose } = createApiTestSetup({
+      pluginServer: mockPluginServer as unknown as IpcEventBridgeDeps["pluginServer"],
+    });
+
+    const data = await api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "test.command", ["arg1"]);
+
+    expect(data).toEqual({ result: 42 });
+    expect(mockPluginServer.sendCommand).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, "test.command", [
+      "arg1",
+    ]);
+
+    await dispose();
+  });
+
+  it("throws when pluginServer is not available", async () => {
+    const { api, dispose } = createApiTestSetup({ pluginServer: null });
+
+    await expect(
+      api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "test.command")
+    ).rejects.toThrow("Plugin server not available");
+
+    await dispose();
+  });
+
+  it("throws when sendCommand returns failure", async () => {
+    const mockPluginServer = {
+      sendCommand: vi.fn().mockResolvedValue({ success: false, error: "Command failed" }),
+    };
+    const { api, dispose } = createApiTestSetup({
+      pluginServer: mockPluginServer as unknown as IpcEventBridgeDeps["pluginServer"],
+    });
+
+    await expect(api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "bad.command")).rejects.toThrow(
+      "Command failed"
+    );
+
+    await dispose();
   });
 });
