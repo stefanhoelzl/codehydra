@@ -6,13 +6,14 @@
  * collection.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createMockGitClient, gitClientMatchers } from "../../services/git/git-client.state-mock";
 import { createMockPathProvider } from "../../services/platform/path-provider.test-utils";
+import { createFileSystemMock } from "../../services/platform/filesystem.state-mock";
 import { createRemoteProjectModule } from "./remote-project-module";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import type { ResolveHookResult, OpenProjectIntent } from "../operations/open-project";
@@ -23,7 +24,7 @@ import type {
   CloseProjectIntent,
 } from "../operations/close-project";
 import { Path } from "../../services/platform/path";
-import type { ProjectConfig } from "../../services/project/types";
+import { generateProjectIdFromUrl, extractRepoName } from "../../services/project/url-utils";
 
 expect.extend(gitClientMatchers);
 
@@ -35,26 +36,12 @@ function createTestSetup() {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  const projectStore = {
-    findByRemoteUrl: vi
-      .fn<(url: string) => Promise<string | undefined>>()
-      .mockResolvedValue(undefined),
-    saveProject: vi
-      .fn<(path: string, options?: { remoteUrl?: string }) => Promise<void>>()
-      .mockResolvedValue(undefined),
-    getProjectConfig: vi
-      .fn<(path: string) => Promise<ProjectConfig | undefined>>()
-      .mockResolvedValue(undefined),
-    deleteProjectDirectory: vi
-      .fn<(path: string, options?: { isClonedProject?: boolean }) => Promise<void>>()
-      .mockResolvedValue(undefined),
-  };
-
+  const fs = createFileSystemMock();
   const gitClient = createMockGitClient();
   const pathProvider = createMockPathProvider();
 
   const module = createRemoteProjectModule({
-    projectStore,
+    fs,
     gitClient,
     pathProvider,
     logger: SILENT_LOGGER,
@@ -62,7 +49,7 @@ function createTestSetup() {
 
   wireModules([module], hookRegistry, dispatcher);
 
-  return { hookRegistry, projectStore, gitClient, pathProvider };
+  return { hookRegistry, fs, gitClient, pathProvider };
 }
 
 // =============================================================================
@@ -97,7 +84,7 @@ describe("RemoteProjectModule Integration", () => {
 
   describe("open-project / resolve", () => {
     it("clones new repo when URL provided and no existing clone", async () => {
-      const { hookRegistry, projectStore, gitClient } = createTestSetup();
+      const { hookRegistry, gitClient } = createTestSetup();
 
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
@@ -117,21 +104,22 @@ describe("RemoteProjectModule Integration", () => {
 
       // Verify clone was called
       expect(gitClient).toHaveClonedRepository(projectPath!);
-
-      // Verify project was saved with remoteUrl
-      expect(projectStore.saveProject).toHaveBeenCalledWith(projectPath, {
-        remoteUrl: "https://github.com/org/repo.git",
-      });
     });
 
-    it("returns existing path when URL already cloned", async () => {
-      const { hookRegistry, projectStore, gitClient } = createTestSetup();
+    it("returns existing path when clone directory exists (readdir succeeds)", async () => {
+      const { hookRegistry, fs, gitClient, pathProvider } = createTestSetup();
 
-      const existingPath = "/test/app-data/remotes/existing/repo";
-      projectStore.findByRemoteUrl.mockResolvedValue(existingPath);
+      const url = "https://github.com/org/repo.git";
+      const urlProjectId = generateProjectIdFromUrl(url);
+      const repoName = extractRepoName(url);
+      const projectDir = new Path(pathProvider.remotesDir.toString(), urlProjectId);
+      const gitPath = new Path(projectDir.toString(), repoName);
+
+      // Pre-populate filesystem so readdir succeeds
+      fs.$.setEntry(gitPath.toString(), { type: "directory" });
 
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
-      const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
+      const intent = openProjectIntent({ git: url });
 
       const { results, errors } = await hooks.collect<ResolveHookResult | undefined>("resolve", {
         intent,
@@ -142,16 +130,15 @@ describe("RemoteProjectModule Integration", () => {
 
       const result = results[0]!;
       expect(result).toBeDefined();
-      expect(result!.projectPath).toBe(existingPath);
-      expect(result!.remoteUrl).toBe("https://github.com/org/repo.git");
+      expect(result!.projectPath).toBe(gitPath.toString());
+      expect(result!.remoteUrl).toBe(url);
 
       // No clone should have happened
       expect(gitClient.$.repositories.size).toBe(0);
-      expect(projectStore.saveProject).not.toHaveBeenCalled();
     });
 
     it("returns undefined for local path (no git URL)", async () => {
-      const { hookRegistry, projectStore } = createTestSetup();
+      const { hookRegistry } = createTestSetup();
 
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ path: new Path("/local/project") });
@@ -162,9 +149,6 @@ describe("RemoteProjectModule Integration", () => {
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(0);
-
-      expect(projectStore.findByRemoteUrl).not.toHaveBeenCalled();
-      expect(projectStore.saveProject).not.toHaveBeenCalled();
     });
 
     it("propagates clone error", async () => {
@@ -196,49 +180,48 @@ describe("RemoteProjectModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("close-project / close", () => {
-    it("deletes directory when removeLocalRepo=true and config has remoteUrl", async () => {
-      const { hookRegistry, projectStore } = createTestSetup();
+    it("deletes clone directory when removeLocalRepo=true and remoteUrl in context", async () => {
+      const { hookRegistry, fs } = createTestSetup();
 
       const projectPath = "/test/app-data/remotes/abc12345/repo";
 
-      // Config lookup returns a remote project
-      projectStore.getProjectConfig.mockResolvedValue({
-        version: 2,
-        path: projectPath,
-        remoteUrl: "https://github.com/org/repo.git",
-      });
+      // Pre-populate clone directory
+      fs.$.setEntry("/test/app-data/remotes/abc12345", { type: "directory" });
+      fs.$.setEntry(projectPath, { type: "directory" });
 
       const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
-      const closeIntent = closeProjectIntent({ projectId: "test-id", removeLocalRepo: true });
+      const closeIntnt = closeProjectIntent({ projectId: "test-id", removeLocalRepo: true });
 
       const closeCtx: CloseHookInput = {
-        intent: closeIntent,
+        intent: closeIntnt,
         projectPath,
         removeLocalRepo: true,
+        remoteUrl: "https://github.com/org/repo.git",
       };
       const { results, errors } = await closeHooks.collect<CloseHookResult>("close", closeCtx);
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
 
-      expect(projectStore.getProjectConfig).toHaveBeenCalledWith(projectPath);
-      expect(projectStore.deleteProjectDirectory).toHaveBeenCalledWith(projectPath, {
-        isClonedProject: true,
-      });
+      // Clone dir (parent of projectPath) should be deleted
+      expect(fs.$.entries.has(new Path("/test/app-data/remotes/abc12345").toString())).toBe(false);
     });
 
     it("no-op when removeLocalRepo=false", async () => {
-      const { hookRegistry, projectStore } = createTestSetup();
+      const { hookRegistry, fs } = createTestSetup();
 
       const projectPath = "/test/app-data/remotes/abc12345/repo";
+      fs.$.setEntry("/test/app-data/remotes/abc12345", { type: "directory" });
+      fs.$.setEntry(projectPath, { type: "directory" });
 
       const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
-      const closeIntent = closeProjectIntent({ projectId: "test-id", removeLocalRepo: false });
+      const closeIntnt = closeProjectIntent({ projectId: "test-id", removeLocalRepo: false });
 
       const closeCtx: CloseHookInput = {
-        intent: closeIntent,
+        intent: closeIntnt,
         projectPath,
         removeLocalRepo: false,
+        remoteUrl: "https://github.com/org/repo.git",
       };
       const { results, errors } = await closeHooks.collect<CloseHookResult>("close", closeCtx);
 
@@ -246,63 +229,29 @@ describe("RemoteProjectModule Integration", () => {
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({});
 
-      // Should not even check config when removeLocalRepo is false
-      expect(projectStore.getProjectConfig).not.toHaveBeenCalled();
-      expect(projectStore.deleteProjectDirectory).not.toHaveBeenCalled();
+      // Directory should still exist
+      expect(fs.$.entries.has(new Path("/test/app-data/remotes/abc12345").toString())).toBe(true);
     });
 
-    it("no-op when config has no remoteUrl (local project)", async () => {
-      const { hookRegistry, projectStore } = createTestSetup();
+    it("no-op when no remoteUrl in context (local project)", async () => {
+      const { hookRegistry } = createTestSetup();
 
       const projectPath = "/home/user/projects/local";
 
-      // Config exists but has no remoteUrl
-      projectStore.getProjectConfig.mockResolvedValue({
-        version: 2,
-        path: projectPath,
-      });
-
       const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
-      const closeIntent = closeProjectIntent({ projectId: "test-id", removeLocalRepo: true });
+      const closeIntnt = closeProjectIntent({ projectId: "test-id", removeLocalRepo: true });
 
       const closeCtx: CloseHookInput = {
-        intent: closeIntent,
+        intent: closeIntnt,
         projectPath,
         removeLocalRepo: true,
+        // No remoteUrl — local project
       };
       const { results, errors } = await closeHooks.collect<CloseHookResult>("close", closeCtx);
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({});
-
-      expect(projectStore.getProjectConfig).toHaveBeenCalledWith(projectPath);
-      expect(projectStore.deleteProjectDirectory).not.toHaveBeenCalled();
-    });
-
-    it("no-op when getProjectConfig returns undefined", async () => {
-      const { hookRegistry, projectStore } = createTestSetup();
-
-      const projectPath = "/unknown/project";
-
-      // getProjectConfig returns undefined (default mock behavior)
-
-      const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
-      const closeIntent = closeProjectIntent({ projectId: "test-id", removeLocalRepo: true });
-
-      const closeCtx: CloseHookInput = {
-        intent: closeIntent,
-        projectPath,
-        removeLocalRepo: true,
-      };
-      const { results, errors } = await closeHooks.collect<CloseHookResult>("close", closeCtx);
-
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
-
-      expect(projectStore.getProjectConfig).toHaveBeenCalledWith(projectPath);
-      expect(projectStore.deleteProjectDirectory).not.toHaveBeenCalled();
     });
   });
 });

@@ -42,10 +42,9 @@ export {
   getCodeServerPort,
 } from "./code-server/code-server-manager";
 
-// Project store
+// Project types
 export type { ProjectConfig } from "./project/types";
 export { CURRENT_PROJECT_VERSION } from "./project/types";
-export { ProjectStore } from "./project/project-store";
 
 // Platform utilities (pure functions - no build-mode dependencies)
 export { sanitizeWorkspaceName, encodePathForUrl, projectDirName } from "./platform/paths";

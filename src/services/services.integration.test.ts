@@ -8,7 +8,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createTestGitRepo, createTempDir } from "./test-utils";
 import { SimpleGitClient } from "./git/simple-git-client";
 import { GitWorktreeProvider } from "./git/git-worktree-provider";
-import { ProjectStore } from "./project/project-store";
 import { DefaultFileSystemLayer } from "./platform/filesystem";
 import { SILENT_LOGGER } from "./logging";
 import { createFileSystemMock, directory } from "./platform/filesystem.state-mock";
@@ -46,16 +45,8 @@ describe("Services Integration", () => {
     });
 
     it("performs complete project and workspace workflow", async () => {
-      // 1. Create project store and save project
+      // 1. Create GitWorktreeProvider with SimpleGitClient
       const fileSystemLayer = new DefaultFileSystemLayer(SILENT_LOGGER);
-      const projectStore = new ProjectStore(projectsDir, fileSystemLayer);
-      await projectStore.saveProject(repoPath);
-
-      // Verify project is saved (paths are normalized by Path class)
-      const savedProjects = await projectStore.loadAllProjects();
-      expect(savedProjects).toContain(new Path(repoPath).toString());
-
-      // 2. Create GitWorktreeProvider with SimpleGitClient
       const gitClient = new SimpleGitClient(SILENT_LOGGER);
       const workspacesDir = getWorkspacesDir(repoPath);
       const provider = await GitWorktreeProvider.create(

@@ -1,22 +1,21 @@
 /**
  * RemoteProjectModule - Handles remote (URL-cloned) project filesystem concerns.
  *
- * No internal state. Delegates project state ownership to LocalProjectModule.
- * Responsible only for cloning repos on open and cleaning up directories on close.
+ * No internal state. No persistence. Delegates project state ownership to
+ * LocalProjectModule. Responsible only for cloning repos on open and cleaning
+ * up clone directories on close.
  *
  * Hook contributions:
  * - open-project / resolve: clone URL or return existing clone path
  * - close-project / close: filesystem cleanup (delete cloned directory if requested)
- *
- * IMPORTANT: Must be registered before LocalProjectModule in wireModules so that
- * the close hook can read the project config before LocalProjectModule removes it.
  */
 
+import nodePath from "path";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { IGitClient } from "../../services/git/git-client";
 import type { PathProvider } from "../../services/platform/path-provider";
-import type { ProjectStore } from "../../services/project/project-store";
+import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Logger } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import {
@@ -34,15 +33,12 @@ import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
 // =============================================================================
 
 export function createRemoteProjectModule(deps: {
-  readonly projectStore: Pick<
-    ProjectStore,
-    "findByRemoteUrl" | "saveProject" | "getProjectConfig" | "deleteProjectDirectory"
-  >;
+  readonly fs: Pick<FileSystemLayer, "readdir" | "rm">;
   readonly gitClient: Pick<IGitClient, "clone">;
   readonly pathProvider: Pick<PathProvider, "remotesDir">;
   readonly logger: Logger;
 }): IntentModule {
-  const { projectStore, gitClient, pathProvider, logger } = deps;
+  const { fs, gitClient, pathProvider, logger } = deps;
 
   return {
     hooks: {
@@ -61,24 +57,27 @@ export function createRemoteProjectModule(deps: {
 
             const expanded = expandGitUrl(git);
 
-            // Check for existing clone
-            const existingPath = await projectStore.findByRemoteUrl(expanded);
-            if (existingPath) {
-              logger.debug("Found existing project for URL", {
-                url: expanded,
-                existingPath,
-              });
-              return {
-                projectPath: existingPath,
-                remoteUrl: expanded,
-              };
-            }
-
-            // Clone
+            // Deterministic clone path from URL
             const urlProjectId = generateProjectIdFromUrl(expanded);
             const repoName = extractRepoName(expanded);
             const projectDir = new Path(pathProvider.remotesDir.toString(), urlProjectId);
             const gitPath = new Path(projectDir.toString(), repoName);
+
+            // Check for existing clone via filesystem
+            try {
+              await fs.readdir(gitPath.toString());
+
+              logger.debug("Found existing project for URL", {
+                url: expanded,
+                existingPath: gitPath.toString(),
+              });
+              return {
+                projectPath: gitPath.toString(),
+                remoteUrl: expanded,
+              };
+            } catch {
+              // Not found — clone
+            }
 
             logger.debug("Cloning repository", {
               url: expanded,
@@ -86,7 +85,9 @@ export function createRemoteProjectModule(deps: {
             });
 
             await gitClient.clone(expanded, gitPath);
-            await projectStore.saveProject(gitPath.toString(), { remoteUrl: expanded });
+
+            // No saveProject call — LocalProjectModule.register handles persistence
+            // with remoteUrl from context
 
             return { projectPath: gitPath.toString(), remoteUrl: expanded };
           },
@@ -98,25 +99,18 @@ export function createRemoteProjectModule(deps: {
       // -----------------------------------------------------------------------
       [CLOSE_PROJECT_OPERATION_ID]: {
         // close: filesystem cleanup only — delete cloned directory if requested
-        // Looks up the project config to determine if this is a remote project.
-        // Must run before LocalProjectModule.close which removes the store entry.
+        // Uses remoteUrl from hook context (provided by resolve-project results)
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath, removeLocalRepo } = ctx as CloseHookInput;
+            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
-            if (!removeLocalRepo) {
+            if (!removeLocalRepo || !remoteUrl) {
               return {};
             }
 
-            // Check if this is a remote project by looking up the store config
-            const config = await projectStore.getProjectConfig(projectPath);
-            if (!config?.remoteUrl) {
-              return {};
-            }
-
-            await projectStore.deleteProjectDirectory(projectPath, {
-              isClonedProject: true,
-            });
+            // Delete the clone directory (parent of gitPath, e.g. remotes/<url-hash>/)
+            const cloneDir = nodePath.dirname(new Path(projectPath).toString());
+            await fs.rm(cloneDir, { recursive: true, force: true });
 
             return {};
           },

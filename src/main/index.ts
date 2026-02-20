@@ -32,7 +32,6 @@ import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 import {
   CodeServerManager,
-  ProjectStore,
   DefaultPathProvider,
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
@@ -92,6 +91,7 @@ import { createWindowTitleModule } from "./modules/window-title-module";
 import { createTelemetryModule } from "./modules/telemetry-module";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
+import { createMigrationModule } from "./modules/migration-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createBadgeModule } from "./modules/badge-module";
@@ -307,11 +307,6 @@ const pluginServer = new PluginServer(networkLayer, loggingService.createLogger(
   extensionLogger: loggingService.createLogger("extension"),
 });
 
-const projectStore = new ProjectStore(
-  pathProvider.projectsDir.toString(),
-  fileSystemLayer,
-  pathProvider.remotesDir.toString()
-);
 const gitClient = new SimpleGitClient(loggingService.createLogger("git"));
 const globalWorktreeProvider = new GitWorktreeProvider(
   gitClient,
@@ -516,12 +511,18 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   dispatcher,
   logger: lifecycleLogger,
 });
+const migrationModule = createMigrationModule({
+  projectsDir: pathProvider.projectsDir.toString(),
+  remotesDir: pathProvider.remotesDir.toString(),
+  fs: fileSystemLayer,
+});
 const localProjectModule = createLocalProjectModule({
-  projectStore,
+  projectsDir: pathProvider.projectsDir.toString(),
+  fs: fileSystemLayer,
   globalProvider: globalWorktreeProvider,
 });
 const remoteProjectModule = createRemoteProjectModule({
-  projectStore,
+  fs: fileSystemLayer,
   gitClient,
   pathProvider,
   logger: lifecycleLogger,
@@ -631,6 +632,7 @@ async function bootstrap(): Promise<void> {
       keepFilesModule,
       deleteWindowsLockModule,
       remoteProjectModule,
+      migrationModule,
       localProjectModule,
       gitWorktreeWorkspaceModule,
       windowTitleModule,
