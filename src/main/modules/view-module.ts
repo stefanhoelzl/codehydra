@@ -18,7 +18,7 @@
  * Internal state: cachedActiveRef, loadingChangeCleanupFn, mountSignal.
  */
 
-import nodePath from "node:path";
+import { Path } from "../../services/platform/path";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
@@ -223,9 +223,9 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
               }
               // Redirect data paths to isolate from system defaults
               if (deps.pathProvider) {
-                const electronDir = deps.pathProvider.electronDataDir.toNative();
+                const electronDir = new Path(deps.pathProvider.electronDataDir.toNative());
                 for (const name of ["userData", "sessionData", "logs", "crashDumps"]) {
-                  deps.electronApp.setPath(name, nodePath.join(electronDir, name));
+                  deps.electronApp.setPath(name, new Path(electronDir, name).toNative());
                 }
               }
             }
