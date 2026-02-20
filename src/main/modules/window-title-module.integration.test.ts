@@ -17,8 +17,14 @@ import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "../operations
 import type { UpdateAvailableIntent } from "../operations/update-available";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import {
+  APP_START_OPERATION_ID,
+  INTENT_APP_START,
+  type AppStartIntent,
+  type StartHookResult,
+} from "../operations/app-start";
 import { createWindowTitleModule } from "./window-title-module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
@@ -63,6 +69,27 @@ class MinimalSwitchOperation implements Operation<MinimalSwitchIntent, void> {
 }
 
 // =============================================================================
+// Minimal start operation that runs the "start" hook point
+// =============================================================================
+
+/**
+ * Minimal start operation that only runs the "start" hook point.
+ * Avoids the full AppStartOperation pipeline while exercising the
+ * window title module's start hook through the dispatcher.
+ */
+class MinimalStartOperation implements Operation<AppStartIntent, void> {
+  readonly id = APP_START_OPERATION_ID;
+
+  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
+    const hookCtx: HookContext = { intent: ctx.intent };
+    const { errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    if (errors.length > 0) {
+      throw errors[0]!;
+    }
+  }
+}
+
+// =============================================================================
 // Test Setup
 // =============================================================================
 
@@ -79,6 +106,7 @@ function createTestSetup(titleVersion?: string): TestSetup {
 
   dispatcher.registerOperation(INTENT_MINIMAL_SWITCH, new MinimalSwitchOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
+  dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
 
   const windowTitleModule = createWindowTitleModule(setTitle, titleVersion ?? "main");
 
@@ -98,6 +126,13 @@ function updateAvailableIntent(version = "1.2.3"): UpdateAvailableIntent {
   return {
     type: INTENT_UPDATE_AVAILABLE,
     payload: { version },
+  };
+}
+
+function startIntent(): AppStartIntent {
+  return {
+    type: INTENT_APP_START,
+    payload: {} as AppStartIntent["payload"],
   };
 }
 
@@ -192,5 +227,36 @@ describe("WindowTitleModule Integration", () => {
     await dispatcher.dispatch(updateAvailableIntent());
 
     expect(setTitle).toHaveBeenCalledWith("CodeHydra - (main) - (update available)");
+  });
+
+  it("sets initial title with version during app:start", async () => {
+    const { dispatcher, setTitle } = createTestSetup("1.0.0");
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(setTitle).toHaveBeenCalledWith("CodeHydra - (1.0.0)");
+  });
+
+  it("sets initial title with dev branch during app:start", async () => {
+    const { dispatcher, setTitle } = createTestSetup("my-branch");
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(setTitle).toHaveBeenCalledWith("CodeHydra - (my-branch)");
+  });
+
+  it("sets initial title without version when titleVersion is undefined", async () => {
+    const setTitle = vi.fn();
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
+
+    const windowTitleModule = createWindowTitleModule(setTitle, undefined);
+    wireModules([windowTitleModule], hookRegistry, dispatcher);
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(setTitle).toHaveBeenCalledWith("CodeHydra");
   });
 });
