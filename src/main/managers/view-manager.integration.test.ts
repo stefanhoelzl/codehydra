@@ -116,6 +116,15 @@ function createViewManagerDeps(): ViewManagerDeps & {
   };
 }
 
+/**
+ * Creates a ViewManager with two-phase init (constructor + create).
+ */
+function createViewManager(deps: ViewManagerDeps): ViewManager {
+  const manager = new ViewManager(deps);
+  manager.create();
+  return manager;
+}
+
 describe("ViewManager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -134,14 +143,14 @@ describe("ViewManager", () => {
   describe("create", () => {
     it("creates a ViewManager instance", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       expect(manager).toBeInstanceOf(ViewManager);
     });
 
     it("creates UI layer view with security settings", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const uiHandle = manager.getUIViewHandle();
       expect(uiHandle.id).toMatch(/^view-\d+$/);
@@ -150,7 +159,7 @@ describe("ViewManager", () => {
 
     it("sets transparent background on UI layer", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const uiHandle = manager.getUIViewHandle();
       expect(deps.viewLayer).toHaveView(uiHandle.id, { backgroundColor: "#00000000" });
@@ -158,7 +167,7 @@ describe("ViewManager", () => {
 
     it("attaches UI layer to window", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const uiHandle = manager.getUIViewHandle();
       expect(deps.viewLayer).toHaveView(uiHandle.id, {
@@ -168,7 +177,7 @@ describe("ViewManager", () => {
 
     it("subscribes to window resize events", () => {
       const deps = createViewManagerDeps();
-      ViewManager.create(deps);
+      createViewManager(deps);
 
       expect(deps.windowManager.onResize).toHaveBeenCalledWith(expect.any(Function));
     });
@@ -177,7 +186,7 @@ describe("ViewManager", () => {
   describe("getUIViewHandle", () => {
     it("returns the UI layer ViewHandle", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const handle = manager.getUIViewHandle();
 
@@ -189,7 +198,7 @@ describe("ViewManager", () => {
   describe("createWorkspaceView", () => {
     it("creates a workspace view (not attached)", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -207,7 +216,7 @@ describe("ViewManager", () => {
 
     it("does not load URL on creation (lazy loading)", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -221,7 +230,7 @@ describe("ViewManager", () => {
 
     it("stores view accessible via getWorkspaceView", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const createdHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -236,7 +245,7 @@ describe("ViewManager", () => {
 
     it("sets dark background color", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -249,7 +258,7 @@ describe("ViewManager", () => {
 
     it("returns a ViewHandle", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const handle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -263,7 +272,7 @@ describe("ViewManager", () => {
 
     it("registers dom-ready handler that disables EditContext", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -282,7 +291,7 @@ describe("ViewManager", () => {
 
     it("loads URL on first activation", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -300,7 +309,7 @@ describe("ViewManager", () => {
 
     it("does not reload URL on subsequent activations", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const ws1Handle = manager.createWorkspaceView(
         "/path/to/workspace1",
@@ -331,7 +340,7 @@ describe("ViewManager", () => {
   describe("preloadWorkspaceUrl", () => {
     it("loads URL without attaching view", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -350,7 +359,7 @@ describe("ViewManager", () => {
 
     it("is idempotent - multiple calls only load URL once", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -371,7 +380,7 @@ describe("ViewManager", () => {
 
     it("does nothing for nonexistent workspace", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       // Should not throw
       expect(() => manager.preloadWorkspaceUrl("/nonexistent/workspace")).not.toThrow();
@@ -381,7 +390,7 @@ describe("ViewManager", () => {
   describe("shared session model", () => {
     it("all workspaces share the same session (same SessionHandle.id)", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace1",
@@ -408,7 +417,7 @@ describe("ViewManager", () => {
 
     it("session data persists after workspace deletion", async () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       // Create two workspaces
       manager.createWorkspaceView(
@@ -434,7 +443,7 @@ describe("ViewManager", () => {
 
     it("uses global partition constant for all workspaces", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       // Create workspaces in different projects
       manager.createWorkspaceView(
@@ -458,7 +467,7 @@ describe("ViewManager", () => {
   describe("destroyWorkspaceView", () => {
     it("removes view from internal map", async () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -473,7 +482,7 @@ describe("ViewManager", () => {
 
     it("clears active workspace path when destroying active workspace", async () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -490,7 +499,7 @@ describe("ViewManager", () => {
 
     it("is idempotent - multiple calls don't throw", async () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -505,14 +514,14 @@ describe("ViewManager", () => {
 
     it("handles workspace that never existed", async () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       await expect(manager.destroyWorkspaceView("/nonexistent/workspace")).resolves.not.toThrow();
     });
 
     it("returns a Promise", async () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -528,7 +537,7 @@ describe("ViewManager", () => {
 
     it("does not clear session storage (shared across workspaces)", async () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -553,7 +562,7 @@ describe("ViewManager", () => {
   describe("getWorkspaceView", () => {
     it("returns the view handle for existing workspace", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const createdHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -568,7 +577,7 @@ describe("ViewManager", () => {
 
     it("returns undefined for non-existent workspace", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const view = manager.getWorkspaceView("/path/to/nonexistent");
 
@@ -580,7 +589,7 @@ describe("ViewManager", () => {
     it("only updates active workspace bounds (O(1) not O(n))", () => {
       const deps = createViewManagerDeps();
       vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const ws1Handle = manager.createWorkspaceView(
         "/path/to/workspace1",
@@ -613,7 +622,7 @@ describe("ViewManager", () => {
     it("sets UI layer bounds to full window", () => {
       const deps = createViewManagerDeps();
       vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.updateBounds();
 
@@ -626,7 +635,7 @@ describe("ViewManager", () => {
     it("sets active workspace bounds with sidebar offset", () => {
       const deps = createViewManagerDeps();
       vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -650,7 +659,7 @@ describe("ViewManager", () => {
       const deps = createViewManagerDeps();
       // Smaller than minimum 800x600
       vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 600, height: 400 });
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -675,7 +684,7 @@ describe("ViewManager", () => {
   describe("setActiveWorkspace", () => {
     it("loads URL and attaches view on first activation (when not loading)", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -696,7 +705,7 @@ describe("ViewManager", () => {
 
     it("detaches previous workspace when switching", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const ws1Handle = manager.createWorkspaceView(
         "/path/to/workspace1",
@@ -728,7 +737,7 @@ describe("ViewManager", () => {
 
     it("is idempotent - same workspace doesn't re-attach", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -749,7 +758,7 @@ describe("ViewManager", () => {
 
     it("keeps UI view at index 0 in workspace mode (DirectComposition workaround)", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
 
       manager.createWorkspaceView(
@@ -768,7 +777,7 @@ describe("ViewManager", () => {
 
     it("null workspace detaches current", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -786,7 +795,7 @@ describe("ViewManager", () => {
 
     it("focuses UI when setting active workspace to null", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -806,7 +815,7 @@ describe("ViewManager", () => {
 
     it("updates active workspace path", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -823,7 +832,7 @@ describe("ViewManager", () => {
   describe("focusActiveWorkspace", () => {
     it("focuses UI when no active workspace", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.focusActiveWorkspace();
 
@@ -836,7 +845,7 @@ describe("ViewManager", () => {
   describe("focusUI", () => {
     it("does not throw", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       // Should not throw (focus is a no-op in behavioral mock)
       expect(() => manager.focusUI()).not.toThrow();
@@ -846,7 +855,7 @@ describe("ViewManager", () => {
   describe("setMode", () => {
     it("changes mode from workspace to shortcut", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       expect(manager.getMode()).toBe("workspace");
 
@@ -857,7 +866,7 @@ describe("ViewManager", () => {
 
     it("is idempotent - same mode is no-op", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const callback = vi.fn();
       manager.onModeChange(callback);
@@ -870,7 +879,7 @@ describe("ViewManager", () => {
 
     it("emits mode change event", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const callback = vi.fn();
       manager.onModeChange(callback);
@@ -887,7 +896,7 @@ describe("ViewManager", () => {
   describe("getMode", () => {
     it("returns current mode", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       expect(manager.getMode()).toBe("workspace");
 
@@ -899,7 +908,7 @@ describe("ViewManager", () => {
   describe("onModeChange", () => {
     it("returns unsubscribe function", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const callback = vi.fn();
       const unsubscribe = manager.onModeChange(callback);
@@ -914,7 +923,7 @@ describe("ViewManager", () => {
   describe("onWorkspaceChange", () => {
     it("is called when active workspace changes", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const callback = vi.fn();
       manager.onWorkspaceChange(callback);
@@ -931,7 +940,7 @@ describe("ViewManager", () => {
 
     it("is called with null when workspace deactivated", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -950,7 +959,7 @@ describe("ViewManager", () => {
 
     it("returns unsubscribe function", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const callback = vi.fn();
       const unsubscribe = manager.onWorkspaceChange(callback);
@@ -971,7 +980,7 @@ describe("ViewManager", () => {
   describe("isWorkspaceLoading", () => {
     it("returns true for newly created workspace with isNew=true", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -985,7 +994,7 @@ describe("ViewManager", () => {
 
     it("returns false for workspace with isNew=false (default)", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -998,7 +1007,7 @@ describe("ViewManager", () => {
 
     it("returns false after setWorkspaceLoaded called", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -1016,7 +1025,7 @@ describe("ViewManager", () => {
   describe("setWorkspaceLoaded", () => {
     it("attaches view if workspace is active", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -1040,7 +1049,7 @@ describe("ViewManager", () => {
 
     it("is idempotent", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -1061,7 +1070,7 @@ describe("ViewManager", () => {
   describe("onLoadingChange", () => {
     it("is called when workspace starts loading", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const callback = vi.fn();
       manager.onLoadingChange(callback);
@@ -1078,7 +1087,7 @@ describe("ViewManager", () => {
 
     it("is called when workspace finishes loading", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",
@@ -1097,7 +1106,7 @@ describe("ViewManager", () => {
 
     it("returns unsubscribe function", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       const callback = vi.fn();
       const unsubscribe = manager.onLoadingChange(callback);
@@ -1118,7 +1127,7 @@ describe("ViewManager", () => {
       vi.useFakeTimers();
 
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       // Create workspace that finishes loading BEFORE callback is wired
       manager.createWorkspaceView(
@@ -1146,7 +1155,7 @@ describe("ViewManager", () => {
   describe("updateCodeServerPort", () => {
     it("updates the port", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       // Should not throw
       expect(() => manager.updateCodeServerPort(9090)).not.toThrow();
@@ -1156,7 +1165,7 @@ describe("ViewManager", () => {
   describe("destroy", () => {
     it("destroys all views", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace1",
@@ -1178,7 +1187,7 @@ describe("ViewManager", () => {
 
     it("disposes shortcut controller", () => {
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.destroy();
 
@@ -1191,7 +1200,7 @@ describe("ViewManager", () => {
       vi.useFakeTimers();
 
       const deps = createViewManagerDeps();
-      const manager = ViewManager.create(deps);
+      const manager = createViewManager(deps);
 
       manager.createWorkspaceView(
         "/path/to/workspace",

@@ -4,6 +4,10 @@
  *
  * This is a facade over WindowLayer that provides a higher-level API
  * for the main application window.
+ *
+ * Uses two-phase initialization:
+ * 1. Constructor: stores deps, title, iconPath (pure, no Electron calls)
+ * 2. create(): creates the BaseWindow and wires event listeners
  */
 
 import type { BaseWindow } from "electron";
@@ -43,16 +47,49 @@ export interface WindowManagerDeps {
  */
 export class WindowManager {
   private readonly windowLayer: WindowLayerInternal;
-  private readonly windowHandle: WindowHandle;
+  private readonly imageLayer: ImageLayer;
   private readonly logger: Logger;
   private readonly platformInfo: PlatformInfo;
+  private readonly title: string;
+  private readonly iconPath: string | undefined;
   private readonly resizeCallbacks: Set<() => void> = new Set();
+  private windowHandle!: WindowHandle;
 
-  private constructor(deps: WindowManagerDeps, windowHandle: WindowHandle) {
+  constructor(deps: WindowManagerDeps, title: string = "CodeHydra", iconPath?: string) {
     this.windowLayer = deps.windowLayer;
-    this.windowHandle = windowHandle;
+    this.imageLayer = deps.imageLayer;
     this.logger = deps.logger;
     this.platformInfo = deps.platformInfo;
+    this.title = title;
+    this.iconPath = iconPath;
+  }
+
+  /**
+   * Creates the BaseWindow and wires event listeners.
+   * Must be called before using any window operations.
+   */
+  create(): void {
+    this.windowHandle = this.windowLayer.createWindow({
+      width: 1200,
+      height: 800,
+      minWidth: 800,
+      minHeight: 600,
+      title: this.title,
+    });
+
+    // Set the window icon for taskbar/dock display
+    if (this.iconPath) {
+      try {
+        const iconHandle = this.imageLayer.createFromPath(this.iconPath);
+        if (!this.imageLayer.isEmpty(iconHandle)) {
+          this.windowLayer.setIcon(this.windowHandle, iconHandle);
+        }
+        this.imageLayer.release(iconHandle);
+      } catch {
+        // Icon loading failed, continue without icon
+        // This is non-critical - the window will use the default icon
+      }
+    }
 
     // Set up resize event handler
     this.windowLayer.onResize(this.windowHandle, () => {
@@ -76,56 +113,14 @@ export class WindowManager {
     this.windowLayer.onClose(this.windowHandle, () => {
       this.logger.info("Window closed");
     });
+
+    this.logger.info("Window created");
   }
 
   private notifyResizeCallbacks(): void {
     for (const callback of this.resizeCallbacks) {
       callback();
     }
-  }
-
-  /**
-   * Creates a new WindowManager with a configured window.
-   *
-   * Configuration:
-   * - Size: 1200x800 (default), minimum 800x600
-   * - Title: Configurable, defaults to "CodeHydra"
-   * - Icon: Loaded from iconPath if provided
-   * - No application menu
-   *
-   * @param deps - Dependencies including WindowLayer, ImageLayer, Logger, PlatformInfo
-   * @param title - Window title (defaults to "CodeHydra")
-   * @param iconPath - Absolute path to the window icon (e.g., from PathProvider.appIconPath)
-   */
-  static create(
-    deps: WindowManagerDeps,
-    title: string = "CodeHydra",
-    iconPath?: string
-  ): WindowManager {
-    const windowHandle = deps.windowLayer.createWindow({
-      width: 1200,
-      height: 800,
-      minWidth: 800,
-      minHeight: 600,
-      title,
-    });
-
-    // Set the window icon for taskbar/dock display
-    if (iconPath) {
-      try {
-        const iconHandle = deps.imageLayer.createFromPath(iconPath);
-        if (!deps.imageLayer.isEmpty(iconHandle)) {
-          deps.windowLayer.setIcon(windowHandle, iconHandle);
-        }
-        deps.imageLayer.release(iconHandle);
-      } catch {
-        // Icon loading failed, continue without icon
-        // This is non-critical - the window will use the default icon
-      }
-    }
-
-    deps.logger.info("Window created");
-    return new WindowManager(deps, windowHandle);
   }
 
   /**
