@@ -346,7 +346,7 @@ const keepFilesService = new KeepFilesService(
   loggingService.createLogger("keepfiles")
 );
 
-// Wrap DialogLayer to match MinimalDialog interface (converts Path to string)
+// Wrap DialogLayer for bootstrap (converts Path to string)
 const dialog = {
   showOpenDialog: async (options: { properties: string[] }) => {
     const result = await dialogLayer.showOpenDialog({
@@ -620,7 +620,6 @@ async function bootstrap(): Promise<void> {
     },
     agentStatusManager,
     globalWorktreeProvider,
-    wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
     dialog,
     modules: [
       idempotencyModule,

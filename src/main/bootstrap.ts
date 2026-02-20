@@ -10,7 +10,6 @@
  */
 
 import { ApiRegistry } from "./api/registry";
-import { CoreModule, type CoreModuleDeps } from "./modules/core";
 import type {
   IApiRegistry,
   IApiModule,
@@ -22,6 +21,7 @@ import type {
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
   WorkspacePathPayload,
+  WorkspaceExecuteCommandPayload,
   UiSwitchWorkspacePayload,
   UiSetModePayload,
   EmptyPayload,
@@ -126,10 +126,13 @@ export interface BootstrapDeps {
   readonly agentStatusManager: import("../agents").AgentStatusManager;
   /** Global worktree provider for fetchBases API handler */
   readonly globalWorktreeProvider: GitWorktreeProvider;
-  /** Wrapper path for Claude Code wrapper script */
-  readonly wrapperPath: string;
   /** Electron dialog for folder selection (optional) */
-  readonly dialog?: import("./modules/core/index").MinimalDialog;
+  readonly dialog?: {
+    showOpenDialog(options: { properties: string[] }): Promise<{
+      canceled: boolean;
+      filePaths: string[];
+    }>;
+  };
   /** Pre-created hook modules (from index.ts composition root) */
   readonly modules: IntentModule[];
   /** View mount signal (from createViewModule) */
@@ -596,7 +599,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
         projectPath: string;
       };
 
-      // Fire-and-forget background update (same as old CoreModule pattern)
+      // Fire-and-forget background update
       void (async () => {
         try {
           const projectRoot = new Path(basesResult.projectPath);
@@ -642,14 +645,42 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     { ipc: ApiIpcChannels.LIFECYCLE_READY }
   );
 
-  const coreDeps: CoreModuleDeps = {
-    codeServerPort: 0, // Updated by CodeServerLifecycleModule
-    wrapperPath: deps.wrapperPath,
-    ...(deps.dialog ? { dialog: deps.dialog } : {}),
-    ...(deps.pluginServer ? { pluginServer: deps.pluginServer } : {}),
-  };
-  const coreModule = new CoreModule(registry, coreDeps);
-  modules.push(coreModule);
+  // executeCommand is not exposed via IPC (only used by MCP/Plugin)
+  registry.register(
+    "workspaces.executeCommand",
+    async (payload: WorkspaceExecuteCommandPayload) => {
+      if (!deps.pluginServer) {
+        throw new Error("Plugin server not available");
+      }
+      const result = await deps.pluginServer.sendCommand(
+        payload.workspacePath,
+        payload.command,
+        payload.args
+      );
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      return result.data;
+    }
+  );
+
+  registry.register(
+    "ui.selectFolder",
+    async (payload: EmptyPayload) => {
+      void payload;
+      if (!deps.dialog) {
+        throw new Error("Dialog not available");
+      }
+      const result = await deps.dialog.showOpenDialog({
+        properties: ["openDirectory"],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return null;
+      }
+      return result.filePaths[0] ?? null;
+    },
+    { ipc: ApiIpcChannels.UI_SELECT_FOLDER }
+  );
 
   /**
    * Get the typed API interface.
