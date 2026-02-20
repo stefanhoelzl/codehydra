@@ -102,7 +102,6 @@ function createMockDeps(): BootstrapDeps {
       dispose: vi.fn(),
     } as never,
     globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-    wrapperPath: "/mock/bin/claude",
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
@@ -157,9 +156,128 @@ describe("bootstrap.module.order", () => {
     const deps = createMockDeps();
     const result = initializeBootstrap(deps);
 
-    // wireDispatcher and CoreModule now run during initializeBootstrap,
+    // wireDispatcher now runs during initializeBootstrap,
     // so getInterface() should succeed immediately
     expect(() => result.getInterface()).not.toThrow();
+  });
+});
+
+// =============================================================================
+// Inline Registration Tests (executeCommand + selectFolder)
+// =============================================================================
+
+describe("bootstrap.executeCommand", () => {
+  it("delegates to pluginServer.sendCommand and returns data", async () => {
+    const mockPluginServer = {
+      sendCommand: vi.fn().mockResolvedValue({ success: true, data: { result: 42 } }),
+    };
+    const deps: BootstrapDeps = {
+      ...createMockDeps(),
+      pluginServer: mockPluginServer as never,
+    };
+    const result = initializeBootstrap(deps);
+    const api = result.getInterface();
+
+    const data = await api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "test.command", ["arg1"]);
+
+    expect(data).toEqual({ result: 42 });
+    expect(mockPluginServer.sendCommand).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, "test.command", [
+      "arg1",
+    ]);
+
+    await result.dispose();
+  });
+
+  it("throws when pluginServer is not available", async () => {
+    const deps: BootstrapDeps = {
+      ...createMockDeps(),
+      pluginServer: null,
+    };
+    const result = initializeBootstrap(deps);
+    const api = result.getInterface();
+
+    await expect(
+      api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "test.command")
+    ).rejects.toThrow("Plugin server not available");
+
+    await result.dispose();
+  });
+
+  it("throws when sendCommand returns failure", async () => {
+    const mockPluginServer = {
+      sendCommand: vi.fn().mockResolvedValue({ success: false, error: "Command failed" }),
+    };
+    const deps: BootstrapDeps = {
+      ...createMockDeps(),
+      pluginServer: mockPluginServer as never,
+    };
+    const result = initializeBootstrap(deps);
+    const api = result.getInterface();
+
+    await expect(api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "bad.command")).rejects.toThrow(
+      "Command failed"
+    );
+
+    await result.dispose();
+  });
+});
+
+describe("bootstrap.selectFolder", () => {
+  it("delegates to dialog and returns selected path", async () => {
+    const mockDialog = {
+      showOpenDialog: vi.fn().mockResolvedValue({
+        canceled: false,
+        filePaths: ["/selected/folder"],
+      }),
+    };
+    const deps: BootstrapDeps = {
+      ...createMockDeps(),
+      dialog: mockDialog,
+    };
+    const result = initializeBootstrap(deps);
+    const api = result.getInterface();
+
+    const folder = await api.ui.selectFolder();
+
+    expect(folder).toBe("/selected/folder");
+    expect(mockDialog.showOpenDialog).toHaveBeenCalledWith({
+      properties: ["openDirectory"],
+    });
+
+    await result.dispose();
+  });
+
+  it("returns null when dialog is canceled", async () => {
+    const mockDialog = {
+      showOpenDialog: vi.fn().mockResolvedValue({
+        canceled: true,
+        filePaths: [],
+      }),
+    };
+    const deps: BootstrapDeps = {
+      ...createMockDeps(),
+      dialog: mockDialog,
+    };
+    const result = initializeBootstrap(deps);
+    const api = result.getInterface();
+
+    const folder = await api.ui.selectFolder();
+
+    expect(folder).toBeNull();
+
+    await result.dispose();
+  });
+
+  it("throws when dialog is not available", async () => {
+    const { dialog: _, ...baseDeps } = createMockDeps();
+    void _;
+    const deps: BootstrapDeps = baseDeps;
+    const result = initializeBootstrap(deps);
+    const api = result.getInterface();
+
+    await expect(api.ui.selectFolder()).rejects.toThrow("Dialog not available");
+
+    await result.dispose();
   });
 });
 
@@ -620,7 +738,6 @@ function createSetupTestDeps(overrides?: {
       dispose: vi.fn(),
     } as never,
     globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-    wrapperPath: "/mock/bin/claude",
     modules: [idempotencyModule, viewModule, codeServerModule, agentModule],
     mountSignal,
   };
@@ -1054,7 +1171,6 @@ describe("bootstrap.setup.progress", () => {
         dispose: vi.fn(),
       } as never,
       globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-      wrapperPath: "/mock/bin/claude",
       modules: [viewModule, codeServerModule, agentModule],
       mountSignal,
     };
@@ -1204,7 +1320,6 @@ describe("bootstrap.setup.progress", () => {
           dispose: vi.fn(),
         } as never,
         globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-        wrapperPath: "/mock/bin/claude",
         modules: [viewModule, codeServerModule, agentModule],
         mountSignal,
       };

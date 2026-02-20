@@ -77,8 +77,8 @@ export interface MockApiRegistry extends IApiRegistry {
  * ```typescript
  * const mockRegistry = createMockRegistry();
  *
- * // Create module under test
- * const module = new CoreModule(mockRegistry, deps);
+ * // Register a method under test
+ * mockRegistry.register("lifecycle.quit", async () => {});
  *
  * // Verify registration
  * expect(mockRegistry.getRegisteredPaths()).toContain("lifecycle.quit");

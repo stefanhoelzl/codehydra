@@ -43,7 +43,6 @@ function createMockDeps(): BootstrapDeps {
       unregisterProject: vi.fn(),
       ensureWorkspaceRegistered: vi.fn(),
     } as never,
-    wrapperPath: "/mock/bin/claude",
     dialog: {
       showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
     },
@@ -76,7 +75,7 @@ describe("initializeBootstrap", () => {
   it("registers all modules including core and ui", () => {
     const result = initializeBootstrap(deps);
 
-    // wireDispatcher and CoreModule now run during initializeBootstrap,
+    // wireDispatcher now runs during initializeBootstrap,
     // so all methods should be registered immediately
     const api = result.getInterface();
     expect(api.lifecycle).toBeDefined();
