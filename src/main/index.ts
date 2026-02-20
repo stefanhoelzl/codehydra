@@ -5,15 +5,15 @@
  * File layout:
  * 1. Pre-import setup (fontconfig fix)
  * 2. Imports
- * 3. Helper function definitions
- * 4. Core initializations (buildInfo, platformInfo, pathProvider, logging)
- * 5. Electron layers (all constructors are pure)
- * 6. Service construction (hoisted from bootstrap)
- * 7. Manager construction (two-phase: constructor only, no Electron resources)
- * 8. Intent modules (all at module level)
- * 9. Pre-ready calls (applyElectronFlags, redirectElectronDataPaths)
- * 10. Mutable state
- * 11. bootstrap() — focused on Electron lifecycle
+ * 3. Core initializations (buildInfo, platformInfo, pathProvider, logging)
+ * 4. Electron layers (all constructors are pure)
+ * 5. Service construction
+ * 6. Manager construction (two-phase: constructor only, no Electron resources)
+ * 7. Intent modules (existing extracted modules)
+ * 8. New modules (electron-ready, logging, script, quit, retry, lifecycle-ready)
+ * 9. ApiRegistry + Operation registration + IPC event bridge
+ * 10. Wire all modules + get API interface
+ * 11. Cleanup + dispatch app:start
  * 12. App lifecycle handlers
  */
 
@@ -48,7 +48,6 @@ import {
   type BuildInfo,
   type LoggingService,
 } from "../services";
-import { setupBinDirectory } from "../services/vscode-setup/bin-setup";
 import { ConfigService } from "../services/config/config-service";
 import { PostHogTelemetryService } from "../services/telemetry";
 import { AutoUpdater } from "../services/auto-updater";
@@ -77,7 +76,7 @@ import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
 import { registerLogHandlers } from "./ipc";
-import { initializeBootstrap } from "./bootstrap";
+import { ApiRegistry } from "./api/registry";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
@@ -96,102 +95,57 @@ import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createBadgeModule } from "./modules/badge-module";
 import { createMcpModule } from "./modules/mcp-module";
-import { INTENT_SET_MODE } from "./operations/set-mode";
-import type { SetModeIntent } from "./operations/set-mode";
-import { INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
-import type { AppShutdownIntent } from "./operations/app-shutdown";
-import { INTENT_DELETE_WORKSPACE, EVENT_WORKSPACE_DELETED } from "./operations/delete-workspace";
-import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./operations/delete-workspace";
-import { INTENT_APP_START } from "./operations/app-start";
+import { createElectronReadyModule } from "./modules/electron-ready-module";
+import { createLoggingModule } from "./modules/logging-module";
+import { createScriptModule } from "./modules/script-module";
+import { createQuitModule } from "./modules/quit-module";
+import { createRetryModule } from "./modules/retry-module";
+import { createLifecycleReadyModule } from "./modules/lifecycle-ready-module";
+import { createIpcEventBridge } from "./modules/ipc-event-bridge";
+import type { IntentModule } from "./intents/infrastructure/module";
+import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
-import { INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
+import type { AppShutdownIntent } from "./operations/app-shutdown";
+import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
+import { SetModeOperation, INTENT_SET_MODE } from "./operations/set-mode";
+import type { SetModeIntent } from "./operations/set-mode";
+import { SetMetadataOperation, INTENT_SET_METADATA } from "./operations/set-metadata";
+import { GetMetadataOperation, INTENT_GET_METADATA } from "./operations/get-metadata";
+import {
+  GetWorkspaceStatusOperation,
+  INTENT_GET_WORKSPACE_STATUS,
+} from "./operations/get-workspace-status";
+import { GetAgentSessionOperation, INTENT_GET_AGENT_SESSION } from "./operations/get-agent-session";
+import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./operations/restart-agent";
+import {
+  GetActiveWorkspaceOperation,
+  INTENT_GET_ACTIVE_WORKSPACE,
+} from "./operations/get-active-workspace";
+import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./operations/open-workspace";
+import {
+  DeleteWorkspaceOperation,
+  INTENT_DELETE_WORKSPACE,
+  EVENT_WORKSPACE_DELETED,
+} from "./operations/delete-workspace";
+import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./operations/delete-workspace";
+import { OpenProjectOperation, INTENT_OPEN_PROJECT } from "./operations/open-project";
+import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./operations/close-project";
+import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./operations/switch-workspace";
+import {
+  UpdateAgentStatusOperation,
+  INTENT_UPDATE_AGENT_STATUS,
+} from "./operations/update-agent-status";
+import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
+import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { ConfigAgentType } from "../shared/api/types";
-import { ApiIpcChannels } from "../shared/ipc";
+import { ApiIpcChannels, type WorkspacePath } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
 import { getErrorMessage } from "../shared/error-utils";
 
-// 3. Helper function definitions
-
-/**
- * Parses Electron command-line flags from a string.
- * @param flags - Space-separated flags string (e.g., "--disable-gpu --use-gl=swiftshader")
- * @returns Array of parsed flags
- * @throws Error if quotes are detected (not supported)
- */
-function parseElectronFlags(flags: string | undefined): { name: string; value?: string }[] {
-  if (!flags || !flags.trim()) {
-    return [];
-  }
-
-  if (flags.includes('"') || flags.includes("'")) {
-    throw new Error(
-      "Quoted values are not supported in CODEHYDRA_ELECTRON_FLAGS. " +
-        'Use --flag=value instead of --flag="value".'
-    );
-  }
-
-  const result: { name: string; value?: string }[] = [];
-  const parts = flags.trim().split(/\s+/);
-
-  for (const part of parts) {
-    const withoutDashes = part.replace(/^--?/, "");
-    const eqIndex = withoutDashes.indexOf("=");
-    if (eqIndex !== -1) {
-      result.push({
-        name: withoutDashes.substring(0, eqIndex),
-        value: withoutDashes.substring(eqIndex + 1),
-      });
-    } else {
-      result.push({ name: withoutDashes });
-    }
-  }
-
-  return result;
-}
-
-/**
- * Applies Electron command-line flags from environment variable.
- * Must be called BEFORE app.whenReady().
- *
- * Environment variable: CODEHYDRA_ELECTRON_FLAGS
- * Example: "--disable-gpu --use-gl=swiftshader"
- */
-function applyElectronFlags(): void {
-  const flags = process.env.CODEHYDRA_ELECTRON_FLAGS;
-  if (!flags) {
-    return;
-  }
-
-  const parsed = parseElectronFlags(flags);
-
-  for (const flag of parsed) {
-    if (flag.value !== undefined) {
-      app.commandLine.appendSwitch(flag.name, flag.value);
-      appLogger.info("Applied Electron flag", { flag: flag.name, value: flag.value });
-    } else {
-      app.commandLine.appendSwitch(flag.name);
-      appLogger.info("Applied Electron flag", { flag: flag.name });
-    }
-  }
-}
-
-/**
- * Redirect Electron's data paths to isolate from system defaults.
- * This prevents conflicts when running nested CodeHydra instances
- * (e.g., running CodeHydra inside a code-server terminal).
- *
- * CRITICAL: Must be called BEFORE app.whenReady()
- */
-function redirectElectronDataPaths(): void {
-  const electronDir = pathProvider.electronDataDir.toNative();
-  ["userData", "sessionData", "logs", "crashDumps"].forEach((name) => {
-    app.setPath(name, nodePath.join(electronDir, name));
-  });
-}
-
-// 4. Core initializations
+// 3. Core initializations (buildInfo, platformInfo, pathProvider, logging)
 
 const buildInfo: BuildInfo = new ElectronBuildInfo();
 
@@ -202,7 +156,7 @@ const appLogger = loggingService.createLogger("app");
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));
 
-// 5. Electron layers (all constructors are pure — just store deps)
+// 4. Electron layers (all constructors are pure — just store deps)
 
 const dialogLayer = new DefaultDialogLayer(loggingService.createLogger("dialog"));
 const menuLayer = new DefaultMenuLayer(loggingService.createLogger("menu"));
@@ -217,7 +171,7 @@ const sessionLayer = new DefaultSessionLayer(loggingService.createLogger("view")
 const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
 const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
 
-// 6. Service construction (hoisted from bootstrap)
+// 5. Service construction
 
 const configService = new ConfigService({
   fileSystem: fileSystemLayer,
@@ -232,20 +186,6 @@ const telemetryService = new PostHogTelemetryService({
   logger: loggingService.createLogger("telemetry"),
   apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
   host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
-});
-
-// Register global error handlers for uncaught exceptions
-// Use prependListener to capture errors before other handlers
-process.prependListener("uncaughtException", (error: Error) => {
-  telemetryService?.captureError(error);
-  // Re-throw to let default handler take over
-  throw error;
-});
-process.prependListener("unhandledRejection", (reason: unknown) => {
-  const error = reason instanceof Error ? reason : new Error(String(reason));
-  telemetryService?.captureError(error);
-  // Re-throw to let default handler take over
-  throw error;
 });
 
 // Process runner uses platform-native tree killing (taskkill on Windows, process.kill on Unix)
@@ -346,7 +286,7 @@ const keepFilesService = new KeepFilesService(
   loggingService.createLogger("keepfiles")
 );
 
-// Wrap DialogLayer for bootstrap (converts Path to string)
+// Wrap DialogLayer for IPC bridge (converts Path to string)
 const dialog = {
   showOpenDialog: async (options: { properties: string[] }) => {
     const result = await dialogLayer.showOpenDialog({
@@ -369,7 +309,7 @@ const workspaceLockHandler = createWorkspaceLockHandler(
 const apiLogger = loggingService.createLogger("api");
 const lifecycleLogger = loggingService.createLogger("lifecycle");
 
-// 7. Manager construction (two-phase: constructor only, no Electron resources)
+// 6. Manager construction (two-phase: constructor only, no Electron resources)
 
 const windowTitle =
   !buildInfo.isPackaged && buildInfo.gitBranch ? `CodeHydra (${buildInfo.gitBranch})` : "CodeHydra";
@@ -411,10 +351,10 @@ const badgeManager = new BadgeManager(
   loggingService.createLogger("badge")
 );
 
-// Mutable reference: set after initializeBootstrap(), read by lazy closures
+// Mutable reference: set after module wiring + registry.getInterface(), read by lazy closures
 let codeHydraApi: ICodeHydraApi | null = null;
 
-// McpServerManager with lazy API factory (API is not available until after bootstrap)
+// McpServerManager with lazy API factory (API is not available until after module wiring)
 const mcpServerManager = new McpServerManager(
   networkLayer,
   pathProvider,
@@ -427,7 +367,7 @@ const mcpServerManager = new McpServerManager(
   loggingService.createLogger("mcp")
 );
 
-// 8. Intent modules (all at module level)
+// 7. Intent modules (all at module level)
 
 const idempotencyModule = createIdempotencyModule([
   { intentType: INTENT_APP_SHUTDOWN },
@@ -443,12 +383,37 @@ const idempotencyModule = createIdempotencyModule([
   },
 ]);
 
+const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
+
 const { module: viewModule, mountSignal } = createViewModule({
   viewManager,
   logger: apiLogger,
   viewLayer,
   windowLayer,
   sessionLayer,
+  menuLayer,
+  windowManager,
+  buildInfo,
+  pathProvider,
+  uiHtmlPath,
+  electronApp: app,
+  devToolsHandler: buildInfo.isDevelopment
+    ? () => {
+        const uiWebContents = viewManager.getUIWebContents();
+        if (uiWebContents) {
+          uiWebContents.on("before-input-event", (event: Electron.Event, input: Electron.Input) => {
+            if (input.control && input.shift && input.key === "I") {
+              if (uiWebContents.isDevToolsOpened()) {
+                uiWebContents.closeDevTools();
+              } else {
+                uiWebContents.openDevTools({ mode: "detach" });
+              }
+              event.preventDefault();
+            }
+          });
+        }
+      }
+    : null,
 });
 
 const codeServerModule = createCodeServerModule({
@@ -538,213 +503,201 @@ const mcpModule = createMcpModule({
   logger: lifecycleLogger,
 });
 
-// 9. Pre-ready calls
+// 8. New modules
 
-// Disable ASAR virtual filesystem when not packaged.
-// Prevents file handle issues on Windows when deleting workspaces
-// that contain node_modules/electron directories.
-if (!buildInfo.isPackaged) {
-  process.noAsar = true;
-}
+const electronReadyModule = createElectronReadyModule({
+  whenReady: () => app.whenReady(),
+});
 
-// Apply Electron command-line flags IMMEDIATELY after logging is available.
-// CRITICAL: Must be before app.whenReady() and any code that might trigger GPU initialization.
-applyElectronFlags();
+const loggingModule = createLoggingModule({
+  loggingService,
+  registerLogHandlers: () => registerLogHandlers(loggingService),
+});
 
-// Redirect Electron data paths before app is ready
-redirectElectronDataPaths();
+const scriptModule = createScriptModule({
+  fileSystem: fileSystemLayer,
+  pathProvider,
+});
 
-// 10. Mutable state
+const quitModule = createQuitModule({ app });
 
-/** Cleanup function — defined as a closure inside bootstrap() to capture local variables. */
-let cleanup: (() => Promise<void>) | null = null;
+const retryModule = createRetryModule({ ipcLayer });
 
-// 11. bootstrap() — focused on Electron lifecycle
+const { module: lifecycleReadyModule, readyHandler } = createLifecycleReadyModule({
+  mountSignal,
+});
 
-/**
- * Bootstraps the application.
- *
- * All services and modules are constructed at module level. This function
- * handles only Electron lifecycle operations:
- * 1. Initialize logging and disable application menu
- * 2. Regenerate wrapper scripts
- * 3. Create window and views (two-phase init: create())
- * 4. Initialize bootstrap with ApiRegistry and lifecycle handlers
- * 5. Load UI
- * 6. Dispatch app:start intent
- */
-async function bootstrap(): Promise<void> {
-  // Initialize logging service (enables renderer logging via IPC)
-  loggingService.initialize();
-  registerLogHandlers(loggingService);
-  appLogger.info("Bootstrap starting", {
-    version: buildInfo.version,
-    isDev: buildInfo.isDevelopment,
-  });
+// 9. ApiRegistry + Operation registration
 
-  // Disable application menu
-  menuLayer.setApplicationMenu(null);
+const registry = new ApiRegistry({
+  logger: apiLogger,
+  ipcLayer,
+});
 
-  // Regenerate wrapper scripts (cheap operation, ensures they always exist)
-  await setupBinDirectory(fileSystemLayer, pathProvider);
+dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
+dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
+dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
+dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
+dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
+dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
 
-  // Two-phase init: create Electron resources
-  windowManager.create();
-  viewManager.create();
+const emitDeletionProgress = (progress: import("../shared/api/types").DeletionProgress) => {
+  try {
+    viewManager.getUIWebContents()?.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
+  } catch {
+    // Ignore - deletion continues even if UI disconnected
+  }
+};
+const deleteOp = new DeleteWorkspaceOperation(emitDeletionProgress);
+dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
 
-  // Maximize window after ViewManager subscription is active
-  // On Linux, maximize() is async - wait for it to complete before loading UI
-  await windowManager.maximizeAsync();
+dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
+dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
 
-  // Initialize bootstrap with API registry and pre-created modules
-  const bootstrapResult = initializeBootstrap({
-    logger: apiLogger,
-    ipcLayer,
-    app,
-    hookRegistry,
-    dispatcher,
-    getApiFn: () => {
-      if (!codeHydraApi) {
-        throw new Error("API not initialized");
-      }
-      return codeHydraApi;
-    },
-    pluginServer,
-    getUIWebContentsFn: () => viewManager.getUIWebContents(),
-    emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => {
-      try {
-        viewManager.getUIWebContents()?.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
-      } catch {
-        // Log but don't throw - deletion continues even if UI disconnected
-      }
-    },
-    agentStatusManager,
-    globalWorktreeProvider,
-    dialog,
-    modules: [
-      idempotencyModule,
-      viewModule,
-      codeServerModule,
-      agentModule,
-      badgeModule,
-      metadataModule,
-      keepFilesModule,
-      deleteWindowsLockModule,
-      remoteProjectModule,
-      migrationModule,
-      localProjectModule,
-      gitWorktreeWorkspaceModule,
-      windowTitleModule,
-      telemetryLifecycleModule,
-      autoUpdaterLifecycleModule,
-      mcpModule,
-    ],
-    mountSignal,
-  });
+const agentStatusScorer = (workspacePath: WorkspacePath): number => {
+  const status = agentStatusManager.getStatus(workspacePath);
+  if (status === undefined || status.status === "none") return 2;
+  if (status.status === "busy") return 1;
+  return 0;
+};
+dispatcher.registerOperation(
+  INTENT_SWITCH_WORKSPACE,
+  new SwitchWorkspaceOperation(extractWorkspaceName, agentStatusScorer)
+);
+dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
 
-  // Get the typed API interface (all methods are now registered)
-  codeHydraApi = bootstrapResult.getInterface();
-
-  // Load UI layer HTML
-  // Renderer starts in "initializing" mode and waits for IPC events
-  const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
-  await viewLayer.loadURL(viewManager.getUIViewHandle(), uiHtmlPath);
-
-  // Focus UI layer so keyboard shortcuts (Alt+X) work immediately on startup
-  viewManager.focusUI();
-
-  // Define cleanup as a closure capturing bootstrapResult
-  cleanup = async () => {
-    const shutdownLogger = loggingService.createLogger("app");
-    shutdownLogger.info("Shutdown initiated");
-
-    try {
-      await dispatcher.dispatch({
-        type: INTENT_APP_SHUTDOWN,
-        payload: {},
-      } as AppShutdownIntent);
-    } catch (error) {
-      shutdownLogger.error(
-        "Shutdown dispatch failed (continuing cleanup)",
-        {},
-        error instanceof Error ? error : undefined
-      );
+// Create IPC event bridge (registers all API bridge handlers on the registry)
+const ipcEventBridge = createIpcEventBridge({
+  apiRegistry: registry,
+  getApi: () => {
+    if (!codeHydraApi) {
+      throw new Error("API not initialized");
     }
+    return codeHydraApi;
+  },
+  getUIWebContents: () => viewManager.getUIWebContents(),
+  pluginServer,
+  logger: apiLogger,
+  dispatcher,
+  agentStatusManager,
+  globalWorktreeProvider,
+  dialog,
+  emitDeletionProgress,
+  deleteOp,
+});
 
-    viewManager.destroy();
-    await bootstrapResult.dispose();
+// 10. Wire all modules + get API interface
 
-    cleanup = null;
-    shutdownLogger.info("Cleanup complete");
-  };
-
-  // Dispatch app:start to orchestrate the startup flow
-  appLogger.info("Dispatching app:start");
-  void dispatcher
-    .dispatch({
-      type: INTENT_APP_START,
-      payload: {},
-    } as AppStartIntent)
-    .catch((error: unknown) => {
-      appLogger.error(
-        "Startup failed",
-        { error: getErrorMessage(error) },
-        error instanceof Error ? error : undefined
-      );
-
-      dialogLayer.showErrorBox("Startup Failed", getErrorMessage(error));
-
-      app.quit();
-    });
-
-  // Open DevTools in development only
-  // Note: DevTools not auto-opened to avoid z-order issues on Linux.
-  // Use Ctrl+Shift+I to open manually when needed (opens detached).
-  if (buildInfo.isDevelopment) {
-    const uiWebContents = viewManager.getUIWebContents();
-    if (uiWebContents) {
-      uiWebContents.on("before-input-event", (event: Electron.Event, input: Electron.Input) => {
-        if (input.control && input.shift && input.key === "I") {
-          if (uiWebContents.isDevToolsOpened()) {
-            uiWebContents.closeDevTools();
-          } else {
-            uiWebContents.openDevTools({ mode: "detach" });
-          }
-          event.preventDefault();
-        }
-      });
+const allModules: readonly IntentModule[] = [
+  idempotencyModule,
+  viewModule,
+  codeServerModule,
+  agentModule,
+  badgeModule,
+  metadataModule,
+  keepFilesModule,
+  deleteWindowsLockModule,
+  remoteProjectModule,
+  migrationModule,
+  localProjectModule,
+  gitWorktreeWorkspaceModule,
+  windowTitleModule,
+  telemetryLifecycleModule,
+  autoUpdaterLifecycleModule,
+  mcpModule,
+  electronReadyModule,
+  loggingModule,
+  scriptModule,
+  quitModule,
+  retryModule,
+  lifecycleReadyModule,
+  ipcEventBridge,
+];
+for (const mod of allModules) {
+  if (mod.hooks) {
+    for (const [operationId, hookPoints] of Object.entries(mod.hooks)) {
+      for (const [hookPointId, handler] of Object.entries(hookPoints)) {
+        hookRegistry.register(operationId, hookPointId, handler);
+      }
+    }
+  }
+  if (mod.events) {
+    for (const [eventType, handler] of Object.entries(mod.events)) {
+      dispatcher.subscribe(eventType, handler);
+    }
+  }
+  if (mod.interceptors) {
+    for (const interceptor of mod.interceptors) {
+      dispatcher.addInterceptor(interceptor);
     }
   }
 }
 
-// 12. App lifecycle handlers
+// Register lifecycle.ready handler (bridges mount signal + projects-loaded deferred)
+registry.register("lifecycle.ready", readyHandler, {
+  ipc: ApiIpcChannels.LIFECYCLE_READY,
+});
 
-app
-  .whenReady()
-  .then(bootstrap)
+// Get the typed API interface (all methods are now registered)
+codeHydraApi = registry.getInterface();
+
+// 11. Cleanup + dispatch
+
+/** Cleanup function — nulled after cleanup runs for macOS re-launch detection. */
+let cleanup: (() => Promise<void>) | null = async () => {
+  const shutdownLogger = loggingService.createLogger("app");
+  shutdownLogger.info("Shutdown initiated");
+
+  try {
+    await dispatcher.dispatch({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    } as AppShutdownIntent);
+  } catch (error) {
+    shutdownLogger.error(
+      "Shutdown dispatch failed (continuing cleanup)",
+      {},
+      error instanceof Error ? error : undefined
+    );
+  }
+
+  viewManager.destroy();
+  await registry.dispose();
+
+  cleanup = null;
+  shutdownLogger.info("Cleanup complete");
+};
+
+// Dispatch app:start — orchestrates the entire startup flow via hook points
+appLogger.info("Dispatching app:start");
+void dispatcher
+  .dispatch({
+    type: INTENT_APP_START,
+    payload: {},
+  } as AppStartIntent)
   .catch((error: unknown) => {
     appLogger.error(
-      "Fatal error",
+      "Startup failed",
       { error: getErrorMessage(error) },
       error instanceof Error ? error : undefined
     );
+
+    dialogLayer.showErrorBox("Startup Failed", getErrorMessage(error));
+
+    app.quit();
   });
+
+// 12. App lifecycle handlers
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     void cleanup?.().then(() => app.quit());
-  }
-});
-
-app.on("activate", () => {
-  if (cleanup === null) {
-    void bootstrap().catch((error: unknown) => {
-      appLogger.error(
-        "Bootstrap failed on activate",
-        { error: getErrorMessage(error) },
-        error instanceof Error ? error : undefined
-      );
-    });
   }
 });
 

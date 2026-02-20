@@ -320,6 +320,20 @@ function createTestSetup(opts?: {
       getUIWebContents: () => null,
       pluginServer: null,
       logger: SILENT_LOGGER,
+      dispatcher:
+        dispatcher as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["dispatcher"],
+      agentStatusManager: {
+        getStatus: vi.fn(),
+      } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["agentStatusManager"],
+      globalWorktreeProvider: {
+        listWorktrees: vi.fn(),
+      } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["globalWorktreeProvider"],
+      emitDeletionProgress: vi.fn(),
+      deleteOp: {
+        hasPendingRetry: vi.fn().mockReturnValue(false),
+        signalDismiss: vi.fn(),
+        signalRetry: vi.fn(),
+      } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["deleteOp"],
     });
     modules.push(ipcEventBridge);
   }

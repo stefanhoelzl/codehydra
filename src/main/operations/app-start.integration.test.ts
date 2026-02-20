@@ -19,6 +19,12 @@
  * #12: check-config error aborts
  * #13: check-deps error aborts
  * #14: configuredAgent flows to check-deps
+ * #15: configure hook collects scripts from multiple modules
+ * #16: configure hook error aborts startup
+ * #17: await-ready hook error aborts startup
+ * #18: init hook receives requiredScripts from configure results
+ * #19: init hook error aborts startup
+ * #20: full sequence: configure -> await-ready -> init -> show-ui -> ...
  */
 
 import { describe, it, expect } from "vitest";
@@ -39,6 +45,8 @@ import type {
   CheckConfigResult,
   CheckDepsHookContext,
   CheckDepsResult,
+  ConfigureResult,
+  InitHookContext,
 } from "./app-start";
 import { INTENT_SETUP } from "./setup";
 import type { SetupIntent } from "./setup";
@@ -879,6 +887,242 @@ describe("AppStart Operation", () => {
       await dispatcher.dispatch(appStartIntent());
 
       expect(eventFired).toBe(true);
+    });
+  });
+
+  // ===========================================================================
+  // Pre-ready Hooks: configure, await-ready, init
+  // ===========================================================================
+
+  describe("pre-ready hooks (configure, await-ready, init)", () => {
+    function createConfigureModule(scripts: string[]): IntentModule {
+      return {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            configure: {
+              handler: async (): Promise<ConfigureResult> => {
+                return { scripts };
+              },
+            },
+          },
+        },
+      };
+    }
+
+    function createFailingConfigureModule(message: string): IntentModule {
+      return {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            configure: {
+              handler: async (): Promise<ConfigureResult> => {
+                throw new Error(message);
+              },
+            },
+          },
+        },
+      };
+    }
+
+    function createAwaitReadyModule(options?: { fail?: boolean }): IntentModule {
+      return {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "await-ready": {
+              handler: async (): Promise<void> => {
+                if (options?.fail) {
+                  throw new Error("Electron ready failed");
+                }
+              },
+            },
+          },
+        },
+      };
+    }
+
+    function createInitModule(
+      state: TestState,
+      options?: { fail?: boolean; captureScripts?: (scripts: readonly string[]) => void }
+    ): IntentModule {
+      return {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            init: {
+              handler: async (ctx: HookContext): Promise<void> => {
+                if (options?.fail) {
+                  throw new Error("Init failed");
+                }
+                state.executionOrder.push("init");
+                if (options?.captureScripts) {
+                  options.captureScripts((ctx as InitHookContext).requiredScripts);
+                }
+              },
+            },
+          },
+        },
+      };
+    }
+
+    it("configure hook collects scripts from multiple modules (#15)", async () => {
+      const state = createTestState();
+      let capturedScripts: readonly string[] = [];
+
+      const { dispatcher } = createTestSetup([
+        createConfigureModule(["script-a", "script-b"]),
+        createConfigureModule(["script-c"]),
+        createInitModule(state, {
+          captureScripts: (scripts) => {
+            capturedScripts = scripts;
+          },
+        }),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+        createViewModule(state),
+      ]);
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(capturedScripts).toEqual(["script-a", "script-b", "script-c"]);
+    });
+
+    it("configure hook error aborts startup (#16)", async () => {
+      const state = createTestState();
+      const { dispatcher } = createTestSetup([
+        createFailingConfigureModule("Config failed"),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Config failed");
+
+      // Nothing else ran
+      expect(state.codeServerStarted).toBe(false);
+      expect(state.dataLoaded).toBe(false);
+    });
+
+    it("await-ready hook error aborts startup (#17)", async () => {
+      const state = createTestState();
+      const { dispatcher } = createTestSetup([
+        createAwaitReadyModule({ fail: true }),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Electron ready failed");
+
+      expect(state.codeServerStarted).toBe(false);
+      expect(state.dataLoaded).toBe(false);
+    });
+
+    it("init hook receives requiredScripts from configure results (#18)", async () => {
+      const state = createTestState();
+      let capturedScripts: readonly string[] = [];
+
+      const { dispatcher } = createTestSetup([
+        createConfigureModule(["bin/agent-wrapper"]),
+        createInitModule(state, {
+          captureScripts: (scripts) => {
+            capturedScripts = scripts;
+          },
+        }),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+        createViewModule(state),
+      ]);
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(capturedScripts).toEqual(["bin/agent-wrapper"]);
+    });
+
+    it("init hook error aborts startup (#19)", async () => {
+      const state = createTestState();
+      const { dispatcher } = createTestSetup([
+        createInitModule(state, { fail: true }),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Init failed");
+
+      expect(state.codeServerStarted).toBe(false);
+      expect(state.dataLoaded).toBe(false);
+    });
+
+    it("full sequence: configure -> await-ready -> init -> show-ui -> start -> activate (#20)", async () => {
+      const state = createTestState();
+
+      const configureTracker: IntentModule = {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            configure: {
+              handler: async (): Promise<ConfigureResult> => {
+                state.executionOrder.push("configure");
+                return { scripts: ["test-script"] };
+              },
+            },
+          },
+        },
+      };
+
+      const awaitReadyTracker: IntentModule = {
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "await-ready": {
+              handler: async (): Promise<void> => {
+                state.executionOrder.push("await-ready");
+              },
+            },
+          },
+        },
+      };
+
+      const { dispatcher } = createTestSetup([
+        configureTracker,
+        awaitReadyTracker,
+        createInitModule(state),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+        createViewModule(state),
+      ]);
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(state.executionOrder).toEqual([
+        "configure",
+        "await-ready",
+        "init",
+        "codeserver-start",
+        "mcp-start",
+        "data-activate",
+        "view-activate",
+      ]);
+    });
+
+    it("empty configure results produce empty requiredScripts", async () => {
+      const state = createTestState();
+      let capturedScripts: readonly string[] | undefined;
+
+      const { dispatcher } = createTestSetup([
+        createInitModule(state, {
+          captureScripts: (scripts) => {
+            capturedScripts = scripts;
+          },
+        }),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+        createViewModule(state),
+      ]);
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(capturedScripts).toEqual([]);
     });
   });
 });

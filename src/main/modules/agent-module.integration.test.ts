@@ -25,6 +25,7 @@ import type {
   CheckConfigResult,
   CheckDepsResult,
   CheckDepsHookContext,
+  ConfigureResult,
   StartHookResult,
   ActivateHookContext,
   ActivateHookResult,
@@ -94,6 +95,23 @@ class MinimalCheckConfigOperation implements Operation<Intent, CheckConfigResult
     });
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? { configuredAgent: null };
+  }
+}
+
+class MinimalConfigureOperation implements Operation<Intent, ConfigureResult> {
+  readonly id = APP_START_OPERATION_ID;
+
+  async execute(ctx: OperationContext<Intent>): Promise<ConfigureResult> {
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
+      intent: ctx.intent,
+    });
+    if (errors.length > 0) throw errors[0]!;
+    // Merge scripts from all results
+    const scripts: string[] = [];
+    for (const r of results) {
+      if (r.scripts) scripts.push(...r.scripts);
+    }
+    return scripts.length > 0 ? { scripts } : {};
   }
 }
 
@@ -457,6 +475,32 @@ describe("AgentModule", () => {
 
       expect(result.configuredAgent).toBe("claude");
       expect(deps.configService.load).toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // configure
+  // ---------------------------------------------------------------------------
+
+  describe("configure", () => {
+    it("declares all agent script files statically", async () => {
+      const { dispatcher } = createTestSetup();
+      dispatcher.registerOperation("app:start", new MinimalConfigureOperation());
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as ConfigureResult;
+
+      expect(result.scripts).toEqual([
+        "ch-claude",
+        "ch-claude.cjs",
+        "ch-claude.cmd",
+        "ch-opencode",
+        "ch-opencode.cjs",
+        "ch-opencode.cmd",
+        "claude-code-hook-handler.cjs",
+      ]);
     });
   });
 

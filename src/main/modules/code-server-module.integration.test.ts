@@ -14,7 +14,7 @@ import { wireModules } from "../intents/infrastructure/wire";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import type { CheckDepsResult, StartHookResult } from "../operations/app-start";
+import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
@@ -44,6 +44,18 @@ import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
+
+class MinimalConfigureOperation implements Operation<Intent, readonly ConfigureResult[]> {
+  readonly id = APP_START_OPERATION_ID;
+
+  async execute(ctx: OperationContext<Intent>): Promise<readonly ConfigureResult[]> {
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
+      intent: ctx.intent,
+    });
+    if (errors.length > 0) throw errors[0]!;
+    return results;
+  }
+}
 
 class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
   readonly id = APP_START_OPERATION_ID;
@@ -269,6 +281,26 @@ function createTestSetup(mockDeps?: CodeServerModuleDeps) {
 // =============================================================================
 
 describe("CodeServerModule", () => {
+  // ---------------------------------------------------------------------------
+  // configure
+  // ---------------------------------------------------------------------------
+
+  describe("configure", () => {
+    it("declares code-server wrapper scripts", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalConfigureOperation());
+
+      const results = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as ConfigureResult[];
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({ scripts: ["code", "code.cmd"] });
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // check-deps
   // ---------------------------------------------------------------------------

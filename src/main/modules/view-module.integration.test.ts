@@ -20,14 +20,18 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../operations/set-mode";
 import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
-import type { AppStartIntent, ShowUIHookResult, ActivateHookResult } from "../operations/app-start";
+import type {
+  AppStartIntent,
+  ConfigureResult,
+  ShowUIHookResult,
+  ActivateHookResult,
+} from "../operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -71,6 +75,36 @@ import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { ApiIpcChannels } from "../../shared/ipc";
 
 // =============================================================================
+// Test Wire Helper
+// =============================================================================
+
+function wireModules(
+  modules: readonly IntentModule[],
+  hookRegistry: HookRegistry,
+  dispatcher: Dispatcher
+): void {
+  for (const mod of modules) {
+    if (mod.hooks) {
+      for (const [operationId, hookPoints] of Object.entries(mod.hooks)) {
+        for (const [hookPointId, handler] of Object.entries(hookPoints)) {
+          hookRegistry.register(operationId, hookPointId, handler);
+        }
+      }
+    }
+    if (mod.events) {
+      for (const [eventType, handler] of Object.entries(mod.events)) {
+        dispatcher.subscribe(eventType, handler);
+      }
+    }
+    if (mod.interceptors) {
+      for (const interceptor of mod.interceptors) {
+        dispatcher.addInterceptor(interceptor);
+      }
+    }
+  }
+}
+
+// =============================================================================
 // Mock IViewManager
 // =============================================================================
 
@@ -108,6 +142,7 @@ function createMockViewManager() {
     updateCodeServerPort: vi.fn(),
     isWorkspaceLoading: vi.fn(),
     setWorkspaceLoaded: vi.fn(),
+    create: vi.fn(),
     // Test accessors
     _webContents: mockWebContents,
     _setActivePath: (p: string | null) => {
@@ -121,7 +156,10 @@ function createMockViewManager() {
 
 function createMockShellLayers() {
   return {
-    viewLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
+    viewLayer: {
+      dispose: vi.fn().mockResolvedValue(undefined),
+      loadURL: vi.fn().mockResolvedValue(undefined),
+    },
     windowLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
     sessionLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
   };
@@ -160,6 +198,38 @@ class MinimalShowUIOperation implements Operation<Intent, ShowUIHookResult> {
       }
     }
     return merged;
+  }
+}
+
+/** Runs "configure" hook point only. */
+class MinimalConfigureOperation implements Operation<Intent, ConfigureResult> {
+  readonly id = APP_START_OPERATION_ID;
+  async execute(ctx: OperationContext<Intent>): Promise<ConfigureResult> {
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
+      intent: ctx.intent,
+    });
+    if (errors.length > 0) throw errors[0]!;
+    const merged: ConfigureResult = {};
+    for (const r of results) {
+      if (r.scripts) {
+        (merged as Record<string, unknown>).scripts = [
+          ...((merged.scripts as string[]) ?? []),
+          ...r.scripts,
+        ];
+      }
+    }
+    return merged;
+  }
+}
+
+/** Runs "init" hook point only. */
+class MinimalInitOperation implements Operation<Intent, void> {
+  readonly id = APP_START_OPERATION_ID;
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
+    const { errors } = await ctx.hooks.collect<void>("init", {
+      intent: ctx.intent,
+    });
+    if (errors.length > 0) throw errors[0]!;
   }
 }
 
@@ -895,6 +965,259 @@ describe("ViewModule Integration", () => {
           payload: {},
         } as AppShutdownIntent)
       ).resolves.not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 17: app-start/configure → sets process.noAsar and calls applyElectronFlags
+  // -------------------------------------------------------------------------
+  describe("app-start/configure", () => {
+    it("sets process.noAsar when not packaged", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        buildInfo: { isPackaged: false, isDevelopment: true, gitBranch: "main" },
+      });
+
+      wireModules([module], hookRegistry, dispatcher);
+
+      const originalNoAsar = process.noAsar;
+      try {
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
+
+        expect(process.noAsar).toBe(true);
+      } finally {
+        process.noAsar = originalNoAsar;
+      }
+    });
+
+    it("applies electron flags from environment", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+
+      const electronApp = {
+        commandLine: { appendSwitch: vi.fn() },
+        setPath: vi.fn(),
+      };
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        electronApp,
+      });
+
+      wireModules([module], hookRegistry, dispatcher);
+
+      const originalFlags = process.env.CODEHYDRA_ELECTRON_FLAGS;
+      try {
+        process.env.CODEHYDRA_ELECTRON_FLAGS = "--disable-gpu --use-gl=swiftshader";
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
+
+        expect(electronApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
+        expect(electronApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
+      } finally {
+        if (originalFlags === undefined) {
+          delete process.env.CODEHYDRA_ELECTRON_FLAGS;
+        } else {
+          process.env.CODEHYDRA_ELECTRON_FLAGS = originalFlags;
+        }
+      }
+    });
+
+    it("redirects electron data paths when pathProvider is available", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+
+      const electronApp = {
+        commandLine: { appendSwitch: vi.fn() },
+        setPath: vi.fn(),
+      };
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        electronApp,
+        pathProvider: { electronDataDir: { toNative: () => "/data/electron" } },
+      });
+
+      wireModules([module], hookRegistry, dispatcher);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(electronApp.setPath).toHaveBeenCalledWith("userData", "/data/electron/userData");
+      expect(electronApp.setPath).toHaveBeenCalledWith("sessionData", "/data/electron/sessionData");
+      expect(electronApp.setPath).toHaveBeenCalledWith("logs", "/data/electron/logs");
+      expect(electronApp.setPath).toHaveBeenCalledWith("crashDumps", "/data/electron/crashDumps");
+    });
+
+    it("does not set process.noAsar when packaged", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        buildInfo: { isPackaged: true, isDevelopment: false },
+      });
+
+      wireModules([module], hookRegistry, dispatcher);
+
+      const originalNoAsar = process.noAsar;
+      try {
+        process.noAsar = false;
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
+
+        expect(process.noAsar).toBe(false);
+      } finally {
+        process.noAsar = originalNoAsar;
+      }
+    });
+
+    it("skips when buildInfo and electronApp are not provided", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+      });
+
+      wireModules([module], hookRegistry, dispatcher);
+
+      // Should not throw when optional deps are omitted
+      await expect(
+        dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent)
+      ).resolves.not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 18: app-start/init → creates window/views, maximizes, loads UI, focuses
+  // -------------------------------------------------------------------------
+  describe("app-start/init", () => {
+    it("calls menuLayer, windowManager, viewManager, and viewLayer in order", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+      const layers = createMockShellLayers();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+      const menuLayer = { setApplicationMenu: vi.fn() };
+      const windowManager = {
+        create: vi.fn(),
+        maximizeAsync: vi.fn().mockResolvedValue(undefined),
+      };
+      const devToolsHandler = vi.fn();
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
+        windowLayer: null,
+        sessionLayer: null,
+        menuLayer,
+        windowManager,
+        uiHtmlPath: "file:///app/ui.html",
+        devToolsHandler,
+      });
+
+      wireModules([module], hookRegistry, dispatcher);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      // Verify call sequence
+      expect(menuLayer.setApplicationMenu).toHaveBeenCalledWith(null);
+      expect(windowManager.create).toHaveBeenCalled();
+      expect(viewManager.create).toHaveBeenCalled();
+      expect(windowManager.maximizeAsync).toHaveBeenCalled();
+      expect(layers.viewLayer.loadURL).toHaveBeenCalledWith(
+        viewManager.getUIViewHandle(),
+        "file:///app/ui.html"
+      );
+      expect(viewManager.focusUI).toHaveBeenCalled();
+      expect(devToolsHandler).toHaveBeenCalled();
+    });
+
+    it("skips optional deps when not provided", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+      });
+
+      wireModules([module], hookRegistry, dispatcher);
+
+      // Should not throw when optional deps are omitted
+      await expect(
+        dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent)
+      ).resolves.not.toThrow();
+
+      // viewManager.create() and focusUI() are always called
+      expect(viewManager.create).toHaveBeenCalled();
+      expect(viewManager.focusUI).toHaveBeenCalled();
     });
   });
 });

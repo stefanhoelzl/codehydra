@@ -21,7 +21,7 @@ import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
 import type { PluginServer } from "../../services/plugin-server/plugin-server";
 import type { Logger } from "../../services/logging/types";
-import type { CheckDepsResult, StartHookResult } from "../operations/app-start";
+import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
 import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
@@ -94,10 +94,19 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
   return {
     hooks: {
-      // -------------------------------------------------------------------
-      // app-start → check-deps: preflight code-server binary + extensions
-      // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
+        // -------------------------------------------------------------------
+        // app-start → configure: declare required scripts
+        // -------------------------------------------------------------------
+        configure: {
+          handler: async (): Promise<ConfigureResult> => {
+            return { scripts: ["code", "code.cmd"] };
+          },
+        },
+
+        // -------------------------------------------------------------------
+        // app-start → check-deps: preflight code-server binary + extensions
+        // -------------------------------------------------------------------
         "check-deps": {
           handler: async (): Promise<CheckDepsResult> => {
             const missingBinaries: import("../../services/vscode-setup/types").BinaryType[] = [];

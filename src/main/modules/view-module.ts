@@ -18,6 +18,7 @@
  * Internal state: cachedActiveRef, loadingChangeCleanupFn, mountSignal.
  */
 
+import nodePath from "node:path";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
@@ -30,7 +31,11 @@ import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { WorkspaceRef } from "../../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../../shared/ipc";
 import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
-import type { ShowUIHookResult, ActivateHookResult } from "../operations/app-start";
+import type {
+  ConfigureResult,
+  ShowUIHookResult,
+  ActivateHookResult,
+} from "../operations/app-start";
 import type { GetActiveWorkspaceHookResult } from "../operations/get-active-workspace";
 import type {
   SwitchWorkspaceIntent,
@@ -79,13 +84,34 @@ export interface MountSignal {
  *
  * Shell layers are nullable because they may not exist in test environments
  * or when the app quits before full initialization.
+ *
+ * Lifecycle deps (menuLayer, windowManager, buildInfo, pathProvider, uiHtmlPath,
+ * electronApp, devToolsHandler) are nullable so existing call sites that
+ * don't need them pass unchanged.
  */
 export interface ViewModuleDeps {
-  readonly viewManager: IViewManager;
+  readonly viewManager: IViewManager & { create(): void };
   readonly logger: Logger;
   readonly viewLayer: ViewLayer | null;
   readonly windowLayer: WindowLayerInternal | null;
   readonly sessionLayer: SessionLayer | null;
+  readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
+  readonly windowManager?: {
+    create(): void;
+    maximizeAsync(): Promise<void>;
+  } | null;
+  readonly buildInfo?: {
+    isPackaged: boolean;
+    isDevelopment: boolean;
+    gitBranch?: string;
+  } | null;
+  readonly pathProvider?: { electronDataDir: { toNative(): string } } | null;
+  readonly uiHtmlPath?: string | null;
+  readonly electronApp?: {
+    commandLine: { appendSwitch(key: string, value?: string): void };
+    setPath(name: string, path: string): void;
+  } | null;
+  readonly devToolsHandler?: (() => void) | null;
 }
 
 /**
@@ -94,6 +120,47 @@ export interface ViewModuleDeps {
 export interface ViewModuleResult {
   readonly module: IntentModule;
   readonly mountSignal: MountSignal;
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/**
+ * Parses Electron command-line flags from a string.
+ * @param flags - Space-separated flags string (e.g., "--disable-gpu --use-gl=swiftshader")
+ * @returns Array of parsed flags
+ * @throws Error if quotes are detected (not supported)
+ */
+export function parseElectronFlags(flags: string | undefined): { name: string; value?: string }[] {
+  if (!flags || !flags.trim()) {
+    return [];
+  }
+
+  if (flags.includes('"') || flags.includes("'")) {
+    throw new Error(
+      "Quoted values are not supported in CODEHYDRA_ELECTRON_FLAGS. " +
+        'Use --flag=value instead of --flag="value".'
+    );
+  }
+
+  const result: { name: string; value?: string }[] = [];
+  const parts = flags.trim().split(/\s+/);
+
+  for (const part of parts) {
+    const withoutDashes = part.replace(/^--?/, "");
+    const eqIndex = withoutDashes.indexOf("=");
+    if (eqIndex !== -1) {
+      result.push({
+        name: withoutDashes.substring(0, eqIndex),
+        value: withoutDashes.substring(eqIndex + 1),
+      });
+    } else {
+      result.push({ name: withoutDashes });
+    }
+  }
+
+  return result;
 }
 
 // =============================================================================
@@ -129,10 +196,74 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       },
 
       // -------------------------------------------------------------------
+      // app-start → configure: Electron configuration (pre-ready)
+      // app-start → init: Shell creation + UI loading (post-ready)
       // app-start → show-ui: send LIFECYCLE_SHOW_STARTING to renderer
       // app-start → activate: wire loading change callback + mount signal
       // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
+        configure: {
+          handler: async (): Promise<ConfigureResult> => {
+            // Disable ASAR when not packaged
+            if (deps.buildInfo && !deps.buildInfo.isPackaged) {
+              process.noAsar = true;
+            }
+            if (deps.electronApp) {
+              // Apply Electron flags from environment
+              const flags = parseElectronFlags(process.env.CODEHYDRA_ELECTRON_FLAGS);
+              for (const flag of flags) {
+                deps.electronApp.commandLine.appendSwitch(
+                  flag.name,
+                  ...(flag.value !== undefined ? [flag.value] : [])
+                );
+                logger.info("Applied Electron flag", {
+                  flag: flag.name,
+                  ...(flag.value !== undefined && { value: flag.value }),
+                });
+              }
+              // Redirect data paths to isolate from system defaults
+              if (deps.pathProvider) {
+                const electronDir = deps.pathProvider.electronDataDir.toNative();
+                for (const name of ["userData", "sessionData", "logs", "crashDumps"]) {
+                  deps.electronApp.setPath(name, nodePath.join(electronDir, name));
+                }
+              }
+            }
+            return {};
+          },
+        },
+        init: {
+          handler: async (): Promise<void> => {
+            // Disable application menu
+            if (deps.menuLayer) {
+              deps.menuLayer.setApplicationMenu(null);
+            }
+
+            // Create window and views
+            if (deps.windowManager) {
+              deps.windowManager.create();
+            }
+            viewManager.create();
+
+            // Maximize window
+            if (deps.windowManager) {
+              await deps.windowManager.maximizeAsync();
+            }
+
+            // Load UI HTML
+            if (deps.viewLayer && deps.uiHtmlPath) {
+              await deps.viewLayer.loadURL(viewManager.getUIViewHandle(), deps.uiHtmlPath);
+            }
+
+            // Focus UI
+            viewManager.focusUI();
+
+            // Set up devtools handler
+            if (deps.devToolsHandler) {
+              deps.devToolsHandler();
+            }
+          },
+        },
         "show-ui": {
           handler: async (): Promise<ShowUIHookResult> => {
             const webContents = viewManager.getUIWebContents();

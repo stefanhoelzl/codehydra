@@ -3,24 +3,62 @@
  *
  * These tests verify the full bootstrap flow with modules wired correctly.
  * Uses behavioral IpcLayer mock instead of vi.mock("electron").
+ *
+ * Since initializeBootstrap() has been eliminated, each test composes the
+ * registry, dispatcher, operations, and modules inline -- mirroring the
+ * composition root in index.ts.
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { initializeBootstrap } from "./bootstrap";
-import type { BootstrapDeps } from "./bootstrap";
 import { createMockLogger } from "../services/logging";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
-import { generateProjectId } from "../shared/api/id-utils";
+import { wireModules } from "./intents/infrastructure/wire";
+import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
+import { ApiRegistry } from "./api/registry";
+import { ApiIpcChannels } from "../shared/ipc";
+import { createIpcEventBridge } from "./modules/ipc-event-bridge";
+import { createQuitModule } from "./modules/quit-module";
+import { createRetryModule } from "./modules/retry-module";
+import { createLifecycleReadyModule } from "./modules/lifecycle-ready-module";
 import { createViewModule } from "./modules/view-module";
 import { createCodeServerModule } from "./modules/code-server-module";
 import { createAgentModule } from "./modules/agent-module";
 import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
-import { INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
-import { INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
-import { INTENT_DELETE_WORKSPACE, EVENT_WORKSPACE_DELETED } from "./operations/delete-workspace";
+
+// Operations
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
+import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
+import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
+import { SetModeOperation, INTENT_SET_MODE } from "./operations/set-mode";
+import { SetMetadataOperation, INTENT_SET_METADATA } from "./operations/set-metadata";
+import { GetMetadataOperation, INTENT_GET_METADATA } from "./operations/get-metadata";
+import {
+  GetWorkspaceStatusOperation,
+  INTENT_GET_WORKSPACE_STATUS,
+} from "./operations/get-workspace-status";
+import { GetAgentSessionOperation, INTENT_GET_AGENT_SESSION } from "./operations/get-agent-session";
+import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./operations/restart-agent";
+import {
+  GetActiveWorkspaceOperation,
+  INTENT_GET_ACTIVE_WORKSPACE,
+} from "./operations/get-active-workspace";
+import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./operations/open-workspace";
+import {
+  DeleteWorkspaceOperation,
+  INTENT_DELETE_WORKSPACE,
+  EVENT_WORKSPACE_DELETED,
+} from "./operations/delete-workspace";
 import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./operations/delete-workspace";
+import { OpenProjectOperation, INTENT_OPEN_PROJECT } from "./operations/open-project";
+import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./operations/close-project";
+import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./operations/switch-workspace";
+import {
+  UpdateAgentStatusOperation,
+  INTENT_UPDATE_AGENT_STATUS,
+} from "./operations/update-agent-status";
+import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
 import type { WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
@@ -47,12 +85,6 @@ function createMockGlobalWorktreeProvider(): import("../services/git/git-worktre
   } as unknown as import("../services/git/git-worktree-provider").GitWorktreeProvider;
 }
 
-function createMockDispatcher(): { hookRegistry: HookRegistry; dispatcher: Dispatcher } {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
-  return { hookRegistry, dispatcher };
-}
-
 function createMockCodeServerLifecycleDeps() {
   return {
     pluginServer: null,
@@ -74,39 +106,122 @@ function createMockCodeServerLifecycleDeps() {
   };
 }
 
-function createMockDeps(): BootstrapDeps {
-  const { hookRegistry, dispatcher } = createMockDispatcher();
-  return {
+/**
+ * Registers all operations on the given dispatcher.
+ * Matches the registration done at the composition root (index.ts).
+ */
+function registerAllOperations(
+  dispatcher: Dispatcher,
+  emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => void
+): DeleteWorkspaceOperation {
+  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+  dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
+  dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
+  dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
+  dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+  dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+  dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
+  dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
+  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
+
+  const deleteOp = new DeleteWorkspaceOperation(emitDeletionProgress);
+  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
+
+  dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
+  dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
+  dispatcher.registerOperation(
+    INTENT_SWITCH_WORKSPACE,
+    new SwitchWorkspaceOperation(extractWorkspaceName)
+  );
+  dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+  dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
+
+  return deleteOp;
+}
+
+/**
+ * Creates a fully wired test composition (registry + dispatcher + modules),
+ * equivalent to what initializeBootstrap() used to do.
+ */
+function createTestWiring(overrides?: {
+  ipcLayer?: ReturnType<typeof createBehavioralIpcLayer>;
+  appQuit?: () => void;
+  pluginServer?: unknown;
+  dialog?: {
+    showOpenDialog: (options: {
+      properties: string[];
+    }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+  };
+  skipDialog?: boolean;
+  modules?: import("./intents/infrastructure/module").IntentModule[];
+  mountSignal?: { resolve: (() => void) | null };
+}) {
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
+  const ipcLayer = overrides?.ipcLayer ?? createBehavioralIpcLayer();
+  const emitDeletionProgress = vi.fn();
+  const deleteOp = registerAllOperations(dispatcher, emitDeletionProgress);
+
+  const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer });
+  const mountSignal = overrides?.mountSignal ?? { resolve: null };
+
+  const ipcEventBridge = createIpcEventBridge({
+    apiRegistry: registry,
+    getApi: () => registry.getInterface(),
+    getUIWebContents: () => null,
+    pluginServer: (overrides?.pluginServer ?? null) as never,
     logger: createMockLogger(),
-    ipcLayer: createBehavioralIpcLayer(),
-    app: { quit: vi.fn() },
-    hookRegistry,
     dispatcher,
-    getApiFn: () =>
-      ({
-        on: vi.fn().mockReturnValue(() => {}),
-        lifecycle: {},
-        projects: {},
-        workspaces: {},
-        ui: {},
-        dispose: vi.fn(),
-      }) as never,
-    pluginServer: null,
-    getUIWebContentsFn: () => null,
-    emitDeletionProgress: vi.fn(),
-    agentStatusManager: {
-      getStatus: vi.fn(),
-      getEnvironmentVariables: vi.fn().mockReturnValue(null),
-      onStatusChanged: vi.fn().mockReturnValue(() => {}),
-      markActive: vi.fn(),
-      dispose: vi.fn(),
-    } as never,
+    agentStatusManager: { getStatus: vi.fn() } as never,
     globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-    dialog: {
-      showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
+    ...(overrides?.skipDialog
+      ? {}
+      : {
+          dialog: overrides?.dialog ?? {
+            showOpenDialog: vi
+              .fn<
+                (options: {
+                  properties: string[];
+                }) => Promise<{ canceled: boolean; filePaths: string[] }>
+              >()
+              .mockResolvedValue({ canceled: true, filePaths: [] }),
+          },
+        }),
+    emitDeletionProgress,
+    deleteOp: {
+      hasPendingRetry: () => false,
+      signalDismiss: vi.fn(),
+      signalRetry: vi.fn(),
     },
-    modules: [],
-    mountSignal: { resolve: null },
+  });
+
+  const quitModule = createQuitModule({
+    app: { quit: overrides?.appQuit ?? vi.fn<() => void>() },
+  });
+  const retryModule = createRetryModule({ ipcLayer });
+  const { module: lifecycleReadyModule, readyHandler } = createLifecycleReadyModule({
+    mountSignal,
+  });
+
+  wireModules(
+    [...(overrides?.modules ?? []), quitModule, retryModule, lifecycleReadyModule, ipcEventBridge],
+    hookRegistry,
+    dispatcher
+  );
+
+  registry.register("lifecycle.ready", readyHandler, {
+    ipc: ApiIpcChannels.LIFECYCLE_READY,
+  });
+
+  return {
+    registry,
+    dispatcher,
+    hookRegistry,
+    getInterface: () => registry.getInterface(),
+    dispose: () => registry.dispose(),
+    deleteOp,
   };
 }
 
@@ -116,10 +231,9 @@ function createMockDeps(): BootstrapDeps {
 
 describe("bootstrap.startup", () => {
   it("full startup with registry and modules", async () => {
-    const deps = createMockDeps();
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring();
 
-    // All modules are registered during initializeBootstrap
+    // All modules are registered during setup
     const api = result.getInterface();
 
     // Verify all API groups are available
@@ -152,11 +266,10 @@ describe("bootstrap.startup", () => {
 });
 
 describe("bootstrap.module.order", () => {
-  it("all modules registered during initializeBootstrap", () => {
-    const deps = createMockDeps();
-    const result = initializeBootstrap(deps);
+  it("all modules registered during initialization", () => {
+    const result = createTestWiring();
 
-    // wireDispatcher now runs during initializeBootstrap,
+    // wireModules runs during createTestWiring,
     // so getInterface() should succeed immediately
     expect(() => result.getInterface()).not.toThrow();
   });
@@ -171,11 +284,7 @@ describe("bootstrap.executeCommand", () => {
     const mockPluginServer = {
       sendCommand: vi.fn().mockResolvedValue({ success: true, data: { result: 42 } }),
     };
-    const deps: BootstrapDeps = {
-      ...createMockDeps(),
-      pluginServer: mockPluginServer as never,
-    };
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ pluginServer: mockPluginServer });
     const api = result.getInterface();
 
     const data = await api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "test.command", ["arg1"]);
@@ -189,11 +298,7 @@ describe("bootstrap.executeCommand", () => {
   });
 
   it("throws when pluginServer is not available", async () => {
-    const deps: BootstrapDeps = {
-      ...createMockDeps(),
-      pluginServer: null,
-    };
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ pluginServer: null });
     const api = result.getInterface();
 
     await expect(
@@ -207,11 +312,7 @@ describe("bootstrap.executeCommand", () => {
     const mockPluginServer = {
       sendCommand: vi.fn().mockResolvedValue({ success: false, error: "Command failed" }),
     };
-    const deps: BootstrapDeps = {
-      ...createMockDeps(),
-      pluginServer: mockPluginServer as never,
-    };
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ pluginServer: mockPluginServer });
     const api = result.getInterface();
 
     await expect(api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "bad.command")).rejects.toThrow(
@@ -230,11 +331,7 @@ describe("bootstrap.selectFolder", () => {
         filePaths: ["/selected/folder"],
       }),
     };
-    const deps: BootstrapDeps = {
-      ...createMockDeps(),
-      dialog: mockDialog,
-    };
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ dialog: mockDialog });
     const api = result.getInterface();
 
     const folder = await api.ui.selectFolder();
@@ -254,11 +351,7 @@ describe("bootstrap.selectFolder", () => {
         filePaths: [],
       }),
     };
-    const deps: BootstrapDeps = {
-      ...createMockDeps(),
-      dialog: mockDialog,
-    };
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ dialog: mockDialog });
     const api = result.getInterface();
 
     const folder = await api.ui.selectFolder();
@@ -269,10 +362,7 @@ describe("bootstrap.selectFolder", () => {
   });
 
   it("throws when dialog is not available", async () => {
-    const { dialog: _, ...baseDeps } = createMockDeps();
-    void _;
-    const deps: BootstrapDeps = baseDeps;
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ skipDialog: true });
     const api = result.getInterface();
 
     await expect(api.ui.selectFolder()).rejects.toThrow("Dialog not available");
@@ -285,8 +375,7 @@ describe("bootstrap.quit.flow", () => {
   it("lifecycle.quit dispatches app:shutdown and calls app.quit()", async () => {
     const appQuit = vi.fn();
     const ipcLayer = createBehavioralIpcLayer();
-    const deps: BootstrapDeps = { ...createMockDeps(), app: { quit: appQuit }, ipcLayer };
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ appQuit, ipcLayer });
 
     // Invoke lifecycle.quit via IPC - should dispatch app:shutdown which runs quit hook
     await ipcLayer._invoke("api:lifecycle:quit", {});
@@ -299,17 +388,47 @@ describe("bootstrap.quit.flow", () => {
   it("second lifecycle.quit is idempotent (shutdown only runs once)", async () => {
     const appQuit = vi.fn();
     const ipcLayer = createBehavioralIpcLayer();
-    const { hookRegistry, dispatcher } = createMockDispatcher();
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+    const emitDeletionProgress = vi.fn();
+    const deleteOp = registerAllOperations(dispatcher, emitDeletionProgress);
     const idempotencyModule = createIdempotencyModule([{ intentType: INTENT_APP_SHUTDOWN }]);
-    const deps: BootstrapDeps = {
-      ...createMockDeps(),
-      app: { quit: appQuit },
-      ipcLayer,
-      hookRegistry,
+
+    const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer });
+
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: registry,
+      getApi: () => registry.getInterface(),
+      getUIWebContents: () => null,
+      pluginServer: null,
+      logger: createMockLogger(),
       dispatcher,
-      modules: [idempotencyModule],
-    };
-    const result = initializeBootstrap(deps);
+      agentStatusManager: { getStatus: vi.fn() } as never,
+      globalWorktreeProvider: createMockGlobalWorktreeProvider(),
+      dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
+      emitDeletionProgress,
+      deleteOp: {
+        hasPendingRetry: () => false,
+        signalDismiss: vi.fn(),
+        signalRetry: vi.fn(),
+      },
+    });
+
+    const quitModule = createQuitModule({ app: { quit: appQuit } });
+    const retryModule = createRetryModule({ ipcLayer });
+    const { module: lifecycleReadyModule, readyHandler } = createLifecycleReadyModule({
+      mountSignal: { resolve: null },
+    });
+
+    wireModules(
+      [idempotencyModule, quitModule, retryModule, lifecycleReadyModule, ipcEventBridge],
+      hookRegistry,
+      dispatcher
+    );
+
+    registry.register("lifecycle.ready", readyHandler, {
+      ipc: ApiIpcChannels.LIFECYCLE_READY,
+    });
 
     // First quit
     await ipcLayer._invoke("api:lifecycle:quit", {});
@@ -319,7 +438,8 @@ describe("bootstrap.quit.flow", () => {
     await ipcLayer._invoke("api:lifecycle:quit", {});
     expect(appQuit).toHaveBeenCalledTimes(1);
 
-    await result.dispose();
+    await registry.dispose();
+    void deleteOp;
   });
 });
 
@@ -337,8 +457,7 @@ describe("bootstrap.quit.flow", () => {
 
 describe("bootstrap.events.roundtrip", () => {
   it("events flow from modules to subscribers", async () => {
-    const deps = createMockDeps();
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring();
 
     // Subscribe to project:opened event
     const projectOpenedHandler = vi.fn();
@@ -393,8 +512,7 @@ describe("bootstrap.events.roundtrip", () => {
 
 describe("bootstrap.events.multiple", () => {
   it("multiple subscribers receive same event", () => {
-    const deps = createMockDeps();
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring();
 
     // Subscribe multiple handlers
     const handler1 = vi.fn();
@@ -417,8 +535,7 @@ describe("bootstrap.events.multiple", () => {
 
 describe("bootstrap.events.unsubscribe", () => {
   it("unsubscribed handlers do not receive events", () => {
-    const deps = createMockDeps();
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring();
 
     const handler = vi.fn();
     const unsubscribe = result.registry.on("project:opened", handler);
@@ -453,8 +570,7 @@ describe("bootstrap.events.unsubscribe", () => {
   });
 
   it("unsubscribing one handler does not affect others", () => {
-    const deps = createMockDeps();
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring();
 
     const handler1 = vi.fn();
     const handler2 = vi.fn();
@@ -480,8 +596,7 @@ describe("bootstrap.events.unsubscribe", () => {
 
 describe("bootstrap.error.propagation", () => {
   it("handler errors are caught and do not affect other handlers", () => {
-    const deps = createMockDeps();
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring();
 
     const errorHandler = vi.fn().mockImplementation(() => {
       throw new Error("Handler error");
@@ -555,6 +670,7 @@ function createSetupViewManager(mockWebContents: unknown) {
       return () => {};
     }),
     preloadWorkspaceUrl: vi.fn(),
+    create: vi.fn(),
   };
 }
 
@@ -712,24 +828,19 @@ function createSetupTestDeps(overrides?: {
     },
   ]);
 
-  const deps: BootstrapDeps = {
-    logger: createMockLogger(),
-    ipcLayer: captured.ipcLayer,
-    app: { quit: vi.fn() },
-    hookRegistry: setupHookRegistry,
-    dispatcher: captured.dispatcher,
-    getApiFn: () =>
-      ({
-        on: vi.fn().mockReturnValue(() => {}),
-        lifecycle: {},
-        projects: {},
-        workspaces: {},
-        ui: {},
-        dispose: vi.fn(),
-      }) as never,
+  // --- Register operations and wire modules ---
+  const emitDeletionProgress = vi.fn();
+  const deleteOp = registerAllOperations(captured.dispatcher, emitDeletionProgress);
+
+  const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer: captured.ipcLayer });
+
+  const ipcEventBridge = createIpcEventBridge({
+    apiRegistry: registry,
+    getApi: () => registry.getInterface(),
+    getUIWebContents: () => mockWebContents as unknown as import("electron").WebContents,
     pluginServer: null,
-    getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
-    emitDeletionProgress: vi.fn(),
+    logger: createMockLogger(),
+    dispatcher: captured.dispatcher,
     agentStatusManager: {
       getStatus: vi.fn(),
       getEnvironmentVariables: vi.fn().mockReturnValue(null),
@@ -738,9 +849,39 @@ function createSetupTestDeps(overrides?: {
       dispose: vi.fn(),
     } as never,
     globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-    modules: [idempotencyModule, viewModule, codeServerModule, agentModule],
+    dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
+    emitDeletionProgress,
+    deleteOp: {
+      hasPendingRetry: (wp: string) => deleteOp.hasPendingRetry(wp),
+      signalDismiss: (wp: string) => deleteOp.signalDismiss(wp),
+      signalRetry: (wp: string) => deleteOp.signalRetry(wp),
+    },
+  });
+
+  const quitModule = createQuitModule({ app: { quit: vi.fn() } });
+  const retryModule = createRetryModule({ ipcLayer: captured.ipcLayer });
+  const { module: lifecycleReadyModule, readyHandler } = createLifecycleReadyModule({
     mountSignal,
-  };
+  });
+
+  wireModules(
+    [
+      idempotencyModule,
+      viewModule,
+      codeServerModule,
+      agentModule,
+      quitModule,
+      retryModule,
+      lifecycleReadyModule,
+      ipcEventBridge,
+    ],
+    setupHookRegistry,
+    captured.dispatcher
+  );
+
+  registry.register("lifecycle.ready", readyHandler, {
+    ipc: ApiIpcChannels.LIFECYCLE_READY,
+  });
 
   const setupMocks = {
     configService: mockConfigService,
@@ -749,19 +890,17 @@ function createSetupTestDeps(overrides?: {
     getAgentBinaryManager: mockGetAgentBinaryManager,
   };
 
-  return { deps, captured, mockWebContents, setupMocks };
+  return { registry, captured, mockWebContents, setupMocks };
 }
 
 describe("bootstrap.setup.flow", () => {
   it("#1: startup completes when no setup needed", async () => {
-    const { deps, captured } = createSetupTestDeps({
+    const { captured } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: false,
       agentNeedsDownload: false,
       extensionNeedsInstall: false,
     });
-
-    initializeBootstrap(deps);
 
     // Dispatch app:start -- should skip setup entirely
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -780,9 +919,7 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#2: shows starting screen immediately", async () => {
-    const { deps, captured } = createSetupTestDeps();
-
-    initializeBootstrap(deps);
+    const { captured } = createSetupTestDeps();
 
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -793,11 +930,9 @@ describe("bootstrap.setup.flow", () => {
   it("#3: shows agent selection when no agent configured", async () => {
     vi.useFakeTimers();
     try {
-      const { deps, captured } = createSetupTestDeps({
+      const { captured } = createSetupTestDeps({
         configAgent: null,
       });
-
-      initializeBootstrap(deps);
 
       // Dispatch app:start -- it will hang at agent-selection waiting for IPC response
       // We need to simulate the renderer responding
@@ -828,13 +963,11 @@ describe("bootstrap.setup.flow", () => {
   it("#4: agent selection saved after user responds", async () => {
     vi.useFakeTimers();
     try {
-      const { deps, captured, setupMocks } = createSetupTestDeps({
+      const { captured, setupMocks } = createSetupTestDeps({
         configAgent: null,
       });
 
       const mockSetAgent = setupMocks.configService.setAgent;
-
-      initializeBootstrap(deps);
 
       const dispatchPromise = captured.dispatcher.dispatch({
         type: "app:start",
@@ -859,7 +992,7 @@ describe("bootstrap.setup.flow", () => {
 
   it("#5: downloads binaries when missing", async () => {
     const agentDownloadMock = vi.fn().mockResolvedValue(undefined);
-    const { deps, captured, setupMocks } = createSetupTestDeps({
+    const { captured, setupMocks } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: true,
       agentNeedsDownload: true,
@@ -870,8 +1003,6 @@ describe("bootstrap.setup.flow", () => {
       typeof vi.fn
     >;
 
-    initializeBootstrap(deps);
-
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
     // Verify both download methods were called
@@ -880,15 +1011,13 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#6: installs extensions when missing", async () => {
-    const { deps, captured, setupMocks } = createSetupTestDeps({
+    const { captured, setupMocks } = createSetupTestDeps({
       configAgent: "opencode",
       extensionNeedsInstall: true,
       missingExtensions: ["test-ext-1", "test-ext-2"],
     });
 
     const mockInstall = setupMocks.extensionManager.install as ReturnType<typeof vi.fn>;
-
-    initializeBootstrap(deps);
 
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -898,12 +1027,10 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#7: returns to starting screen after setup", async () => {
-    const { deps, captured } = createSetupTestDeps({
+    const { captured } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: true,
     });
-
-    initializeBootstrap(deps);
 
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -919,13 +1046,11 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#12: show-main-view not sent from setup flow (sent by lifecycle layer)", async () => {
-    const { deps, captured } = createSetupTestDeps({
+    const { captured } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: false,
       extensionNeedsInstall: false,
     });
-
-    initializeBootstrap(deps);
 
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -938,12 +1063,10 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#13: app:setup includes causation reference", async () => {
-    const { deps, captured } = createSetupTestDeps({
+    const { captured } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: true,
     });
-
-    initializeBootstrap(deps);
 
     // The app:start operation dispatches app:setup internally via ctx.dispatch().
     // We verify causation by checking that app:setup was dispatched (it would fail
@@ -968,13 +1091,11 @@ describe("bootstrap.setup.flow", () => {
     vi.useFakeTimers();
     try {
       const downloadError = new Error("Network timeout");
-      const { deps, captured, setupMocks } = createSetupTestDeps({
+      const { captured, setupMocks } = createSetupTestDeps({
         configAgent: "opencode",
         codeServerNeedsDownload: true,
         downloadError,
       });
-
-      initializeBootstrap(deps);
 
       // Dispatch will enter retry loop after setup failure.
       // Start the dispatch but don't await -- it will wait for retry IPC.
@@ -1008,12 +1129,10 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#17: agent-selection hook skipped when agent configured", async () => {
-    const { deps, captured } = createSetupTestDeps({
+    const { captured } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: true, // Need setup but agent is configured
     });
-
-    initializeBootstrap(deps);
 
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1025,7 +1144,7 @@ describe("bootstrap.setup.flow", () => {
   });
 
   it("#18: binary hook skipped when binaries present", async () => {
-    const { deps, captured, setupMocks } = createSetupTestDeps({
+    const { captured, setupMocks } = createSetupTestDeps({
       configAgent: "opencode",
       codeServerNeedsDownload: false,
       agentNeedsDownload: false,
@@ -1036,8 +1155,6 @@ describe("bootstrap.setup.flow", () => {
     const mockDownloadBinary = setupMocks.codeServerManager.downloadBinary as ReturnType<
       typeof vi.fn
     >;
-
-    initializeBootstrap(deps);
 
     await captured.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1146,24 +1263,21 @@ describe("bootstrap.setup.progress", () => {
       } as never,
     });
 
-    const progressDeps: BootstrapDeps = {
-      logger: createMockLogger(),
-      ipcLayer: createBehavioralIpcLayer(),
-      app: { quit: vi.fn() },
-      hookRegistry: progressHookRegistry,
-      dispatcher: progressDispatcher,
-      getApiFn: () =>
-        ({
-          on: vi.fn().mockReturnValue(() => {}),
-          lifecycle: {},
-          projects: {},
-          workspaces: {},
-          ui: {},
-          dispose: vi.fn(),
-        }) as never,
+    // Register operations and wire modules
+    const emitDeletionProgress = vi.fn();
+    const deleteOp = registerAllOperations(progressDispatcher, emitDeletionProgress);
+    void deleteOp;
+
+    const progressIpcLayer = createBehavioralIpcLayer();
+    const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer: progressIpcLayer });
+
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: registry,
+      getApi: () => registry.getInterface(),
+      getUIWebContents: () => mockWebContents as unknown as import("electron").WebContents,
       pluginServer: null,
-      getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
-      emitDeletionProgress: vi.fn(),
+      logger: createMockLogger(),
+      dispatcher: progressDispatcher,
       agentStatusManager: {
         getStatus: vi.fn(),
         onStatusChanged: vi.fn().mockReturnValue(() => {}),
@@ -1171,11 +1285,38 @@ describe("bootstrap.setup.progress", () => {
         dispose: vi.fn(),
       } as never,
       globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-      modules: [viewModule, codeServerModule, agentModule],
-      mountSignal,
-    };
+      dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
+      emitDeletionProgress,
+      deleteOp: {
+        hasPendingRetry: () => false,
+        signalDismiss: vi.fn(),
+        signalRetry: vi.fn(),
+      },
+    });
 
-    initializeBootstrap(progressDeps);
+    const quitModule = createQuitModule({ app: { quit: vi.fn() } });
+    const retryModule = createRetryModule({ ipcLayer: progressIpcLayer });
+    const { module: lifecycleReadyModule, readyHandler } = createLifecycleReadyModule({
+      mountSignal,
+    });
+
+    wireModules(
+      [
+        viewModule,
+        codeServerModule,
+        agentModule,
+        quitModule,
+        retryModule,
+        lifecycleReadyModule,
+        ipcEventBridge,
+      ],
+      progressHookRegistry,
+      progressDispatcher
+    );
+
+    registry.register("lifecycle.ready", readyHandler, {
+      ipc: ApiIpcChannels.LIFECYCLE_READY,
+    });
 
     // Dispatch app:start which triggers check -> app:setup -> binary/extensions hooks
     const handle = progressDispatcher.dispatch({
@@ -1295,24 +1436,21 @@ describe("bootstrap.setup.progress", () => {
         } as never,
       });
 
-      const deps: BootstrapDeps = {
-        logger: createMockLogger(),
-        ipcLayer: createBehavioralIpcLayer(),
-        app: { quit: vi.fn() },
-        hookRegistry: pctHookRegistry,
-        dispatcher: capturedDispatcher,
-        getApiFn: () =>
-          ({
-            on: vi.fn().mockReturnValue(() => {}),
-            lifecycle: {},
-            projects: {},
-            workspaces: {},
-            ui: {},
-            dispose: vi.fn(),
-          }) as never,
+      // Register operations and wire modules
+      const emitDeletionProgress = vi.fn();
+      const deleteOp = registerAllOperations(capturedDispatcher, emitDeletionProgress);
+      void deleteOp;
+
+      const pctIpcLayer = createBehavioralIpcLayer();
+      const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer: pctIpcLayer });
+
+      const ipcEventBridge = createIpcEventBridge({
+        apiRegistry: registry,
+        getApi: () => registry.getInterface(),
+        getUIWebContents: () => mockWebContents as unknown as import("electron").WebContents,
         pluginServer: null,
-        getUIWebContentsFn: () => mockWebContents as unknown as import("electron").WebContents,
-        emitDeletionProgress: vi.fn(),
+        logger: createMockLogger(),
+        dispatcher: capturedDispatcher,
         agentStatusManager: {
           getStatus: vi.fn(),
           onStatusChanged: vi.fn().mockReturnValue(() => {}),
@@ -1320,11 +1458,38 @@ describe("bootstrap.setup.progress", () => {
           dispose: vi.fn(),
         } as never,
         globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-        modules: [viewModule, codeServerModule, agentModule],
-        mountSignal,
-      };
+        dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
+        emitDeletionProgress,
+        deleteOp: {
+          hasPendingRetry: () => false,
+          signalDismiss: vi.fn(),
+          signalRetry: vi.fn(),
+        },
+      });
 
-      initializeBootstrap(deps);
+      const quitModule = createQuitModule({ app: { quit: vi.fn() } });
+      const retryModule = createRetryModule({ ipcLayer: pctIpcLayer });
+      const { module: lifecycleReadyModule, readyHandler } = createLifecycleReadyModule({
+        mountSignal,
+      });
+
+      wireModules(
+        [
+          viewModule,
+          codeServerModule,
+          agentModule,
+          quitModule,
+          retryModule,
+          lifecycleReadyModule,
+          ipcEventBridge,
+        ],
+        pctHookRegistry,
+        capturedDispatcher
+      );
+
+      registry.register("lifecycle.ready", readyHandler, {
+        ipc: ApiIpcChannels.LIFECYCLE_READY,
+      });
 
       const handle = capturedDispatcher.dispatch({
         type: "app:start",
@@ -1358,15 +1523,8 @@ describe("bootstrap.setup.progress", () => {
 
 describe("bootstrap.lifecycle.ready", () => {
   it("resolves mount promise (no event re-emission)", async () => {
-    const baseDeps = createMockDeps();
     const ipcLayer = createBehavioralIpcLayer();
-
-    const deps: BootstrapDeps = {
-      ...baseDeps,
-      ipcLayer,
-    };
-
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ ipcLayer });
 
     // lifecycle.ready just resolves the mount promise -- no events re-emitted
     const projectOpenedEvents: unknown[] = [];
@@ -1383,11 +1541,8 @@ describe("bootstrap.lifecycle.ready", () => {
   });
 
   it("is idempotent (can be called multiple times safely)", async () => {
-    const baseDeps = createMockDeps();
     const ipcLayer = createBehavioralIpcLayer();
-    const deps: BootstrapDeps = { ...baseDeps, ipcLayer };
-
-    const result = initializeBootstrap(deps);
+    const result = createTestWiring({ ipcLayer });
 
     // Call twice -- second call is a no-op (mountResolve is null)
     await ipcLayer._invoke("api:lifecycle:ready", {});
