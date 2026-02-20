@@ -105,6 +105,21 @@ If a PR already exists for this branch:
 - If state is MERGED: skip to step 6 (delete workspace) with exit code 0
 - If state is CLOSED: continue to create new PR
 
+### 1.5. Rebase onto main
+
+```bash
+git fetch origin main
+git rebase origin/main
+```
+
+If rebase fails, abort and report:
+
+```
+Rebase onto main failed (conflicts?).
+
+Resolve conflicts manually, then run `/ship` again.
+```
+
 ### 2. Push
 
 ```bash
