@@ -29,6 +29,7 @@ import {
   SWITCH_WORKSPACE_OPERATION_ID,
   INTENT_SWITCH_WORKSPACE,
   EVENT_WORKSPACE_SWITCHED,
+  selectNextWorkspace,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
@@ -39,6 +40,8 @@ import type {
   ActivateHookInput,
   WorkspaceSwitchedEvent,
   FindCandidatesHookResult,
+  SelectNextHookInput,
+  SelectNextHookResult,
 } from "./switch-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -49,6 +52,7 @@ import { SILENT_LOGGER } from "../../services/logging";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./update-available";
 import type { UpdateAvailableIntent } from "./update-available";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 
 // =============================================================================
 // Mock ApiRegistry for IpcEventBridge
@@ -205,10 +209,7 @@ function createTestSetup(opts?: {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  dispatcher.registerOperation(
-    INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(extractWorkspaceName)
-  );
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // ResolveModule: "resolve" hook -- resolves workspacePath → projectPath + workspaceName
   const resolveModule: IntentModule = {
@@ -221,8 +222,7 @@ function createTestSetup(opts?: {
             for (const project of appState.projects) {
               const workspace = project.workspaces.find((w) => w.path === wsPath);
               if (workspace) {
-                const workspaceName = extractWorkspaceName(wsPath);
-                return { projectPath: project.path, workspaceName: workspaceName as WorkspaceName };
+                return { projectPath: project.path, workspaceName: extractWorkspaceName(wsPath) };
               }
             }
             return {};
@@ -309,6 +309,21 @@ function createTestSetup(opts?: {
       },
     };
     modules.push(findCandidatesModule);
+
+    const selectNextModule: IntentModule = {
+      hooks: {
+        [SWITCH_WORKSPACE_OPERATION_ID]: {
+          "select-next": {
+            handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
+              const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
+              const result = selectNextWorkspace(currentPath, candidates, extractWorkspaceName);
+              return result ? { selected: result } : {};
+            },
+          },
+        },
+      },
+    };
+    modules.push(selectNextModule);
   }
 
   if (opts?.withIpcEventBridge) {
@@ -360,11 +375,6 @@ function createTestSetup(opts?: {
 /** Resolve project path from project ID using the same logic as id-utils */
 function generateProjectId(path: string): ProjectId {
   return Buffer.from(path).toString("base64url") as ProjectId;
-}
-
-function extractWorkspaceName(path: string): string {
-  const parts = path.split("/");
-  return parts[parts.length - 1] ?? "";
 }
 
 function switchIntent(workspacePath?: string, focus?: boolean): SwitchWorkspaceIntent {

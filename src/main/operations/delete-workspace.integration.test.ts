@@ -58,6 +58,7 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_SWITCHED,
+  selectNextWorkspace,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
@@ -68,6 +69,8 @@ import type {
   ResolveProjectHookResult as SwitchResolveProjectHookResult,
   ActivateHookInput,
   FindCandidatesHookResult,
+  SelectNextHookInput,
+  SelectNextHookResult,
 } from "./switch-workspace";
 
 // =============================================================================
@@ -349,20 +352,7 @@ function createTestHarness(options?: {
   // Register operations
   const deleteOp = new DeleteWorkspaceOperation();
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
-  dispatcher.registerOperation(
-    INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(
-      extractWorkspaceName,
-      // Agent status scorer: returns score from mock appState
-      (workspacePath) => {
-        const agentStatusManager = appState.getAgentStatusManager();
-        const status = agentStatusManager?.getStatus(workspacePath);
-        if (!status || status.status === "none") return 2;
-        if (status.status === "busy") return 1;
-        return 0;
-      }
-    )
-  );
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();
@@ -753,6 +743,33 @@ function createTestHarness(options?: {
     },
   };
 
+  // select-next module: uses selectNextWorkspace with agent status scoring
+  const switchSelectNextModule: IntentModule = {
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        "select-next": {
+          handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
+            const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
+            const scorer = (workspacePath: string): number => {
+              const mgr = appState.getAgentStatusManager();
+              const status = mgr?.getStatus(workspacePath as WorkspacePath);
+              if (!status || status.status === "none") return 2;
+              if (status.status === "busy") return 1;
+              return 0;
+            };
+            const result = selectNextWorkspace(
+              currentPath,
+              candidates,
+              extractWorkspaceName,
+              scorer
+            );
+            return result ? { selected: result } : {};
+          },
+        },
+      },
+    },
+  };
+
   for (const m of [
     idempotencyModule,
     progressCaptureModule,
@@ -769,6 +786,7 @@ function createTestHarness(options?: {
     switchResolveProjectModule,
     switchViewModule,
     switchFindCandidatesModule,
+    switchSelectNextModule,
   ])
     dispatcher.registerModule(m);
 
