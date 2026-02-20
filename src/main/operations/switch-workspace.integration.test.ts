@@ -34,15 +34,24 @@ import {
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
-  ResolveHookResult,
-  ResolveProjectHookInput,
-  ResolveProjectHookResult,
   ActivateHookInput,
   WorkspaceSwitchedEvent,
   FindCandidatesHookResult,
   SelectNextHookInput,
   SelectNextHookResult,
 } from "./switch-workspace";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult } from "./resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "./resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
@@ -209,12 +218,14 @@ function createTestSetup(opts?: {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // ResolveModule: "resolve" hook -- resolves workspacePath → projectPath + workspaceName
   const resolveModule: IntentModule = {
     hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
             const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
@@ -232,13 +243,13 @@ function createTestSetup(opts?: {
     },
   };
 
-  // ResolveProjectModule: "resolve-project" hook -- resolves projectPath → projectId + projectName
+  // ResolveProjectModule: "resolve" hook -- resolves projectPath → projectId + projectName
   const resolveProjectModule: IntentModule = {
     hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { projectPath } = ctx as ResolveProjectHookInput;
+            const { projectPath } = ctx as { projectPath: string } & HookContext;
             const project = appState.getProject(projectPath);
             if (!project) return {};
             return { projectId: generateProjectId(project.path), projectName: project.name };

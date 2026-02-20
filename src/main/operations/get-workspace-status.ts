@@ -1,9 +1,9 @@
 /**
  * GetWorkspaceStatusOperation - Orchestrates workspace status queries.
  *
- * Runs two hook points in sequence:
- * 1. "resolve" - Validates workspacePath is tracked, returns projectPath + workspaceName
- * 2. "get" - Each handler contributes a piece of the status
+ * Runs two steps:
+ * 1. Dispatch workspace:resolve to validate workspacePath
+ * 2. "get" hook — each handler contributes a piece of the status
  *
  * No provider dependencies - hook handlers do the actual work.
  * No domain events - this is a query operation.
@@ -11,8 +11,9 @@
 
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
+import type { WorkspaceStatus } from "../../shared/api/types";
 import type { AggregatedAgentStatus } from "../../shared/ipc";
+import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 
 // =============================================================================
 // Intent Types
@@ -34,17 +35,6 @@ export const INTENT_GET_WORKSPACE_STATUS = "workspace:get-status" as const;
 // =============================================================================
 
 export const GET_WORKSPACE_STATUS_OPERATION_ID = "get-workspace-status";
-
-/** Input context for "resolve" handlers. */
-export interface ResolveHookInput extends HookContext {
-  readonly workspacePath: string;
-}
-
-/** Per-handler result for "resolve" hook point. */
-export interface ResolveHookResult {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
-}
 
 /**
  * Input context for "get" handlers — built from resolve results.
@@ -75,24 +65,11 @@ export class GetWorkspaceStatusOperation implements Operation<
   async execute(ctx: OperationContext<GetWorkspaceStatusIntent>): Promise<WorkspaceStatus> {
     const { payload } = ctx.intent;
 
-    // 1. resolve — validate workspacePath is tracked
-    const resolveCtx: ResolveHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
-    if (resolveErrors.length > 0) {
-      throw new AggregateError(resolveErrors, "get-workspace-status resolve failed");
-    }
-
-    let found = false;
-    for (const result of resolveResults) {
-      if (result.projectPath !== undefined) found = true;
-    }
-    if (!found) {
-      throw new Error(`Workspace not found: ${payload.workspacePath}`);
-    }
+    // 1. Dispatch shared workspace resolution
+    await ctx.dispatch({
+      type: INTENT_RESOLVE_WORKSPACE,
+      payload: { workspacePath: payload.workspacePath },
+    } as ResolveWorkspaceIntent);
 
     // 2. get — each handler contributes its piece
     const getCtx: GetStatusHookInput = {

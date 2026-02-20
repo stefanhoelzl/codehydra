@@ -4,9 +4,9 @@
  * Two modes:
  *
  * **Specific target** (workspacePath):
- * 1. "resolve": resolve workspacePath → projectPath + workspaceName
- * 2. "resolve-project": resolve projectPath → projectId + projectName
- * 3. "activate": call viewManager.setActiveWorkspace()
+ * 1. Dispatch workspace:resolve — resolve workspacePath → projectPath + workspaceName
+ * 2. Dispatch project:resolve — resolve projectPath → projectId + projectName
+ * 3. "activate" hook — call viewManager.setActiveWorkspace()
  *
  * **Auto-select** ({ auto: true, currentPath }):
  * Used when the active workspace is being deleted. Runs a "find-candidates"
@@ -23,6 +23,8 @@ import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
+import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 
 // =============================================================================
 // Intent Types
@@ -81,28 +83,6 @@ export const EVENT_WORKSPACE_SWITCHED = "workspace:switched" as const;
 // =============================================================================
 
 export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
-
-/** Input context for the "resolve" hook point. */
-export interface ResolveHookInput extends HookContext {
-  readonly workspacePath: string;
-}
-
-/** Per-handler result for the "resolve" hook point. */
-export interface ResolveHookResult {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
-}
-
-/** Input context for the "resolve-project" hook point. */
-export interface ResolveProjectHookInput extends HookContext {
-  readonly projectPath: string;
-}
-
-/** Per-handler result for the "resolve-project" hook point. */
-export interface ResolveProjectHookResult {
-  readonly projectId?: ProjectId;
-  readonly projectName?: string;
-}
 
 /** Input context for the "activate" hook point. */
 export interface ActivateHookInput extends HookContext {
@@ -248,54 +228,17 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
     ctx: OperationContext<SwitchWorkspaceIntent>,
     payload: SwitchWorkspaceTargetPayload
   ): Promise<void> {
-    // 1. Resolve: workspacePath → projectPath + workspaceName
-    const resolveCtx: ResolveHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
-    if (resolveErrors.length === 1) {
-      throw resolveErrors[0]!;
-    }
-    if (resolveErrors.length > 1) {
-      throw new AggregateError(resolveErrors, "workspace:switch resolve hooks failed");
-    }
-    let projectPath: string | undefined;
-    let workspaceName: WorkspaceName | undefined;
-    for (const r of resolveResults) {
-      if (r.projectPath !== undefined) projectPath = r.projectPath;
-      if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
-    }
-    if (!projectPath || !workspaceName) {
-      throw new Error(`Workspace not found: ${payload.workspacePath}`);
-    }
+    // 1. Dispatch shared workspace resolution
+    const { projectPath, workspaceName } = await ctx.dispatch({
+      type: INTENT_RESOLVE_WORKSPACE,
+      payload: { workspacePath: payload.workspacePath },
+    } as ResolveWorkspaceIntent);
 
-    // 2. Resolve project: projectPath → projectId + projectName
-    const resolveProjectCtx: ResolveProjectHookInput = {
-      intent: ctx.intent,
-      projectPath,
-    };
-    const { results: resolveProjectResults, errors: resolveProjectErrors } =
-      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveProjectCtx);
-    if (resolveProjectErrors.length === 1) {
-      throw resolveProjectErrors[0]!;
-    }
-    if (resolveProjectErrors.length > 1) {
-      throw new AggregateError(
-        resolveProjectErrors,
-        "workspace:switch resolve-project hooks failed"
-      );
-    }
-    let projectId: ProjectId | undefined;
-    let projectName: string | undefined;
-    for (const r of resolveProjectResults) {
-      if (r.projectId !== undefined) projectId = r.projectId;
-      if (r.projectName !== undefined) projectName = r.projectName;
-    }
-    if (!projectId) {
-      throw new Error(`Project not found for path: ${projectPath}`);
-    }
+    // 2. Dispatch shared project resolution
+    const { projectId, projectName } = await ctx.dispatch({
+      type: INTENT_RESOLVE_PROJECT,
+      payload: { projectPath },
+    } as ResolveProjectIntent);
 
     // 3. Activate: call setActiveWorkspace
     const activateCtx: ActivateHookInput = {
@@ -328,7 +271,7 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       type: EVENT_WORKSPACE_SWITCHED,
       payload: {
         projectId,
-        projectName: projectName ?? "",
+        projectName,
         projectPath,
         workspaceName,
         path: resolvedPath,

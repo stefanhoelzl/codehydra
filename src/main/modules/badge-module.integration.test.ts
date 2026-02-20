@@ -18,16 +18,24 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import {
   UpdateAgentStatusOperation,
-  UPDATE_AGENT_STATUS_OPERATION_ID,
   INTENT_UPDATE_AGENT_STATUS,
 } from "../operations/update-agent-status";
+import type { UpdateAgentStatusIntent } from "../operations/update-agent-status";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "../operations/resolve-workspace";
 import type {
-  UpdateAgentStatusIntent,
-  ResolveHookResult,
-  ResolveProjectHookResult,
-  ResolveHookInput,
-  ResolveProjectHookInput,
-} from "../operations/update-agent-status";
+  ResolveHookResult as ResolveWorkspaceHookResult,
+  ResolveHookInput as ResolveWorkspaceHookInput,
+} from "../operations/resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "../operations/resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "../operations/resolve-project";
 import { EVENT_WORKSPACE_DELETED, INTENT_DELETE_WORKSPACE } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../operations/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
@@ -111,19 +119,20 @@ interface TestSetup {
 function createMockResolveModule(): IntentModule {
   return {
     hooks: {
-      [UPDATE_AGENT_STATUS_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const { workspacePath } = ctx as ResolveHookInput;
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { workspacePath } = ctx as ResolveWorkspaceHookInput;
             return {
               projectPath: "/projects/test",
               workspaceName: workspacePath.split("/").pop() as WorkspaceName,
             };
           },
         },
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            void (ctx as ResolveProjectHookInput);
+      },
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (): Promise<ResolveProjectHookResult> => {
             return { projectId: "test-project" as ProjectId };
           },
         },
@@ -151,6 +160,8 @@ function createTestSetup(): TestSetup {
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   const badgeModule = createBadgeModule(badgeManager, SILENT_LOGGER);
   const resolveModule = createMockResolveModule();

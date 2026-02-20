@@ -1,9 +1,9 @@
 /**
  * GetAgentSessionOperation - Orchestrates agent session queries.
  *
- * Runs two sequential hook points:
- * 1. "resolve" - Validates workspacePath is tracked, returns projectPath + workspaceName
- * 2. "get" - Retrieve session info from enriched context
+ * Runs two steps:
+ * 1. Dispatch workspace:resolve to validate workspacePath
+ * 2. "get" hook — retrieve session info from enriched context
  *
  * No provider dependencies - the hook handlers do the actual work.
  * No domain events - this is a query operation.
@@ -11,7 +11,8 @@
 
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { WorkspaceName, AgentSession } from "../../shared/api/types";
+import type { AgentSession } from "../../shared/api/types";
+import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 
 // =============================================================================
 // Intent Types
@@ -33,17 +34,6 @@ export const INTENT_GET_AGENT_SESSION = "agent:get-session" as const;
 // =============================================================================
 
 export const GET_AGENT_SESSION_OPERATION_ID = "get-agent-session";
-
-/** Input context for "resolve" handlers. */
-export interface ResolveHookInput extends HookContext {
-  readonly workspacePath: string;
-}
-
-/** Per-handler result for "resolve" hook point. */
-export interface ResolveHookResult {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
-}
 
 /** Input context for the "get" hook point. */
 export interface GetAgentSessionHookInput extends HookContext {
@@ -72,27 +62,11 @@ export class GetAgentSessionOperation implements Operation<
   async execute(ctx: OperationContext<GetAgentSessionIntent>): Promise<AgentSession | null> {
     const { payload } = ctx.intent;
 
-    // 1. resolve — validate workspacePath is tracked
-    const resolveCtx: ResolveHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
-    if (resolveErrors.length === 1) {
-      throw resolveErrors[0]!;
-    }
-    if (resolveErrors.length > 1) {
-      throw new AggregateError(resolveErrors, "get-agent-session resolve hooks failed");
-    }
-
-    let found = false;
-    for (const r of resolveResults) {
-      if (r.projectPath !== undefined) found = true;
-    }
-    if (!found) {
-      throw new Error(`Workspace not found: ${payload.workspacePath}`);
-    }
+    // 1. Dispatch shared workspace resolution
+    await ctx.dispatch({
+      type: INTENT_RESOLVE_WORKSPACE,
+      payload: { workspacePath: payload.workspacePath },
+    } as ResolveWorkspaceIntent);
 
     // 2. get — handler retrieves session info
     const getCtx: GetAgentSessionHookInput = {

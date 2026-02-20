@@ -21,14 +21,24 @@ import {
 } from "../operations/switch-workspace";
 import type {
   SwitchWorkspaceIntent,
-  ResolveHookResult,
-  ResolveProjectHookResult,
   SwitchWorkspaceHookResult,
   FindCandidatesHookResult,
   WorkspaceCandidate,
   WorkspaceSwitchedEvent,
 } from "../operations/switch-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "../operations/resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../operations/resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "../operations/resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "../operations/resolve-project";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
@@ -87,15 +97,17 @@ function createTestSetup(opts: {
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   let activeWorkspacePath: string | null = null;
 
   // Resolve module: workspace path → project path + workspace name
   const resolveModule: IntentModule = {
     hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
             const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
             const found = opts.candidates.find((c) => c.workspacePath === wsPath);
             if (!found) return {};
@@ -112,8 +124,8 @@ function createTestSetup(opts: {
   // Resolve project module
   const resolveProjectModule: IntentModule = {
     hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
             const { projectPath } = ctx as { projectPath: string } & HookContext;
             if (projectPath === PROJECT_PATH) {

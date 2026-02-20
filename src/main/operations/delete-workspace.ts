@@ -1,18 +1,18 @@
 /**
  * DeleteWorkspaceOperation - Orchestrates workspace deletion.
  *
- * Runs hook points in sequence using collect():
- * 1. "resolve" - Resolves workspacePath to projectPath + workspaceName
- * 2. "resolve-project" - Resolves projectPath to projectId
- * 3. "shutdown" - ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
- * 4. "release" - WindowsLockModule (detect CWD + kill) [Windows-only]
- * 5. "delete" - WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
+ * Steps:
+ * 1. Dispatch workspace:resolve — resolves workspacePath to projectPath + workspaceName
+ * 2. Dispatch project:resolve — resolves projectPath to projectId
+ * 3. "shutdown" hook — ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
+ * 4. "release" hook — WindowsLockModule (detect CWD + kill) [Windows-only]
+ * 5. "delete" hook — WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
  *
  * If delete fails (and not force), enters a retry loop:
- * 6. "detect" - Full blocking process detection (RM + CWD + handles)
+ * 6. "detect" — Full blocking process detection (RM + CWD + handles)
  * 7. Emit progress with blockers, wait for user choice (Kill & Retry or Dismiss)
- * 8. "flush" - Kill collected PIDs
- * 9. "delete" - Re-attempt
+ * 8. "flush" — Kill collected PIDs
+ * 9. "delete" — Re-attempt
  * Loop back to 6 if delete fails again.
  *
  * Each handler returns a typed result; the operation merges results and tracks errors.
@@ -34,6 +34,8 @@ import type {
 } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
+import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 
 // =============================================================================
 // Intent Types
@@ -128,31 +130,6 @@ export interface FlushHookResult {
   readonly error?: string;
 }
 
-/** Input for the "resolve" hook point (workspacePath → projectPath + workspaceName). */
-export interface ResolveHookInput extends HookContext {
-  readonly workspacePath: string;
-}
-
-/**
- * Per-handler result for the "resolve" hook point.
- */
-export interface ResolveHookResult {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
-}
-
-/** Input for the "resolve-project" hook point (projectPath → projectId). */
-export interface ResolveProjectHookInput extends HookContext {
-  readonly projectPath: string;
-}
-
-/**
- * Per-handler result for the "resolve-project" hook point.
- */
-export interface ResolveProjectHookResult {
-  readonly projectId?: ProjectId;
-}
-
 /** Input for shutdown/release/delete/detect hooks (enriched with both resolved paths). */
 export interface DeletePipelineHookInput extends HookContext {
   readonly projectPath: string;
@@ -167,17 +144,6 @@ export interface FlushHookInput extends DeletePipelineHookInput {
 // =============================================================================
 // Merged Result Types (internal to operation)
 // =============================================================================
-
-interface MergedResolve {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
-  readonly errors: readonly string[];
-}
-
-interface MergedResolveProject {
-  readonly projectId?: ProjectId;
-  readonly errors: readonly string[];
-}
 
 interface MergedShutdown {
   readonly wasActive: boolean;
@@ -205,42 +171,6 @@ interface MergedFlush {
 // =============================================================================
 // Merge Functions
 // =============================================================================
-
-function mergeResolve(
-  results: readonly ResolveHookResult[],
-  collectErrors: readonly Error[]
-): MergedResolve {
-  let projectPath: string | undefined;
-  let workspaceName: WorkspaceName | undefined;
-  const errors: string[] = [];
-
-  for (const e of collectErrors) errors.push(e.message);
-  for (const r of results) {
-    if (r.projectPath !== undefined) projectPath = r.projectPath;
-    if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
-  }
-
-  return {
-    ...(projectPath !== undefined && { projectPath }),
-    ...(workspaceName !== undefined && { workspaceName }),
-    errors,
-  };
-}
-
-function mergeResolveProject(
-  results: readonly ResolveProjectHookResult[],
-  collectErrors: readonly Error[]
-): MergedResolveProject {
-  let projectId: ProjectId | undefined;
-  const errors: string[] = [];
-
-  for (const e of collectErrors) errors.push(e.message);
-  for (const r of results) {
-    if (r.projectId !== undefined) projectId = r.projectId;
-  }
-
-  return { ...(projectId !== undefined && { projectId }), errors };
-}
 
 function mergeShutdown(
   results: readonly ShutdownHookResult[],
@@ -343,7 +273,7 @@ interface PipelineState {
 // Operation
 // =============================================================================
 
-/** Resolved identity from hooks, needed for events and progress. */
+/** Resolved identity from dispatch, needed for events and progress. */
 interface ResolvedIdentity {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
@@ -443,37 +373,17 @@ export class DeleteWorkspaceOperation implements Operation<
   ): Promise<PipelineResult> {
     const { payload } = ctx.intent;
 
-    // --- Resolve (workspacePath → projectPath + workspaceName) ---
-    const resolveCtx: ResolveHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
-    const resolve = mergeResolve(resolveResults, resolveErrors);
+    // --- Resolve (workspacePath → projectPath + workspaceName) via dispatch ---
+    const { projectPath, workspaceName } = await ctx.dispatch({
+      type: INTENT_RESOLVE_WORKSPACE,
+      payload: { workspacePath: payload.workspacePath },
+    } as ResolveWorkspaceIntent);
 
-    const projectPath = resolve.projectPath;
-    if (!projectPath) {
-      throw new Error("resolve hook did not provide projectPath");
-    }
-    const workspaceName = resolve.workspaceName;
-    if (!workspaceName) {
-      throw new Error("resolve hook did not provide workspaceName");
-    }
-
-    // --- Resolve Project (projectPath → projectId) ---
-    const resolveProjectCtx: ResolveProjectHookInput = {
-      intent: ctx.intent,
-      projectPath,
-    };
-    const { results: resolveProjectResults, errors: resolveProjectErrors } =
-      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveProjectCtx);
-    const resolveProject = mergeResolveProject(resolveProjectResults, resolveProjectErrors);
-
-    const projectId = resolveProject.projectId;
-    if (!projectId) {
-      throw new Error("resolve-project hook did not provide projectId");
-    }
+    // --- Resolve Project (projectPath → projectId) via dispatch ---
+    const { projectId } = await ctx.dispatch({
+      type: INTENT_RESOLVE_PROJECT,
+      payload: { projectPath },
+    } as ResolveProjectIntent);
 
     const identity: ResolvedIdentity = { projectId, workspaceName, projectPath };
 
