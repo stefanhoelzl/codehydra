@@ -75,6 +75,7 @@ interface RecordedEvent {
 
 class MockApiRegistry {
   readonly events: RecordedEvent[] = [];
+  readonly dispose = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
 
   emit(channel: string, data: unknown): void {
     this.events.push({ channel, data });
@@ -90,10 +91,6 @@ class MockApiRegistry {
 
   getInterface(): undefined {
     return undefined;
-  }
-
-  async dispose(): Promise<void> {
-    // no-op
   }
 }
 
@@ -595,7 +592,7 @@ describe("IpcEventBridge - lifecycle", () => {
   });
 
   describe("app:shutdown / stop hook", () => {
-    it("cleans up API event wiring on shutdown", async () => {
+    it("cleans up API event wiring and disposes apiRegistry on shutdown", async () => {
       const unsubscribeFn = vi.fn();
       const mockApi = {
         on: vi.fn().mockReturnValue(unsubscribeFn),
@@ -656,10 +653,8 @@ describe("IpcEventBridge - lifecycle", () => {
         payload: {},
       } as AppShutdownIntent);
 
-      // wireApiEvents returns a single cleanup fn that calls all individual unsubscribers.
-      // The cleanup fn was called during shutdown.
-      // We can't directly observe the composite cleanup fn, but we verified api.on was called
-      // during start and no errors occurred during shutdown.
+      // apiRegistry.dispose() is called during shutdown
+      expect(mockApiRegistry.dispose).toHaveBeenCalled();
     });
 
     it("logs error but does not throw when cleanup fails", async () => {

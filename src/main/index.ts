@@ -609,32 +609,7 @@ registry.register("lifecycle.ready", readyHandler, {
 // Get the typed API interface (all methods are now registered)
 codeHydraApi = registry.getInterface();
 
-// 11. Cleanup + dispatch
-
-/** Cleanup function — nulled after cleanup runs for macOS re-launch detection. */
-let cleanup: (() => Promise<void>) | null = async () => {
-  const shutdownLogger = loggingService.createLogger("app");
-  shutdownLogger.info("Shutdown initiated");
-
-  try {
-    await dispatcher.dispatch({
-      type: INTENT_APP_SHUTDOWN,
-      payload: {},
-    } as AppShutdownIntent);
-  } catch (error) {
-    shutdownLogger.error(
-      "Shutdown dispatch failed (continuing cleanup)",
-      {},
-      error instanceof Error ? error : undefined
-    );
-  }
-
-  viewManager.destroy();
-  await registry.dispose();
-
-  cleanup = null;
-  shutdownLogger.info("Cleanup complete");
-};
+// 11. Dispatch app:start
 
 // Dispatch app:start — orchestrates the entire startup flow via hook points
 appLogger.info("Dispatching app:start");
@@ -659,12 +634,16 @@ void dispatcher
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    void cleanup?.().then(() => app.quit());
+    void dispatcher.dispatch({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    } as AppShutdownIntent);
   }
 });
 
 app.on("before-quit", () => {
-  // Fire-and-forget cleanup. The shutdown idempotency interceptor ensures
-  // only one execution proceeds (window-all-closed also calls cleanup).
-  void cleanup?.();
+  void dispatcher.dispatch({
+    type: INTENT_APP_SHUTDOWN,
+    payload: {},
+  } as AppShutdownIntent);
 });
