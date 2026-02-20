@@ -14,6 +14,9 @@
  * blocks until the renderer signals ready, ensuring event subscriptions
  * are in place before project:open dispatches fire.
  *
+ * After all project:open dispatches complete, emits an `app:started` domain
+ * event so subscribers (e.g., lifecycle.ready) know startup is done.
+ *
  * The "check-config" and "check-deps" hook points use collect() for isolated
  * handler contexts. Each handler returns a typed result; the operation merges
  * results and derives boolean flags (needsSetup, needsBinaryDownload, etc.).
@@ -28,7 +31,7 @@
  * No provider dependencies - hook handlers do the actual work.
  */
 
-import type { Intent } from "../intents/infrastructure/types";
+import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
@@ -51,6 +54,18 @@ export interface AppStartIntent extends Intent<void> {
 }
 
 export const INTENT_APP_START = "app:start" as const;
+
+// =============================================================================
+// Domain Events
+// =============================================================================
+
+/** Emitted after all initial project:open dispatches complete. */
+export interface AppStartedEvent extends DomainEvent {
+  readonly type: typeof EVENT_APP_STARTED;
+  readonly payload: Record<string, never>;
+}
+
+export const EVENT_APP_STARTED = "app:started" as const;
 
 // =============================================================================
 // Hook Context & Result Types
@@ -227,9 +242,9 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 6: "loaded" — Signal that initial project:open dispatches are complete.
-    // lifecycle.ready awaits this before returning to the renderer.
-    await ctx.hooks.collect<void>("loaded", hookCtx);
+    // Signal that initial project:open dispatches are complete.
+    // lifecycle.ready awaits this event before returning to the renderer.
+    ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
   }
 
   /**

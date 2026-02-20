@@ -25,7 +25,12 @@ import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { wireModules } from "../intents/infrastructure/wire";
-import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
+import {
+  AppStartOperation,
+  INTENT_APP_START,
+  APP_START_OPERATION_ID,
+  EVENT_APP_STARTED,
+} from "./app-start";
 import type {
   AppStartIntent,
   StartHookResult,
@@ -816,6 +821,64 @@ describe("AppStart Operation", () => {
       await dispatcher.dispatch(appStartIntent());
 
       expect(receivedMcpPort).toBeNull();
+    });
+  });
+
+  // ===========================================================================
+  // app:started Domain Event
+  // ===========================================================================
+
+  describe("app:started event emitted after project:open dispatches (#16)", () => {
+    it("emits app:started after project:open dispatches complete", async () => {
+      const state = createTestState();
+      const stub = createProjectOpenStub(state);
+      const { dispatcher } = createTestSetup(
+        [
+          createCodeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state, { projectPaths: ["/project-a", "/project-b"] }),
+          createViewModule(state),
+          createMountModule(state),
+        ],
+        { projectOpenStub: stub }
+      );
+
+      dispatcher.subscribe(EVENT_APP_STARTED, () => {
+        state.executionOrder.push("app:started");
+      });
+
+      await dispatcher.dispatch(appStartIntent());
+
+      // app:started fires after all project:open dispatches
+      expect(state.executionOrder).toEqual([
+        "codeserver-start",
+        "mcp-start",
+        "data-activate",
+        "view-activate",
+        "mount",
+        "project-open:/project-a",
+        "project-open:/project-b",
+        "app:started",
+      ]);
+    });
+
+    it("emits app:started even when no projects to open", async () => {
+      const state = createTestState();
+      const { dispatcher } = createTestSetup([
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+        createViewModule(state),
+      ]);
+
+      let eventFired = false;
+      dispatcher.subscribe(EVENT_APP_STARTED, () => {
+        eventFired = true;
+      });
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(eventFired).toBe(true);
     });
   });
 });

@@ -75,6 +75,7 @@ import {
   AppStartOperation,
   INTENT_APP_START,
   APP_START_OPERATION_ID,
+  EVENT_APP_STARTED,
 } from "./operations/app-start";
 import type { ShowUIHookResult } from "./operations/app-start";
 import {
@@ -280,26 +281,22 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   const inProgressOpens = new Set<string>();
 
-  // Deferred for the "loaded" hook point: resolved after all initial project:open dispatches
+  // Deferred for the app:started event: resolved after all initial project:open dispatches
   // complete. lifecycle.ready awaits this so the renderer receives project:opened events
   // (via Electron IPC FIFO ordering) before setLoaded() fires.
   let projectsLoadedResolve: (() => void) | null = null;
   const projectsLoadedPromise = new Promise<void>((resolve) => {
     projectsLoadedResolve = resolve;
   });
-  // LoadedSignalModule: "loaded" hook on app-start resolves the deferred so lifecycle.ready
-  // can return to the renderer after all initial project:open dispatches complete.
-  const loadedSignalModule: IntentModule = {
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        loaded: {
-          handler: async (): Promise<void> => {
-            if (projectsLoadedResolve) {
-              projectsLoadedResolve();
-              projectsLoadedResolve = null;
-            }
-          },
-        },
+  // LoadedEventModule: subscribes to app:started event to resolve the deferred so
+  // lifecycle.ready can return to the renderer after all initial project:open dispatches complete.
+  const loadedEventModule: IntentModule = {
+    events: {
+      [EVENT_APP_STARTED]: () => {
+        if (projectsLoadedResolve) {
+          projectsLoadedResolve();
+          projectsLoadedResolve = null;
+        }
       },
     },
   };
@@ -308,7 +305,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // Pre-created modules from index.ts (idempotency, view, codeServer, agent, etc.)
   // are combined with inline modules that need bootstrap-internal state.
   wireModules(
-    [...deps.modules, quitModule, ipcEventBridge, retryModule, loadedSignalModule],
+    [...deps.modules, quitModule, ipcEventBridge, retryModule, loadedEventModule],
     hookRegistry,
     dispatcher
   );
