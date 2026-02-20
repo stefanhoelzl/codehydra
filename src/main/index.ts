@@ -285,19 +285,6 @@ const keepFilesService = new KeepFilesService(
   loggingService.createLogger("keepfiles")
 );
 
-// Wrap DialogLayer for IPC bridge (converts Path to string)
-const dialog = {
-  showOpenDialog: async (options: { properties: string[] }) => {
-    const result = await dialogLayer.showOpenDialog({
-      properties: options.properties as import("../services/platform/dialog").OpenDialogProperty[],
-    });
-    return {
-      canceled: result.canceled,
-      filePaths: result.filePaths.map((p) => p.toString()),
-    };
-  },
-};
-
 const workspaceLockHandler = createWorkspaceLockHandler(
   processRunner,
   platformInfo,
@@ -382,6 +369,7 @@ const { module: viewModule, mountSignal } = createViewModule({
   viewLayer,
   windowLayer,
   sessionLayer,
+  dialogLayer,
   menuLayer,
   windowManager,
   buildInfo,
@@ -563,7 +551,6 @@ const ipcEventBridge = createIpcEventBridge({
   dispatcher,
   agentStatusManager,
   globalWorktreeProvider,
-  dialog,
   deleteOp,
 });
 

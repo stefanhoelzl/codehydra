@@ -19,6 +19,7 @@
  */
 
 import { Path } from "../../services/platform/path";
+import type { DialogLayer } from "../../services/platform/dialog";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
@@ -50,9 +51,10 @@ import type {
   DeletePipelineHookInput,
 } from "../operations/delete-workspace";
 import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
-import type { ProjectOpenedEvent } from "../operations/open-project";
+import type { ProjectOpenedEvent, SelectFolderHookResult } from "../operations/open-project";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../operations/set-mode";
+import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
@@ -96,6 +98,7 @@ export interface ViewModuleDeps {
   readonly viewLayer: ViewLayer | null;
   readonly windowLayer: WindowLayerInternal | null;
   readonly sessionLayer: SessionLayer | null;
+  readonly dialogLayer?: Pick<DialogLayer, "showOpenDialog"> | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
   readonly windowManager?: {
     create(): void;
@@ -397,6 +400,26 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
               }
               throw error;
             }
+          },
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // open-project → select-folder: show folder dialog
+      // -------------------------------------------------------------------
+      [OPEN_PROJECT_OPERATION_ID]: {
+        "select-folder": {
+          handler: async (): Promise<SelectFolderHookResult> => {
+            if (!deps.dialogLayer) {
+              return { folderPath: null };
+            }
+            const result = await deps.dialogLayer.showOpenDialog({
+              properties: ["openDirectory"] as const,
+            });
+            if (result.canceled || result.filePaths.length === 0) {
+              return { folderPath: null };
+            }
+            return { folderPath: result.filePaths[0]!.toString() };
           },
         },
       },

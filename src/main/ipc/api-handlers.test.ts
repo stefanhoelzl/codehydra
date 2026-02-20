@@ -31,7 +31,6 @@ function createMockApi(): ICodeHydraApi {
       restartAgentServer: vi.fn().mockResolvedValue(3000),
     },
     ui: {
-      selectFolder: vi.fn().mockResolvedValue(null),
       getActiveWorkspace: vi.fn().mockResolvedValue(null),
       switchWorkspace: vi.fn(),
       setMode: vi.fn(),

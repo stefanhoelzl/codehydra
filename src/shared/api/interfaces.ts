@@ -34,7 +34,7 @@ export interface ProjectCloseOptions {
 }
 
 export interface IProjectApi {
-  open(path: string): Promise<Project>;
+  open(path?: string): Promise<Project | null>;
   close(projectId: ProjectId, options?: ProjectCloseOptions): Promise<void>;
   /**
    * Clone a git repository and create a new project.
@@ -155,7 +155,6 @@ export interface IWorkspaceApi {
 }
 
 export interface IUiApi {
-  selectFolder(): Promise<string | null>;
   getActiveWorkspace(): Promise<WorkspaceRef | null>;
   switchWorkspace(workspacePath: string, focus?: boolean): Promise<void>;
   /**

@@ -30,7 +30,7 @@ describe("IProjectApi Interface", () => {
   it("should have correct method signatures", () => {
     // Type-level test: this compiles if interface is correct
     const api: IProjectApi = {
-      async open(path: string): Promise<Project> {
+      async open(path?: string): Promise<Project | null> {
         void path;
         throw new Error("mock");
       },
@@ -127,9 +127,6 @@ describe("IWorkspaceApi Interface", () => {
 describe("IUiApi Interface", () => {
   it("should have correct method signatures", () => {
     const api: IUiApi = {
-      async selectFolder(): Promise<string | null> {
-        return null;
-      },
       async getActiveWorkspace(): Promise<WorkspaceRef | null> {
         return null;
       },
@@ -143,7 +140,6 @@ describe("IUiApi Interface", () => {
     };
 
     expect(api).toBeDefined();
-    expect(typeof api.selectFolder).toBe("function");
     expect(typeof api.getActiveWorkspace).toBe("function");
     expect(typeof api.switchWorkspace).toBe("function");
     expect(typeof api.setMode).toBe("function");

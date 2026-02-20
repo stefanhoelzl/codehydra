@@ -46,7 +46,7 @@ describe("registry-types.paths", () => {
     // This test is compile-time verified by the `satisfies` constraint in registry-types.ts
     // At runtime, we verify the count matches
     // Note: lifecycle methods (getState, setAgent, setup, startServices) were removed in app:setup migration
-    const registryKeyCount = 18; // Count of all methods in MethodRegistry
+    const registryKeyCount = 17; // Count of all methods in MethodRegistry
     expect(ALL_METHOD_PATHS.length).toBe(registryKeyCount);
   });
 
@@ -62,7 +62,7 @@ describe("registry-types.paths", () => {
     expectTypeOf<"lifecycle.quit">().toExtend<MethodPath>();
     expectTypeOf<"projects.open">().toExtend<MethodPath>();
     expectTypeOf<"workspaces.create">().toExtend<MethodPath>();
-    expectTypeOf<"ui.selectFolder">().toExtend<MethodPath>();
+    expectTypeOf<"ui.getActiveWorkspace">().toExtend<MethodPath>();
   });
 
   it("grouped paths match their expected values", () => {
@@ -84,7 +84,6 @@ describe("registry-types.paths", () => {
     expectTypeOf<"workspaces.getMetadata">().toExtend<WorkspacePath>();
 
     // UI paths
-    expectTypeOf<"ui.selectFolder">().toExtend<UiPath>();
     expectTypeOf<"ui.getActiveWorkspace">().toExtend<UiPath>();
     expectTypeOf<"ui.switchWorkspace">().toExtend<UiPath>();
     expectTypeOf<"ui.setMode">().toExtend<UiPath>();
@@ -95,15 +94,13 @@ describe("registry-types.payload", () => {
   it("extracts EmptyPayload for no-arg methods", () => {
     // Note: lifecycle.getState, lifecycle.setup removed in app:setup migration
     expectTypeOf<MethodPayload<"lifecycle.quit">>().toEqualTypeOf<EmptyPayload>();
-    expectTypeOf<MethodPayload<"ui.selectFolder">>().toEqualTypeOf<EmptyPayload>();
     expectTypeOf<MethodPayload<"ui.getActiveWorkspace">>().toEqualTypeOf<EmptyPayload>();
   });
 
   it("extracts ProjectOpenPayload for projects.open", () => {
     expectTypeOf<MethodPayload<"projects.open">>().toEqualTypeOf<ProjectOpenPayload>();
-    // Verify shape
+    // Verify shape - path is optional
     expectTypeOf<MethodPayload<"projects.open">>().toHaveProperty("path");
-    expectTypeOf<MethodPayload<"projects.open">["path"]>().toBeString();
   });
 
   it("extracts ProjectIdPayload for project ID methods", () => {
@@ -174,11 +171,11 @@ describe("registry-types.payload", () => {
 
 describe("registry-types.handler", () => {
   it("MethodHandler extracts correct function type", () => {
-    // Handler for projects.open should accept ProjectOpenPayload and return Promise<Project>
+    // Handler for projects.open should accept ProjectOpenPayload and return Promise<Project | null>
     type OpenHandler = MethodHandler<"projects.open">;
     expectTypeOf<OpenHandler>().toBeFunction();
     expectTypeOf<OpenHandler>().parameter(0).toEqualTypeOf<ProjectOpenPayload>();
-    expectTypeOf<OpenHandler>().returns.resolves.toEqualTypeOf<Project>();
+    expectTypeOf<OpenHandler>().returns.resolves.toEqualTypeOf<Project | null>();
   });
 
   it("MethodHandler matches MethodRegistry definition", () => {
@@ -201,7 +198,7 @@ describe("registry-types.result", () => {
     expectTypeOf<MethodResult<"lifecycle.quit">>().toEqualTypeOf<void>();
 
     // Project methods
-    expectTypeOf<MethodResult<"projects.open">>().toEqualTypeOf<Project>();
+    expectTypeOf<MethodResult<"projects.open">>().toEqualTypeOf<Project | null>();
     expectTypeOf<MethodResult<"projects.close">>().toEqualTypeOf<void>();
     expectTypeOf<MethodResult<"projects.fetchBases">>().toEqualTypeOf<{
       readonly bases: readonly BaseInfo[];
@@ -218,7 +215,6 @@ describe("registry-types.result", () => {
     >();
 
     // UI methods
-    expectTypeOf<MethodResult<"ui.selectFolder">>().toEqualTypeOf<string | null>();
     expectTypeOf<MethodResult<"ui.getActiveWorkspace">>().toEqualTypeOf<WorkspaceRef | null>();
     expectTypeOf<MethodResult<"ui.switchWorkspace">>().toEqualTypeOf<void>();
     expectTypeOf<MethodResult<"ui.setMode">>().toEqualTypeOf<void>();

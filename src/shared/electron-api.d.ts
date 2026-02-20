@@ -32,7 +32,7 @@ export interface Api {
   // Lifecycle handlers are registered in bootstrap(), others in startServices().
 
   projects: {
-    open(path: string): Promise<Project>;
+    open(path?: string): Promise<Project | null>;
     close(projectId: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
     clone(url: string): Promise<Project>;
     fetchBases(projectId: string): Promise<{ readonly bases: readonly ApiBaseInfo[] }>;
@@ -61,7 +61,6 @@ export interface Api {
     getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
   };
   ui: {
-    selectFolder(): Promise<string | null>;
     getActiveWorkspace(): Promise<WorkspaceRef | null>;
     switchWorkspace(workspacePath: string, focus?: boolean): Promise<void>;
     setMode(mode: UIMode): Promise<void>;

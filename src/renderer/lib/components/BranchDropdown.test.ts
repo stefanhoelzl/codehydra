@@ -30,7 +30,6 @@ const { mockFetchBases, basesUpdatedHandlers } = vi.hoisted(() => ({
 
 // Mock $lib/api module
 vi.mock("$lib/api", () => ({
-  selectFolder: vi.fn().mockResolvedValue(null),
   openProject: vi.fn().mockResolvedValue(undefined),
   closeProject: vi.fn().mockResolvedValue(undefined),
   listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),

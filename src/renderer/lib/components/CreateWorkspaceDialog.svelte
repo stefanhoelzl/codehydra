@@ -10,6 +10,7 @@
     projects as projectsApi,
     type Workspace,
     type ProjectId,
+    type Project,
   } from "$lib/api";
   import { closeDialog, openGitCloneDialog } from "$lib/stores/dialogs.svelte.js";
   import { getProjectById, projects } from "$lib/stores/projects.svelte.js";
@@ -172,26 +173,18 @@
     submitError = null;
 
     try {
-      const path = await ui.selectFolder();
-      if (!path) {
+      const project: Project | null = await projectsApi.open();
+      if (!project) {
         // User cancelled folder picker
         return;
       }
-
-      try {
-        await projectsApi.open(path);
-        // Find the newly opened project (it will be the one with the matching path)
-        const newProject = projects.value.find((p) => p.path === path);
-        if (newProject) {
-          handleProjectSelect(newProject.id);
-          // Focus name input for efficient form completion
-          setTimeout(() => nameInputRef?.focus(), 0);
-        }
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.warn("Failed to open project from dialog", { path, error: message });
-        submitError = message;
-      }
+      handleProjectSelect(project.id);
+      // Focus name input for efficient form completion
+      setTimeout(() => nameInputRef?.focus(), 0);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.warn("Failed to open project from dialog", { error: message });
+      submitError = message;
     } finally {
       isOpeningProject = false;
     }

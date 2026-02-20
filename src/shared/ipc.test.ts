@@ -58,12 +58,6 @@ describe("ApiIpcChannels (v2 API)", () => {
     });
   });
 
-  describe("UI commands", () => {
-    it("has UI_SELECT_FOLDER channel", () => {
-      expect(ApiIpcChannels.UI_SELECT_FOLDER).toBe("api:ui:select-folder");
-    });
-  });
-
   describe("Events", () => {
     it("has PROJECT_OPENED event channel", () => {
       expect(ApiIpcChannels.PROJECT_OPENED).toBe("api:project:opened");
