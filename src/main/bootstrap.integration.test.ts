@@ -14,7 +14,6 @@ import { createMockLogger } from "../services/logging";
 import { createBehavioralIpcLayer } from "../services/platform/ipc.test-utils";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
-import { wireModules } from "./intents/infrastructure/wire";
 import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
 import { ApiRegistry } from "./api/registry";
 import { ApiIpcChannels } from "../shared/ipc";
@@ -191,11 +190,15 @@ function createTestWiring(overrides?: {
     mountSignal,
   });
 
-  wireModules(
-    [...(overrides?.modules ?? []), quitModule, retryModule, lifecycleReadyModule, ipcEventBridge],
-    hookRegistry,
-    dispatcher
-  );
+  for (const mod of [
+    ...(overrides?.modules ?? []),
+    quitModule,
+    retryModule,
+    lifecycleReadyModule,
+    ipcEventBridge,
+  ]) {
+    dispatcher.registerModule(mod);
+  }
 
   registry.register("lifecycle.ready", readyHandler, {
     ipc: ApiIpcChannels.LIFECYCLE_READY,
@@ -254,7 +257,7 @@ describe("bootstrap.module.order", () => {
   it("all modules registered during initialization", () => {
     const result = createTestWiring();
 
-    // wireModules runs during createTestWiring,
+    // dispatcher.registerModule runs during createTestWiring,
     // so getInterface() should succeed immediately
     expect(() => result.getInterface()).not.toThrow();
   });
@@ -355,11 +358,15 @@ describe("bootstrap.quit.flow", () => {
       mountSignal: { resolve: null },
     });
 
-    wireModules(
-      [idempotencyModule, quitModule, retryModule, lifecycleReadyModule, ipcEventBridge],
-      hookRegistry,
-      dispatcher
-    );
+    for (const mod of [
+      idempotencyModule,
+      quitModule,
+      retryModule,
+      lifecycleReadyModule,
+      ipcEventBridge,
+    ]) {
+      dispatcher.registerModule(mod);
+    }
 
     registry.register("lifecycle.ready", readyHandler, {
       ipc: ApiIpcChannels.LIFECYCLE_READY,
@@ -799,20 +806,18 @@ function createSetupTestDeps(overrides?: {
     mountSignal,
   });
 
-  wireModules(
-    [
-      idempotencyModule,
-      viewModule,
-      codeServerModule,
-      agentModule,
-      quitModule,
-      retryModule,
-      lifecycleReadyModule,
-      ipcEventBridge,
-    ],
-    setupHookRegistry,
-    captured.dispatcher
-  );
+  for (const mod of [
+    idempotencyModule,
+    viewModule,
+    codeServerModule,
+    agentModule,
+    quitModule,
+    retryModule,
+    lifecycleReadyModule,
+    ipcEventBridge,
+  ]) {
+    captured.dispatcher.registerModule(mod);
+  }
 
   registry.register("lifecycle.ready", readyHandler, {
     ipc: ApiIpcChannels.LIFECYCLE_READY,
@@ -1231,19 +1236,17 @@ describe("bootstrap.setup.progress", () => {
       mountSignal,
     });
 
-    wireModules(
-      [
-        viewModule,
-        codeServerModule,
-        agentModule,
-        quitModule,
-        retryModule,
-        lifecycleReadyModule,
-        ipcEventBridge,
-      ],
-      progressHookRegistry,
-      progressDispatcher
-    );
+    for (const mod of [
+      viewModule,
+      codeServerModule,
+      agentModule,
+      quitModule,
+      retryModule,
+      lifecycleReadyModule,
+      ipcEventBridge,
+    ]) {
+      progressDispatcher.registerModule(mod);
+    }
 
     registry.register("lifecycle.ready", readyHandler, {
       ipc: ApiIpcChannels.LIFECYCLE_READY,
@@ -1398,19 +1401,17 @@ describe("bootstrap.setup.progress", () => {
         mountSignal,
       });
 
-      wireModules(
-        [
-          viewModule,
-          codeServerModule,
-          agentModule,
-          quitModule,
-          retryModule,
-          lifecycleReadyModule,
-          ipcEventBridge,
-        ],
-        pctHookRegistry,
-        capturedDispatcher
-      );
+      for (const mod of [
+        viewModule,
+        codeServerModule,
+        agentModule,
+        quitModule,
+        retryModule,
+        lifecycleReadyModule,
+        ipcEventBridge,
+      ]) {
+        capturedDispatcher.registerModule(mod);
+      }
 
       registry.register("lifecycle.ready", readyHandler, {
         ipc: ApiIpcChannels.LIFECYCLE_READY,

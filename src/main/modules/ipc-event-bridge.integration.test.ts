@@ -20,7 +20,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   UpdateAgentStatusOperation,
   UPDATE_AGENT_STATUS_OPERATION_ID,
@@ -226,7 +226,8 @@ function createStatusTestSetup(): StatusTestSetup {
   });
   const resolveModule = createMockResolveModule();
 
-  wireModules([ipcEventBridge, resolveModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(ipcEventBridge);
+  dispatcher.registerModule(resolveModule);
 
   return { dispatcher, mockApiRegistry };
 }
@@ -304,7 +305,8 @@ function createLifecycleTestSetup(
     },
   };
 
-  wireModules([ipcEventBridge, quitModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(ipcEventBridge);
+  dispatcher.registerModule(quitModule);
 
   return { dispatcher, mockApiRegistry, mockApi, mockPluginServer };
 }
@@ -637,7 +639,8 @@ describe("IpcEventBridge - lifecycle", () => {
         },
       };
 
-      wireModules([ipcEventBridge, quitModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(ipcEventBridge);
+      dispatcher.registerModule(quitModule);
 
       // Start (wires API events, each api.on() returns unsubscribeFn)
       await dispatcher.dispatch({
@@ -710,7 +713,8 @@ describe("IpcEventBridge - lifecycle", () => {
         },
       };
 
-      wireModules([ipcEventBridge, quitModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(ipcEventBridge);
+      dispatcher.registerModule(quitModule);
 
       // Start (wires with throwing cleanup)
       await dispatcher.dispatch({
@@ -792,7 +796,8 @@ describe("IpcEventBridge - setup:error", () => {
       },
     };
 
-    wireModules([ipcEventBridge, failingSetupHook], hookRegistry, dispatcher);
+    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(failingSetupHook);
 
     return { dispatcher, mockWebContents };
   }
@@ -857,7 +862,8 @@ describe("IpcEventBridge - setup:error", () => {
       },
     };
 
-    wireModules([ipcEventBridge, failingHook], hookRegistry, dispatcher);
+    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(failingHook);
 
     const intent: SetupIntent = { type: INTENT_SETUP, payload: {} };
     await expect(dispatcher.dispatch(intent)).rejects.toThrow("Network timeout");

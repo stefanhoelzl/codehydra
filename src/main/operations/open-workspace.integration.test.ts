@@ -36,7 +36,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   OpenWorkspaceOperation,
   OPEN_WORKSPACE_OPERATION_ID,
@@ -440,7 +440,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     // Insert before keepFilesModule so the failing handler runs first on the "setup" hook
     modules.splice(modules.indexOf(worktreeModule) + 1, 0, failingSetupModule);
   }
-  wireModules(modules, hookRegistry, dispatcher);
+  for (const m of modules) dispatcher.registerModule(m);
 
   return { dispatcher, projectId, keepFilesService };
 }
@@ -1016,21 +1016,15 @@ describe("OpenWorkspace Operation", () => {
         },
       };
 
-      wireModules(
-        [
-          switchResolveModule,
-          switchResolveProjectModule,
-          switchViewModule,
-          resolveProjectModule,
-          fetchBasesModule,
-          worktreeModule,
-          agentModule,
-          extraEnvModule,
-          codeServerModule,
-        ],
-        hookRegistry,
-        dispatcher
-      );
+      dispatcher.registerModule(switchResolveModule);
+      dispatcher.registerModule(switchResolveProjectModule);
+      dispatcher.registerModule(switchViewModule);
+      dispatcher.registerModule(resolveProjectModule);
+      dispatcher.registerModule(fetchBasesModule);
+      dispatcher.registerModule(worktreeModule);
+      dispatcher.registerModule(agentModule);
+      dispatcher.registerModule(extraEnvModule);
+      dispatcher.registerModule(codeServerModule);
 
       await dispatcher.dispatch(createIntent(projectId));
 

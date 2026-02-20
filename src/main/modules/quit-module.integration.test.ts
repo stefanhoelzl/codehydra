@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import { createQuitModule } from "./quit-module";
@@ -28,7 +28,7 @@ describe("QuitModule Integration", () => {
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const module = createQuitModule({ app: { quit } });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
       type: INTENT_APP_SHUTDOWN,

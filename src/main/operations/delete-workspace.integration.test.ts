@@ -15,7 +15,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import {
@@ -753,27 +753,24 @@ function createTestHarness(options?: {
     },
   };
 
-  wireModules(
-    [
-      idempotencyModule,
-      progressCaptureModule,
-      deleteResolveModule,
-      deleteResolveProjectModule,
-      deleteViewModule,
-      deleteAgentModule,
-      deleteWindowsLockModule,
-      deleteWorktreeModule,
-      deleteCodeServerModule,
-      deleteStateModule,
-      deleteIpcBridge,
-      switchResolveModule,
-      switchResolveProjectModule,
-      switchViewModule,
-      switchFindCandidatesModule,
-    ],
-    hookRegistry,
-    dispatcher
-  );
+  for (const m of [
+    idempotencyModule,
+    progressCaptureModule,
+    deleteResolveModule,
+    deleteResolveProjectModule,
+    deleteViewModule,
+    deleteAgentModule,
+    deleteWindowsLockModule,
+    deleteWorktreeModule,
+    deleteCodeServerModule,
+    deleteStateModule,
+    deleteIpcBridge,
+    switchResolveModule,
+    switchResolveProjectModule,
+    switchViewModule,
+    switchFindCandidatesModule,
+  ])
+    dispatcher.registerModule(m);
 
   return {
     dispatcher,

@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   RestartAgentOperation,
   RESTART_AGENT_OPERATION_ID,
@@ -136,7 +136,9 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
     },
   };
 
-  wireModules([resolveModule, resolveProjectModule, restartModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(resolveProjectModule);
+  dispatcher.registerModule(restartModule);
 
   return { dispatcher, projectId, workspaceName };
 }

@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "../operations/update-available";
 import type { UpdateAvailableIntent } from "../operations/update-available";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
@@ -110,7 +110,7 @@ function createTestSetup(titleVersion?: string): TestSetup {
 
   const windowTitleModule = createWindowTitleModule(setTitle, titleVersion ?? "main");
 
-  wireModules([windowTitleModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(windowTitleModule);
 
   return { dispatcher, setTitle };
 }
@@ -253,7 +253,7 @@ describe("WindowTitleModule Integration", () => {
     dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
 
     const windowTitleModule = createWindowTitleModule(setTitle, undefined);
-    wireModules([windowTitleModule], hookRegistry, dispatcher);
+    dispatcher.registerModule(windowTitleModule);
 
     await dispatcher.dispatch(startIntent());
 

@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -201,10 +201,9 @@ function createTestSetup(
 
   if (options?.withIdempotency) {
     const idempotencyModule = createIdempotencyModule([{ intentType: INTENT_APP_SHUTDOWN }]);
-    wireModules([idempotencyModule, ...modules], hookRegistry, dispatcher);
-  } else {
-    wireModules(modules, hookRegistry, dispatcher);
+    dispatcher.registerModule(idempotencyModule);
   }
+  for (const m of modules) dispatcher.registerModule(m);
 
   return { dispatcher };
 }

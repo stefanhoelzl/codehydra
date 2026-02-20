@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import {
   APP_START_OPERATION_ID,
@@ -159,7 +159,7 @@ function createTestSetup(overrides?: { disposeThrows?: Error; logger?: Logger })
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, updateOperation);
 
-  wireModules([autoUpdaterModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(autoUpdaterModule);
 
   return { dispatcher, autoUpdater, updateOperation };
 }

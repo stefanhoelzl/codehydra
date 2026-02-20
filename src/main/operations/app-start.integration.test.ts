@@ -30,7 +30,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   AppStartOperation,
   INTENT_APP_START,
@@ -288,7 +288,7 @@ function createTestSetup(
   }
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
-  wireModules(allModules, hookRegistry, dispatcher);
+  for (const m of allModules) dispatcher.registerModule(m);
 
   return { dispatcher };
 }
@@ -591,7 +591,7 @@ describe("AppStart Operation", () => {
       if (options?.setupStub) {
         dispatcher.registerOperation(INTENT_SETUP, options.setupStub);
       }
-      wireModules(modules, hookRegistry, dispatcher);
+      for (const m of modules) dispatcher.registerModule(m);
 
       return { dispatcher };
     }

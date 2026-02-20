@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   GetAgentSessionOperation,
   GET_AGENT_SESSION_OPERATION_ID,
@@ -114,7 +114,8 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
     },
   };
 
-  wireModules([resolveModule, agentSessionModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(agentSessionModule);
 
   return { dispatcher, workspaceName };
 }

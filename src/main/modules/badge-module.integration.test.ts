@@ -15,7 +15,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   UpdateAgentStatusOperation,
   UPDATE_AGENT_STATUS_OPERATION_ID,
@@ -155,7 +155,8 @@ function createTestSetup(): TestSetup {
   const badgeModule = createBadgeModule(badgeManager, SILENT_LOGGER);
   const resolveModule = createMockResolveModule();
 
-  wireModules([badgeModule, resolveModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(badgeModule);
+  dispatcher.registerModule(resolveModule);
 
   return { dispatcher, appLayer, badgeManager };
 }

@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   GetActiveWorkspaceOperation,
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
@@ -64,7 +64,7 @@ function createTestSetup(cachedRef: WorkspaceRef | null): TestSetup {
     },
   };
 
-  wireModules([activeWorkspaceModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(activeWorkspaceModule);
 
   return { dispatcher };
 }

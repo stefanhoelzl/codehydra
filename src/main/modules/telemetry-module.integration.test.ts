@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import {
   APP_START_OPERATION_ID,
@@ -151,7 +151,7 @@ function createTestSetup(overrides?: {
   dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-  wireModules([telemetryModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(telemetryModule);
 
   return {
     dispatcher,
@@ -263,7 +263,7 @@ describe("TelemetryModule Integration", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-      wireModules([telemetryModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(telemetryModule);
 
       await dispatcher.dispatch(startIntent());
 
@@ -306,7 +306,7 @@ describe("TelemetryModule Integration", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-      wireModules([telemetryModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(telemetryModule);
 
       await dispatcher.dispatch(startIntent());
 

@@ -81,36 +81,6 @@ import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { ApiIpcChannels } from "../../shared/ipc";
 
 // =============================================================================
-// Test Wire Helper
-// =============================================================================
-
-function wireModules(
-  modules: readonly IntentModule[],
-  hookRegistry: HookRegistry,
-  dispatcher: Dispatcher
-): void {
-  for (const mod of modules) {
-    if (mod.hooks) {
-      for (const [operationId, hookPoints] of Object.entries(mod.hooks)) {
-        for (const [hookPointId, handler] of Object.entries(hookPoints)) {
-          hookRegistry.register(operationId, hookPointId, handler);
-        }
-      }
-    }
-    if (mod.events) {
-      for (const [eventType, handler] of Object.entries(mod.events)) {
-        dispatcher.subscribe(eventType, handler);
-      }
-    }
-    if (mod.interceptors) {
-      for (const interceptor of mod.interceptors) {
-        dispatcher.addInterceptor(interceptor);
-      }
-    }
-  }
-}
-
-// =============================================================================
 // Mock IViewManager
 // =============================================================================
 
@@ -434,7 +404,7 @@ function createTestSetup(
     dispatcher.registerOperation(operationOverride.intentType, operationOverride.operation);
   }
 
-  wireModules([module], hookRegistry, dispatcher);
+  dispatcher.registerModule(module);
 
   return { dispatcher, hookRegistry, viewManager, layers, mountSignal };
 }
@@ -949,7 +919,8 @@ describe("ViewModule Integration", () => {
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
       });
 
-      wireModules([module, quitModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
+      dispatcher.registerModule(quitModule);
 
       await dispatcher.dispatch({
         type: INTENT_APP_SHUTDOWN,
@@ -996,7 +967,8 @@ describe("ViewModule Integration", () => {
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
       });
 
-      wireModules([module, quitModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
+      dispatcher.registerModule(quitModule);
 
       // Start app (wires loading change callback)
       const startPromise = dispatcher.dispatch({
@@ -1045,7 +1017,8 @@ describe("ViewModule Integration", () => {
         sessionLayer: null,
       });
 
-      wireModules([module, quitModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
+      dispatcher.registerModule(quitModule);
 
       await expect(
         dispatcher.dispatch({
@@ -1076,7 +1049,7 @@ describe("ViewModule Integration", () => {
         buildInfo: { isPackaged: false, isDevelopment: true, gitBranch: "main" },
       });
 
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       const originalNoAsar = process.noAsar;
       try {
@@ -1112,7 +1085,7 @@ describe("ViewModule Integration", () => {
         electronApp,
       });
 
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       const originalFlags = process.env.CODEHYDRA_ELECTRON_FLAGS;
       try {
@@ -1155,7 +1128,7 @@ describe("ViewModule Integration", () => {
         pathProvider: { electronDataDir: { toNative: () => "/data/electron" } },
       });
 
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       await dispatcher.dispatch({
         type: INTENT_APP_START,
@@ -1197,7 +1170,7 @@ describe("ViewModule Integration", () => {
         buildInfo: { isPackaged: true, isDevelopment: false },
       });
 
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       const originalNoAsar = process.noAsar;
       try {
@@ -1228,7 +1201,7 @@ describe("ViewModule Integration", () => {
         sessionLayer: null,
       });
 
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       // Should not throw when optional deps are omitted
       await expect(
@@ -1271,7 +1244,7 @@ describe("ViewModule Integration", () => {
         devToolsHandler,
       });
 
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       await dispatcher.dispatch({
         type: INTENT_APP_START,
@@ -1306,7 +1279,7 @@ describe("ViewModule Integration", () => {
         sessionLayer: null,
       });
 
-      wireModules([module], hookRegistry, dispatcher);
+      dispatcher.registerModule(module);
 
       // Should not throw when optional deps are omitted
       await expect(

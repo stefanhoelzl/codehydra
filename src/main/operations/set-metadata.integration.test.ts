@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   SetMetadataOperation,
   SET_METADATA_OPERATION_ID,
@@ -235,11 +235,10 @@ function createTestSetup(): TestSetup {
       signalRetry: vi.fn(),
     } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["deleteOp"],
   });
-  wireModules(
-    [resolveModule, resolveProjectModule, metadataModule, ipcEventBridge],
-    hookRegistry,
-    dispatcher
-  );
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(resolveProjectModule);
+  dispatcher.registerModule(metadataModule);
+  dispatcher.registerModule(ipcEventBridge);
 
   return {
     dispatcher,

@@ -11,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   UpdateAgentStatusOperation,
   UPDATE_AGENT_STATUS_OPERATION_ID,
@@ -75,7 +75,7 @@ function createTestSetup(): { dispatcher: Dispatcher } {
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 
   const resolveModule = createMockResolveModule();
-  wireModules([resolveModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(resolveModule);
 
   return { dispatcher };
 }
@@ -182,7 +182,7 @@ describe("UpdateAgentStatus Operation", () => {
           },
         },
       };
-      wireModules([emptyResolveModule], hookRegistry, dispatcher);
+      dispatcher.registerModule(emptyResolveModule);
 
       const receivedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_AGENT_STATUS_UPDATED, (event) => {

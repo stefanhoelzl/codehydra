@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import {
   GetWorkspaceStatusOperation,
   GET_WORKSPACE_STATUS_OPERATION_ID,
@@ -145,7 +145,9 @@ function createTestSetup(opts: {
     },
   };
 
-  wireModules([resolveModule, getStatusModule, agentStatusModule], hookRegistry, dispatcher);
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(getStatusModule);
+  dispatcher.registerModule(agentStatusModule);
 
   return { dispatcher, workspaceName };
 }

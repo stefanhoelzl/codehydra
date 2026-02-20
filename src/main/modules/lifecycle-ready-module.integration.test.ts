@@ -11,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import { wireModules } from "../intents/infrastructure/wire";
+
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import {
@@ -52,7 +52,7 @@ describe("LifecycleReadyModule Integration", () => {
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
 
     const { module, readyHandler } = createLifecycleReadyModule({ mountSignal });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     // Set up mount signal so readyHandler has something to resolve
     let mountResolved = false;
@@ -81,7 +81,7 @@ describe("LifecycleReadyModule Integration", () => {
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
 
     const { module, readyHandler } = createLifecycleReadyModule({ mountSignal });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     // Set up mount signal
     let mountResolved = false;
@@ -119,7 +119,7 @@ describe("LifecycleReadyModule Integration", () => {
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
 
     const { module, readyHandler } = createLifecycleReadyModule({ mountSignal });
-    wireModules([module], hookRegistry, dispatcher);
+    dispatcher.registerModule(module);
 
     // Set up mount signal
     let callCount = 0;
