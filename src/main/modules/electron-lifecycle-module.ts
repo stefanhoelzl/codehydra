@@ -1,36 +1,41 @@
 /**
- * ElectronReadyModule - Waits for Electron app ready event.
+ * ElectronLifecycleModule - Electron app lifecycle hooks.
  *
- * Provides the "await-ready" hook on app-start, decoupling the
- * AppStartOperation from the Electron app lifecycle.
+ * Provides:
+ * - "await-ready" hook on app:start (waits for Electron app ready)
+ * - "quit" hook on app:shutdown (calls app.quit())
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 
 // =============================================================================
 // Dependency Interface
 // =============================================================================
 
-export interface ElectronReadyModuleDeps {
-  /** Electron app.whenReady() or equivalent promise-returning function. */
-  readonly whenReady: () => Promise<void>;
+export interface ElectronLifecycleModuleDeps {
+  readonly app: { whenReady(): Promise<void>; quit(): void };
 }
 
 // =============================================================================
 // Factory
 // =============================================================================
 
-/**
- * Create an ElectronReadyModule that provides the "await-ready" hook.
- */
-export function createElectronReadyModule(deps: ElectronReadyModuleDeps): IntentModule {
+export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps): IntentModule {
   return {
     hooks: {
       [APP_START_OPERATION_ID]: {
         "await-ready": {
           handler: async (): Promise<void> => {
-            await deps.whenReady();
+            await deps.app.whenReady();
+          },
+        },
+      },
+      [APP_SHUTDOWN_OPERATION_ID]: {
+        quit: {
+          handler: async () => {
+            deps.app.quit();
           },
         },
       },
