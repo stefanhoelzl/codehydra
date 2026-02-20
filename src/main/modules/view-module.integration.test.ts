@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { Path } from "../../services/platform/path";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
@@ -1074,10 +1075,23 @@ describe("ViewModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      expect(electronApp.setPath).toHaveBeenCalledWith("userData", "/data/electron/userData");
-      expect(electronApp.setPath).toHaveBeenCalledWith("sessionData", "/data/electron/sessionData");
-      expect(electronApp.setPath).toHaveBeenCalledWith("logs", "/data/electron/logs");
-      expect(electronApp.setPath).toHaveBeenCalledWith("crashDumps", "/data/electron/crashDumps");
+      const electronDir = new Path("/data/electron");
+      expect(electronApp.setPath).toHaveBeenCalledWith(
+        "userData",
+        new Path(electronDir, "userData").toNative()
+      );
+      expect(electronApp.setPath).toHaveBeenCalledWith(
+        "sessionData",
+        new Path(electronDir, "sessionData").toNative()
+      );
+      expect(electronApp.setPath).toHaveBeenCalledWith(
+        "logs",
+        new Path(electronDir, "logs").toNative()
+      );
+      expect(electronApp.setPath).toHaveBeenCalledWith(
+        "crashDumps",
+        new Path(electronDir, "crashDumps").toNative()
+      );
     });
 
     it("does not set process.noAsar when packaged", async () => {
