@@ -779,6 +779,8 @@ VS Code extension communication via Socket.IO:
 
 **Full details**: See [Plugin Interface](docs/PATTERNS.md#plugin-interface) for protocol and commands.
 
+**Mock Server for Extension Development**: When debugging extensions that depend on the sidekick extension (like markdown-review-editor), a mock PluginServer is available at `extensions/markdown-review-editor/scripts/mock-plugin-server.ts`. If the sidekick's Socket.IO protocol (events in `extensions/sidekick/src/types.ts`) is modified, this mock server must also be updated to match.
+
 ### Plugin API (for Third-Party Extensions)
 
 Third-party VS Code extensions can call CodeHydra API methods through the codehydra extension's exports.
