@@ -221,7 +221,6 @@ function createTestSetup(): TestSetup {
     globalWorktreeProvider: {
       listWorktrees: vi.fn(),
     } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["globalWorktreeProvider"],
-    emitDeletionProgress: vi.fn(),
     deleteOp: {
       hasPendingRetry: vi.fn().mockReturnValue(false),
       signalDismiss: vi.fn(),

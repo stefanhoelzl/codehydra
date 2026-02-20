@@ -73,6 +73,13 @@ export interface WorkspaceDeletedEvent extends DomainEvent {
 
 export const EVENT_WORKSPACE_DELETED = "workspace:deleted" as const;
 
+export const EVENT_WORKSPACE_DELETION_PROGRESS = "workspace:deletion-progress" as const;
+
+export interface WorkspaceDeletionProgressEvent extends DomainEvent {
+  readonly type: typeof EVENT_WORKSPACE_DELETION_PROGRESS;
+  readonly payload: DeletionProgress;
+}
+
 // =============================================================================
 // Hook Result Types (returned by handlers via collect())
 // =============================================================================
@@ -315,13 +322,10 @@ function mergeFlush(
 }
 
 // =============================================================================
-// Progress Callback Type
+// Emit function type (for threading ctx.emit through private methods)
 // =============================================================================
 
-/**
- * Callback for emitting deletion progress events.
- */
-export type DeletionProgressCallback = (progress: DeletionProgress) => void;
+type EmitFn = (event: DomainEvent) => void;
 
 // =============================================================================
 // Pipeline State (for progress emission)
@@ -360,8 +364,6 @@ export class DeleteWorkspaceOperation implements Operation<
 
   /** Pending retry resolvers keyed by workspace path. */
   private readonly retryResolvers = new Map<string, (choice: "retry" | "dismiss") => void>();
-
-  constructor(private readonly emitProgress: DeletionProgressCallback) {}
 
   /**
    * Wait for user choice (Kill & Retry or Dismiss) for a workspace.
@@ -415,7 +417,7 @@ export class DeleteWorkspaceOperation implements Operation<
     if (payload.force) {
       let identity: ResolvedIdentity | undefined;
       try {
-        const result = await this.runPipeline(ctx);
+        const result = await this.runPipeline(ctx, ctx.emit);
         identity = result.identity;
       } finally {
         // Force mode: always emit workspace:deleted for state cleanup (if identity resolved)
@@ -424,7 +426,7 @@ export class DeleteWorkspaceOperation implements Operation<
         }
       }
     } else {
-      const result = await this.runPipeline(ctx);
+      const result = await this.runPipeline(ctx, ctx.emit);
 
       // Normal mode: only emit if no errors
       if (!result.hasErrors) {
@@ -435,7 +437,10 @@ export class DeleteWorkspaceOperation implements Operation<
     return { started: true };
   }
 
-  private async runPipeline(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<PipelineResult> {
+  private async runPipeline(
+    ctx: OperationContext<DeleteWorkspaceIntent>,
+    emit: EmitFn
+  ): Promise<PipelineResult> {
     const { payload } = ctx.intent;
 
     // --- Resolve (workspacePath → projectPath + workspaceName) ---
@@ -480,11 +485,19 @@ export class DeleteWorkspaceOperation implements Operation<
     };
 
     // --- Shutdown ---
-    this.emitPipelineProgress(identity, payload, {}, false, false, "kill-terminals");
+    this.emitPipelineProgress(emit, identity, payload, {}, false, false, "kill-terminals");
     const { results: shutdownResults, errors: shutdownCollectErrors } =
       await ctx.hooks.collect<ShutdownHookResult>("shutdown", pipelineCtx);
     const shutdown = mergeShutdown(shutdownResults, shutdownCollectErrors);
-    this.emitPipelineProgress(identity, payload, { shutdown }, false, false, "cleanup-workspace");
+    this.emitPipelineProgress(
+      emit,
+      identity,
+      payload,
+      { shutdown },
+      false,
+      false,
+      "cleanup-workspace"
+    );
 
     // Dispatch workspace:switch(auto) if deleted workspace was the active one.
     // Auto-select mode finds the best candidate via find-candidates hook.
@@ -502,13 +515,13 @@ export class DeleteWorkspaceOperation implements Operation<
 
     const shutdownFailed = shutdown.errors.length > 0;
     if (shutdownFailed && !payload.force) {
-      this.emitPipelineProgress(identity, payload, { shutdown }, true, true);
+      this.emitPipelineProgress(emit, identity, payload, { shutdown }, true, true);
       return { hasErrors: true, identity };
     }
 
     // When removeWorktree is false, skip "release" and "delete" hooks (runtime teardown only)
     if (!payload.removeWorktree) {
-      this.emitPipelineProgress(identity, payload, { shutdown }, true, false);
+      this.emitPipelineProgress(emit, identity, payload, { shutdown }, true, false);
       return { hasErrors: false, identity };
     }
 
@@ -517,6 +530,7 @@ export class DeleteWorkspaceOperation implements Operation<
       await ctx.hooks.collect<ReleaseHookResult>("release", pipelineCtx);
     const release = mergeRelease(releaseResults, releaseCollectErrors);
     this.emitPipelineProgress(
+      emit,
       identity,
       payload,
       { shutdown, release },
@@ -533,14 +547,21 @@ export class DeleteWorkspaceOperation implements Operation<
     const deleteFailed = del.errors.length > 0;
     if (!deleteFailed) {
       // Success
-      this.emitPipelineProgress(identity, payload, { shutdown, release, del }, true, false);
+      this.emitPipelineProgress(emit, identity, payload, { shutdown, release, del }, true, false);
       return { hasErrors: false, identity };
     }
 
     // Delete failed — if force mode, emit and return
     if (payload.force) {
       const hasErrors = shutdownFailed || deleteFailed;
-      this.emitPipelineProgress(identity, payload, { shutdown, release, del }, true, hasErrors);
+      this.emitPipelineProgress(
+        emit,
+        identity,
+        payload,
+        { shutdown, release, del },
+        true,
+        hasErrors
+      );
       return { hasErrors, identity };
     }
 
@@ -549,6 +570,7 @@ export class DeleteWorkspaceOperation implements Operation<
     for (;;) {
       // Detect
       this.emitPipelineProgress(
+        emit,
         identity,
         payload,
         { shutdown, release, del: currentDel },
@@ -562,6 +584,7 @@ export class DeleteWorkspaceOperation implements Operation<
 
       // Emit progress with blockers and wait for user choice
       this.emitPipelineProgress(
+        emit,
         identity,
         payload,
         { shutdown, release, del: currentDel, detect },
@@ -576,6 +599,7 @@ export class DeleteWorkspaceOperation implements Operation<
 
       // Flush (kill collected PIDs)
       this.emitPipelineProgress(
+        emit,
         identity,
         payload,
         { shutdown, release, del: currentDel, detect },
@@ -593,7 +617,7 @@ export class DeleteWorkspaceOperation implements Operation<
       const flush = mergeFlush(flushResults, flushCollectErrors);
 
       // Emit progress showing kill completed
-      this.emitPipelineProgress(identity, payload, {
+      this.emitPipelineProgress(emit, identity, payload, {
         shutdown,
         release,
         del: currentDel,
@@ -603,6 +627,7 @@ export class DeleteWorkspaceOperation implements Operation<
 
       // Re-attempt delete
       this.emitPipelineProgress(
+        emit,
         identity,
         payload,
         { shutdown, release, del: currentDel, detect, flush },
@@ -617,6 +642,7 @@ export class DeleteWorkspaceOperation implements Operation<
       if (retryDel.errors.length === 0) {
         // Success
         this.emitPipelineProgress(
+          emit,
           identity,
           payload,
           { shutdown, release, del: retryDel },
@@ -635,6 +661,7 @@ export class DeleteWorkspaceOperation implements Operation<
    * Build DeletionOperation[] from pipeline state and emit progress.
    */
   private emitPipelineProgress(
+    emit: EmitFn,
     identity: ResolvedIdentity,
     payload: DeleteWorkspacePayload,
     state: PipelineState,
@@ -728,16 +755,20 @@ export class DeleteWorkspaceOperation implements Operation<
         ? state.detect.blockingProcesses
         : undefined;
 
-    this.emitProgress({
-      workspacePath: payload.workspacePath as WorkspacePath,
-      workspaceName: identity.workspaceName,
-      projectId: identity.projectId,
-      keepBranch: payload.keepBranch,
-      operations,
-      completed,
-      hasErrors,
-      ...(blockingProcesses !== undefined && { blockingProcesses }),
-    });
+    const progressEvent: WorkspaceDeletionProgressEvent = {
+      type: EVENT_WORKSPACE_DELETION_PROGRESS,
+      payload: {
+        workspacePath: payload.workspacePath as WorkspacePath,
+        workspaceName: identity.workspaceName,
+        projectId: identity.projectId,
+        keepBranch: payload.keepBranch,
+        operations,
+        completed,
+        hasErrors,
+        ...(blockingProcesses !== undefined && { blockingProcesses }),
+      },
+    };
+    emit(progressEvent);
   }
 
   private hookPointStatus(

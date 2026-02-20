@@ -116,10 +116,7 @@ function createMockCodeServerManagerLifecycleMethods() {
  * Registers all operations on the given dispatcher.
  * Matches the registration done at the composition root (index.ts).
  */
-function registerAllOperations(
-  dispatcher: Dispatcher,
-  emitDeletionProgress: (progress: import("../shared/api/types").DeletionProgress) => void
-): DeleteWorkspaceOperation {
+function registerAllOperations(dispatcher: Dispatcher): DeleteWorkspaceOperation {
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
   dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
@@ -132,7 +129,7 @@ function registerAllOperations(
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
 
-  const deleteOp = new DeleteWorkspaceOperation(emitDeletionProgress);
+  const deleteOp = new DeleteWorkspaceOperation();
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
 
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
@@ -167,8 +164,7 @@ function createTestWiring(overrides?: {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   const ipcLayer = overrides?.ipcLayer ?? createBehavioralIpcLayer();
-  const emitDeletionProgress = vi.fn();
-  const deleteOp = registerAllOperations(dispatcher, emitDeletionProgress);
+  const deleteOp = registerAllOperations(dispatcher);
 
   const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer });
   const mountSignal = overrides?.mountSignal ?? { resolve: null };
@@ -195,7 +191,6 @@ function createTestWiring(overrides?: {
               .mockResolvedValue({ canceled: true, filePaths: [] }),
           },
         }),
-    emitDeletionProgress,
     deleteOp: {
       hasPendingRetry: () => false,
       signalDismiss: vi.fn(),
@@ -396,8 +391,8 @@ describe("bootstrap.quit.flow", () => {
     const ipcLayer = createBehavioralIpcLayer();
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
-    const emitDeletionProgress = vi.fn();
-    const deleteOp = registerAllOperations(dispatcher, emitDeletionProgress);
+    const deleteOp = registerAllOperations(dispatcher);
+    void deleteOp;
     const idempotencyModule = createIdempotencyModule([{ intentType: INTENT_APP_SHUTDOWN }]);
 
     const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer });
@@ -412,7 +407,6 @@ describe("bootstrap.quit.flow", () => {
       agentStatusManager: { getStatus: vi.fn() } as never,
       globalWorktreeProvider: createMockGlobalWorktreeProvider(),
       dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
-      emitDeletionProgress,
       deleteOp: {
         hasPendingRetry: () => false,
         signalDismiss: vi.fn(),
@@ -834,8 +828,7 @@ function createSetupTestDeps(overrides?: {
   ]);
 
   // --- Register operations and wire modules ---
-  const emitDeletionProgress = vi.fn();
-  const deleteOp = registerAllOperations(captured.dispatcher, emitDeletionProgress);
+  const deleteOp = registerAllOperations(captured.dispatcher);
 
   const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer: captured.ipcLayer });
 
@@ -855,7 +848,6 @@ function createSetupTestDeps(overrides?: {
     } as never,
     globalWorktreeProvider: createMockGlobalWorktreeProvider(),
     dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
-    emitDeletionProgress,
     deleteOp: {
       hasPendingRetry: (wp: string) => deleteOp.hasPendingRetry(wp),
       signalDismiss: (wp: string) => deleteOp.signalDismiss(wp),
@@ -1268,8 +1260,7 @@ describe("bootstrap.setup.progress", () => {
     });
 
     // Register operations and wire modules
-    const emitDeletionProgress = vi.fn();
-    const deleteOp = registerAllOperations(progressDispatcher, emitDeletionProgress);
+    const deleteOp = registerAllOperations(progressDispatcher);
     void deleteOp;
 
     const progressIpcLayer = createBehavioralIpcLayer();
@@ -1290,7 +1281,6 @@ describe("bootstrap.setup.progress", () => {
       } as never,
       globalWorktreeProvider: createMockGlobalWorktreeProvider(),
       dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
-      emitDeletionProgress,
       deleteOp: {
         hasPendingRetry: () => false,
         signalDismiss: vi.fn(),
@@ -1438,8 +1428,7 @@ describe("bootstrap.setup.progress", () => {
       });
 
       // Register operations and wire modules
-      const emitDeletionProgress = vi.fn();
-      const deleteOp = registerAllOperations(capturedDispatcher, emitDeletionProgress);
+      const deleteOp = registerAllOperations(capturedDispatcher);
       void deleteOp;
 
       const pctIpcLayer = createBehavioralIpcLayer();
@@ -1460,7 +1449,6 @@ describe("bootstrap.setup.progress", () => {
         } as never,
         globalWorktreeProvider: createMockGlobalWorktreeProvider(),
         dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
-        emitDeletionProgress,
         deleteOp: {
           hasPendingRetry: () => false,
           signalDismiss: vi.fn(),

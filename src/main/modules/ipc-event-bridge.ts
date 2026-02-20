@@ -46,12 +46,16 @@ import type { SetModeIntent } from "../operations/set-mode";
 import type { WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_CREATED, INTENT_OPEN_WORKSPACE } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent } from "../operations/open-workspace";
-import type { WorkspaceDeletedEvent } from "../operations/delete-workspace";
-import { EVENT_WORKSPACE_DELETED, INTENT_DELETE_WORKSPACE } from "../operations/delete-workspace";
 import type {
-  DeleteWorkspaceIntent,
-  DeletionProgressCallback,
+  WorkspaceDeletedEvent,
+  WorkspaceDeletionProgressEvent,
 } from "../operations/delete-workspace";
+import {
+  EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETION_PROGRESS,
+  INTENT_DELETE_WORKSPACE,
+} from "../operations/delete-workspace";
+import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { ProjectOpenedEvent } from "../operations/open-project";
 import { EVENT_PROJECT_OPENED, INTENT_OPEN_PROJECT } from "../operations/open-project";
 import type { OpenProjectIntent } from "../operations/open-project";
@@ -107,7 +111,6 @@ export interface IpcEventBridgeDeps {
       filePaths: string[];
     }>;
   };
-  readonly emitDeletionProgress: DeletionProgressCallback;
   readonly deleteOp: {
     hasPendingRetry(wp: string): boolean;
     signalDismiss(wp: string): void;
@@ -171,6 +174,17 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         workspaceName: payload.workspaceName,
         path: payload.workspacePath,
       });
+    },
+    [EVENT_WORKSPACE_DELETION_PROGRESS]: (event: DomainEvent) => {
+      const progress = (event as WorkspaceDeletionProgressEvent).payload;
+      try {
+        const webContents = deps.getUIWebContents();
+        if (webContents && !webContents.isDestroyed()) {
+          webContents.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
+        }
+      } catch {
+        // Ignore - deletion continues even if UI disconnected
+      }
     },
     [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
       const p = (event as ProjectOpenedEvent).payload;
