@@ -15,7 +15,12 @@
  * - mountModule (app-start/activate hook)
  * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
  *
- * Internal state: cachedActiveRef, loadingChangeCleanupFn, mountSignal.
+ * Also owns the lifecycle.ready handler (merged from LifecycleReadyModule):
+ * - app:started event resolves projectsLoadedPromise
+ * - readyHandler resolves mountSignal and awaits projectsLoadedPromise
+ *
+ * Internal state: cachedActiveRef, loadingChangeCleanupFn, mountSignal,
+ * projectsLoadedPromise.
  */
 
 import { Path } from "../../services/platform/path";
@@ -32,11 +37,13 @@ import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { WorkspaceRef } from "../../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../../shared/ipc";
 import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
-import type {
-  ConfigureResult,
-  ShowUIHookResult,
-  ActivateHookContext,
-  ActivateHookResult,
+import {
+  APP_START_OPERATION_ID,
+  EVENT_APP_STARTED,
+  type ConfigureResult,
+  type ShowUIHookResult,
+  type ActivateHookContext,
+  type ActivateHookResult,
 } from "../operations/app-start";
 import type { GetActiveWorkspaceHookResult } from "../operations/get-active-workspace";
 import type {
@@ -55,7 +62,6 @@ import type { ProjectOpenedEvent, SelectFolderHookResult } from "../operations/o
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../operations/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
-import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../operations/get-active-workspace";
@@ -74,11 +80,10 @@ import { getErrorMessage } from "../../shared/error-utils";
 // =============================================================================
 
 /**
- * Mount coordination signal shared between ViewModule and wireDispatcher's
- * lifecycle.ready handler.
+ * Mount coordination signal used internally by ViewModule.
  */
-export interface MountSignal {
-  /** Set by mountModule's activate handler; called by lifecycle.ready handler. */
+interface MountSignal {
+  /** Set by mountModule's activate handler; called by readyHandler. */
   resolve: (() => void) | null;
 }
 
@@ -123,7 +128,8 @@ export interface ViewModuleDeps {
  */
 export interface ViewModuleResult {
   readonly module: IntentModule;
-  readonly mountSignal: MountSignal;
+  /** Handler for the lifecycle.ready API method. Call from registry.register(). */
+  readonly readyHandler: () => Promise<void>;
 }
 
 // =============================================================================
@@ -182,6 +188,10 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
   let cachedActiveRef: WorkspaceRef | null = null;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
   const mountSignal: MountSignal = { resolve: null };
+  let projectsLoadedResolve: (() => void) | null = null;
+  const projectsLoadedPromise = new Promise<void>((resolve) => {
+    projectsLoadedResolve = resolve;
+  });
 
   const module: IntentModule = {
     hooks: {
@@ -513,8 +523,26 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         const payload = (event as AgentStatusUpdatedEvent).payload;
         viewManager.setWorkspaceLoaded(payload.workspacePath);
       },
+
+      // -------------------------------------------------------------------
+      // app:started → resolve projectsLoadedPromise
+      // -------------------------------------------------------------------
+      [EVENT_APP_STARTED]: () => {
+        if (projectsLoadedResolve) {
+          projectsLoadedResolve();
+          projectsLoadedResolve = null;
+        }
+      },
     },
   };
 
-  return { module, mountSignal };
+  const readyHandler = async (): Promise<void> => {
+    if (mountSignal.resolve) {
+      mountSignal.resolve();
+      mountSignal.resolve = null;
+      await projectsLoadedPromise;
+    }
+  };
+
+  return { module, readyHandler };
 }

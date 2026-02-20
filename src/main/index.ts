@@ -10,7 +10,7 @@
  * 5. Service construction
  * 6. Manager construction (two-phase: constructor only, no Electron resources)
  * 7. Intent modules (existing extracted modules)
- * 8. New modules (electron-ready, logging, script, quit, retry, lifecycle-ready)
+ * 8. New modules (electron-ready, logging, script, quit, retry)
  * 9. ApiRegistry + Operation registration + IPC event bridge
  * 10. Wire all modules + get API interface
  * 11. Cleanup + dispatch app:start
@@ -100,7 +100,6 @@ import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
 import { createQuitModule } from "./modules/quit-module";
 import { createRetryModule } from "./modules/retry-module";
-import { createLifecycleReadyModule } from "./modules/lifecycle-ready-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
@@ -362,7 +361,7 @@ const idempotencyModule = createIdempotencyModule([
 
 const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
 
-const { module: viewModule, mountSignal } = createViewModule({
+const { module: viewModule, readyHandler } = createViewModule({
   viewManager,
   logger: apiLogger,
   viewLayer,
@@ -494,10 +493,6 @@ const quitModule = createQuitModule({ app });
 
 const retryModule = createRetryModule({ ipcLayer });
 
-const { module: lifecycleReadyModule, readyHandler } = createLifecycleReadyModule({
-  mountSignal,
-});
-
 // 9. ApiRegistry + Operation registration
 
 const registry = new ApiRegistry({
@@ -569,7 +564,6 @@ dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(quitModule);
 dispatcher.registerModule(retryModule);
-dispatcher.registerModule(lifecycleReadyModule);
 dispatcher.registerModule(ipcEventBridge);
 
 // Register lifecycle.ready handler (bridges mount signal + projects-loaded deferred)
