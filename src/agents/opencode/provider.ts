@@ -36,6 +36,12 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   private _port: number | null = null;
 
   /**
+   * Bridge server port for wrapper notifications.
+   * Set via setBridgePort() after server starts.
+   */
+  private _bridgePort: number | null = null;
+
+  /**
    * Primary session ID for this workspace.
    * Created or found during connect(), preserved during restart.
    */
@@ -89,11 +95,23 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     if (!session) {
       return {};
     }
-    return {
+    const envVars: Record<string, string> = {
       CODEHYDRA_OPENCODE_PORT: String(session.port),
       CODEHYDRA_OPENCODE_SESSION_ID: session.sessionId,
       CODEHYDRA_WORKSPACE_PATH: this.workspacePath,
     };
+    if (this._bridgePort !== null) {
+      envVars.CODEHYDRA_BRIDGE_PORT = String(this._bridgePort);
+    }
+    return envVars;
+  }
+
+  /**
+   * Set the bridge server port for wrapper notifications.
+   * Called after the server starts when the bridge is known to be running.
+   */
+  setBridgePort(port: number): void {
+    this._bridgePort = port;
   }
 
   /**
@@ -352,6 +370,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       this.client = null;
     }
     this._port = null;
+    this._bridgePort = null;
     this._primarySessionId = null;
     this.clientStatus = "idle";
     this.tuiAttached = false;

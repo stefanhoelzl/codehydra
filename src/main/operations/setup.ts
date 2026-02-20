@@ -20,6 +20,7 @@ import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType, SetupRowId, SetupRowStatus } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
+import type { LifecycleAgentType } from "../../shared/ipc";
 
 // =============================================================================
 // Intent Types
@@ -56,10 +57,27 @@ export const INTENT_SETUP = "app:setup" as const;
 export const SETUP_OPERATION_ID = "setup";
 
 /**
+ * Per-handler result contract for the "register-agents" hook point.
+ * Each per-agent module returns its agent info for the selection UI.
+ */
+export interface RegisterAgentResult {
+  readonly agent: LifecycleAgentType;
+  readonly label: string;
+  readonly icon: string;
+}
+
+/**
  * Per-handler result contract for the "agent-selection" hook point.
  */
 export interface AgentSelectionHookResult {
   readonly selectedAgent: ConfigAgentType;
+}
+
+/**
+ * Input context for the "agent-selection" hook — carries available agents from register-agents.
+ */
+export interface AgentSelectionHookContext extends HookContext {
+  readonly availableAgents: readonly RegisterAgentResult[];
 }
 
 /**
@@ -151,11 +169,20 @@ export class SetupOperation implements Operation<SetupIntent, void> {
         throw showUiErrors[0]!;
       }
 
-      // Hook 2: "agent-selection" -- (conditional) Show UI, wait for user selection
+      // Hook 2: "agent-selection" -- (conditional) Collect agent info + show UI
       let selectedAgent: ConfigAgentType | undefined;
       if (payload.needsAgentSelection) {
+        // 2a: Collect available agents from per-agent modules
+        const { results: agentInfos, errors: registerErrors } =
+          await ctx.hooks.collect<RegisterAgentResult>("register-agents", hookCtx);
+        if (registerErrors.length > 0) {
+          throw registerErrors[0]!;
+        }
+
+        // 2b: Show agent selection UI with collected agents
+        const selectionCtx: AgentSelectionHookContext = { ...hookCtx, availableAgents: agentInfos };
         const { results: agentResults, errors: agentErrors } =
-          await ctx.hooks.collect<AgentSelectionHookResult>("agent-selection", hookCtx);
+          await ctx.hooks.collect<AgentSelectionHookResult>("agent-selection", selectionCtx);
         if (agentErrors.length > 0) {
           throw agentErrors[0]!;
         }

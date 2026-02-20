@@ -2,24 +2,25 @@
   /**
    * Agent selection dialog component.
    * Displayed on first run to let users choose their preferred AI agent.
+   * Renders cards dynamically from the agents prop provided via IPC.
    */
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import Logo from "./Logo.svelte";
   import Icon from "./Icon.svelte";
+  import type { AgentInfo } from "@shared/ipc";
   import type { ConfigAgentType } from "@shared/api/types";
 
   interface Props {
+    /** Available agents to display */
+    agents: readonly AgentInfo[];
     /** Callback when agent is selected and user clicks Continue */
     onselect: (agent: ConfigAgentType) => void;
   }
 
-  const { onselect }: Props = $props();
+  const { agents, onselect }: Props = $props();
 
-  /** Available agents in order */
-  const agents: ConfigAgentType[] = ["claude", "opencode"];
-
-  /** Currently selected agent */
-  let selectedAgent = $state<ConfigAgentType>("claude");
+  /** Currently selected agent — default to first in agents list */
+  let selectedAgent = $state<ConfigAgentType>(untrack(() => agents[0]?.agent ?? "claude"));
 
   /** Handle card selection */
   function selectAgent(agent: ConfigAgentType): void {
@@ -39,14 +40,14 @@
 
   /** Handle keyboard navigation on cards */
   function handleCardKeydown(event: KeyboardEvent, agent: ConfigAgentType): void {
-    const currentIndex = agents.indexOf(agent);
+    const currentIndex = agents.findIndex((a) => a.agent === agent);
 
     switch (event.key) {
       case "ArrowUp":
       case "ArrowLeft": {
         event.preventDefault();
         const prevIndex = currentIndex === 0 ? agents.length - 1 : currentIndex - 1;
-        const prevAgent = agents[prevIndex] as ConfigAgentType;
+        const prevAgent = agents[prevIndex]!.agent;
         selectAgent(prevAgent);
         focusCard(prevAgent);
         break;
@@ -55,7 +56,7 @@
       case "ArrowRight": {
         event.preventDefault();
         const nextIndex = currentIndex === agents.length - 1 ? 0 : currentIndex + 1;
-        const nextAgent = agents[nextIndex] as ConfigAgentType;
+        const nextAgent = agents[nextIndex]!.agent;
         selectAgent(nextAgent);
         focusCard(nextAgent);
         break;
@@ -84,53 +85,31 @@
   <p class="subtitle">Select which AI assistant to use with CodeHydra</p>
 
   <div class="cards" role="radiogroup" aria-label="AI Agent selection">
-    <button
-      type="button"
-      class="card"
-      class:selected={selectedAgent === "claude"}
-      role="radio"
-      aria-checked={selectedAgent === "claude"}
-      tabindex={selectedAgent === "claude" ? 0 : -1}
-      data-agent="claude"
-      onclick={() => selectAgent("claude")}
-      onkeydown={(e) => handleCardKeydown(e, "claude")}
-    >
-      <div class="card-icon">
-        <Icon name="sparkle" size={32} />
-      </div>
-      <span class="card-title">Claude</span>
-      <div class="card-indicator">
-        {#if selectedAgent === "claude"}
-          <Icon name="circle-filled" size={16} />
-        {:else}
-          <Icon name="circle-outline" size={16} />
-        {/if}
-      </div>
-    </button>
-
-    <button
-      type="button"
-      class="card"
-      class:selected={selectedAgent === "opencode"}
-      role="radio"
-      aria-checked={selectedAgent === "opencode"}
-      tabindex={selectedAgent === "opencode" ? 0 : -1}
-      data-agent="opencode"
-      onclick={() => selectAgent("opencode")}
-      onkeydown={(e) => handleCardKeydown(e, "opencode")}
-    >
-      <div class="card-icon">
-        <Icon name="terminal" size={32} />
-      </div>
-      <span class="card-title">OpenCode</span>
-      <div class="card-indicator">
-        {#if selectedAgent === "opencode"}
-          <Icon name="circle-filled" size={16} />
-        {:else}
-          <Icon name="circle-outline" size={16} />
-        {/if}
-      </div>
-    </button>
+    {#each agents as agentInfo (agentInfo.agent)}
+      <button
+        type="button"
+        class="card"
+        class:selected={selectedAgent === agentInfo.agent}
+        role="radio"
+        aria-checked={selectedAgent === agentInfo.agent}
+        tabindex={selectedAgent === agentInfo.agent ? 0 : -1}
+        data-agent={agentInfo.agent}
+        onclick={() => selectAgent(agentInfo.agent)}
+        onkeydown={(e) => handleCardKeydown(e, agentInfo.agent)}
+      >
+        <div class="card-icon">
+          <Icon name={agentInfo.icon} size={32} />
+        </div>
+        <span class="card-title">{agentInfo.label}</span>
+        <div class="card-indicator">
+          {#if selectedAgent === agentInfo.agent}
+            <Icon name="circle-filled" size={16} />
+          {:else}
+            <Icon name="circle-outline" size={16} />
+          {/if}
+        </div>
+      </button>
+    {/each}
   </div>
 
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->

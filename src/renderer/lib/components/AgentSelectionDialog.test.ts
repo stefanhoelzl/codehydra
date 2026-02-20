@@ -6,9 +6,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import AgentSelectionDialog from "./AgentSelectionDialog.svelte";
+import type { AgentInfo } from "@shared/ipc";
+
+const TEST_AGENTS: readonly AgentInfo[] = [
+  { agent: "claude", label: "Claude", icon: "sparkle" },
+  { agent: "opencode", label: "OpenCode", icon: "terminal" },
+];
 
 describe("AgentSelectionDialog component", () => {
   const defaultProps = {
+    agents: TEST_AGENTS,
     onselect: vi.fn(),
   };
 
@@ -106,7 +113,7 @@ describe("AgentSelectionDialog component", () => {
   describe("keyboard navigation", () => {
     it("Enter key on card calls onselect (continues with current selection)", async () => {
       const onselect = vi.fn();
-      render(AgentSelectionDialog, { props: { onselect } });
+      render(AgentSelectionDialog, { props: { agents: TEST_AGENTS, onselect } });
 
       const claudeCard = screen.getByRole("radio", { name: /claude/i });
 
@@ -238,7 +245,7 @@ describe("AgentSelectionDialog component", () => {
   describe("Continue button behavior", () => {
     it("clicking Continue calls onselect with default selection (Claude)", async () => {
       const onselect = vi.fn();
-      render(AgentSelectionDialog, { props: { onselect } });
+      render(AgentSelectionDialog, { props: { agents: TEST_AGENTS, onselect } });
 
       // Find vscode-button by text content
       const continueButton = screen.getByText("Continue");
@@ -250,7 +257,7 @@ describe("AgentSelectionDialog component", () => {
 
     it("clicking Continue after selecting OpenCode calls onselect with opencode", async () => {
       const onselect = vi.fn();
-      render(AgentSelectionDialog, { props: { onselect } });
+      render(AgentSelectionDialog, { props: { agents: TEST_AGENTS, onselect } });
 
       // Select OpenCode
       const opencodeCard = screen.getByRole("radio", { name: /opencode/i });
@@ -266,7 +273,7 @@ describe("AgentSelectionDialog component", () => {
 
     it("Enter key on Continue button triggers onselect", async () => {
       const onselect = vi.fn();
-      render(AgentSelectionDialog, { props: { onselect } });
+      render(AgentSelectionDialog, { props: { agents: TEST_AGENTS, onselect } });
 
       // Find vscode-button by text content
       const continueButton = screen.getByText("Continue");
@@ -279,7 +286,7 @@ describe("AgentSelectionDialog component", () => {
 
     it("Space key on Continue button triggers onselect", async () => {
       const onselect = vi.fn();
-      render(AgentSelectionDialog, { props: { onselect } });
+      render(AgentSelectionDialog, { props: { agents: TEST_AGENTS, onselect } });
 
       // Find vscode-button by text content
       const continueButton = screen.getByText("Continue");

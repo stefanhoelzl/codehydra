@@ -45,7 +45,12 @@ import {
 } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import { INTENT_SETUP, SETUP_OPERATION_ID } from "../operations/setup";
-import type { SetupIntent } from "../operations/setup";
+import type {
+  SetupIntent,
+  AgentSelectionHookResult,
+  AgentSelectionHookContext,
+  RegisterAgentResult,
+} from "../operations/setup";
 import { INTENT_GET_ACTIVE_WORKSPACE } from "../operations/get-active-workspace";
 import type { GetActiveWorkspaceIntent } from "../operations/get-active-workspace";
 import { GetActiveWorkspaceOperation } from "../operations/get-active-workspace";
@@ -223,6 +228,31 @@ class MinimalSetupOperation implements Operation<SetupIntent, void> {
   }
   async execute(ctx: OperationContext<SetupIntent>): Promise<void> {
     await ctx.hooks.collect<void>(this.hookPoint, { intent: ctx.intent });
+  }
+}
+
+/** Runs "agent-selection" hook with pre-populated availableAgents context. */
+class MinimalAgentSelectionOperation implements Operation<SetupIntent, AgentSelectionHookResult> {
+  readonly id = SETUP_OPERATION_ID;
+  readonly availableAgents: readonly RegisterAgentResult[];
+  constructor(availableAgents: readonly RegisterAgentResult[]) {
+    this.availableAgents = availableAgents;
+  }
+  async execute(ctx: OperationContext<SetupIntent>): Promise<AgentSelectionHookResult> {
+    const hookCtx: AgentSelectionHookContext = {
+      intent: ctx.intent,
+      availableAgents: this.availableAgents,
+    };
+    const { results, errors } = await ctx.hooks.collect<AgentSelectionHookResult>(
+      "agent-selection",
+      hookCtx
+    );
+    if (errors.length > 0) throw errors[0]!;
+    let selectedAgent: AgentSelectionHookResult["selectedAgent"] = "claude";
+    for (const r of results) {
+      if (r.selectedAgent !== undefined) selectedAgent = r.selectedAgent;
+    }
+    return { selectedAgent };
   }
 }
 
@@ -522,6 +552,61 @@ describe("ViewModule Integration", () => {
 
       expect(viewManager._webContents.send).toHaveBeenCalledWith(
         ApiIpcChannels.LIFECYCLE_SHOW_STARTING
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 4b: setup/agent-selection → sends AgentInfo[] payload to renderer
+  // -------------------------------------------------------------------------
+  describe("setup/agent-selection", () => {
+    it("sends AgentInfo objects in ShowAgentSelectionPayload", async () => {
+      const availableAgents: RegisterAgentResult[] = [
+        { agent: "claude", label: "Claude", icon: "sparkle" },
+        { agent: "opencode", label: "OpenCode", icon: "terminal" },
+      ];
+
+      const mockIpcLayer = {
+        on: vi.fn((_channel: string, handler: (...args: unknown[]) => void) => {
+          // Simulate agent selection response immediately
+          setTimeout(() => handler(null, { agent: "claude" }), 0);
+        }),
+        removeListener: vi.fn(),
+      };
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(
+        INTENT_SETUP,
+        new MinimalAgentSelectionOperation(availableAgents)
+      );
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        ipcLayer: mockIpcLayer,
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_SETUP,
+        payload: {},
+      } as SetupIntent);
+
+      expect(viewManager._webContents.send).toHaveBeenCalledWith(
+        ApiIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION,
+        {
+          agents: [
+            { agent: "claude", label: "Claude", icon: "sparkle" },
+            { agent: "opencode", label: "OpenCode", icon: "terminal" },
+          ],
+        }
       );
     });
   });
