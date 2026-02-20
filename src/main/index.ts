@@ -376,9 +376,7 @@ const { module: viewModule, readyHandler } = createViewModule({
   menuLayer,
   windowManager,
   buildInfo,
-  pathProvider,
   uiHtmlPath,
-  electronApp: app,
   devToolsHandler: buildInfo.isDevelopment
     ? () => {
         const uiWebContents = viewManager.getUIWebContents();
@@ -485,7 +483,12 @@ const mcpModule = createMcpModule({
 
 // 8. New modules
 
-const electronLifecycleModule = createElectronLifecycleModule({ app });
+const electronLifecycleModule = createElectronLifecycleModule({
+  app,
+  buildInfo,
+  pathProvider,
+  logger: lifecycleLogger,
+});
 
 const loggingModule = createLoggingModule({
   loggingService,

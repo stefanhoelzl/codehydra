@@ -23,7 +23,6 @@
  * projectsLoadedPromise.
  */
 
-import { Path } from "../../services/platform/path";
 import type { DialogLayer } from "../../services/platform/dialog";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -41,7 +40,6 @@ import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
 import {
   APP_START_OPERATION_ID,
   EVENT_APP_STARTED,
-  type ConfigureResult,
   type ShowUIHookResult,
   type ActivateHookContext,
   type ActivateHookResult,
@@ -122,16 +120,10 @@ export interface ViewModuleDeps {
     maximizeAsync(): Promise<void>;
   } | null;
   readonly buildInfo?: {
-    isPackaged: boolean;
     isDevelopment: boolean;
     gitBranch?: string;
   } | null;
-  readonly pathProvider?: { electronDataDir: { toNative(): string } } | null;
   readonly uiHtmlPath?: string | null;
-  readonly electronApp?: {
-    commandLine: { appendSwitch(key: string, value?: string): void };
-    setPath(name: string, path: string): void;
-  } | null;
   readonly devToolsHandler?: (() => void) | null;
 }
 
@@ -142,47 +134,6 @@ export interface ViewModuleResult {
   readonly module: IntentModule;
   /** Handler for the lifecycle.ready API method. Call from registry.register(). */
   readonly readyHandler: () => Promise<void>;
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/**
- * Parses Electron command-line flags from a string.
- * @param flags - Space-separated flags string (e.g., "--disable-gpu --use-gl=swiftshader")
- * @returns Array of parsed flags
- * @throws Error if quotes are detected (not supported)
- */
-export function parseElectronFlags(flags: string | undefined): { name: string; value?: string }[] {
-  if (!flags || !flags.trim()) {
-    return [];
-  }
-
-  if (flags.includes('"') || flags.includes("'")) {
-    throw new Error(
-      "Quoted values are not supported in CODEHYDRA_ELECTRON_FLAGS. " +
-        'Use --flag=value instead of --flag="value".'
-    );
-  }
-
-  const result: { name: string; value?: string }[] = [];
-  const parts = flags.trim().split(/\s+/);
-
-  for (const part of parts) {
-    const withoutDashes = part.replace(/^--?/, "");
-    const eqIndex = withoutDashes.indexOf("=");
-    if (eqIndex !== -1) {
-      result.push({
-        name: withoutDashes.substring(0, eqIndex),
-        value: withoutDashes.substring(eqIndex + 1),
-      });
-    } else {
-      result.push({ name: withoutDashes });
-    }
-  }
-
-  return result;
 }
 
 // =============================================================================
@@ -222,42 +173,11 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       },
 
       // -------------------------------------------------------------------
-      // app-start → configure: Electron configuration (pre-ready)
       // app-start → init: Shell creation + UI loading (post-ready)
       // app-start → show-ui: send LIFECYCLE_SHOW_STARTING to renderer
       // app-start → activate: wire loading change callback + mount signal
       // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
-        configure: {
-          handler: async (): Promise<ConfigureResult> => {
-            // Disable ASAR when not packaged
-            if (deps.buildInfo && !deps.buildInfo.isPackaged) {
-              process.noAsar = true;
-            }
-            if (deps.electronApp) {
-              // Apply Electron flags from environment
-              const flags = parseElectronFlags(process.env.CODEHYDRA_ELECTRON_FLAGS);
-              for (const flag of flags) {
-                deps.electronApp.commandLine.appendSwitch(
-                  flag.name,
-                  ...(flag.value !== undefined ? [flag.value] : [])
-                );
-                logger.info("Applied Electron flag", {
-                  flag: flag.name,
-                  ...(flag.value !== undefined && { value: flag.value }),
-                });
-              }
-              // Redirect data paths to isolate from system defaults
-              if (deps.pathProvider) {
-                const electronDir = new Path(deps.pathProvider.electronDataDir.toNative());
-                for (const name of ["userData", "sessionData", "logs", "crashDumps"]) {
-                  deps.electronApp.setPath(name, new Path(electronDir, name).toNative());
-                }
-              }
-            }
-            return {};
-          },
-        },
         init: {
           handler: async (): Promise<void> => {
             // Disable application menu
