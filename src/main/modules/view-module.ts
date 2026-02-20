@@ -437,6 +437,9 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
                 loadingChangeCleanupFn = null;
               }
 
+              // Destroy all views before disposing layers (uses viewLayer internally)
+              viewManager.destroy();
+
               // Dispose layers in reverse initialization order
               if (deps.viewLayer) {
                 await deps.viewLayer.dispose();

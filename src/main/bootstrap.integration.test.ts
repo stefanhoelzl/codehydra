@@ -28,7 +28,11 @@ import { createAgentModule } from "./modules/agent-module";
 import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
 
 // Operations
-import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
+import {
+  AppShutdownOperation,
+  INTENT_APP_SHUTDOWN,
+  type AppShutdownIntent,
+} from "./operations/app-shutdown";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
 import { SetModeOperation, INTENT_SET_MODE } from "./operations/set-mode";
@@ -361,15 +365,19 @@ describe("bootstrap.quit.flow", () => {
       ipc: ApiIpcChannels.LIFECYCLE_READY,
     });
 
-    // First quit
+    // First quit via IPC
     await ipcLayer._invoke("api:lifecycle:quit", {});
     expect(appQuit).toHaveBeenCalledTimes(1);
 
-    // Second quit - idempotency interceptor blocks it
-    await ipcLayer._invoke("api:lifecycle:quit", {});
+    // Second quit via dispatcher - idempotency interceptor blocks it.
+    // IPC handler is gone after first shutdown (apiRegistry.dispose()),
+    // so the real re-entrant path dispatches directly.
+    await dispatcher.dispatch({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    } as AppShutdownIntent);
     expect(appQuit).toHaveBeenCalledTimes(1);
 
-    await registry.dispose();
     void deleteOp;
   });
 });

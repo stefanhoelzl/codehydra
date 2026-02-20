@@ -617,6 +617,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
                 apiEventCleanupFn();
                 apiEventCleanupFn = null;
               }
+              await deps.apiRegistry.dispose();
             } catch (error) {
               deps.logger.error(
                 "IpcBridge lifecycle shutdown failed (non-fatal)",

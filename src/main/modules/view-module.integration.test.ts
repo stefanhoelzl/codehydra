@@ -149,6 +149,7 @@ function createMockViewManager() {
     isWorkspaceLoading: vi.fn(),
     setWorkspaceLoaded: vi.fn(),
     create: vi.fn(),
+    destroy: vi.fn(),
     // Test accessors
     _webContents: mockWebContents,
     _setActivePath: (p: string | null) => {
@@ -920,10 +921,10 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 15: app-shutdown/stop → layers disposed
+  // Test 15: app-shutdown/stop → viewManager.destroy() + layers disposed
   // -------------------------------------------------------------------------
   describe("app-shutdown/stop", () => {
-    it("disposes shell layers", async () => {
+    it("calls viewManager.destroy() and disposes shell layers", async () => {
       // Need a quit module to prevent missing handler error
       const quitModule: IntentModule = {
         hooks: {
@@ -955,6 +956,7 @@ describe("ViewModule Integration", () => {
         payload: {},
       } as AppShutdownIntent);
 
+      expect(viewManager.destroy).toHaveBeenCalled();
       expect(layers.viewLayer.dispose).toHaveBeenCalled();
       expect(layers.windowLayer.dispose).toHaveBeenCalled();
       expect(layers.sessionLayer.dispose).toHaveBeenCalled();

@@ -226,4 +226,10 @@ export interface IViewManager {
    * @param workspacePath - Absolute path to the workspace directory
    */
   preloadWorkspaceUrl(workspacePath: string): void;
+
+  /**
+   * Destroys all views and cleans up resources.
+   * Called during application shutdown.
+   */
+  destroy(): void;
 }
