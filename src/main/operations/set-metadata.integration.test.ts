@@ -50,7 +50,7 @@ import { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -127,7 +127,7 @@ function createTestSetup(): TestSetup {
   const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
   globalProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
 
-  const projectId = generateProjectId(PROJECT_ROOT.toString());
+  const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
 
   // Build dispatcher with hook registry

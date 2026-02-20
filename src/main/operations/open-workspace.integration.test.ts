@@ -60,7 +60,9 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
 import type { ProjectId, Workspace } from "../../shared/api/types";
-import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
+
+const PROJECT_ID = "project-ea0135bc" as import("../../shared/api/types").ProjectId;
 import { Path } from "../../services/platform/path";
 import {
   SwitchWorkspaceOperation,
@@ -195,7 +197,7 @@ interface TestSetup {
 }
 
 function createTestSetup(opts?: TestSetupOptions): TestSetup {
-  const projectId = generateProjectId(PROJECT_ROOT);
+  const projectId = PROJECT_ID;
   const provider = createMockWorkspaceProvider();
   const serverManager = opts?.serverManager ?? createMockServerManager();
   const agentStatusManager =
@@ -231,7 +233,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "resolve-project": {
           handler: async (): Promise<SwitchResolveProjectHookResult> => {
-            return { projectId: generateProjectId(PROJECT_ROOT), projectName: "test" };
+            return { projectId: PROJECT_ID, projectName: "test" };
           },
         },
       },
@@ -901,7 +903,7 @@ describe("OpenWorkspace Operation", () => {
       };
 
       // Re-create setup with the extra module
-      const projectId = generateProjectId(PROJECT_ROOT);
+      const projectId = PROJECT_ID;
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
@@ -930,7 +932,7 @@ describe("OpenWorkspace Operation", () => {
           [SWITCH_WORKSPACE_OPERATION_ID]: {
             "resolve-project": {
               handler: async (): Promise<SwitchResolveProjectHookResult> => {
-                return { projectId: generateProjectId(PROJECT_ROOT), projectName: "test" };
+                return { projectId: PROJECT_ID, projectName: "test" };
               },
             },
           },

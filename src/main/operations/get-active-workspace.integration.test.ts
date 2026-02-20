@@ -28,13 +28,15 @@ import type {
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { Intent } from "../intents/infrastructure/types";
 import type { WorkspaceRef } from "../../shared/api/types";
-import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
+import type { ProjectId } from "../../shared/api/types";
+
+const PROJECT_ID = "project-ea0135bc" as ProjectId;
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = "/project";
 const WORKSPACE_PATH = "/workspaces/feature-x";
 
 // =============================================================================
@@ -89,7 +91,7 @@ describe("GetActiveWorkspace Operation", () => {
     let setup: TestSetup;
 
     const expectedRef: WorkspaceRef = {
-      projectId: generateProjectId(PROJECT_ROOT),
+      projectId: PROJECT_ID,
       workspaceName: extractWorkspaceName(WORKSPACE_PATH),
       path: WORKSPACE_PATH,
     };
@@ -123,7 +125,7 @@ describe("GetActiveWorkspace Operation", () => {
   describe("interceptor", () => {
     it("cancellation prevents operation execution (#14)", async () => {
       const expectedRef: WorkspaceRef = {
-        projectId: generateProjectId(PROJECT_ROOT),
+        projectId: PROJECT_ID,
         workspaceName: extractWorkspaceName(WORKSPACE_PATH),
         path: WORKSPACE_PATH,
       };

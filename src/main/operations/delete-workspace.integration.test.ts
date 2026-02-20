@@ -47,9 +47,13 @@ import type { IApiRegistry } from "../api/registry-types";
 import type { WorkspaceLockHandler } from "../../services/platform/workspace-lock-handler";
 import type { IWorkspaceFileService } from "../../services";
 import type { WorkspacePath } from "../../shared/ipc";
-import type { BlockingProcess, DeletionProgress, WorkspaceName } from "../../shared/api/types";
+import type {
+  BlockingProcess,
+  DeletionProgress,
+  ProjectId,
+  WorkspaceName,
+} from "../../shared/api/types";
 import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
-import { generateProjectId } from "../../shared/api/id-utils";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../services/platform/path";
@@ -74,11 +78,19 @@ import type {
 } from "./switch-workspace";
 
 // =============================================================================
+// Test Helpers
+// =============================================================================
+
+function testProjectId(path: string): ProjectId {
+  return Buffer.from(path).toString("base64url") as ProjectId;
+}
+
+// =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_PATH = "/test/project";
-const PROJECT_ID = generateProjectId(PROJECT_PATH);
+const PROJECT_ID = testProjectId(PROJECT_PATH);
 const WORKSPACE_PATH = "/test/project/workspaces/feature-a";
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 
@@ -417,7 +429,7 @@ function createTestHarness(options?: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
             const { projectPath } = ctx as ResolveProjectHookInput;
-            const projectId = generateProjectId(projectPath);
+            const projectId = testProjectId(projectPath);
             return { projectId };
           },
         },
@@ -672,7 +684,7 @@ function createTestHarness(options?: {
             const allProjects = await appState.getAllProjects();
             const project = allProjects.find((p) => p.path === projectPath);
             return project
-              ? { projectId: generateProjectId(project.path), projectName: project.name }
+              ? { projectId: testProjectId(project.path), projectName: project.name }
               : {};
           },
         },

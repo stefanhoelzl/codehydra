@@ -57,7 +57,6 @@ import type {
 } from "./open-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { Project, ProjectId } from "../../shared/api/types";
-import { generateProjectId } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import { expandGitUrl } from "../../services/project/url-utils";
 import {
@@ -83,12 +82,16 @@ function extractWorkspaceName(path: string): string {
   return parts[parts.length - 1] ?? "";
 }
 
+function testProjectId(path: string): ProjectId {
+  return Buffer.from(path).toString("base64url") as ProjectId;
+}
+
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_PATH = "/test/project";
-const PROJECT_ID = generateProjectId(PROJECT_PATH);
+const PROJECT_ID = testProjectId(PROJECT_PATH);
 const WORKSPACE_A_PATH = "/test/project/workspaces/feature-a";
 const WORKSPACE_B_PATH = "/test/project/workspaces/feature-b";
 const WORKSPACE_URL = "http://127.0.0.1:8080/?folder=test";
@@ -405,7 +408,7 @@ function createTestHarness(options?: {
 
             const projectPath = new Path(projectPathStr);
             const normalizedKey = projectPath.toString();
-            const projectId = generateProjectId(projectPathStr);
+            const projectId = testProjectId(projectPathStr);
 
             // Already registered — return alreadyOpen
             if (registeredPaths.has(normalizedKey)) {
@@ -433,7 +436,7 @@ function createTestHarness(options?: {
           handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
             const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
             const projectPath = new Path(projectPathStr);
-            const projectId = generateProjectId(projectPathStr);
+            const projectId = testProjectId(projectPathStr);
 
             appState.registerProject({
               id: projectId,
@@ -615,7 +618,7 @@ function createTestHarness(options?: {
             const { projectPath } = ctx as SwitchResolveProjectHookInput;
             const project = projectState.registeredProjects.find((p) => p.path === projectPath);
             return project
-              ? { projectId: generateProjectId(project.path), projectName: project.name }
+              ? { projectId: testProjectId(project.path), projectName: project.name }
               : {};
           },
         },
@@ -809,7 +812,7 @@ describe("OpenProjectOperation", () => {
           register: {
             handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
               const { projectPath: projectPathStr } = ctx as RegisterHookInput;
-              const projectId = generateProjectId(projectPathStr);
+              const projectId = testProjectId(projectPathStr);
               return { projectId, name: new Path(projectPathStr).basename };
             },
           },

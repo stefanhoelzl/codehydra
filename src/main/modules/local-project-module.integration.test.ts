@@ -48,7 +48,6 @@ import {
 import type { CloseProjectIntent } from "../operations/close-project";
 import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
-import { generateProjectId } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import type { ProjectId } from "../../shared/api/types";
 import type { ResolvedHooks } from "../intents/infrastructure/operation";
@@ -62,7 +61,7 @@ import nodePath from "path";
 // =============================================================================
 
 const PROJECT_PATH = "/test/local-project";
-const PROJECT_ID = generateProjectId(PROJECT_PATH);
+const PROJECT_ID = "local-project-40b89393" as ProjectId;
 const PROJECTS_DIR = "/test/app-data/projects";
 
 // =============================================================================
