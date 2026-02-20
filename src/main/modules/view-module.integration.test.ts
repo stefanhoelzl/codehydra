@@ -31,6 +31,7 @@ import type {
   AppStartIntent,
   ConfigureResult,
   ShowUIHookResult,
+  ActivateHookContext,
   ActivateHookResult,
 } from "../operations/app-start";
 import {
@@ -321,6 +322,28 @@ class MinimalActivateOperation implements Operation<Intent, ActivateHookResult> 
       }
     }
     return merged;
+  }
+}
+
+/** Runs "activate" hook with ActivateHookContext (includes ports from start results). */
+class MinimalActivateWithPortsOperation implements Operation<Intent, ActivateHookResult> {
+  readonly id = APP_START_OPERATION_ID;
+  private readonly codeServerPort: number | null;
+  constructor(codeServerPort: number | null) {
+    this.codeServerPort = codeServerPort;
+  }
+  async execute(ctx: OperationContext<Intent>): Promise<ActivateHookResult> {
+    const activateCtx: ActivateHookContext = {
+      intent: ctx.intent,
+      mcpPort: null,
+      codeServerPort: this.codeServerPort,
+    };
+    const { results, errors } = await ctx.hooks.collect<ActivateHookResult>(
+      "activate",
+      activateCtx
+    );
+    if (errors.length > 0) throw errors[0]!;
+    return results[0] ?? {};
   }
 }
 
@@ -831,6 +854,47 @@ describe("ViewModule Integration", () => {
       mountSignal.resolve!();
 
       await dispatchPromise;
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 14b: app-start/activate → updateCodeServerPort called from context
+  // -------------------------------------------------------------------------
+  describe("app-start/activate (codeServerPort)", () => {
+    it("calls updateCodeServerPort when codeServerPort is set in context", async () => {
+      const { dispatcher, viewManager, mountSignal } = createTestSetup({
+        intentType: INTENT_APP_START,
+        operation: new MinimalActivateWithPortsOperation(9090),
+      });
+
+      const dispatchPromise = dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      await new Promise<void>((r) => setTimeout(r, 10));
+      mountSignal.resolve!();
+      await dispatchPromise;
+
+      expect(viewManager.updateCodeServerPort).toHaveBeenCalledWith(9090);
+    });
+
+    it("does not call updateCodeServerPort when codeServerPort is null", async () => {
+      const { dispatcher, viewManager, mountSignal } = createTestSetup({
+        intentType: INTENT_APP_START,
+        operation: new MinimalActivateWithPortsOperation(null),
+      });
+
+      const dispatchPromise = dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      await new Promise<void>((r) => setTimeout(r, 10));
+      mountSignal.resolve!();
+      await dispatchPromise;
+
+      expect(viewManager.updateCodeServerPort).not.toHaveBeenCalled();
     });
   });
 

@@ -85,24 +85,30 @@ function createMockGlobalWorktreeProvider(): import("../services/git/git-worktre
   } as unknown as import("../services/git/git-worktree-provider").GitWorktreeProvider;
 }
 
+/** Returns the flat lifecycle-related deps for CodeServerModule mocking. */
 function createMockCodeServerLifecycleDeps() {
   return {
     pluginServer: null,
-    codeServerManager: {
-      ensureRunning: vi.fn().mockResolvedValue(undefined),
-      port: vi.fn().mockReturnValue(9090),
-      getConfig: vi.fn().mockReturnValue({
-        runtimeDir: "/mock/runtime",
-        extensionsDir: "/mock/extensions",
-        userDataDir: "/mock/user-data",
-      }),
-      setPluginPort: vi.fn(),
-      stop: vi.fn().mockResolvedValue(undefined),
-    } as never,
     fileSystemLayer: {
       mkdir: vi.fn().mockResolvedValue(undefined),
     } as never,
-    onPortChanged: () => {},
+    workspaceFileService: {} as never,
+    wrapperPath: "/mock/bin/claude",
+  };
+}
+
+/** Returns lifecycle-related methods to merge into codeServerManager mock. */
+function createMockCodeServerManagerLifecycleMethods() {
+  return {
+    ensureRunning: vi.fn().mockResolvedValue(undefined),
+    port: vi.fn().mockReturnValue(9090),
+    getConfig: vi.fn().mockReturnValue({
+      runtimeDir: "/mock/runtime",
+      extensionsDir: "/mock/extensions",
+      userDataDir: "/mock/user-data",
+    }),
+    setPluginPort: vi.fn(),
+    stop: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -764,14 +770,13 @@ function createSetupTestDeps(overrides?: {
   });
 
   const codeServerModule = createCodeServerModule({
-    codeServerManager: mockSetupCodeServerManager as never,
+    codeServerManager: {
+      ...mockSetupCodeServerManager,
+      ...createMockCodeServerManagerLifecycleMethods(),
+    } as never,
     extensionManager: mockExtensionManager as never,
     logger: createMockLogger(),
-    getLifecycleDeps: () => createMockCodeServerLifecycleDeps(),
-    getWorkspaceDeps: () => ({
-      workspaceFileService: {} as never,
-      wrapperPath: "/mock/bin/claude",
-    }),
+    ...createMockCodeServerLifecycleDeps(),
   });
 
   const agentModule = createAgentModule({
@@ -1217,14 +1222,13 @@ describe("bootstrap.setup.progress", () => {
     });
 
     const codeServerModule = createCodeServerModule({
-      codeServerManager: progressCodeServerManager as never,
+      codeServerManager: {
+        ...progressCodeServerManager,
+        ...createMockCodeServerManagerLifecycleMethods(),
+      } as never,
       extensionManager: progressExtensionManager as never,
       logger: createMockLogger(),
-      getLifecycleDeps: () => createMockCodeServerLifecycleDeps(),
-      getWorkspaceDeps: () => ({
-        workspaceFileService: {} as never,
-        wrapperPath: "/mock/bin/claude",
-      }),
+      ...createMockCodeServerLifecycleDeps(),
     });
 
     const agentModule = createAgentModule({
@@ -1377,6 +1381,7 @@ describe("bootstrap.setup.progress", () => {
         codeServerManager: {
           preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
           downloadBinary: mockDownloadBinary,
+          ...createMockCodeServerManagerLifecycleMethods(),
         } as never,
         extensionManager: {
           preflight: vi.fn().mockResolvedValue({
@@ -1388,11 +1393,7 @@ describe("bootstrap.setup.progress", () => {
           install: vi.fn().mockResolvedValue(undefined),
         } as never,
         logger: createMockLogger(),
-        getLifecycleDeps: () => createMockCodeServerLifecycleDeps(),
-        getWorkspaceDeps: () => ({
-          workspaceFileService: {} as never,
-          wrapperPath: "/mock/bin/claude",
-        }),
+        ...createMockCodeServerLifecycleDeps(),
       });
 
       const agentModule = createAgentModule({

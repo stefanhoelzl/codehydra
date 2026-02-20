@@ -30,12 +30,7 @@ import type {
   DeletePipelineHookInput,
   DeleteHookResult,
 } from "../operations/delete-workspace";
-import {
-  createCodeServerModule,
-  type CodeServerModuleDeps,
-  type CodeServerLifecycleDeps,
-  type CodeServerWorkspaceDeps,
-} from "./code-server-module";
+import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import { SetupError } from "../../services/errors";
@@ -193,15 +188,11 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
 // Mock Factories
 // =============================================================================
 
-function createMockLifecycleDeps(): CodeServerLifecycleDeps {
+function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
   return {
-    pluginServer: {
-      start: vi.fn().mockResolvedValue(3456),
-      close: vi.fn().mockResolvedValue(undefined),
-      setWorkspaceConfig: vi.fn(),
-      removeWorkspaceConfig: vi.fn(),
-    } as unknown as CodeServerLifecycleDeps["pluginServer"],
     codeServerManager: {
+      preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
+      downloadBinary: vi.fn().mockResolvedValue(undefined),
       ensureRunning: vi.fn().mockResolvedValue(9090),
       port: vi.fn().mockReturnValue(9090),
       getConfig: vi.fn().mockReturnValue({
@@ -211,39 +202,6 @@ function createMockLifecycleDeps(): CodeServerLifecycleDeps {
       }),
       setPluginPort: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
-    },
-    fileSystemLayer: {
-      mkdir: vi.fn().mockResolvedValue(undefined),
-    },
-    onPortChanged: vi.fn(),
-  };
-}
-
-function createMockWorkspaceDeps(): CodeServerWorkspaceDeps {
-  return {
-    workspaceFileService: {
-      ensureWorkspaceFile: vi
-        .fn()
-        .mockResolvedValue(new Path("/test/project/.worktrees/feature-1.code-workspace")),
-      deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
-      createWorkspaceFile: vi.fn(),
-      getWorkspaceFilePath: vi.fn(),
-    },
-    wrapperPath: "/path/to/wrapper",
-  };
-}
-
-function createMockDeps(overrides?: {
-  lifecycleDeps?: CodeServerLifecycleDeps;
-  workspaceDeps?: CodeServerWorkspaceDeps;
-}): CodeServerModuleDeps {
-  const lifecycleDeps = overrides?.lifecycleDeps ?? createMockLifecycleDeps();
-  const workspaceDeps = overrides?.workspaceDeps ?? createMockWorkspaceDeps();
-
-  return {
-    codeServerManager: {
-      preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
-      downloadBinary: vi.fn().mockResolvedValue(undefined),
     },
     extensionManager: {
       preflight: vi.fn().mockResolvedValue({
@@ -255,9 +213,26 @@ function createMockDeps(overrides?: {
       install: vi.fn().mockResolvedValue(undefined),
       cleanOutdated: vi.fn().mockResolvedValue(undefined),
     },
+    pluginServer: {
+      start: vi.fn().mockResolvedValue(3456),
+      close: vi.fn().mockResolvedValue(undefined),
+      setWorkspaceConfig: vi.fn(),
+      removeWorkspaceConfig: vi.fn(),
+    },
+    fileSystemLayer: {
+      mkdir: vi.fn().mockResolvedValue(undefined),
+    },
+    workspaceFileService: {
+      ensureWorkspaceFile: vi
+        .fn()
+        .mockResolvedValue(new Path("/test/project/.worktrees/feature-1.code-workspace")),
+      deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+      createWorkspaceFile: vi.fn(),
+      getWorkspaceFilePath: vi.fn(),
+    } as unknown as CodeServerModuleDeps["workspaceFileService"],
+    wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
-    getLifecycleDeps: () => lifecycleDeps,
-    getWorkspaceDeps: () => workspaceDeps,
+    ...overrides,
   };
 }
 
@@ -380,9 +355,8 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("start", () => {
-    it("starts PluginServer and code-server, updates port", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const deps = createMockDeps({ lifecycleDeps });
+    it("starts PluginServer and code-server, returns port", async () => {
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
@@ -392,50 +366,49 @@ describe("CodeServerModule", () => {
       })) as StartHookResult;
 
       expect(result.codeServerPort).toBe(9090);
-      expect(lifecycleDeps.pluginServer!.start).toHaveBeenCalled();
-      expect(lifecycleDeps.codeServerManager.ensureRunning).toHaveBeenCalled();
-      expect(lifecycleDeps.onPortChanged).toHaveBeenCalledWith(9090);
+      expect(deps.pluginServer!.start).toHaveBeenCalled();
+      expect(deps.codeServerManager.ensureRunning).toHaveBeenCalled();
     });
 
     it("ensures required directories exist", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const deps = createMockDeps({ lifecycleDeps });
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(lifecycleDeps.fileSystemLayer.mkdir).toHaveBeenCalledTimes(3);
+      expect(deps.fileSystemLayer.mkdir).toHaveBeenCalledTimes(3);
     });
 
     it("does not call setWorkspaceConfig during start (config pushed during finalize)", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const deps = createMockDeps({ lifecycleDeps });
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(lifecycleDeps.pluginServer!.setWorkspaceConfig).not.toHaveBeenCalled();
+      expect(deps.pluginServer!.setWorkspaceConfig).not.toHaveBeenCalled();
     });
 
     it("sets plugin port on CodeServerManager", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const deps = createMockDeps({ lifecycleDeps });
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(lifecycleDeps.codeServerManager.setPluginPort).toHaveBeenCalledWith(3456);
+      expect(deps.codeServerManager.setPluginPort).toHaveBeenCalledWith(3456);
     });
 
     it("degrades gracefully when PluginServer fails", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (lifecycleDeps.pluginServer!.start as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("bind failed")
-      );
-      const deps = createMockDeps({ lifecycleDeps });
+      const deps = createMockDeps({
+        pluginServer: {
+          start: vi.fn().mockRejectedValue(new Error("bind failed")),
+          close: vi.fn().mockResolvedValue(undefined),
+          setWorkspaceConfig: vi.fn(),
+          removeWorkspaceConfig: vi.fn(),
+        },
+      });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
@@ -446,13 +419,11 @@ describe("CodeServerModule", () => {
 
       // code-server should still start
       expect(result.codeServerPort).toBe(9090);
-      expect(lifecycleDeps.codeServerManager.ensureRunning).toHaveBeenCalled();
+      expect(deps.codeServerManager.ensureRunning).toHaveBeenCalled();
     });
 
     it("works with null PluginServer", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (lifecycleDeps as unknown as Record<string, unknown>).pluginServer = null;
-      const deps = createMockDeps({ lifecycleDeps });
+      const deps = createMockDeps({ pluginServer: null });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
@@ -471,19 +442,23 @@ describe("CodeServerModule", () => {
 
   describe("stop", () => {
     it("stops code-server then PluginServer", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
       const callOrder: string[] = [];
-      (lifecycleDeps.codeServerManager.stop as ReturnType<typeof vi.fn>).mockImplementation(
-        async () => {
-          callOrder.push("cs-stop");
-        }
-      );
-      (lifecycleDeps.pluginServer!.close as ReturnType<typeof vi.fn>).mockImplementation(
-        async () => {
-          callOrder.push("plugin-close");
-        }
-      );
-      const deps = createMockDeps({ lifecycleDeps });
+      const deps = createMockDeps({
+        codeServerManager: {
+          ...createMockDeps().codeServerManager,
+          stop: vi.fn().mockImplementation(async () => {
+            callOrder.push("cs-stop");
+          }),
+        },
+        pluginServer: {
+          start: vi.fn().mockResolvedValue(3456),
+          close: vi.fn().mockImplementation(async () => {
+            callOrder.push("plugin-close");
+          }),
+          setWorkspaceConfig: vi.fn(),
+          removeWorkspaceConfig: vi.fn(),
+        },
+      });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
 
@@ -493,11 +468,12 @@ describe("CodeServerModule", () => {
     });
 
     it("handles non-fatal stop errors", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      (lifecycleDeps.codeServerManager.stop as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("stop failed")
-      );
-      const deps = createMockDeps({ lifecycleDeps });
+      const deps = createMockDeps({
+        codeServerManager: {
+          ...createMockDeps().codeServerManager,
+          stop: vi.fn().mockRejectedValue(new Error("stop failed")),
+        },
+      });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
 
@@ -642,10 +618,7 @@ describe("CodeServerModule", () => {
 
   describe("finalize", () => {
     it("creates workspace file and returns URL using port from start", async () => {
-      // Create deps that will be shared
-      const lifecycleDeps = createMockLifecycleDeps();
-      const workspaceDeps = createMockWorkspaceDeps();
-      const deps = createMockDeps({ lifecycleDeps, workspaceDeps });
+      const deps = createMockDeps();
 
       // Create single setup with both operations
       const hookRegistry = new HookRegistry();
@@ -677,7 +650,7 @@ describe("CodeServerModule", () => {
 
       expect(result.workspaceUrl).toContain("9090");
       expect(result.workspaceUrl).toContain("workspace=");
-      expect(workspaceDeps.workspaceFileService.ensureWorkspaceFile).toHaveBeenCalledWith(
+      expect(deps.workspaceFileService.ensureWorkspaceFile).toHaveBeenCalledWith(
         new Path("/test/project/.worktrees/feature-1"),
         new Path("/test/project/.worktrees"),
         expect.objectContaining({
@@ -688,12 +661,14 @@ describe("CodeServerModule", () => {
     });
 
     it("falls back to folder URL on workspace file error", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const workspaceDeps = createMockWorkspaceDeps();
-      (
-        workspaceDeps.workspaceFileService.ensureWorkspaceFile as ReturnType<typeof vi.fn>
-      ).mockRejectedValue(new Error("disk full"));
-      const deps = createMockDeps({ lifecycleDeps, workspaceDeps });
+      const deps = createMockDeps({
+        workspaceFileService: {
+          ensureWorkspaceFile: vi.fn().mockRejectedValue(new Error("disk full")),
+          deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+          createWorkspaceFile: vi.fn(),
+          getWorkspaceFilePath: vi.fn(),
+        } as unknown as CodeServerModuleDeps["workspaceFileService"],
+      });
 
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
@@ -727,9 +702,7 @@ describe("CodeServerModule", () => {
     });
 
     it("calls setWorkspaceConfig on PluginServer during finalize", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const workspaceDeps = createMockWorkspaceDeps();
-      const deps = createMockDeps({ lifecycleDeps, workspaceDeps });
+      const deps = createMockDeps();
 
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
@@ -759,7 +732,7 @@ describe("CodeServerModule", () => {
         },
       } as OpenWorkspaceIntent);
 
-      expect(lifecycleDeps.pluginServer!.setWorkspaceConfig).toHaveBeenCalledWith(
+      expect(deps.pluginServer!.setWorkspaceConfig).toHaveBeenCalledWith(
         "/test/project/.worktrees/feature-1",
         { OPENCODE_PORT: "8080" },
         "opencode"
@@ -773,8 +746,7 @@ describe("CodeServerModule", () => {
 
   describe("delete", () => {
     it("deletes workspace file", async () => {
-      const workspaceDeps = createMockWorkspaceDeps();
-      const deps = createMockDeps({ workspaceDeps });
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
 
@@ -791,18 +763,21 @@ describe("CodeServerModule", () => {
         },
       } as DeleteWorkspaceIntent);
 
-      expect(workspaceDeps.workspaceFileService.deleteWorkspaceFile).toHaveBeenCalledWith(
+      expect(deps.workspaceFileService.deleteWorkspaceFile).toHaveBeenCalledWith(
         "feature-1",
         new Path("/test/project/.worktrees")
       );
     });
 
     it("suppresses errors in force mode", async () => {
-      const workspaceDeps = createMockWorkspaceDeps();
-      (
-        workspaceDeps.workspaceFileService.deleteWorkspaceFile as ReturnType<typeof vi.fn>
-      ).mockRejectedValue(new Error("permission denied"));
-      const deps = createMockDeps({ workspaceDeps });
+      const deps = createMockDeps({
+        workspaceFileService: {
+          ensureWorkspaceFile: vi.fn(),
+          deleteWorkspaceFile: vi.fn().mockRejectedValue(new Error("permission denied")),
+          createWorkspaceFile: vi.fn(),
+          getWorkspaceFilePath: vi.fn(),
+        } as unknown as CodeServerModuleDeps["workspaceFileService"],
+      });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
 
@@ -824,11 +799,14 @@ describe("CodeServerModule", () => {
     });
 
     it("throws on non-force error", async () => {
-      const workspaceDeps = createMockWorkspaceDeps();
-      (
-        workspaceDeps.workspaceFileService.deleteWorkspaceFile as ReturnType<typeof vi.fn>
-      ).mockRejectedValue(new Error("permission denied"));
-      const deps = createMockDeps({ workspaceDeps });
+      const deps = createMockDeps({
+        workspaceFileService: {
+          ensureWorkspaceFile: vi.fn(),
+          deleteWorkspaceFile: vi.fn().mockRejectedValue(new Error("permission denied")),
+          createWorkspaceFile: vi.fn(),
+          getWorkspaceFilePath: vi.fn(),
+        } as unknown as CodeServerModuleDeps["workspaceFileService"],
+      });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
 
@@ -849,9 +827,7 @@ describe("CodeServerModule", () => {
     });
 
     it("calls removeWorkspaceConfig on PluginServer during delete", async () => {
-      const lifecycleDeps = createMockLifecycleDeps();
-      const workspaceDeps = createMockWorkspaceDeps();
-      const deps = createMockDeps({ lifecycleDeps, workspaceDeps });
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
 
@@ -868,7 +844,7 @@ describe("CodeServerModule", () => {
         },
       } as DeleteWorkspaceIntent);
 
-      expect(lifecycleDeps.pluginServer!.removeWorkspaceConfig).toHaveBeenCalledWith(
+      expect(deps.pluginServer!.removeWorkspaceConfig).toHaveBeenCalledWith(
         "/test/project/.worktrees/feature-1"
       );
     });
