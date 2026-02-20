@@ -34,7 +34,6 @@ const mockApi = vi.hoisted(() => ({
   },
   // Flat API structure - ui namespace
   ui: {
-    selectFolder: vi.fn().mockResolvedValue(null),
     getActiveWorkspace: vi.fn().mockResolvedValue(null),
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
     setMode: vi.fn().mockResolvedValue(undefined),

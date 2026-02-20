@@ -170,7 +170,7 @@ export class ApiRegistry implements IApiRegistry {
     // Build facade that converts positional args to payload objects
     return {
       projects: {
-        open: (path) => get("projects.open")({ path }),
+        open: (path) => get("projects.open")({ ...(path !== undefined && { path }) }),
         close: (projectId, options) => get("projects.close")({ projectId, ...options }),
         clone: (url) => get("projects.clone")({ url }),
         fetchBases: (projectId) => get("projects.fetchBases")({ projectId }),
@@ -199,7 +199,6 @@ export class ApiRegistry implements IApiRegistry {
           }),
       },
       ui: {
-        selectFolder: () => get("ui.selectFolder")({}),
         getActiveWorkspace: () => get("ui.getActiveWorkspace")({}),
         switchWorkspace: (workspacePath, focus) =>
           get("ui.switchWorkspace")({

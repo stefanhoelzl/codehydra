@@ -91,14 +91,6 @@ describe("renderer API layer", () => {
       expect(result).toHaveProperty("name");
     });
 
-    it("ui.selectFolder returns path or null", async () => {
-      const api = await import("$lib/api");
-      const result = await api.ui.selectFolder();
-
-      expect(mockApi.ui.selectFolder).toHaveBeenCalled();
-      expect(result).toBeNull();
-    });
-
     // Note: lifecycle.getState removed in app:setup migration
     it("lifecycle.quit calls quit", async () => {
       const api = await import("$lib/api");

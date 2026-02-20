@@ -91,7 +91,6 @@ export const ApiIpcChannels = {
   WORKSPACE_SET_METADATA: "api:workspace:set-metadata",
   WORKSPACE_GET_METADATA: "api:workspace:get-metadata",
   // UI commands
-  UI_SELECT_FOLDER: "api:ui:select-folder",
   UI_GET_ACTIVE_WORKSPACE: "api:ui:get-active-workspace",
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
   UI_SET_MODE: "api:ui:set-mode",

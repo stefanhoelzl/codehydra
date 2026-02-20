@@ -29,7 +29,6 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
         fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
       },
       ui: {
-        selectFolder: vi.fn().mockResolvedValue(null),
         getActiveWorkspace: vi.fn().mockResolvedValue(null),
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
         setMode: vi.fn().mockResolvedValue(undefined),

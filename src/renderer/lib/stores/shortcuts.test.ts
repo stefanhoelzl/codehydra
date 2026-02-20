@@ -10,7 +10,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockApi = vi.hoisted(() => ({
   ui: {
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
-    selectFolder: vi.fn().mockResolvedValue(null),
     setMode: vi.fn().mockResolvedValue(undefined),
   },
   projects: {

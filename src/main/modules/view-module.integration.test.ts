@@ -67,8 +67,12 @@ import type {
 } from "../operations/delete-workspace";
 import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../operations/open-workspace";
-import { EVENT_PROJECT_OPENED } from "../operations/open-project";
-import type { ProjectOpenedEvent } from "../operations/open-project";
+import {
+  INTENT_OPEN_PROJECT,
+  EVENT_PROJECT_OPENED,
+  OPEN_PROJECT_OPERATION_ID,
+} from "../operations/open-project";
+import type { ProjectOpenedEvent, SelectFolderHookResult } from "../operations/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { SILENT_LOGGER } from "../../services/logging";
@@ -370,6 +374,22 @@ class MinimalOpenOperation implements Operation<OpenWorkspaceIntent, unknown> {
   }
 }
 
+/** Runs "select-folder" hook point (matches OpenProjectOperation's conditional hook). */
+class MinimalSelectFolderOperation implements Operation<Intent, SelectFolderHookResult | null> {
+  readonly id = OPEN_PROJECT_OPERATION_ID;
+  async execute(ctx: OperationContext<Intent>): Promise<SelectFolderHookResult | null> {
+    const { results, errors } = await ctx.hooks.collect<SelectFolderHookResult>("select-folder", {
+      intent: ctx.intent,
+    });
+    if (errors.length > 0) throw errors[0]!;
+    let folderPath: string | null = null;
+    for (const r of results) {
+      if (r.folderPath) folderPath = r.folderPath;
+    }
+    return { folderPath };
+  }
+}
+
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -384,7 +404,7 @@ interface TestSetup {
 
 function createTestSetup(
   operationOverride?: { intentType: string; operation: Operation<Intent, unknown> },
-  options?: { nullLayers?: boolean }
+  options?: { nullLayers?: boolean; dialogLayer?: ViewModuleDeps["dialogLayer"] }
 ): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -404,6 +424,7 @@ function createTestSetup(
     sessionLayer: options?.nullLayers
       ? null
       : (layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"]),
+    ...(options?.dialogLayer !== undefined && { dialogLayer: options.dialogLayer }),
   };
 
   const { module, mountSignal } = createViewModule(deps);
@@ -1296,6 +1317,70 @@ describe("ViewModule Integration", () => {
       // viewManager.create() and focusUI() are always called
       expect(viewManager.create).toHaveBeenCalled();
       expect(viewManager.focusUI).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // open-project → select-folder hook
+  // -------------------------------------------------------------------------
+  describe("open-project/select-folder", () => {
+    it("returns selected folder path from dialog", async () => {
+      const mockDialogLayer = {
+        showOpenDialog: vi.fn().mockResolvedValue({
+          canceled: false,
+          filePaths: [{ toString: () => "/selected/project" }],
+        }),
+      };
+
+      const { dispatcher } = createTestSetup(
+        { intentType: INTENT_OPEN_PROJECT, operation: new MinimalSelectFolderOperation() },
+        { dialogLayer: mockDialogLayer }
+      );
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_OPEN_PROJECT,
+        payload: {},
+      })) as SelectFolderHookResult;
+
+      expect(result.folderPath).toBe("/selected/project");
+      expect(mockDialogLayer.showOpenDialog).toHaveBeenCalledWith({
+        properties: ["openDirectory"],
+      });
+    });
+
+    it("returns null when dialog canceled", async () => {
+      const mockDialogLayer = {
+        showOpenDialog: vi.fn().mockResolvedValue({
+          canceled: true,
+          filePaths: [],
+        }),
+      };
+
+      const { dispatcher } = createTestSetup(
+        { intentType: INTENT_OPEN_PROJECT, operation: new MinimalSelectFolderOperation() },
+        { dialogLayer: mockDialogLayer }
+      );
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_OPEN_PROJECT,
+        payload: {},
+      })) as SelectFolderHookResult;
+
+      expect(result.folderPath).toBeNull();
+    });
+
+    it("returns null when no dialogLayer provided", async () => {
+      const { dispatcher } = createTestSetup({
+        intentType: INTENT_OPEN_PROJECT,
+        operation: new MinimalSelectFolderOperation(),
+      });
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_OPEN_PROJECT,
+        payload: {},
+      })) as SelectFolderHookResult;
+
+      expect(result.folderPath).toBeNull();
     });
   });
 });

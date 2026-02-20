@@ -196,7 +196,7 @@ function createMockCodeHydraApi(
 
   return {
     projects: {
-      open: (path) => get("projects.open")({ path }),
+      open: (path) => get("projects.open")({ ...(path !== undefined && { path }) }),
       close: (projectId, options) => get("projects.close")({ projectId, ...options }),
       clone: (url) => get("projects.clone")({ url }),
       fetchBases: (projectId) => get("projects.fetchBases")({ projectId }),
@@ -225,7 +225,6 @@ function createMockCodeHydraApi(
         }),
     },
     ui: {
-      selectFolder: () => get("ui.selectFolder")({}),
       getActiveWorkspace: () => get("ui.getActiveWorkspace")({}),
       switchWorkspace: (workspacePath, focus) =>
         get("ui.switchWorkspace")({
@@ -266,7 +265,6 @@ export function registerAllMethodsWithStubs(
     "workspaces.setMetadata": async () => {},
     "workspaces.getMetadata": async () => ({}),
     "workspaces.executeCommand": async () => undefined,
-    "ui.selectFolder": async () => null,
     "ui.getActiveWorkspace": async () => null,
     "ui.switchWorkspace": async () => {},
     "ui.setMode": async () => {},

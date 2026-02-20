@@ -189,20 +189,17 @@
     // Prevent sidebar collapse while native dialog is open (Windows focus issue)
     setDialogOpen(true);
     try {
-      const path = await api.ui.selectFolder();
-      if (!path) {
+      const project = await api.projects.open();
+      if (!project) {
         // User cancelled folder picker - keep dialog open with original error
         return;
       }
-      // Clear error and try opening the new path
+      // Clear error on success
       openProjectError = null;
-      try {
-        await api.projects.open(path);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        logger.warn("Failed to open project", { path, error: message });
-        openProjectError = message;
-      }
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.warn("Failed to open project", { error: message });
+      openProjectError = message;
     } finally {
       setDialogOpen(false);
     }

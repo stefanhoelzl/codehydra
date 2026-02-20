@@ -293,7 +293,7 @@ describe("registry.getInterface", () => {
     // Verify methods exist
     expect(typeof api.projects.open).toBe("function");
     expect(typeof api.workspaces.create).toBe("function");
-    expect(typeof api.ui.selectFolder).toBe("function");
+    expect(typeof api.ui.getActiveWorkspace).toBe("function");
     expect(typeof api.lifecycle.quit).toBe("function");
   });
 });
@@ -509,7 +509,6 @@ function registerAllMethodsWithStubs(
     "workspaces.setMetadata": async () => {},
     "workspaces.getMetadata": async () => ({}),
     "workspaces.executeCommand": async () => undefined,
-    "ui.selectFolder": async () => null,
     "ui.getActiveWorkspace": async () => null,
     "ui.switchWorkspace": async () => {},
     "ui.setMode": async () => {},

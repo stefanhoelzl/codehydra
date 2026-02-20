@@ -31,7 +31,6 @@ const {
 
 // Mock $lib/api - using v2 API
 vi.mock("$lib/api", () => ({
-  selectFolder: vi.fn().mockResolvedValue(null),
   openProject: vi.fn().mockResolvedValue(undefined),
   closeProject: vi.fn().mockResolvedValue(undefined),
   listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),

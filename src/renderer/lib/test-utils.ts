@@ -46,7 +46,6 @@ export function createMockApi(): Api {
       getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
     },
     ui: {
-      selectFolder: vi.fn().mockResolvedValue(null),
       getActiveWorkspace: vi.fn().mockResolvedValue(null),
       switchWorkspace: vi.fn().mockResolvedValue(undefined),
       setMode: vi.fn().mockResolvedValue(undefined),

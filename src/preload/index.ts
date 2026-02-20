@@ -36,7 +36,10 @@ contextBridge.exposeInMainWorld("api", {
   // Lifecycle handlers are registered in bootstrap(), others in startServices().
 
   projects: {
-    open: (path: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_OPEN, { path }),
+    open: (path?: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.PROJECT_OPEN, {
+        ...(path !== undefined && { path }),
+      }),
     close: (projectId: string, options?: { removeLocalRepo?: boolean }) =>
       ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectId, ...options }),
     clone: (url: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLONE, { url }),
@@ -72,7 +75,6 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_METADATA, { workspacePath }),
   },
   ui: {
-    selectFolder: () => ipcRenderer.invoke(ApiIpcChannels.UI_SELECT_FOLDER),
     getActiveWorkspace: () => ipcRenderer.invoke(ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE),
     switchWorkspace: (workspacePath: string, focus?: boolean) =>
       ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { workspacePath, focus }),

@@ -66,6 +66,11 @@ export const EVENT_PROJECT_OPENED = "project:opened" as const;
 
 export const OPEN_PROJECT_OPERATION_ID = "open-project";
 
+/** Result returned by handlers on the "select-folder" hook point. */
+export interface SelectFolderHookResult {
+  readonly folderPath: string | null;
+}
+
 /** Result returned by handlers on the "resolve" hook point. */
 export interface ResolveHookResult {
   /** Optional when using collect() — handler may skip via self-selection. */
@@ -105,12 +110,40 @@ export interface RegisterHookInput extends HookContext {
 // Operation
 // =============================================================================
 
-export class OpenProjectOperation implements Operation<OpenProjectIntent, Project> {
+export class OpenProjectOperation implements Operation<OpenProjectIntent, Project | null> {
   readonly id = OPEN_PROJECT_OPERATION_ID;
 
-  async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
+  async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project | null> {
+    const { intent } = ctx;
+
+    // 0. Select folder: when no path or git URL provided, run "select-folder" hook
+    let effectiveIntent = intent;
+    if (!intent.payload.path && !intent.payload.git) {
+      const selectCtx: HookContext = { intent };
+      const { results: selectResults, errors: selectErrors } =
+        await ctx.hooks.collect<SelectFolderHookResult>("select-folder", selectCtx);
+      if (selectErrors.length === 1) {
+        throw selectErrors[0]!;
+      }
+      if (selectErrors.length > 1) {
+        throw new AggregateError(selectErrors, "project:open select-folder hooks failed");
+      }
+      let folderPath: string | null = null;
+      for (const r of selectResults) {
+        if (r.folderPath) folderPath = r.folderPath;
+      }
+      if (!folderPath) {
+        return null; // User canceled dialog
+      }
+      // Construct effective intent with the selected path
+      effectiveIntent = {
+        ...intent,
+        payload: { ...intent.payload, path: new Path(folderPath) },
+      };
+    }
+
     // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
-    const resolveCtx: HookContext = { intent: ctx.intent };
+    const resolveCtx: HookContext = { intent: effectiveIntent };
     const { results: resolveResults, errors: resolveErrors } =
       await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
     if (resolveErrors.length === 1) {
@@ -133,7 +166,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
 
     // 2. Register: generate ID, store state, persist
     const registerCtx: RegisterHookInput = {
-      intent: ctx.intent,
+      intent: effectiveIntent,
       projectPath,
       ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
     };
@@ -157,7 +190,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
     }
 
     // 3. Discover: find existing workspaces
-    const discoverCtx: DiscoverHookInput = { intent: ctx.intent, projectPath };
+    const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath };
     const { results: discoverResults, errors: discoverErrors } =
       await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
     if (discoverErrors.length === 1) {

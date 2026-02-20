@@ -34,6 +34,7 @@ import {
 } from "./open-project";
 import type {
   OpenProjectIntent,
+  SelectFolderHookResult,
   ResolveHookResult,
   DiscoverHookResult,
   RegisterHookInput,
@@ -152,6 +153,7 @@ interface TestProjectState {
 
 interface TestHarness {
   dispatcher: Dispatcher;
+  hookRegistry: HookRegistry;
   viewManager: IViewManager;
   activeWorkspace: { path: string | null };
   createdViews: Array<{ path: string; url: string }>;
@@ -667,6 +669,7 @@ function createTestHarness(options?: {
 
   return {
     dispatcher,
+    hookRegistry,
     viewManager,
     activeWorkspace,
     createdViews,
@@ -948,5 +951,94 @@ describe("OpenProjectOperation", () => {
     const intent = buildOpenIntent({ git: "https://invalid-host.example/bad/repo.git" });
 
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Failed to clone");
+  });
+
+  // ---------------------------------------------------------------------------
+  // select-folder hook point
+  // ---------------------------------------------------------------------------
+
+  it("test 9: select-folder hook passes selected path to resolve hooks", async () => {
+    const harness = createTestHarness();
+
+    // Add a select-folder module that returns the project path
+    const selectFolderModule: IntentModule = {
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          "select-folder": {
+            handler: async (): Promise<SelectFolderHookResult> => {
+              return { folderPath: PROJECT_PATH };
+            },
+          },
+        },
+      },
+    };
+    wireModules([selectFolderModule], harness.hookRegistry, harness.dispatcher);
+
+    // Dispatch with NO path — triggers select-folder hook
+    const intent: OpenProjectIntent = {
+      type: INTENT_OPEN_PROJECT,
+      payload: {},
+    };
+    const result = await harness.dispatcher.dispatch(intent);
+
+    // Project opened at the path returned by select-folder
+    const project = result as Project;
+    expect(project.path).toBe(PROJECT_PATH);
+    expect(project.id).toBe(PROJECT_ID);
+  });
+
+  it("test 10: returns null when select-folder hook returns null (canceled)", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
+
+    // Select-folder module that returns null (user canceled)
+    const selectFolderModule: IntentModule = {
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          "select-folder": {
+            handler: async (): Promise<SelectFolderHookResult> => {
+              return { folderPath: null };
+            },
+          },
+        },
+      },
+    };
+
+    wireModules([selectFolderModule], hookRegistry, dispatcher);
+
+    const result = await dispatcher.dispatch({
+      type: INTENT_OPEN_PROJECT,
+      payload: {},
+    } as OpenProjectIntent);
+
+    expect(result).toBeNull();
+  });
+
+  it("test 11: select-folder hook skipped when path provided", async () => {
+    const selectFolderSpy = vi.fn();
+    const harness = createTestHarness();
+
+    // Add a select-folder module with spy
+    const selectFolderModule: IntentModule = {
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          "select-folder": {
+            handler: async (): Promise<SelectFolderHookResult> => {
+              selectFolderSpy();
+              return { folderPath: "/should-not-be-used" };
+            },
+          },
+        },
+      },
+    };
+    wireModules([selectFolderModule], harness.hookRegistry, harness.dispatcher);
+
+    // Dispatch with a path — should skip select-folder
+    const intent = buildOpenIntent({ path: new Path(PROJECT_PATH) });
+    await harness.dispatcher.dispatch(intent);
+
+    expect(selectFolderSpy).not.toHaveBeenCalled();
   });
 });

@@ -40,7 +40,6 @@ const mockApi = vi.hoisted(() => ({
   },
   // Flat API structure - ui namespace
   ui: {
-    selectFolder: vi.fn().mockResolvedValue(null),
     getActiveWorkspace: vi.fn().mockResolvedValue(null),
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
     setMode: vi.fn().mockResolvedValue(undefined),
@@ -667,8 +666,8 @@ describe("MainView component", () => {
         expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
 
-      // Verify folder picker was NOT automatically called
-      expect(mockApi.ui.selectFolder).not.toHaveBeenCalled();
+      // Verify projects.open was NOT automatically called (no folder picker)
+      expect(mockApi.projects.open).not.toHaveBeenCalled();
     });
 
     it("auto-opens create dialog when projects exist but no workspaces", async () => {
@@ -688,8 +687,8 @@ describe("MainView component", () => {
         expect(screen.getByText("Create Workspace")).toBeInTheDocument();
       });
 
-      // Verify folder picker was NOT automatically called
-      expect(mockApi.ui.selectFolder).not.toHaveBeenCalled();
+      // Verify projects.open was NOT automatically called (no folder picker)
+      expect(mockApi.projects.open).not.toHaveBeenCalled();
     });
   });
 

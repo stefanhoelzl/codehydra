@@ -92,7 +92,7 @@ describe("preload API", () => {
       };
       mockIpcRenderer.invoke.mockResolvedValue(mockProject);
 
-      const projects = exposedApi.projects as { open: (path: string) => Promise<unknown> };
+      const projects = exposedApi.projects as { open: (path?: string) => Promise<unknown> };
       const result = await projects.open("/test/path");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:open", {
@@ -260,16 +260,6 @@ describe("preload API", () => {
   });
 
   describe("ui", () => {
-    it("ui.selectFolder calls api:ui:select-folder", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue("/selected/path");
-
-      const ui = exposedApi.ui as { selectFolder: () => Promise<string | null> };
-      const result = await ui.selectFolder();
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:ui:select-folder");
-      expect(result).toBe("/selected/path");
-    });
-
     it("ui.getActiveWorkspace calls api:ui:get-active-workspace", async () => {
       const mockRef = {
         projectId: "my-app-12345678",

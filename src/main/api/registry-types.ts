@@ -25,7 +25,7 @@ export type EmptyPayload = object;
 
 /** projects.open */
 export interface ProjectOpenPayload {
-  readonly path: string;
+  readonly path?: string;
 }
 
 /** projects.close */
@@ -114,7 +114,7 @@ export interface MethodRegistry {
   "lifecycle.quit": (payload: EmptyPayload) => Promise<void>;
 
   // Projects
-  "projects.open": (payload: ProjectOpenPayload) => Promise<Project>;
+  "projects.open": (payload: ProjectOpenPayload) => Promise<Project | null>;
   "projects.close": (payload: ProjectClosePayload) => Promise<void>;
   "projects.clone": (payload: ProjectClonePayload) => Promise<Project>;
   "projects.fetchBases": (
@@ -134,7 +134,6 @@ export interface MethodRegistry {
   "workspaces.executeCommand": (payload: WorkspaceExecuteCommandPayload) => Promise<unknown>;
 
   // UI
-  "ui.selectFolder": (payload: EmptyPayload) => Promise<string | null>;
   "ui.getActiveWorkspace": (payload: EmptyPayload) => Promise<WorkspaceRef | null>;
   "ui.switchWorkspace": (payload: UiSwitchWorkspacePayload) => Promise<void>;
   "ui.setMode": (payload: UiSetModePayload) => Promise<void>;
@@ -172,11 +171,7 @@ export type WorkspacePath =
   | "workspaces.getMetadata"
   | "workspaces.executeCommand";
 /** @internal Exported for testing only */
-export type UiPath =
-  | "ui.selectFolder"
-  | "ui.getActiveWorkspace"
-  | "ui.switchWorkspace"
-  | "ui.setMode";
+export type UiPath = "ui.getActiveWorkspace" | "ui.switchWorkspace" | "ui.setMode";
 
 /**
  * Get the handler signature for a method path.
@@ -212,7 +207,6 @@ export const ALL_METHOD_PATHS = [
   "workspaces.setMetadata",
   "workspaces.getMetadata",
   "workspaces.executeCommand",
-  "ui.selectFolder",
   "ui.getActiveWorkspace",
   "ui.switchWorkspace",
   "ui.setMode",

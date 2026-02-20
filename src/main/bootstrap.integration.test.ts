@@ -152,12 +152,6 @@ function createTestWiring(overrides?: {
   ipcLayer?: ReturnType<typeof createBehavioralIpcLayer>;
   appQuit?: () => void;
   pluginServer?: unknown;
-  dialog?: {
-    showOpenDialog: (options: {
-      properties: string[];
-    }) => Promise<{ canceled: boolean; filePaths: string[] }>;
-  };
-  skipDialog?: boolean;
   modules?: import("./intents/infrastructure/module").IntentModule[];
   mountSignal?: { resolve: (() => void) | null };
 }) {
@@ -178,19 +172,6 @@ function createTestWiring(overrides?: {
     dispatcher,
     agentStatusManager: { getStatus: vi.fn() } as never,
     globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-    ...(overrides?.skipDialog
-      ? {}
-      : {
-          dialog: overrides?.dialog ?? {
-            showOpenDialog: vi
-              .fn<
-                (options: {
-                  properties: string[];
-                }) => Promise<{ canceled: boolean; filePaths: string[] }>
-              >()
-              .mockResolvedValue({ canceled: true, filePaths: [] }),
-          },
-        }),
     deleteOp: {
       hasPendingRetry: () => false,
       signalDismiss: vi.fn(),
@@ -256,7 +237,6 @@ describe("bootstrap.startup", () => {
     expect(api.workspaces.getMetadata).toBeTypeOf("function");
 
     expect(api.ui).toBeDefined();
-    expect(api.ui.selectFolder).toBeTypeOf("function");
     expect(api.ui.getActiveWorkspace).toBeTypeOf("function");
     expect(api.ui.switchWorkspace).toBeTypeOf("function");
     expect(api.ui.setMode).toBeTypeOf("function");
@@ -277,7 +257,7 @@ describe("bootstrap.module.order", () => {
 });
 
 // =============================================================================
-// Inline Registration Tests (executeCommand + selectFolder)
+// Inline Registration Tests (executeCommand)
 // =============================================================================
 
 describe("bootstrap.executeCommand", () => {
@@ -324,54 +304,6 @@ describe("bootstrap.executeCommand", () => {
   });
 });
 
-describe("bootstrap.selectFolder", () => {
-  it("delegates to dialog and returns selected path", async () => {
-    const mockDialog = {
-      showOpenDialog: vi.fn().mockResolvedValue({
-        canceled: false,
-        filePaths: ["/selected/folder"],
-      }),
-    };
-    const result = createTestWiring({ dialog: mockDialog });
-    const api = result.getInterface();
-
-    const folder = await api.ui.selectFolder();
-
-    expect(folder).toBe("/selected/folder");
-    expect(mockDialog.showOpenDialog).toHaveBeenCalledWith({
-      properties: ["openDirectory"],
-    });
-
-    await result.dispose();
-  });
-
-  it("returns null when dialog is canceled", async () => {
-    const mockDialog = {
-      showOpenDialog: vi.fn().mockResolvedValue({
-        canceled: true,
-        filePaths: [],
-      }),
-    };
-    const result = createTestWiring({ dialog: mockDialog });
-    const api = result.getInterface();
-
-    const folder = await api.ui.selectFolder();
-
-    expect(folder).toBeNull();
-
-    await result.dispose();
-  });
-
-  it("throws when dialog is not available", async () => {
-    const result = createTestWiring({ skipDialog: true });
-    const api = result.getInterface();
-
-    await expect(api.ui.selectFolder()).rejects.toThrow("Dialog not available");
-
-    await result.dispose();
-  });
-});
-
 describe("bootstrap.quit.flow", () => {
   it("lifecycle.quit dispatches app:shutdown and calls app.quit()", async () => {
     const appQuit = vi.fn();
@@ -406,7 +338,6 @@ describe("bootstrap.quit.flow", () => {
       dispatcher,
       agentStatusManager: { getStatus: vi.fn() } as never,
       globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-      dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
       deleteOp: {
         hasPendingRetry: () => false,
         signalDismiss: vi.fn(),
@@ -847,7 +778,6 @@ function createSetupTestDeps(overrides?: {
       dispose: vi.fn(),
     } as never,
     globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-    dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
     deleteOp: {
       hasPendingRetry: (wp: string) => deleteOp.hasPendingRetry(wp),
       signalDismiss: (wp: string) => deleteOp.signalDismiss(wp),
@@ -1280,7 +1210,6 @@ describe("bootstrap.setup.progress", () => {
         dispose: vi.fn(),
       } as never,
       globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-      dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
       deleteOp: {
         hasPendingRetry: () => false,
         signalDismiss: vi.fn(),
@@ -1448,7 +1377,6 @@ describe("bootstrap.setup.progress", () => {
           dispose: vi.fn(),
         } as never,
         globalWorktreeProvider: createMockGlobalWorktreeProvider(),
-        dialog: { showOpenDialog: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }) },
         deleteOp: {
           hasPendingRetry: () => false,
           signalDismiss: vi.fn(),

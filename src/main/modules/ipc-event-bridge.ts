@@ -105,12 +105,6 @@ export interface IpcEventBridgeDeps {
     getStatus(wp: WorkspacePath): { status: string } | undefined;
   };
   readonly globalWorktreeProvider: GitWorktreeProvider;
-  readonly dialog?: {
-    showOpenDialog(options: { properties: string[] }): Promise<{
-      canceled: boolean;
-      filePaths: string[];
-    }>;
-  };
   readonly deleteOp: {
     hasPendingRetry(wp: string): boolean;
     signalDismiss(wp: string): void;
@@ -469,23 +463,26 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   apiRegistry.register(
     "projects.open",
     async (payload: ProjectOpenPayload) => {
-      const key = new Path(payload.path).toString();
-      if (inProgressOpens.has(key)) {
-        throw new Error("Project open already in progress");
+      // When path is provided, deduplicate in-progress opens
+      const key = payload.path ? new Path(payload.path).toString() : null;
+      if (key) {
+        if (inProgressOpens.has(key)) {
+          throw new Error("Project open already in progress");
+        }
+        inProgressOpens.add(key);
       }
-      inProgressOpens.add(key);
       try {
         const intent: OpenProjectIntent = {
           type: INTENT_OPEN_PROJECT,
-          payload: { path: new Path(payload.path) },
+          payload: {
+            ...(payload.path !== undefined && { path: new Path(payload.path) }),
+          },
         };
-        const result = await dispatcher.dispatch(intent);
-        if (!result) {
-          throw new Error("Open project dispatch returned no result");
-        }
-        return result;
+        return await dispatcher.dispatch(intent);
       } finally {
-        inProgressOpens.delete(key);
+        if (key) {
+          inProgressOpens.delete(key);
+        }
       }
     },
     { ipc: ApiIpcChannels.PROJECT_OPEN }
@@ -595,24 +592,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
       }
       return result.data;
     }
-  );
-
-  apiRegistry.register(
-    "ui.selectFolder",
-    async (payload: EmptyPayload) => {
-      void payload;
-      if (!deps.dialog) {
-        throw new Error("Dialog not available");
-      }
-      const result = await deps.dialog.showOpenDialog({
-        properties: ["openDirectory"],
-      });
-      if (result.canceled || result.filePaths.length === 0) {
-        return null;
-      }
-      return result.filePaths[0] ?? null;
-    },
-    { ipc: ApiIpcChannels.UI_SELECT_FOLDER }
   );
 
   return {
