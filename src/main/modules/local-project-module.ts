@@ -411,7 +411,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               }
             }
 
-            return {};
+            return { otherProjectsExist: projects.size > 0 };
           },
         },
       },

@@ -59,23 +59,10 @@ import type {
   DeleteWorkspaceIntent,
   DeletionProgressCallback,
 } from "./operations/delete-workspace";
-import {
-  OpenProjectOperation,
-  INTENT_OPEN_PROJECT,
-  EVENT_PROJECT_OPENED,
-} from "./operations/open-project";
-import type { OpenProjectIntent, ProjectOpenedEvent } from "./operations/open-project";
-import {
-  CloseProjectOperation,
-  CLOSE_PROJECT_OPERATION_ID,
-  INTENT_CLOSE_PROJECT,
-  EVENT_PROJECT_CLOSED,
-} from "./operations/close-project";
-import type {
-  CloseProjectIntent,
-  CloseHookResult,
-  ProjectClosedEvent,
-} from "./operations/close-project";
+import { OpenProjectOperation, INTENT_OPEN_PROJECT } from "./operations/open-project";
+import type { OpenProjectIntent } from "./operations/open-project";
+import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./operations/close-project";
+import type { CloseProjectIntent } from "./operations/close-project";
 import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./operations/switch-workspace";
 import type { SwitchWorkspaceIntent } from "./operations/switch-workspace";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
@@ -102,8 +89,6 @@ import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
 import { wireModules } from "./intents/infrastructure/wire";
 import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
-import type { HookContext } from "./intents/infrastructure/operation";
-import type { DomainEvent } from "./intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
 import type { Workspace } from "../shared/api/types";
 import { Path } from "../services/platform/path";
@@ -272,22 +257,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     return 0;
   };
 
-  // --- Project Index (for projectCloseIndexModule's otherProjectsExist check) ---
-  const projectsById = new Map<string, { path: string; name: string }>();
-
-  const indexModule: IntentModule = {
-    events: {
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const { project } = (event as ProjectOpenedEvent).payload;
-        projectsById.set(project.id, { path: project.path, name: project.name });
-      },
-      [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
-        const { projectId } = (event as ProjectClosedEvent).payload;
-        projectsById.delete(projectId);
-      },
-    },
-  };
-
   // Register remaining operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
@@ -310,27 +279,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // Note: AppStartOperation and AppShutdownOperation are registered early in initializeBootstrap()
 
   const inProgressOpens = new Set<string>();
-
-  // ProjectCloseIndexModule: "close" hook -- checks if other projects exist via workspace index
-  const projectCloseIndexModule: IntentModule = {
-    hooks: {
-      [CLOSE_PROJECT_OPERATION_ID]: {
-        close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const currentProjectId = (ctx.intent as CloseProjectIntent).payload.projectId;
-            let otherExists = false;
-            for (const id of projectsById.keys()) {
-              if (id !== currentProjectId) {
-                otherExists = true;
-                break;
-              }
-            }
-            return { otherProjectsExist: otherExists };
-          },
-        },
-      },
-    },
-  };
 
   // Deferred for the "loaded" hook point: resolved after all initial project:open dispatches
   // complete. lifecycle.ready awaits this so the renderer receives project:opened events
@@ -360,15 +308,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   // Pre-created modules from index.ts (idempotency, view, codeServer, agent, etc.)
   // are combined with inline modules that need bootstrap-internal state.
   wireModules(
-    [
-      ...deps.modules,
-      quitModule,
-      ipcEventBridge,
-      retryModule,
-      indexModule,
-      projectCloseIndexModule,
-      loadedSignalModule,
-    ],
+    [...deps.modules, quitModule, ipcEventBridge, retryModule, loadedSignalModule],
     hookRegistry,
     dispatcher
   );
