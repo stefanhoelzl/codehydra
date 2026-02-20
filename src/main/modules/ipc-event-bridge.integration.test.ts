@@ -36,9 +36,14 @@ import type {
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETION_PROGRESS,
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../operations/delete-workspace";
-import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../operations/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  WorkspaceDeletedEvent,
+  WorkspaceDeletionProgressEvent,
+} from "../operations/delete-workspace";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
 import {
@@ -216,7 +221,6 @@ function createStatusTestSetup(): StatusTestSetup {
     globalWorktreeProvider: {
       listWorktrees: vi.fn(),
     } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-    emitDeletionProgress: vi.fn(),
     deleteOp: {
       hasPendingRetry: vi.fn().mockReturnValue(false),
       signalDismiss: vi.fn(),
@@ -287,7 +291,6 @@ function createLifecycleTestSetup(
     globalWorktreeProvider: {
       listWorktrees: vi.fn(),
     } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-    emitDeletionProgress: vi.fn(),
     deleteOp: {
       hasPendingRetry: vi.fn().mockReturnValue(false),
       signalDismiss: vi.fn(),
@@ -444,6 +447,114 @@ describe("IpcEventBridge - workspace:deleted", () => {
 });
 
 // =============================================================================
+// Tests - workspace:deletion-progress event
+// =============================================================================
+
+describe("IpcEventBridge - workspace:deletion-progress", () => {
+  function createMockWebContents(): {
+    send: ReturnType<typeof vi.fn>;
+    isDestroyed: ReturnType<typeof vi.fn>;
+  } {
+    return { send: vi.fn(), isDestroyed: vi.fn().mockReturnValue(false) };
+  }
+
+  it("sends deletion progress to webContents via IPC", () => {
+    const mockWebContents = createMockWebContents();
+    const mockApiRegistry = createMockApiRegistry();
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: mockApiRegistry as unknown as IApiRegistry,
+      getApi: () => {
+        throw new Error("not wired");
+      },
+      getUIWebContents: () =>
+        mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
+      pluginServer: null,
+      logger: SILENT_LOGGER,
+      dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
+      agentStatusManager: {
+        getStatus: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+      globalWorktreeProvider: {
+        listWorktrees: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+      deleteOp: {
+        hasPendingRetry: vi.fn().mockReturnValue(false),
+        signalDismiss: vi.fn(),
+        signalRetry: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["deleteOp"],
+    });
+
+    const progressPayload = {
+      workspacePath: TEST_WORKSPACE_PATH as WorkspacePath,
+      workspaceName: TEST_WORKSPACE_NAME,
+      projectId: TEST_PROJECT_ID,
+      keepBranch: true,
+      operations: [
+        {
+          id: "kill-terminals" as const,
+          label: "Terminating processes",
+          status: "done" as const,
+        },
+      ],
+      completed: false,
+      hasErrors: false,
+    };
+    const event: WorkspaceDeletionProgressEvent = {
+      type: EVENT_WORKSPACE_DELETION_PROGRESS,
+      payload: progressPayload,
+    };
+
+    // Call the event handler directly from the module's events declaration
+    ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!(event);
+
+    expect(mockWebContents.send).toHaveBeenCalledWith(
+      ApiIpcChannels.WORKSPACE_DELETION_PROGRESS,
+      progressPayload
+    );
+  });
+
+  it("ignores when webContents is null", () => {
+    const mockApiRegistry = createMockApiRegistry();
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: mockApiRegistry as unknown as IApiRegistry,
+      getApi: () => {
+        throw new Error("not wired");
+      },
+      getUIWebContents: () => null,
+      pluginServer: null,
+      logger: SILENT_LOGGER,
+      dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
+      agentStatusManager: {
+        getStatus: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+      globalWorktreeProvider: {
+        listWorktrees: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+      deleteOp: {
+        hasPendingRetry: vi.fn().mockReturnValue(false),
+        signalDismiss: vi.fn(),
+        signalRetry: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["deleteOp"],
+    });
+
+    // Should not throw when webContents is null
+    const event: WorkspaceDeletionProgressEvent = {
+      type: EVENT_WORKSPACE_DELETION_PROGRESS,
+      payload: {
+        workspacePath: TEST_WORKSPACE_PATH as WorkspacePath,
+        workspaceName: TEST_WORKSPACE_NAME,
+        projectId: TEST_PROJECT_ID,
+        keepBranch: false,
+        operations: [],
+        completed: true,
+        hasErrors: false,
+      },
+    };
+    expect(() => ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!(event)).not.toThrow();
+  });
+});
+
+// =============================================================================
 // Tests - lifecycle hooks
 // =============================================================================
 
@@ -514,7 +625,6 @@ describe("IpcEventBridge - lifecycle", () => {
         globalWorktreeProvider: {
           listWorktrees: vi.fn(),
         } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-        emitDeletionProgress: vi.fn(),
         deleteOp: {
           hasPendingRetry: vi.fn().mockReturnValue(false),
           signalDismiss: vi.fn(),
@@ -590,7 +700,6 @@ describe("IpcEventBridge - lifecycle", () => {
         globalWorktreeProvider: {
           listWorktrees: vi.fn(),
         } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-        emitDeletionProgress: vi.fn(),
         deleteOp: {
           hasPendingRetry: vi.fn().mockReturnValue(false),
           signalDismiss: vi.fn(),
@@ -668,7 +777,6 @@ describe("IpcEventBridge - setup:error", () => {
       globalWorktreeProvider: {
         listWorktrees: vi.fn(),
       } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-      emitDeletionProgress: vi.fn(),
       deleteOp: {
         hasPendingRetry: vi.fn().mockReturnValue(false),
         signalDismiss: vi.fn(),
@@ -734,7 +842,6 @@ describe("IpcEventBridge - setup:error", () => {
       globalWorktreeProvider: {
         listWorktrees: vi.fn(),
       } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-      emitDeletionProgress: vi.fn(),
       deleteOp: {
         hasPendingRetry: vi.fn().mockReturnValue(false),
         signalDismiss: vi.fn(),

@@ -529,14 +529,7 @@ dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
 dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
 
-const emitDeletionProgress = (progress: import("../shared/api/types").DeletionProgress) => {
-  try {
-    viewManager.getUIWebContents()?.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
-  } catch {
-    // Ignore - deletion continues even if UI disconnected
-  }
-};
-const deleteOp = new DeleteWorkspaceOperation(emitDeletionProgress);
+const deleteOp = new DeleteWorkspaceOperation();
 dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
 
 dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
@@ -571,7 +564,6 @@ const ipcEventBridge = createIpcEventBridge({
   agentStatusManager,
   globalWorktreeProvider,
   dialog,
-  emitDeletionProgress,
   deleteOp,
 });
 

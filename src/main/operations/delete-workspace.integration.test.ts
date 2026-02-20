@@ -23,11 +23,11 @@ import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETION_PROGRESS,
 } from "./delete-workspace";
-import type { WorkspaceDeletedEvent } from "./delete-workspace";
+import type { WorkspaceDeletedEvent, WorkspaceDeletionProgressEvent } from "./delete-workspace";
 import type {
   DeleteWorkspaceIntent,
-  DeletionProgressCallback,
   ShutdownHookResult,
   ReleaseHookResult,
   DeleteHookResult,
@@ -319,9 +319,6 @@ function createTestHarness(options?: {
   const dispatcher = new Dispatcher(hookRegistry);
 
   const progressCaptures: DeletionProgress[] = [];
-  const emitProgress: DeletionProgressCallback = (progress) => {
-    progressCaptures.push(progress);
-  };
 
   const { appState, state: testState } = createTestAppState(
     options?.initialProjects ? { projects: options.initialProjects } : undefined
@@ -350,7 +347,7 @@ function createTestHarness(options?: {
   const workspaceFileService = createTestWorkspaceFileService();
 
   // Register operations
-  const deleteOp = new DeleteWorkspaceOperation(emitProgress);
+  const deleteOp = new DeleteWorkspaceOperation();
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
   dispatcher.registerOperation(
     INTENT_SWITCH_WORKSPACE,
@@ -748,9 +745,18 @@ function createTestHarness(options?: {
     },
   };
 
+  const progressCaptureModule: IntentModule = {
+    events: {
+      [EVENT_WORKSPACE_DELETION_PROGRESS]: (event: DomainEvent) => {
+        progressCaptures.push((event as WorkspaceDeletionProgressEvent).payload);
+      },
+    },
+  };
+
   wireModules(
     [
       idempotencyModule,
+      progressCaptureModule,
       deleteResolveModule,
       deleteResolveProjectModule,
       deleteViewModule,

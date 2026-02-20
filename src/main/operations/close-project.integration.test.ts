@@ -45,7 +45,6 @@ import {
 import type {
   DeleteWorkspaceIntent,
   WorkspaceDeletedEvent,
-  DeletionProgressCallback,
   ShutdownHookResult,
   DeletePipelineHookInput,
   ResolveHookInput,
@@ -210,9 +209,8 @@ function createTestHarness(options?: {
   };
 
   // Register operations
-  const emitProgress: DeletionProgressCallback = () => {};
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation(emitProgress));
+  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
 
   // Delete-workspace resolve modules
   const deleteResolveModule: IntentModule = {
