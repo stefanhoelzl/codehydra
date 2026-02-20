@@ -23,6 +23,7 @@
   import * as api from "$lib/api";
   import type { SetupRowProgress, SetupRowId, ConfigAgentType } from "@shared/api/types";
   import type {
+    AgentInfo,
     ShowAgentSelectionPayload,
     SetupErrorPayload,
     LifecycleAgentType,
@@ -65,6 +66,9 @@
 
   // Selected agent type (from initial getState or after user selection)
   let selectedAgent = $state<ConfigAgentType | null>(null);
+
+  // Available agents from IPC payload (populated when agent-selection event fires)
+  let availableAgents = $state<readonly AgentInfo[]>([]);
 
   // Setup progress state - array of row progress updates, initialized with default rows
   const DEFAULT_PROGRESS_ROWS: readonly SetupRowId[] = ["vscode", "agent", "setup"];
@@ -149,8 +153,10 @@
   // Main process tells us when to show the agent selection dialog
   $effect(() => {
     const unsub = api.on<ShowAgentSelectionPayload>("lifecycle:show-agent-selection", (payload) => {
-      logger.debug("Showing agent selection", { agents: payload.agents.join(",") });
-      // Store available agents if needed for display
+      logger.debug("Showing agent selection", {
+        agents: payload.agents.map((a) => a.agent).join(","),
+      });
+      availableAgents = payload.agents;
       appMode = { type: "agent-selection" };
     });
     return () => {
@@ -259,7 +265,7 @@
   {:else if appMode.type === "agent-selection"}
     <!-- Agent selection mode - show selection dialog -->
     <div class="setup-container">
-      <AgentSelectionDialog onselect={handleAgentSelect} />
+      <AgentSelectionDialog agents={availableAgents} onselect={handleAgentSelect} />
     </div>
   {:else if appMode.type === "setup"}
     <!-- Setup mode - show setup screens based on setup state -->

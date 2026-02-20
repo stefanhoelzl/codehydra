@@ -33,6 +33,7 @@ import type { Logger } from "../../services/logging";
 import type { ViewLayer } from "../../services/shell/view";
 import type { WindowLayerInternal } from "../../services/shell/window";
 import type { SessionLayer } from "../../services/shell/session";
+import type { IpcEventHandler } from "../../services/platform/ipc";
 import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { WorkspaceRef } from "../../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../../shared/ipc";
@@ -45,6 +46,7 @@ import {
   type ActivateHookContext,
   type ActivateHookResult,
 } from "../operations/app-start";
+import type { AgentSelectionHookResult, AgentSelectionHookContext } from "../operations/setup";
 import type { GetActiveWorkspaceHookResult } from "../operations/get-active-workspace";
 import type {
   SwitchWorkspaceIntent,
@@ -71,8 +73,14 @@ import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
-import { ApiIpcChannels } from "../../shared/ipc";
+import {
+  ApiIpcChannels,
+  type LifecycleAgentType,
+  type ShowAgentSelectionPayload,
+  type AgentSelectedPayload,
+} from "../../shared/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../../shared/ipc";
+import { SetupError } from "../../services/errors";
 import { getErrorMessage } from "../../shared/error-utils";
 
 // =============================================================================
@@ -104,6 +112,10 @@ export interface ViewModuleDeps {
   readonly windowLayer: WindowLayerInternal | null;
   readonly sessionLayer: SessionLayer | null;
   readonly dialogLayer?: Pick<DialogLayer, "showOpenDialog"> | null;
+  readonly ipcLayer?: Pick<
+    import("../../services/platform/ipc").IpcLayer,
+    "on" | "removeListener"
+  > | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
   readonly windowManager?: {
     create(): void;
@@ -340,6 +352,50 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
             if (webContents && !webContents.isDestroyed()) {
               webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_SETUP);
             }
+          },
+        },
+        "agent-selection": {
+          handler: async (ctx: HookContext): Promise<AgentSelectionHookResult> => {
+            const { availableAgents } = ctx as AgentSelectionHookContext;
+            const webContents = viewManager.getUIWebContents();
+
+            if (!webContents || webContents.isDestroyed()) {
+              throw new SetupError("UI not available for agent selection", "TIMEOUT");
+            }
+
+            if (!deps.ipcLayer) {
+              throw new SetupError("IPC layer not available for agent selection", "TIMEOUT");
+            }
+
+            const ipcLayer = deps.ipcLayer;
+            logger.debug("Showing agent selection dialog");
+
+            const agentPromise = new Promise<LifecycleAgentType>((resolve) => {
+              const handleAgentSelected: IpcEventHandler = (_event, ...args) => {
+                ipcLayer.removeListener(
+                  SetupIpcChannels.LIFECYCLE_AGENT_SELECTED,
+                  handleAgentSelected
+                );
+                const payload = args[0] as AgentSelectedPayload;
+                resolve(payload.agent);
+              };
+
+              ipcLayer.on(SetupIpcChannels.LIFECYCLE_AGENT_SELECTED, handleAgentSelected);
+            });
+
+            const payload: ShowAgentSelectionPayload = {
+              agents: availableAgents.map((a) => ({
+                agent: a.agent,
+                label: a.label,
+                icon: a.icon,
+              })),
+            };
+            webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION, payload);
+
+            const selectedAgent = await agentPromise;
+            logger.info("Agent selected", { agent: selectedAgent });
+
+            return { selectedAgent };
           },
         },
         "hide-ui": {

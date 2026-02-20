@@ -16,6 +16,14 @@ import type { PathProvider } from "../services/platform/path-provider";
 import type { Logger } from "../services/logging";
 import type { NormalizedInitialPrompt } from "../shared/api/types";
 
+/**
+ * MCP server configuration shared by both agent server managers.
+ */
+export interface McpConfig {
+  /** MCP server port */
+  readonly port: number;
+}
+
 // Re-export AggregatedAgentStatus from shared/ipc (single source of truth)
 export type { AggregatedAgentStatus, InternalAgentCounts } from "../shared/ipc";
 
@@ -139,6 +147,9 @@ export interface AgentServerManager {
    * @param config - Normalized initial prompt configuration
    */
   setInitialPrompt?(workspacePath: string, config: NormalizedInitialPrompt): Promise<void>;
+
+  /** Configure MCP server connection for agent integration */
+  setMcpConfig(config: McpConfig): void;
 
   /** Dispose the manager, stopping all servers */
   dispose(): Promise<void>;

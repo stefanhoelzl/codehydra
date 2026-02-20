@@ -149,12 +149,22 @@ export interface WorkspaceLoadingChangedPayload {
 export type LifecycleAgentType = "opencode" | "claude";
 
 /**
+ * Agent info for the selection dialog.
+ * Provided by per-agent modules via the register-agents hook.
+ */
+export interface AgentInfo {
+  readonly agent: LifecycleAgentType;
+  readonly label: string;
+  readonly icon: string;
+}
+
+/**
  * Payload for lifecycle:show-agent-selection event (main → renderer).
  * Tells the renderer to show the agent selection dialog.
  */
 export interface ShowAgentSelectionPayload {
   /** Available agents to choose from */
-  readonly agents: readonly LifecycleAgentType[];
+  readonly agents: readonly AgentInfo[];
 }
 
 /**

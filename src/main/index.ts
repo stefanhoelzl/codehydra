@@ -70,6 +70,8 @@ import {
 } from "../services/binary-download";
 import { ExtensionManager } from "../services/vscode-setup/extension-manager";
 import { AgentStatusManager, createAgentServerManager } from "../agents";
+import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
+import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import { PluginServer } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
 import { WindowManager } from "./managers/window-manager";
@@ -82,7 +84,8 @@ import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
 import { createViewModule } from "./modules/view-module";
 import { createCodeServerModule } from "./modules/code-server-module";
-import { createAgentModule } from "./modules/agent-module";
+import { createClaudeAgentModule } from "./modules/claude-agent-module";
+import { createOpenCodeAgentModule } from "./modules/opencode-agent-module";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
@@ -136,7 +139,6 @@ import {
 } from "./operations/update-agent-status";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
-import type { ConfigAgentType } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
@@ -218,14 +220,17 @@ const codeServerManager = new CodeServerManager(
   binaryDownloadService
 );
 
-// AgentBinaryManager factory - creates manager for specific agent type
-const getAgentBinaryManager = (agentType: ConfigAgentType): AgentBinaryManager => {
-  return new AgentBinaryManager(
-    agentType,
-    binaryDownloadService,
-    loggingService.createLogger("agent-binary")
-  );
-};
+// Per-agent binary managers (one per agent type, created upfront)
+const claudeBinaryManager = new AgentBinaryManager(
+  "claude",
+  binaryDownloadService,
+  loggingService.createLogger("agent-binary")
+);
+const opencodeBinaryManager = new AgentBinaryManager(
+  "opencode",
+  binaryDownloadService,
+  loggingService.createLogger("agent-binary")
+);
 
 // ExtensionManager for extension preflight/install
 const setupExtensionManager = new ExtensionManager(
@@ -368,6 +373,7 @@ const { module: viewModule, readyHandler } = createViewModule({
   windowLayer,
   sessionLayer,
   dialogLayer,
+  ipcLayer,
   menuLayer,
   windowManager,
   buildInfo,
@@ -403,19 +409,24 @@ const codeServerModule = createCodeServerModule({
   logger: apiLogger,
 });
 
-const agentModule = createAgentModule({
+const claudeAgentModule = createClaudeAgentModule({
   configService,
-  getAgentBinaryManager,
-  ipcLayer,
-  getUIWebContentsFn: () => viewManager.getUIWebContents(),
+  agentBinaryManager: claudeBinaryManager,
+  serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
+  agentStatusManager,
+  dispatcher,
   logger: apiLogger,
   loggingService,
-  dispatcher,
-  killTerminalsCallback: async (workspacePath: string) => {
-    await pluginServer.sendExtensionHostShutdown(workspacePath);
-  },
-  agentServerManagers,
+});
+
+const opencodeAgentModule = createOpenCodeAgentModule({
+  configService,
+  agentBinaryManager: opencodeBinaryManager,
+  serverManager: agentServerManagers.opencode as OpenCodeServerManager,
   agentStatusManager,
+  dispatcher,
+  logger: apiLogger,
+  loggingService,
 });
 
 const metadataModule = createMetadataModule({
@@ -545,7 +556,8 @@ const ipcEventBridge = createIpcEventBridge({
 dispatcher.registerModule(idempotencyModule);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(codeServerModule);
-dispatcher.registerModule(agentModule);
+dispatcher.registerModule(claudeAgentModule);
+dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
