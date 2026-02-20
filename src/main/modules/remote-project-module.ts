@@ -10,6 +10,7 @@
  * - close-project / close: filesystem cleanup (delete cloned directory if requested)
  */
 
+import * as crypto from "node:crypto";
 import nodePath from "path";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -18,15 +19,31 @@ import type { PathProvider } from "../../services/platform/path-provider";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Logger } from "../../services/logging";
 import { Path } from "../../services/platform/path";
-import {
-  expandGitUrl,
-  generateProjectIdFromUrl,
-  extractRepoName,
-} from "../../services/project/url-utils";
+import type { ProjectId } from "../../shared/api/types";
+import { expandGitUrl, normalizeGitUrl, extractRepoName } from "../../services/project/url-utils";
 import type { OpenProjectIntent, ResolveHookResult } from "../operations/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import type { CloseHookInput, CloseHookResult } from "../operations/close-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
+
+// =============================================================================
+// Private Helpers
+// =============================================================================
+
+function generateProjectIdFromUrl(url: string): ProjectId {
+  const normalized = normalizeGitUrl(url);
+  const repoName = extractRepoName(url);
+
+  const safeName =
+    repoName
+      .replace(/[^a-zA-Z0-9]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "repo";
+
+  const hash = crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 8);
+
+  return `${safeName}-${hash}` as ProjectId;
+}
 
 // =============================================================================
 // Factory

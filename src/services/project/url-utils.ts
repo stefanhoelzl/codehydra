@@ -4,9 +4,6 @@
  * Provides URL normalization and project ID generation from URLs.
  */
 
-import * as crypto from "node:crypto";
-import type { ProjectId } from "../../shared/api/types";
-
 /**
  * Normalize a git remote URL to a canonical form for comparison.
  *
@@ -122,42 +119,6 @@ export function extractRepoName(url: string): string {
   const normalized = normalizeGitUrl(url);
   const segments = normalized.split("/").filter((s) => s.length > 0);
   return segments[segments.length - 1] ?? "repo";
-}
-
-/**
- * Generate a deterministic ProjectId from a git remote URL.
- *
- * The ID format is: `<repo-name>-<8-char-hex-hash>`
- * - repo-name: Repository name extracted from URL
- * - hash: first 8 characters of SHA-256 hash of normalized URL
- *
- * @param url Git remote URL
- * @returns A deterministic ProjectId
- *
- * @example
- * generateProjectIdFromUrl("https://github.com/org/my-repo.git") // "my-repo-abcd1234"
- * // Same URL variants produce same ID:
- * generateProjectIdFromUrl("git@github.com:org/my-repo.git") // "my-repo-abcd1234"
- */
-export function generateProjectIdFromUrl(url: string): ProjectId {
-  const normalized = normalizeGitUrl(url);
-  const repoName = extractRepoName(url);
-
-  // Create safe name:
-  // 1. Replace non-alphanumeric characters with dashes
-  // 2. Collapse consecutive dashes
-  // 3. Remove leading/trailing dashes
-  // 4. Use "repo" as fallback for empty result
-  const safeName =
-    repoName
-      .replace(/[^a-zA-Z0-9]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "repo";
-
-  // Generate hash from normalized URL
-  const hash = crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 8);
-
-  return `${safeName}-${hash}` as ProjectId;
 }
 
 /**

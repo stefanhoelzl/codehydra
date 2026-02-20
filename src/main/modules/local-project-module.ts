@@ -13,11 +13,11 @@
  * - app:start     → activate: load ALL saved project configs
  */
 
+import * as crypto from "node:crypto";
 import nodePath from "path";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { ProjectId } from "../../shared/api/types";
-import { generateProjectId } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import { projectDirName } from "../../services/platform/paths";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
@@ -97,6 +97,35 @@ export interface LocalProjectModuleDeps {
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm" | "rename"
   >;
   readonly globalProvider: Pick<GitWorktreeProvider, "validateRepository">;
+}
+
+// =============================================================================
+// Private ID Generation
+// =============================================================================
+
+function normalizePathForId(absolutePath: string): string {
+  let normalized = nodePath.normalize(absolutePath);
+  normalized = normalized.replace(/\\/g, "/");
+  normalized = normalized.replace(/\/+/g, "/");
+  if (normalized.length > 1 && normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (process.platform === "win32") {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
+
+function generateProjectId(absolutePath: string): ProjectId {
+  const normalizedPath = normalizePathForId(absolutePath);
+  const basename = normalizedPath.split("/").pop() ?? "";
+  const safeName =
+    basename
+      .replace(/[^a-zA-Z0-9]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "root";
+  const hash = crypto.createHash("sha256").update(normalizedPath).digest("hex").slice(0, 8);
+  return `${safeName}-${hash}` as ProjectId;
 }
 
 // =============================================================================

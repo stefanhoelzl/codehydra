@@ -24,7 +24,11 @@ import type {
   CloseProjectIntent,
 } from "../operations/close-project";
 import { Path } from "../../services/platform/path";
-import { generateProjectIdFromUrl, extractRepoName } from "../../services/project/url-utils";
+import { extractRepoName } from "../../services/project/url-utils";
+import type { ProjectId } from "../../shared/api/types";
+
+// Pre-computed: generateProjectIdFromUrl("https://github.com/org/repo.git")
+const URL_PROJECT_ID = "repo-4c06e3f1" as ProjectId;
 
 expect.extend(gitClientMatchers);
 
@@ -110,9 +114,8 @@ describe("RemoteProjectModule Integration", () => {
       const { hookRegistry, fs, gitClient, pathProvider } = createTestSetup();
 
       const url = "https://github.com/org/repo.git";
-      const urlProjectId = generateProjectIdFromUrl(url);
       const repoName = extractRepoName(url);
-      const projectDir = new Path(pathProvider.remotesDir.toString(), urlProjectId);
+      const projectDir = new Path(pathProvider.remotesDir.toString(), URL_PROJECT_ID);
       const gitPath = new Path(projectDir.toString(), repoName);
 
       // Pre-populate filesystem so readdir succeeds

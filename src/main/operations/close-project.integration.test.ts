@@ -55,16 +55,23 @@ import type {
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
-import { generateProjectId } from "../../shared/api/id-utils";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+function testProjectId(path: string): ProjectId {
+  return Buffer.from(path).toString("base64url") as ProjectId;
+}
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_PATH = "/test/project";
-const PROJECT_ID = generateProjectId(PROJECT_PATH);
+const PROJECT_ID = testProjectId(PROJECT_PATH);
 const WORKSPACE_A_PATH = "/test/project/workspaces/feature-a";
 const WORKSPACE_A_NAME = "feature-a" as WorkspaceName;
 const WORKSPACE_B_PATH = "/test/project/workspaces/feature-b";
@@ -241,7 +248,7 @@ function createTestHarness(options?: {
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
             const { projectPath } = ctx as ResolveProjectHookInput;
-            const projectId = generateProjectId(projectPath);
+            const projectId = testProjectId(projectPath);
             return { projectId };
           },
         },

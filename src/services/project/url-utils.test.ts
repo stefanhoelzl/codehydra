@@ -3,13 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  normalizeGitUrl,
-  extractRepoName,
-  generateProjectIdFromUrl,
-  isValidGitUrl,
-  expandGitUrl,
-} from "./url-utils";
+import { normalizeGitUrl, extractRepoName, isValidGitUrl, expandGitUrl } from "./url-utils";
 
 describe("normalizeGitUrl", () => {
   it("normalizes HTTPS URLs", () => {
@@ -75,30 +69,6 @@ describe("extractRepoName", () => {
 
   it("handles nested paths", () => {
     expect(extractRepoName("https://gitlab.com/group/subgroup/repo.git")).toBe("repo");
-  });
-});
-
-describe("generateProjectIdFromUrl", () => {
-  it("generates a ProjectId from URL", () => {
-    const id = generateProjectIdFromUrl("https://github.com/org/my-repo.git");
-    expect(id).toMatch(/^my-repo-[a-f0-9]{8}$/);
-  });
-
-  it("generates consistent IDs for equivalent URLs", () => {
-    const httpsId = generateProjectIdFromUrl("https://github.com/org/my-repo.git");
-    const sshId = generateProjectIdFromUrl("git@github.com:org/my-repo.git");
-    expect(httpsId).toBe(sshId);
-  });
-
-  it("generates different IDs for different URLs", () => {
-    const id1 = generateProjectIdFromUrl("https://github.com/org/repo-a.git");
-    const id2 = generateProjectIdFromUrl("https://github.com/org/repo-b.git");
-    expect(id1).not.toBe(id2);
-  });
-
-  it("handles repo names with special characters", () => {
-    const id = generateProjectIdFromUrl("https://github.com/org/my.cool-repo.git");
-    expect(id).toMatch(/^my-cool-repo-[a-f0-9]{8}$/);
   });
 });
 
