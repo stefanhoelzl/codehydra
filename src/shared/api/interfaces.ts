@@ -56,6 +56,12 @@ export interface WorkspaceCreateOptions {
   readonly initialPrompt?: InitialPrompt;
   /** If true, don't switch to the new workspace (default: false = switch to it) */
   readonly keepInBackground?: boolean;
+  /**
+   * Workspace path of the calling workspace.
+   * Used by Plugin API / MCP server as an alternative to projectId.
+   * When provided, projectId is resolved from this workspace's project.
+   */
+  readonly callerWorkspacePath?: string;
 }
 
 export interface IWorkspaceApi {
@@ -68,7 +74,7 @@ export interface IWorkspaceApi {
    * @param options Optional creation options (initialPrompt, keepInBackground)
    */
   create(
-    projectId: ProjectId,
+    projectId: ProjectId | undefined,
     name: string,
     base: string,
     options?: WorkspaceCreateOptions
@@ -78,62 +84,54 @@ export interface IWorkspaceApi {
    * Progress is emitted via workspace:deletion-progress events.
    * Returns { started: true } on success, { started: false } if blocked by idempotency.
    *
-   * @param projectId Project containing the workspace
-   * @param workspaceName Name of the workspace to remove
+   * @param workspacePath Absolute path to the workspace to remove
    * @param options Optional removal options (keepBranch, skipSwitch, force)
    */
   remove(
-    projectId: ProjectId,
-    workspaceName: WorkspaceName,
+    workspacePath: string,
     options?: {
       keepBranch?: boolean;
       skipSwitch?: boolean;
       force?: boolean;
     }
   ): Promise<{ started: boolean }>;
-  getStatus(projectId: ProjectId, workspaceName: WorkspaceName): Promise<WorkspaceStatus>;
+  /**
+   * Get the status of a workspace.
+   * @param workspacePath Absolute path to the workspace
+   * @returns Workspace status including dirty flag and agent status
+   * @throws Error if workspace not found
+   */
+  getStatus(workspacePath: string): Promise<WorkspaceStatus>;
   /**
    * Get the agent session info for a workspace.
-   * @param projectId Project containing the workspace
-   * @param workspaceName Name of the workspace
+   * @param workspacePath Absolute path to the workspace
    * @returns Session info (port and sessionId) if available, null if not running or not initialized
-   * @throws Error if project or workspace not found
+   * @throws Error if workspace not found
    */
-  getAgentSession(projectId: ProjectId, workspaceName: WorkspaceName): Promise<AgentSession | null>;
+  getAgentSession(workspacePath: string): Promise<AgentSession | null>;
   /**
    * Set a metadata value for a workspace.
-   * @param projectId Project containing the workspace
-   * @param workspaceName Name of the workspace
+   * @param workspacePath Absolute path to the workspace
    * @param key Metadata key (must match /^[A-Za-z][A-Za-z0-9-]*$/)
    * @param value Value to set, or null to delete the key
-   * @throws Error if project or workspace not found, or key format invalid
+   * @throws Error if workspace not found, or key format invalid
    */
-  setMetadata(
-    projectId: ProjectId,
-    workspaceName: WorkspaceName,
-    key: string,
-    value: string | null
-  ): Promise<void>;
+  setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
   /**
    * Get all metadata for a workspace.
    * Always includes `base` key (with fallback if not in config).
-   * @param projectId Project containing the workspace
-   * @param workspaceName Name of the workspace
+   * @param workspacePath Absolute path to the workspace
    * @returns Metadata record with at least `base` key
-   * @throws Error if project or workspace not found
+   * @throws Error if workspace not found
    */
-  getMetadata(
-    projectId: ProjectId,
-    workspaceName: WorkspaceName
-  ): Promise<Readonly<Record<string, string>>>;
+  getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
   /**
    * Execute a VS Code command in a workspace.
    *
    * Note: Most VS Code commands return `undefined`. The return type is `unknown`
    * because command return types are not statically typed.
    *
-   * @param projectId Project containing the workspace
-   * @param workspaceName Name of the workspace
+   * @param workspacePath Absolute path to the workspace
    * @param command VS Code command identifier (e.g., "workbench.action.files.save")
    * @param args Optional arguments to pass to the command
    * @returns The command's return value, or undefined if command returns nothing
@@ -141,8 +139,7 @@ export interface IWorkspaceApi {
    * @throws Error if command times out (10-second limit)
    */
   executeCommand(
-    projectId: ProjectId,
-    workspaceName: WorkspaceName,
+    workspacePath: string,
     command: string,
     args?: readonly unknown[]
   ): Promise<unknown>;
@@ -150,22 +147,17 @@ export interface IWorkspaceApi {
    * Restart the agent server for a workspace, preserving the same port.
    * Useful for reloading configuration changes without affecting other workspaces.
    *
-   * @param projectId Project containing the workspace
-   * @param workspaceName Name of the workspace
+   * @param workspacePath Absolute path to the workspace
    * @returns The port number of the restarted server
-   * @throws Error if project or workspace not found, or server not running
+   * @throws Error if workspace not found, or server not running
    */
-  restartAgentServer(projectId: ProjectId, workspaceName: WorkspaceName): Promise<number>;
+  restartAgentServer(workspacePath: string): Promise<number>;
 }
 
 export interface IUiApi {
   selectFolder(): Promise<string | null>;
   getActiveWorkspace(): Promise<WorkspaceRef | null>;
-  switchWorkspace(
-    projectId: ProjectId,
-    workspaceName: WorkspaceName,
-    focus?: boolean
-  ): Promise<void>;
+  switchWorkspace(workspacePath: string, focus?: boolean): Promise<void>;
   /**
    * Sets the UI mode.
    * - "workspace": UI at z-index 0, focus active workspace

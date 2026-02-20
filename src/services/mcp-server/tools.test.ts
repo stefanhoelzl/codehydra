@@ -7,8 +7,8 @@
 
 import { describe, it, expect, vi } from "vitest";
 import type { ICoreApi, IProjectApi } from "../../shared/api/interfaces";
-import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
-import type { McpResolvedWorkspace, McpError } from "./types";
+import type { WorkspaceStatus } from "../../shared/api/types";
+import type { McpError } from "./types";
 import type { Logger, LogContext } from "../logging";
 import type { LogLevel } from "../logging/types";
 import { createBehavioralLogger } from "../logging/logging.test-utils";
@@ -51,15 +51,16 @@ function parseToolResult<T>(
 
 /**
  * Simulated tool handler context.
+ * After the workspace registry removal, only workspacePath is needed.
  */
 interface SimulatedToolContext {
-  resolved: McpResolvedWorkspace | null;
   workspacePath: string;
 }
 
 /**
  * Simulate tool handlers for testing.
  * This mimics the tool registration logic from McpServer.
+ * Tools now pass workspacePath directly to API methods.
  */
 function createToolHandlers(api: ICoreApi) {
   // Handle undefined specially since JSON.stringify(undefined) returns undefined (not a string)
@@ -79,14 +80,11 @@ function createToolHandlers(api: ICoreApi) {
 
   return {
     workspace_get_status: async (context: SimulatedToolContext): Promise<ToolResult> => {
-      if (!context.resolved) {
-        return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
+      if (!context.workspacePath) {
+        return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const status = await api.workspaces.getStatus(
-          context.resolved.projectId,
-          context.resolved.workspaceName
-        );
+        const status = await api.workspaces.getStatus(context.workspacePath);
         return successResult(status);
       } catch (error) {
         return handleError(error);
@@ -94,14 +92,11 @@ function createToolHandlers(api: ICoreApi) {
     },
 
     workspace_get_metadata: async (context: SimulatedToolContext): Promise<ToolResult> => {
-      if (!context.resolved) {
-        return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
+      if (!context.workspacePath) {
+        return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const metadata = await api.workspaces.getMetadata(
-          context.resolved.projectId,
-          context.resolved.workspaceName
-        );
+        const metadata = await api.workspaces.getMetadata(context.workspacePath);
         return successResult(metadata);
       } catch (error) {
         return handleError(error);
@@ -112,16 +107,11 @@ function createToolHandlers(api: ICoreApi) {
       context: SimulatedToolContext,
       args: { key: string; value: string | null }
     ): Promise<ToolResult> => {
-      if (!context.resolved) {
-        return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
+      if (!context.workspacePath) {
+        return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        await api.workspaces.setMetadata(
-          context.resolved.projectId,
-          context.resolved.workspaceName,
-          args.key,
-          args.value
-        );
+        await api.workspaces.setMetadata(context.workspacePath, args.key, args.value);
         return successResult(null);
       } catch (error) {
         return handleError(error);
@@ -129,14 +119,11 @@ function createToolHandlers(api: ICoreApi) {
     },
 
     workspace_get_opencode_port: async (context: SimulatedToolContext): Promise<ToolResult> => {
-      if (!context.resolved) {
-        return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
+      if (!context.workspacePath) {
+        return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const port = await api.workspaces.getAgentSession(
-          context.resolved.projectId,
-          context.resolved.workspaceName
-        );
+        const port = await api.workspaces.getAgentSession(context.workspacePath);
         return successResult(port);
       } catch (error) {
         return handleError(error);
@@ -147,15 +134,13 @@ function createToolHandlers(api: ICoreApi) {
       context: SimulatedToolContext,
       args: { keepBranch?: boolean }
     ): Promise<ToolResult> => {
-      if (!context.resolved) {
-        return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
+      if (!context.workspacePath) {
+        return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const result = await api.workspaces.remove(
-          context.resolved.projectId,
-          context.resolved.workspaceName,
-          { keepBranch: args.keepBranch ?? false }
-        );
+        const result = await api.workspaces.remove(context.workspacePath, {
+          keepBranch: args.keepBranch ?? false,
+        });
         return successResult(result);
       } catch (error) {
         return handleError(error);
@@ -166,13 +151,12 @@ function createToolHandlers(api: ICoreApi) {
       context: SimulatedToolContext,
       args: { command: string; args?: readonly unknown[] }
     ): Promise<ToolResult> => {
-      if (!context.resolved) {
-        return errorResult("workspace-not-found", `Workspace not found: ${context.workspacePath}`);
+      if (!context.workspacePath) {
+        return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
         const result = await api.workspaces.executeCommand(
-          context.resolved.projectId,
-          context.resolved.workspaceName,
+          context.workspacePath,
           args.command,
           args.args
         );
@@ -230,26 +214,20 @@ function createLogToolHandler(logger: Logger) {
 }
 
 /**
- * Create a test context with resolved workspace.
+ * Create a test context with a valid workspace path.
  */
-function createResolvedContext(): SimulatedToolContext {
+function createContext(): SimulatedToolContext {
   return {
     workspacePath: "/path/to/workspace",
-    resolved: {
-      projectId: "test-12345678" as ProjectId,
-      workspaceName: "feature-branch" as WorkspaceName,
-      workspacePath: "/path/to/workspace",
-    },
   };
 }
 
 /**
- * Create a test context without resolved workspace.
+ * Create a test context with an empty workspace path (simulates missing header).
  */
-function createUnresolvedContext(): SimulatedToolContext {
+function createEmptyContext(): SimulatedToolContext {
   return {
-    workspacePath: "/unknown/path",
-    resolved: null,
+    workspacePath: "",
   };
 }
 
@@ -273,7 +251,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_get_status(context);
       const parsed = parseToolResult<WorkspaceStatus>(result);
@@ -294,7 +272,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createUnresolvedContext();
+      const context = createEmptyContext();
 
       const result = await handlers.workspace_get_status(context);
       const parsed = parseToolResult<WorkspaceStatus>(result);
@@ -318,7 +296,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_get_status(context);
       const parsed = parseToolResult<WorkspaceStatus>(result);
@@ -347,7 +325,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_get_metadata(context);
       const parsed = parseToolResult<Record<string, string>>(result);
@@ -375,7 +353,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_set_metadata(context, {
         key: "note",
@@ -384,12 +362,7 @@ describe("MCP Tools", () => {
       const parsed = parseToolResult<null>(result);
 
       expect(parsed.success).toBe(true);
-      expect(setMetadataMock).toHaveBeenCalledWith(
-        context.resolved!.projectId,
-        context.resolved!.workspaceName,
-        "note",
-        "test value"
-      );
+      expect(setMetadataMock).toHaveBeenCalledWith(context.workspacePath, "note", "test value");
     });
 
     it("deletes metadata when value is null", async () => {
@@ -406,19 +379,14 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       await handlers.workspace_set_metadata(context, {
         key: "note",
         value: null,
       });
 
-      expect(setMetadataMock).toHaveBeenCalledWith(
-        context.resolved!.projectId,
-        context.resolved!.workspaceName,
-        "note",
-        null
-      );
+      expect(setMetadataMock).toHaveBeenCalledWith(context.workspacePath, "note", null);
     });
 
     it("propagates validation errors from API", async () => {
@@ -434,7 +402,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_set_metadata(context, {
         key: "123invalid",
@@ -463,7 +431,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_get_opencode_port(context);
       const parsed = parseToolResult<{ port: number; sessionId: string }>(result);
@@ -487,7 +455,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_get_opencode_port(context);
       const parsed = parseToolResult<{ port: number; sessionId: string } | null>(result);
@@ -514,7 +482,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_delete(context, { keepBranch: false });
       const parsed = parseToolResult<{ started: boolean }>(result);
@@ -524,11 +492,7 @@ describe("MCP Tools", () => {
         expect(parsed.data.started).toBe(true);
       }
 
-      expect(removeMock).toHaveBeenCalledWith(
-        context.resolved!.projectId,
-        context.resolved!.workspaceName,
-        { keepBranch: false }
-      );
+      expect(removeMock).toHaveBeenCalledWith(context.workspacePath, { keepBranch: false });
     });
 
     it("respects keepBranch option", async () => {
@@ -545,15 +509,11 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       await handlers.workspace_delete(context, { keepBranch: true });
 
-      expect(removeMock).toHaveBeenCalledWith(
-        context.resolved!.projectId,
-        context.resolved!.workspaceName,
-        { keepBranch: true }
-      );
+      expect(removeMock).toHaveBeenCalledWith(context.workspacePath, { keepBranch: true });
     });
 
     it("defaults keepBranch to false", async () => {
@@ -570,15 +530,11 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       await handlers.workspace_delete(context, {});
 
-      expect(removeMock).toHaveBeenCalledWith(
-        context.resolved!.projectId,
-        context.resolved!.workspaceName,
-        { keepBranch: false }
-      );
+      expect(removeMock).toHaveBeenCalledWith(context.workspacePath, { keepBranch: false });
     });
   });
 
@@ -597,7 +553,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_execute_command(context, {
         command: "test.command",
@@ -624,7 +580,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_execute_command(context, {
         command: "workbench.action.files.saveAll",
@@ -652,7 +608,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_execute_command(context, {
         command: "workbench.action.files.saveAll",
@@ -690,19 +646,17 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       await handlers.workspace_execute_command(context, {
         command: "vscode.open",
         args: ["/path/to/file", { preview: true }],
       });
 
-      expect(executeCommandMock).toHaveBeenCalledWith(
-        context.resolved!.projectId,
-        context.resolved!.workspaceName,
-        "vscode.open",
-        ["/path/to/file", { preview: true }]
-      );
+      expect(executeCommandMock).toHaveBeenCalledWith(context.workspacePath, "vscode.open", [
+        "/path/to/file",
+        { preview: true },
+      ]);
     });
 
     it("returns error when workspace not found", async () => {
@@ -714,7 +668,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createUnresolvedContext();
+      const context = createEmptyContext();
 
       const result = await handlers.workspace_execute_command(context, {
         command: "test.command",
@@ -743,7 +697,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_execute_command(context, {
         command: "invalid.command",
@@ -771,7 +725,7 @@ describe("MCP Tools", () => {
       };
 
       const handlers = createToolHandlers(api);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handlers.workspace_execute_command(context, {
         command: "slow.command",
@@ -790,7 +744,7 @@ describe("MCP Tools", () => {
     it("logs info level message with workspace context", async () => {
       const logger = createBehavioralLogger();
       const handler = createLogToolHandler(logger);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handler.log(context, {
         level: "info",
@@ -812,7 +766,7 @@ describe("MCP Tools", () => {
     it("logs all levels correctly", async () => {
       const logger = createBehavioralLogger();
       const handler = createLogToolHandler(logger);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const levels: LogLevel[] = ["silly", "debug", "info", "warn", "error"];
 
@@ -833,7 +787,7 @@ describe("MCP Tools", () => {
     it("preserves context and adds workspace", async () => {
       const logger = createBehavioralLogger();
       const handler = createLogToolHandler(logger);
-      const context = createResolvedContext();
+      const context = createContext();
 
       await handler.log(context, {
         level: "debug",
@@ -853,7 +807,7 @@ describe("MCP Tools", () => {
     it("returns success result immediately", async () => {
       const logger = createBehavioralLogger();
       const handler = createLogToolHandler(logger);
-      const context = createResolvedContext();
+      const context = createContext();
 
       const result = await handler.log(context, {
         level: "info",

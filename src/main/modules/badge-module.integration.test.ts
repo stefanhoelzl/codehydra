@@ -66,14 +66,13 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
   readonly id = "delete-workspace";
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
-    const { payload } = ctx.intent;
     const event: WorkspaceDeletedEvent = {
       type: EVENT_WORKSPACE_DELETED,
       payload: {
-        projectId: payload.projectId,
-        workspaceName: payload.workspaceName,
-        workspacePath: payload.workspacePath ?? "",
-        projectPath: payload.projectPath ?? "",
+        projectId: "test-12345678" as ProjectId,
+        workspaceName: "ws" as WorkspaceName,
+        workspacePath: ctx.intent.payload.workspacePath ?? "",
+        projectPath: "/projects/test",
       },
     };
     ctx.emit(event);
@@ -274,10 +273,7 @@ describe("BadgeModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
           workspacePath: "/workspace/1",
-          projectPath: "/projects/test",
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -304,10 +300,7 @@ describe("BadgeModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "ws2" as WorkspaceName,
           workspacePath: "/workspace/2",
-          projectPath: "/projects/test",
           keepBranch: false,
           force: false,
           removeWorktree: true,

@@ -3,6 +3,10 @@
  *
  * Provides MCP (Model Context Protocol) server functionality for AI agent integration.
  * Uses the @modelcontextprotocol/sdk for protocol handling.
+ *
+ * Workspace resolution is handled by the intent system — the MCP server passes
+ * workspacePath directly to API methods. For `create`, it uses `callerWorkspacePath`
+ * so the intent hooks resolve the project from the calling workspace.
  */
 
 import {
@@ -17,12 +21,11 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import type { IMcpServer, McpResolvedWorkspace, McpError } from "./types";
+import type { IMcpServer, McpError } from "./types";
 import type { ICoreApi } from "../../shared/api/interfaces";
 import type { Logger, LogContext } from "../logging";
 import { SILENT_LOGGER, logAtLevel } from "../logging";
 import type { LogLevel } from "../logging/types";
-import { Path } from "../platform/path";
 import { getErrorMessage } from "../errors";
 import {
   initialPromptSchema,
@@ -35,14 +38,6 @@ import { createOpencodeClient } from "@opencode-ai/sdk";
  * X-Workspace-Path header name.
  */
 const WORKSPACE_PATH_HEADER = "x-workspace-path";
-
-/**
- * Tool handler context providing workspace resolution.
- */
-interface ToolContext {
-  readonly workspacePath: string;
-  readonly resolved: McpResolvedWorkspace | null;
-}
 
 /**
  * Factory function type for creating MCP SDK instances.
@@ -79,12 +74,12 @@ export function createDefaultMcpServer(): McpServerSdk {
  * MCP Server implementation.
  *
  * Provides HTTP-based MCP server that exposes workspace tools to AI agents.
+ * Workspace resolution is delegated to the intent system via workspacePath-based API methods.
  */
 export class McpServer implements IMcpServer {
   private readonly api: ICoreApi;
   private readonly serverFactory: McpServerFactory;
   private readonly logger: Logger;
-  private readonly workspaces = new Map<string, McpResolvedWorkspace>();
 
   private mcpServer: McpServerSdk | null = null;
   private httpServer: HttpServer | null = null;
@@ -102,20 +97,6 @@ export class McpServer implements IMcpServer {
     this.api = api;
     this.serverFactory = serverFactory;
     this.logger = logger ?? SILENT_LOGGER;
-  }
-
-  /**
-   * Register a workspace for tool resolution.
-   */
-  registerWorkspace(identity: McpResolvedWorkspace): void {
-    this.workspaces.set(new Path(identity.workspacePath).toString(), identity);
-  }
-
-  /**
-   * Unregister a workspace from tool resolution.
-   */
-  unregisterWorkspace(workspacePath: string): void {
-    this.workspaces.delete(new Path(workspacePath).toString());
   }
 
   /**
@@ -259,25 +240,22 @@ export class McpServer implements IMcpServer {
   }
 
   /**
-   * Create a workspace tool handler that resolves workspace and handles errors.
+   * Create a workspace tool handler that passes workspacePath and handles errors.
    */
   private createWorkspaceHandler<TArgs, TResult>(
-    fn: (resolved: McpResolvedWorkspace, args: TArgs) => Promise<TResult>
+    fn: (workspacePath: string, args: TArgs) => Promise<TResult>
   ): (
     args: TArgs,
     extra: unknown
   ) => Promise<{ content: Array<{ type: "text"; text: string }>; isError?: true }> {
     return async (args: TArgs, extra: unknown) => {
-      const context = await this.getToolContext(extra);
-      if (!context.resolved) {
-        return this.errorResult(
-          "workspace-not-found",
-          `Workspace not found: ${context.workspacePath}`
-        );
+      const workspacePath = this.getWorkspacePathFromExtra(extra);
+      if (!workspacePath) {
+        return this.errorResult("workspace-not-found", "Missing workspace path");
       }
 
       try {
-        const result = await fn(context.resolved, args);
+        const result = await fn(workspacePath, args);
         return this.successResult(result);
       } catch (error) {
         return this.handleError(error);
@@ -301,8 +279,8 @@ export class McpServer implements IMcpServer {
           description: "Get the current workspace status including dirty flag and agent status",
           inputSchema: z.object({}),
         },
-        this.createWorkspaceHandler(async (resolved) =>
-          this.api.workspaces.getStatus(resolved.projectId, resolved.workspaceName)
+        this.createWorkspaceHandler(async (workspacePath) =>
+          this.api.workspaces.getStatus(workspacePath)
         )
       )
     );
@@ -315,8 +293,8 @@ export class McpServer implements IMcpServer {
           description: "Get all metadata for the current workspace",
           inputSchema: z.object({}),
         },
-        this.createWorkspaceHandler(async (resolved) =>
-          this.api.workspaces.getMetadata(resolved.projectId, resolved.workspaceName)
+        this.createWorkspaceHandler(async (workspacePath) =>
+          this.api.workspaces.getMetadata(workspacePath)
         )
       )
     );
@@ -339,13 +317,8 @@ export class McpServer implements IMcpServer {
           }),
         },
         this.createWorkspaceHandler(
-          async (resolved, args: { key: string; value: string | null }) => {
-            await this.api.workspaces.setMetadata(
-              resolved.projectId,
-              resolved.workspaceName,
-              args.key,
-              args.value
-            );
+          async (workspacePath, args: { key: string; value: string | null }) => {
+            await this.api.workspaces.setMetadata(workspacePath, args.key, args.value);
             return null;
           }
         )
@@ -360,8 +333,8 @@ export class McpServer implements IMcpServer {
           description: "Get the agent session info (port and session ID) for the current workspace",
           inputSchema: z.object({}),
         },
-        this.createWorkspaceHandler(async (resolved) =>
-          this.api.workspaces.getAgentSession(resolved.projectId, resolved.workspaceName)
+        this.createWorkspaceHandler(async (workspacePath) =>
+          this.api.workspaces.getAgentSession(workspacePath)
         )
       )
     );
@@ -375,8 +348,8 @@ export class McpServer implements IMcpServer {
             "Restart the agent server for the current workspace, preserving the same port",
           inputSchema: z.object({}),
         },
-        this.createWorkspaceHandler(async (resolved) =>
-          this.api.workspaces.restartAgentServer(resolved.projectId, resolved.workspaceName)
+        this.createWorkspaceHandler(async (workspacePath) =>
+          this.api.workspaces.restartAgentServer(workspacePath)
         )
       )
     );
@@ -408,16 +381,12 @@ export class McpServer implements IMcpServer {
           }),
         },
         async (args, extra) => {
-          const context = await this.getToolContext(extra);
-          if (!context.resolved) {
-            return this.errorResult(
-              "workspace-not-found",
-              `Workspace not found: ${context.workspacePath}`
-            );
+          const workspacePath = this.getWorkspacePathFromExtra(extra);
+          if (!workspacePath) {
+            return this.errorResult("workspace-not-found", "Missing workspace path");
           }
 
           try {
-            const resolved = context.resolved;
             const name = args.name as string;
             const base = args.base as string;
             const rawInitialPrompt = args.initialPrompt as
@@ -435,7 +404,7 @@ export class McpServer implements IMcpServer {
               // If no model specified, try to get caller's current model
               let model = normalized.model;
               if (!model) {
-                model = await this.getCallerModel(resolved);
+                model = await this.getCallerModel(workspacePath);
               }
 
               // Build final prompt with model if available
@@ -448,8 +417,9 @@ export class McpServer implements IMcpServer {
               }
             }
 
-            // Create workspace with options
-            const result = await this.api.workspaces.create(resolved.projectId, name, base, {
+            // Create workspace with callerWorkspacePath (intent resolves project)
+            const result = await this.api.workspaces.create(undefined, name, base, {
+              callerWorkspacePath: workspacePath,
               ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
               ...(keepInBackground && { keepInBackground }),
             });
@@ -475,11 +445,11 @@ export class McpServer implements IMcpServer {
               .describe("If true, keep the git branch after deleting the worktree"),
           }),
         },
-        this.createWorkspaceHandler(async (resolved, args: { keepBranch: boolean }) =>
-          this.api.workspaces.remove(resolved.projectId, resolved.workspaceName, {
+        this.createWorkspaceHandler(async (workspacePath, args: { keepBranch: boolean }) => {
+          return this.api.workspaces.remove(workspacePath, {
             keepBranch: args.keepBranch,
-          })
-        )
+          });
+        })
       )
     );
 
@@ -512,13 +482,8 @@ export class McpServer implements IMcpServer {
           }),
         },
         this.createWorkspaceHandler(
-          async (resolved, args: { command: string; args?: unknown[] | undefined }) =>
-            this.api.workspaces.executeCommand(
-              resolved.projectId,
-              resolved.workspaceName,
-              args.command,
-              args.args
-            )
+          async (workspacePath, args: { command: string; args?: unknown[] | undefined }) =>
+            this.api.workspaces.executeCommand(workspacePath, args.command, args.args)
         )
       )
     );
@@ -542,11 +507,11 @@ export class McpServer implements IMcpServer {
           }),
         },
         async (args, extra) => {
-          const context = await this.getToolContext(extra);
+          const workspacePath = this.getWorkspacePathFromExtra(extra);
           const level = args.level as LogLevel;
           const logContext: LogContext = {
             ...(args.context ?? {}),
-            workspace: context.workspacePath,
+            workspace: workspacePath,
           };
 
           logAtLevel(this.logger, level, args.message, logContext);
@@ -560,60 +525,38 @@ export class McpServer implements IMcpServer {
   }
 
   /**
-   * Get tool context from extra info.
+   * Extract workspace path from MCP extra info.
    * The workspace path is passed via req.auth.extra.workspacePath which becomes
    * extra.authInfo.extra.workspacePath in tool handlers.
    */
-  private async getToolContext(extra: unknown): Promise<ToolContext> {
-    let workspacePath = "";
-
-    // Extract from extra.authInfo.extra.workspacePath
+  private getWorkspacePathFromExtra(extra: unknown): string {
     if (extra && typeof extra === "object" && "authInfo" in extra) {
       const authInfo = (extra as { authInfo?: unknown }).authInfo;
       if (authInfo && typeof authInfo === "object" && "extra" in authInfo) {
         const authExtra = (authInfo as { extra?: unknown }).extra;
         if (authExtra && typeof authExtra === "object" && "workspacePath" in authExtra) {
-          workspacePath = String((authExtra as { workspacePath: unknown }).workspacePath);
+          return String((authExtra as { workspacePath: unknown }).workspacePath);
         }
       }
     }
-
-    // Resolve workspace from internal registry
-    let resolved: McpResolvedWorkspace | null = null;
-    if (workspacePath) {
-      try {
-        const key = new Path(workspacePath).toString();
-        resolved = this.workspaces.get(key) ?? null;
-      } catch {
-        resolved = null;
-      }
-    }
-
-    return {
-      workspacePath,
-      resolved,
-    };
+    return "";
   }
 
   /**
    * Get the model from the caller's current OpenCode session.
    * Used to propagate the model when creating a new workspace with an initial prompt.
    *
-   * @param resolved - The resolved workspace info for the caller
+   * @param workspacePath - The workspace path of the caller
    * @returns The model from the most recent user message, or undefined if not available
    */
-  private async getCallerModel(resolved: McpResolvedWorkspace): Promise<PromptModel | undefined> {
+  private async getCallerModel(workspacePath: string): Promise<PromptModel | undefined> {
     try {
       // Get caller's OpenCode session
-      const session = await this.api.workspaces.getAgentSession(
-        resolved.projectId,
-        resolved.workspaceName
-      );
+      const session = await this.api.workspaces.getAgentSession(workspacePath);
 
       if (!session) {
         this.logger.debug("Cannot determine model: no OpenCode session running", {
-          projectId: resolved.projectId,
-          workspaceName: resolved.workspaceName,
+          workspace: workspacePath,
         });
         return undefined;
       }
@@ -625,8 +568,7 @@ export class McpServer implements IMcpServer {
 
       if (!activeSession) {
         this.logger.debug("Cannot determine model: no active session in caller workspace", {
-          projectId: resolved.projectId,
-          workspaceName: resolved.workspaceName,
+          workspace: workspacePath,
         });
         return undefined;
       }
@@ -643,8 +585,7 @@ export class McpServer implements IMcpServer {
 
       if (!userInfo?.model) {
         this.logger.debug("Cannot determine model: no user messages with model in caller session", {
-          projectId: resolved.projectId,
-          workspaceName: resolved.workspaceName,
+          workspace: workspacePath,
           sessionId: activeSession.id,
         });
         return undefined;
@@ -657,16 +598,14 @@ export class McpServer implements IMcpServer {
       };
 
       this.logger.debug("Retrieved caller model", {
-        projectId: resolved.projectId,
-        workspaceName: resolved.workspaceName,
+        workspace: workspacePath,
         model: `${model.providerID}/${model.modelID}`,
       });
 
       return model;
     } catch (error) {
       this.logger.warn("Failed to get caller model", {
-        projectId: resolved.projectId,
-        workspaceName: resolved.workspaceName,
+        workspace: workspacePath,
         error: getErrorMessage(error),
       });
       return undefined;

@@ -70,7 +70,7 @@ class ReleaseOperation implements Operation<Intent, ReleaseHookResult> {
     const { payload } = ctx.intent as DeleteWorkspaceIntent;
     const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath ?? "",
+      projectPath: "/projects/my-app",
       workspacePath: payload.workspacePath ?? "",
     };
     const { results, errors } = await ctx.hooks.collect<ReleaseHookResult>("release", hookCtx);
@@ -89,7 +89,7 @@ class DetectOperation implements Operation<Intent, DetectHookResult> {
     const { payload } = ctx.intent as DeleteWorkspaceIntent;
     const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath ?? "",
+      projectPath: "/projects/my-app",
       workspacePath: payload.workspacePath ?? "",
     };
     const { results, errors } = await ctx.hooks.collect<DetectHookResult>("detect", hookCtx);

@@ -423,12 +423,8 @@ describe("shortcuts store", () => {
 
         // Wait for async action to complete
         await vi.waitFor(() => {
-          // Should pass projectId, workspaceName, false to keep shortcut mode active
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws2",
-            false
-          );
+          // Should pass workspacePath and false to keep shortcut mode active
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws2", false);
         });
       });
 
@@ -448,12 +444,8 @@ describe("shortcuts store", () => {
         handleShortcutKey("up");
 
         await vi.waitFor(() => {
-          // Should pass projectId, workspaceName, false to keep shortcut mode active
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws1",
-            false
-          );
+          // Should pass workspacePath and false to keep shortcut mode active
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws1", false);
         });
       });
 
@@ -471,12 +463,8 @@ describe("shortcuts store", () => {
         handleShortcutKey("up");
 
         await vi.waitFor(() => {
-          // Should pass projectId, workspaceName, false to keep shortcut mode active
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws3",
-            false
-          );
+          // Should pass workspacePath and false to keep shortcut mode active
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws3", false);
         });
       });
 
@@ -494,12 +482,8 @@ describe("shortcuts store", () => {
         handleShortcutKey("down");
 
         await vi.waitFor(() => {
-          // Should pass projectId, workspaceName, false to keep shortcut mode active
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws1",
-            false
-          );
+          // Should pass workspacePath and false to keep shortcut mode active
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws1", false);
         });
       });
 
@@ -544,11 +528,7 @@ describe("shortcuts store", () => {
         handleShortcutKey("left");
 
         await vi.waitFor(() => {
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws1",
-            false
-          );
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws1", false);
         });
       });
 
@@ -574,11 +554,7 @@ describe("shortcuts store", () => {
 
         await vi.waitFor(() => {
           // Should skip ws2 (busy) and go to ws3 (idle)
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws3",
-            false
-          );
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws3", false);
         });
       });
 
@@ -641,11 +617,7 @@ describe("shortcuts store", () => {
         handleShortcutKey("right");
 
         await vi.waitFor(() => {
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws2",
-            false
-          );
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws2", false);
         });
       });
 
@@ -715,12 +687,8 @@ describe("shortcuts store", () => {
         handleShortcutKey("5");
 
         await vi.waitFor(() => {
-          // Should pass projectId, workspaceName, false to keep shortcut mode active
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws5",
-            false
-          );
+          // Should pass workspacePath and false to keep shortcut mode active
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws5", false);
         });
       });
 
@@ -736,12 +704,8 @@ describe("shortcuts store", () => {
         handleShortcutKey("0");
 
         await vi.waitFor(() => {
-          // Should pass projectId, workspaceName, false to keep shortcut mode active
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws10",
-            false
-          );
+          // Should pass workspacePath and false to keep shortcut mode active
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws10", false);
         });
       });
 
@@ -894,11 +858,7 @@ describe("shortcuts store", () => {
 
         // Verify the call was attempted with correct parameters
         await vi.waitFor(() => {
-          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-            "test-project-12345678",
-            "ws2",
-            false
-          );
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws2", false);
         });
         // Logging is an implementation detail - we just verify the call was made
         // and no unhandled rejection occurs

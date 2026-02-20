@@ -626,9 +626,6 @@ describe("App component", () => {
         expect(getEventCallback("shortcut:key")).toBeDefined();
       });
 
-      // Get actual project ID
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
       // Set active workspace to second one
       projectsStore.setActiveWorkspace("/test/.worktrees/ws2");
 
@@ -639,8 +636,8 @@ describe("App component", () => {
       fireEvent("shortcut:key", "up");
 
       await waitFor(() => {
-        // Should navigate to first workspace (ws1)
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws1", false);
+        // Should navigate to first workspace (ws1) using workspacePath
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws1", false);
       });
     });
 
@@ -666,9 +663,6 @@ describe("App component", () => {
         expect(getEventCallback("shortcut:key")).toBeDefined();
       });
 
-      // Get actual project ID
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
       // Set active workspace to first one
       projectsStore.setActiveWorkspace("/test/.worktrees/ws1");
 
@@ -679,8 +673,8 @@ describe("App component", () => {
       fireEvent("shortcut:key", "down");
 
       await waitFor(() => {
-        // Should navigate to second workspace (ws2)
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws2", false);
+        // Should navigate to second workspace (ws2) using workspacePath
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2", false);
       });
     });
 
@@ -707,8 +701,6 @@ describe("App component", () => {
         expect(getEventCallback("shortcut:key")).toBeDefined();
       });
 
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
       // Enable shortcut mode
       fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
 
@@ -716,7 +708,7 @@ describe("App component", () => {
       fireEvent("shortcut:key", "2");
 
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws2", false);
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2", false);
       });
     });
 
@@ -747,8 +739,6 @@ describe("App component", () => {
         expect(getEventCallback("shortcut:key")).toBeDefined();
       });
 
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
       // Enable shortcut mode
       fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
 
@@ -756,7 +746,7 @@ describe("App component", () => {
       fireEvent("shortcut:key", "0");
 
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, "ws10", false);
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws10", false);
       });
     });
 
@@ -949,9 +939,9 @@ describe("App component", () => {
       showMainView();
 
       await waitFor(() => {
-        // Should call getStatus for each workspace
-        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("test-project-12345678", "ws1");
-        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("test-project-12345678", "ws2");
+        // Should call getStatus for each workspace (using workspacePath)
+        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("/test/.worktrees/ws1");
+        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("/test/.worktrees/ws2");
       });
     });
 
@@ -970,22 +960,20 @@ describe("App component", () => {
       ];
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
-      // Mock different statuses for each workspace
-      mockApi.workspaces.getStatus.mockImplementation(
-        (_projectId: string, workspaceName: string) => {
-          if (workspaceName === "ws1") {
-            return Promise.resolve({
-              isDirty: false,
-              agent: { type: "idle", counts: { idle: 2, busy: 0, total: 2 } },
-            });
-          } else {
-            return Promise.resolve({
-              isDirty: true,
-              agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
-            });
-          }
+      // Mock different statuses for each workspace (uses workspacePath)
+      mockApi.workspaces.getStatus.mockImplementation((workspacePath: string) => {
+        if (workspacePath === "/test/.worktrees/ws1") {
+          return Promise.resolve({
+            isDirty: false,
+            agent: { type: "idle", counts: { idle: 2, busy: 0, total: 2 } },
+          });
+        } else {
+          return Promise.resolve({
+            isDirty: true,
+            agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
+          });
         }
-      );
+      });
 
       render(App);
       showMainView();

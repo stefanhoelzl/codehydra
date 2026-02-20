@@ -7,7 +7,7 @@
  * - src/main/operations/close-project.integration.test.ts
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { CoreModule, type CoreModuleDeps } from "./index";
 import { createMockRegistry } from "../../api/registry.test-utils";
 import type { MockApiRegistry } from "../../api/registry.test-utils";
@@ -17,7 +17,6 @@ import type { MockApiRegistry } from "../../api/registry.test-utils";
 
 function createMockDeps(overrides: Partial<CoreModuleDeps> = {}): CoreModuleDeps {
   const defaults: CoreModuleDeps = {
-    resolveWorkspace: vi.fn().mockReturnValue("/mock/workspace"),
     codeServerPort: 0,
     wrapperPath: "/mock/bin/claude",
   };

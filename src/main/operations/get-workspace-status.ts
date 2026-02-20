@@ -1,10 +1,9 @@
 /**
  * GetWorkspaceStatusOperation - Orchestrates workspace status queries.
  *
- * Runs three hook points in sequence:
- * 1. "resolve-project" - Resolves projectId to projectPath
- * 2. "resolve-workspace" - Resolves workspaceName to workspacePath
- * 3. "get" - Each handler contributes a piece of the status
+ * Runs two hook points in sequence:
+ * 1. "resolve" - Validates workspacePath is tracked, returns projectPath + workspaceName
+ * 2. "get" - Each handler contributes a piece of the status
  *
  * No provider dependencies - hook handlers do the actual work.
  * No domain events - this is a query operation.
@@ -12,7 +11,7 @@
 
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
+import type { WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
 import type { AggregatedAgentStatus } from "../../shared/ipc";
 
 // =============================================================================
@@ -20,8 +19,7 @@ import type { AggregatedAgentStatus } from "../../shared/ipc";
 // =============================================================================
 
 export interface GetWorkspaceStatusPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+  readonly workspacePath: string;
 }
 
 export interface GetWorkspaceStatusIntent extends Intent<WorkspaceStatus> {
@@ -37,32 +35,19 @@ export const INTENT_GET_WORKSPACE_STATUS = "workspace:get-status" as const;
 
 export const GET_WORKSPACE_STATUS_OPERATION_ID = "get-workspace-status";
 
-/**
- * Per-handler result contract for the "resolve-project" hook point.
- * Each handler returns projectPath if it owns the project, or `{}` to skip.
- */
-export interface ResolveProjectHookResult {
+/** Input context for "resolve" handlers. */
+export interface ResolveHookInput extends HookContext {
+  readonly workspacePath: string;
+}
+
+/** Per-handler result for "resolve" hook point. */
+export interface ResolveHookResult {
   readonly projectPath?: string;
+  readonly workspaceName?: WorkspaceName;
 }
 
 /**
- * Per-handler result contract for the "resolve-workspace" hook point.
- * Each handler returns workspacePath if it can resolve, or `{}` to skip.
- */
-export interface ResolveWorkspaceHookResult {
-  readonly workspacePath?: string;
-}
-
-/**
- * Input context for "resolve-workspace" handlers — built from resolve-project results.
- */
-export interface ResolveWorkspaceHookInput extends HookContext {
-  readonly projectPath: string;
-  readonly workspaceName: string;
-}
-
-/**
- * Input context for "get" handlers — built from resolve-workspace results.
+ * Input context for "get" handlers — built from resolve results.
  */
 export interface GetStatusHookInput extends HookContext {
   readonly workspacePath: string;
@@ -90,50 +75,29 @@ export class GetWorkspaceStatusOperation implements Operation<
   async execute(ctx: OperationContext<GetWorkspaceStatusIntent>): Promise<WorkspaceStatus> {
     const { payload } = ctx.intent;
 
-    // 1. resolve-project — resolve projectId to projectPath
-    const { results: resolveProjectResults, errors: resolveProjectErrors } =
-      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", {
-        intent: ctx.intent,
-      });
-    if (resolveProjectErrors.length > 0) {
-      throw new AggregateError(resolveProjectErrors, "get-workspace-status resolve-project failed");
-    }
-
-    let projectPath: string | undefined;
-    for (const result of resolveProjectResults) {
-      if (result.projectPath !== undefined) projectPath = result.projectPath;
-    }
-    if (!projectPath) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    // 2. resolve-workspace — resolve workspaceName to workspacePath
-    const resolveWorkspaceCtx: ResolveWorkspaceHookInput = {
+    // 1. resolve — validate workspacePath is tracked
+    const resolveCtx: ResolveHookInput = {
       intent: ctx.intent,
-      projectPath,
-      workspaceName: payload.workspaceName,
+      workspacePath: payload.workspacePath,
     };
-    const { results: resolveWorkspaceResults, errors: resolveWorkspaceErrors } =
-      await ctx.hooks.collect<ResolveWorkspaceHookResult>("resolve-workspace", resolveWorkspaceCtx);
-    if (resolveWorkspaceErrors.length > 0) {
-      throw new AggregateError(
-        resolveWorkspaceErrors,
-        "get-workspace-status resolve-workspace failed"
-      );
+    const { results: resolveResults, errors: resolveErrors } =
+      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+    if (resolveErrors.length > 0) {
+      throw new AggregateError(resolveErrors, "get-workspace-status resolve failed");
     }
 
-    let workspacePath: string | undefined;
-    for (const result of resolveWorkspaceResults) {
-      if (result.workspacePath !== undefined) workspacePath = result.workspacePath;
+    let found = false;
+    for (const result of resolveResults) {
+      if (result.projectPath !== undefined) found = true;
     }
-    if (!workspacePath) {
-      throw new Error(`Workspace not found: ${payload.workspaceName}`);
+    if (!found) {
+      throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
-    // 3. get — each handler contributes its piece
+    // 2. get — each handler contributes its piece
     const getCtx: GetStatusHookInput = {
       intent: ctx.intent,
-      workspacePath,
+      workspacePath: payload.workspacePath,
     };
     const { results, errors } = await ctx.hooks.collect<GetStatusHookResult>("get", getCtx);
     if (errors.length > 0) {

@@ -26,9 +26,9 @@ import type {
   RestartAgentIntent,
   RestartAgentHookInput,
   RestartAgentHookResult,
+  ResolveHookResult,
   ResolveProjectHookResult,
-  ResolveWorkspaceHookInput,
-  ResolveWorkspaceHookResult,
+  ResolveProjectHookInput,
   AgentRestartedEvent,
 } from "./restart-agent";
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -83,15 +83,15 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 
   dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
 
-  // Resolve-project module: look up projectId
-  const resolveProjectModule: IntentModule = {
+  // Resolve module: validates workspacePath → returns projectPath + workspaceName
+  const resolveModule: IntentModule = {
     hooks: {
       [RESTART_AGENT_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
             const intent = ctx.intent as RestartAgentIntent;
-            if (intent.payload.projectId === projectId) {
-              return { projectPath: PROJECT_ROOT };
+            if (intent.payload.workspacePath === WORKSPACE_PATH) {
+              return { projectPath: PROJECT_ROOT, workspaceName };
             }
             return {};
           },
@@ -100,15 +100,15 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
     },
   };
 
-  // Resolve-workspace module: look up workspaceName
-  const resolveWorkspaceModule: IntentModule = {
+  // Resolve-project module: resolves projectPath → projectId (for domain events)
+  const resolveProjectModule: IntentModule = {
     hooks: {
       [RESTART_AGENT_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspaceName: name } = ctx as ResolveWorkspaceHookInput;
-            if (name === workspaceName) {
-              return { workspacePath: WORKSPACE_PATH };
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
+            if (projectPath === PROJECT_ROOT) {
+              return { projectId };
             }
             return {};
           },
@@ -136,11 +136,7 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
     },
   };
 
-  wireModules(
-    [resolveProjectModule, resolveWorkspaceModule, restartModule],
-    hookRegistry,
-    dispatcher
-  );
+  wireModules([resolveModule, resolveProjectModule, restartModule], hookRegistry, dispatcher);
 
   return { dispatcher, projectId, workspaceName };
 }
@@ -149,10 +145,10 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 // Helpers
 // =============================================================================
 
-function restartIntent(projectId: ProjectId, workspaceName: WorkspaceName): RestartAgentIntent {
+function restartIntent(workspacePath: string): RestartAgentIntent {
   return {
     type: INTENT_RESTART_AGENT,
-    payload: { projectId, workspaceName },
+    payload: { workspacePath },
   };
 }
 
@@ -174,9 +170,9 @@ describe("RestartAgent Operation", () => {
     });
 
     it("returns port number from restart", async () => {
-      const { dispatcher, projectId, workspaceName } = setup;
+      const { dispatcher } = setup;
 
-      const result = await dispatcher.dispatch(restartIntent(projectId, workspaceName));
+      const result = await dispatcher.dispatch(restartIntent(WORKSPACE_PATH));
 
       expect(result).toBe(9090);
     });
@@ -192,9 +188,9 @@ describe("RestartAgent Operation", () => {
         }),
       });
 
-      await expect(
-        setup.dispatcher.dispatch(restartIntent(setup.projectId, setup.workspaceName))
-      ).rejects.toThrow("Server process exited unexpectedly");
+      await expect(setup.dispatcher.dispatch(restartIntent(WORKSPACE_PATH))).rejects.toThrow(
+        "Server process exited unexpectedly"
+      );
     });
   });
 
@@ -218,7 +214,7 @@ describe("RestartAgent Operation", () => {
         receivedEvents.push(event);
       });
 
-      await dispatcher.dispatch(restartIntent(projectId, workspaceName));
+      await dispatcher.dispatch(restartIntent(WORKSPACE_PATH));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentRestartedEvent;
@@ -243,35 +239,21 @@ describe("RestartAgent Operation", () => {
         receivedEvents.push(event);
       });
 
-      await expect(
-        failSetup.dispatcher.dispatch(restartIntent(failSetup.projectId, failSetup.workspaceName))
-      ).rejects.toThrow();
+      await expect(failSetup.dispatcher.dispatch(restartIntent(WORKSPACE_PATH))).rejects.toThrow();
 
       expect(receivedEvents).toHaveLength(0);
     });
   });
 
   describe("error cases", () => {
-    it("unknown workspace throws", async () => {
+    it("unknown workspace path throws", async () => {
       const setup = createTestSetup({
         serverManager: createMockAgentServerManager({ success: true, port: 9090 }),
       });
 
-      await expect(
-        setup.dispatcher.dispatch(restartIntent(setup.projectId, "nonexistent" as WorkspaceName))
-      ).rejects.toThrow("Workspace not found");
-    });
-
-    it("unknown project throws", async () => {
-      const setup = createTestSetup({
-        serverManager: createMockAgentServerManager({ success: true, port: 9090 }),
-      });
-
-      await expect(
-        setup.dispatcher.dispatch(
-          restartIntent("nonexistent-12345678" as ProjectId, setup.workspaceName)
-        )
-      ).rejects.toThrow("Project not found");
+      await expect(setup.dispatcher.dispatch(restartIntent("/nonexistent/path"))).rejects.toThrow(
+        "Workspace not found: /nonexistent/path"
+      );
     });
   });
 
@@ -294,9 +276,7 @@ describe("RestartAgent Operation", () => {
       };
       setup.dispatcher.addInterceptor(cancelInterceptor);
 
-      const result = await setup.dispatcher.dispatch(
-        restartIntent(setup.projectId, setup.workspaceName)
-      );
+      const result = await setup.dispatcher.dispatch(restartIntent(WORKSPACE_PATH));
 
       expect(result).toBeUndefined();
       expect(receivedEvents).toHaveLength(0);

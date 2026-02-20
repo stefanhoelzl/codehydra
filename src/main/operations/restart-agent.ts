@@ -2,9 +2,9 @@
  * RestartAgentOperation - Orchestrates agent server restarts.
  *
  * Runs three sequential hook points:
- * 1. "resolve-project": resolve projectId -> projectPath
- * 2. "resolve-workspace": resolve workspaceName -> workspacePath
- * 3. "restart": restart the agent server using enriched context
+ * 1. "resolve" - Validates workspacePath is tracked, returns projectPath + workspaceName
+ * 2. "resolve-project" - Resolves projectPath to projectId (for domain events)
+ * 3. "restart" - Restart the agent server using enriched context
  *
  * On success, emits an agent:restarted domain event.
  *
@@ -20,8 +20,7 @@ import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 // =============================================================================
 
 export interface RestartAgentPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+  readonly workspacePath: string;
 }
 
 export interface RestartAgentIntent extends Intent<number> {
@@ -55,20 +54,25 @@ export const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
 
 export const RESTART_AGENT_OPERATION_ID = "restart-agent";
 
-/** Per-handler result for the "resolve-project" hook point. */
-export interface ResolveProjectHookResult {
+/** Input context for "resolve" handlers. */
+export interface ResolveHookInput extends HookContext {
+  readonly workspacePath: string;
+}
+
+/** Per-handler result for "resolve" hook point. */
+export interface ResolveHookResult {
   readonly projectPath?: string;
+  readonly workspaceName?: WorkspaceName;
 }
 
-/** Input context for the "resolve-workspace" hook point. */
-export interface ResolveWorkspaceHookInput extends HookContext {
+/** Input context for "resolve-project" handlers. */
+export interface ResolveProjectHookInput extends HookContext {
   readonly projectPath: string;
-  readonly workspaceName: string;
 }
 
-/** Per-handler result for the "resolve-workspace" hook point. */
-export interface ResolveWorkspaceHookResult {
-  readonly workspacePath?: string;
+/** Per-handler result for "resolve-project" hook point. */
+export interface ResolveProjectHookResult {
+  readonly projectId?: ProjectId;
 }
 
 /** Input context for the "restart" hook point. */
@@ -94,8 +98,35 @@ export class RestartAgentOperation implements Operation<RestartAgentIntent, numb
   async execute(ctx: OperationContext<RestartAgentIntent>): Promise<number> {
     const { payload } = ctx.intent;
 
-    // 1. Resolve project: projectId -> projectPath
-    const resolveProjectCtx: HookContext = { intent: ctx.intent };
+    // 1. resolve — validate workspacePath is tracked, get projectPath + workspaceName
+    const resolveCtx: ResolveHookInput = {
+      intent: ctx.intent,
+      workspacePath: payload.workspacePath,
+    };
+    const { results: resolveResults, errors: resolveErrors } =
+      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+    if (resolveErrors.length === 1) {
+      throw resolveErrors[0]!;
+    }
+    if (resolveErrors.length > 1) {
+      throw new AggregateError(resolveErrors, "restart-agent resolve hooks failed");
+    }
+
+    let projectPath: string | undefined;
+    let workspaceName: WorkspaceName | undefined;
+    for (const r of resolveResults) {
+      if (r.projectPath !== undefined) projectPath = r.projectPath;
+      if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
+    }
+    if (!projectPath || !workspaceName) {
+      throw new Error(`Workspace not found: ${payload.workspacePath}`);
+    }
+
+    // 2. resolve-project — get projectId from projectPath (for domain events)
+    const resolveProjectCtx: ResolveProjectHookInput = {
+      intent: ctx.intent,
+      projectPath,
+    };
     const { results: resolveProjectResults, errors: resolveProjectErrors } =
       await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveProjectCtx);
     if (resolveProjectErrors.length === 1) {
@@ -104,43 +135,19 @@ export class RestartAgentOperation implements Operation<RestartAgentIntent, numb
     if (resolveProjectErrors.length > 1) {
       throw new AggregateError(resolveProjectErrors, "restart-agent resolve-project hooks failed");
     }
-    let projectPath: string | undefined;
+
+    let projectId: ProjectId | undefined;
     for (const r of resolveProjectResults) {
-      if (r.projectPath !== undefined) projectPath = r.projectPath;
+      if (r.projectId !== undefined) projectId = r.projectId;
     }
-    if (!projectPath) {
-      throw new Error(`Project not found: ${payload.projectId}`);
-    }
-
-    // 2. Resolve workspace: workspaceName -> workspacePath
-    const resolveWorkspaceCtx: ResolveWorkspaceHookInput = {
-      intent: ctx.intent,
-      projectPath,
-      workspaceName: payload.workspaceName,
-    };
-    const { results: resolveWorkspaceResults, errors: resolveWorkspaceErrors } =
-      await ctx.hooks.collect<ResolveWorkspaceHookResult>("resolve-workspace", resolveWorkspaceCtx);
-    if (resolveWorkspaceErrors.length === 1) {
-      throw resolveWorkspaceErrors[0]!;
-    }
-    if (resolveWorkspaceErrors.length > 1) {
-      throw new AggregateError(
-        resolveWorkspaceErrors,
-        "restart-agent resolve-workspace hooks failed"
-      );
-    }
-    let workspacePath: string | undefined;
-    for (const r of resolveWorkspaceResults) {
-      if (r.workspacePath !== undefined) workspacePath = r.workspacePath;
-    }
-    if (!workspacePath) {
-      throw new Error(`Workspace not found: ${payload.workspaceName}`);
+    if (!projectId) {
+      throw new Error(`Project not found for path: ${projectPath}`);
     }
 
-    // 3. Restart: handler restarts the server
+    // 3. restart — handler restarts the server
     const restartCtx: RestartAgentHookInput = {
       intent: ctx.intent,
-      workspacePath,
+      workspacePath: payload.workspacePath,
     };
     const { results, errors } = await ctx.hooks.collect<RestartAgentHookResult>(
       "restart",
@@ -167,9 +174,9 @@ export class RestartAgentOperation implements Operation<RestartAgentIntent, numb
     const event: AgentRestartedEvent = {
       type: EVENT_AGENT_RESTARTED,
       payload: {
-        projectId: payload.projectId,
-        workspaceName: payload.workspaceName,
-        path: workspacePath,
+        projectId,
+        workspaceName,
+        path: payload.workspacePath,
         port,
       },
     };

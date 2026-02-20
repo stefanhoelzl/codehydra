@@ -32,20 +32,20 @@ import type {
 } from "../operations/delete-workspace";
 import type {
   DeleteHookResult,
-  ResolveWorkspaceHookInput as DeleteResolveWorkspaceInput,
+  ResolveHookInput as DeleteResolveInput,
 } from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
 import type {
   GetStatusHookInput,
   GetStatusHookResult,
-  ResolveWorkspaceHookResult,
+  ResolveHookResult as GetStatusResolveHookResult,
 } from "../operations/get-workspace-status";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
 import type { FetchBasesHookResult } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
-import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { ProjectId } from "../../shared/api/types";
 
 // =============================================================================
 // Mock Dependencies
@@ -145,23 +145,22 @@ class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<DeleteResult> {
     const { payload } = ctx.intent;
 
-    // resolve-workspace (enriched with projectPath from payload, matching real operation)
-    const resolveInput: DeleteResolveWorkspaceInput = {
+    // resolve (workspacePath → projectPath + workspaceName, matching real operation)
+    const resolveInput: DeleteResolveInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath ?? "",
+      workspacePath: payload.workspacePath,
     };
-    const { results: resolveResults } = await ctx.hooks.collect<{ workspacePath?: string }>(
-      "resolve-workspace",
-      resolveInput
-    );
+    const { results: resolveResults } = await ctx.hooks.collect<{
+      projectPath?: string;
+    }>("resolve", resolveInput);
     const resolved = resolveResults[0];
-    const resolvedWorkspacePath = resolved?.workspacePath ?? payload.workspacePath ?? "";
+    const resolvedProjectPath = resolved?.projectPath ?? "";
 
     // delete (enriched with both paths, matching real operation's DeletePipelineHookInput)
     const deleteInput: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath ?? "",
-      workspacePath: resolvedWorkspacePath,
+      projectPath: resolvedProjectPath,
+      workspacePath: payload.workspacePath,
     };
     const { results: deleteResults, errors: deleteErrors } =
       await ctx.hooks.collect<DeleteHookResult>("delete", deleteInput);
@@ -169,39 +168,40 @@ class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent
 
     return {
       ...deleteResults[0],
-      ...(resolved?.workspacePath !== undefined && { resolvedPath: resolved.workspacePath }),
+      ...(resolvedProjectPath !== "" && { resolvedPath: payload.workspacePath }),
     };
   }
 }
 
-/** Result from workspace path resolution. */
+/** Result from workspace path resolution (reverse lookup: workspacePath → projectPath + workspaceName). */
 interface ResolveResult {
-  readonly workspacePath?: string;
+  readonly projectPath?: string | undefined;
+  readonly workspaceName?: string | undefined;
 }
 
 /**
- * Resolve-workspace operation: runs "resolve-workspace" hook point via switch-workspace.
+ * Resolve-workspace operation: runs "resolve" hook point via switch-workspace.
  *
  * Uses SWITCH_WORKSPACE_OPERATION_ID because the module registers its
- * resolve-workspace hook under that operation (get-workspace-status hooks
- * were moved to bootstrap.ts inline hooks).
+ * resolve hook under that operation. Accepts workspacePath and reverse-looks
+ * up projectPath + workspaceName.
  */
 class MinimalResolveWorkspaceOperation implements Operation<Intent, ResolveResult> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<ResolveResult> {
-    const payload = ctx.intent.payload as { projectPath: string; workspaceName: string };
+    const payload = ctx.intent.payload as { workspacePath: string };
     const resolveInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath,
-      workspaceName: payload.workspaceName,
+      workspacePath: payload.workspacePath,
     };
-    const { results: resolveResults } = await ctx.hooks.collect<{ workspacePath?: string }>(
-      "resolve-workspace",
-      resolveInput
-    );
-    const workspacePath = resolveResults[0]?.workspacePath;
-    return workspacePath ? { workspacePath } : {};
+    const { results: resolveResults } = await ctx.hooks.collect<{
+      projectPath?: string;
+      workspaceName?: string;
+    }>("resolve", resolveInput);
+    const projectPath = resolveResults[0]?.projectPath;
+    const workspaceName = resolveResults[0]?.workspaceName;
+    return projectPath ? { projectPath, workspaceName } : {};
   }
 }
 
@@ -229,37 +229,36 @@ interface GetStatusResult {
 }
 
 /**
- * Get-workspace-status operation: runs "resolve-workspace" then "get" hook points.
- * Mirrors the real GetWorkspaceStatusOperation (minus resolve-project).
+ * Get-workspace-status operation: runs "resolve" then "get" hook points.
+ * Mirrors the real GetWorkspaceStatusOperation.
  */
 class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
   readonly id = GET_WORKSPACE_STATUS_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<GetStatusResult> {
-    const payload = ctx.intent.payload as { projectPath: string; workspaceName: string };
+    const payload = ctx.intent.payload as { workspacePath: string };
 
-    // resolve-workspace
+    // resolve (workspacePath → projectPath + workspaceName)
     const resolveInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath,
-      workspaceName: payload.workspaceName,
+      workspacePath: payload.workspacePath,
     };
-    const { results: resolveResults } = await ctx.hooks.collect<ResolveWorkspaceHookResult>(
-      "resolve-workspace",
+    const { results: resolveResults } = await ctx.hooks.collect<GetStatusResolveHookResult>(
+      "resolve",
       resolveInput
     );
-    let workspacePath: string | undefined;
+    let found = false;
     for (const r of resolveResults) {
-      if (r.workspacePath !== undefined) workspacePath = r.workspacePath;
+      if (r.projectPath !== undefined) found = true;
     }
-    if (!workspacePath) {
-      throw new Error(`Workspace not found: ${payload.workspaceName}`);
+    if (!found) {
+      throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
     // get
     const getInput: GetStatusHookInput = {
       intent: ctx.intent,
-      workspacePath,
+      workspacePath: payload.workspacePath,
     };
     const { results, errors } = await ctx.hooks.collect<GetStatusHookResult>("get", getInput);
     if (errors.length > 0) throw errors[0]!;
@@ -343,12 +342,11 @@ async function dispatchCloseProject(dispatcher: Dispatcher, projectPath: string)
 
 async function dispatchResolveWorkspace(
   dispatcher: Dispatcher,
-  projectPath: string,
-  workspaceName: string
+  workspacePath: string
 ): Promise<ResolveResult> {
   return (await dispatcher.dispatch({
     type: "workspace:resolve",
-    payload: { projectPath, workspaceName },
+    payload: { workspacePath },
   } as Intent)) as ResolveResult;
 }
 
@@ -364,12 +362,11 @@ async function dispatchFetchBases(
 
 async function dispatchGetStatus(
   dispatcher: Dispatcher,
-  projectPath: string,
-  workspaceName: string
+  workspacePath: string
 ): Promise<GetStatusResult> {
   return (await dispatcher.dispatch({
     type: "workspace:get-status",
-    payload: { projectPath, workspaceName },
+    payload: { workspacePath },
   } as Intent)) as GetStatusResult;
 }
 
@@ -453,9 +450,12 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       expect(provider.unregisterProject).toHaveBeenCalledWith(new Path(projectPath));
 
-      // Subsequent resolve should return empty (no workspacePath)
-      const resolveResult = await dispatchResolveWorkspace(dispatcher, projectPath, "feature-1");
-      expect(resolveResult.workspacePath).toBeUndefined();
+      // Subsequent resolve should return empty (no projectPath)
+      const resolveResult = await dispatchResolveWorkspace(
+        dispatcher,
+        `${projectPath}/.worktrees/feature-1`
+      );
+      expect(resolveResult.projectPath).toBeUndefined();
     });
   });
 
@@ -503,12 +503,8 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(result.branch).toBe("new-feature");
 
         // Verify state was updated (resolve should find it)
-        const resolveResult = await dispatchResolveWorkspace(
-          dispatcher,
-          projectPath,
-          "new-feature"
-        );
-        expect(resolveResult.workspacePath).toBe("/workspaces/new-feature");
+        const resolveResult = await dispatchResolveWorkspace(dispatcher, "/workspaces/new-feature");
+        expect(resolveResult.projectPath).toBe(projectPath);
       });
     });
 
@@ -544,12 +540,8 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(result.branch).toBe("existing-ws");
 
         // Verify state was updated
-        const resolveResult = await dispatchResolveWorkspace(
-          dispatcher,
-          projectPath,
-          "existing-ws"
-        );
-        expect(resolveResult.workspacePath).toBe("/workspaces/existing-ws");
+        const resolveResult = await dispatchResolveWorkspace(dispatcher, "/workspaces/existing-ws");
+        expect(resolveResult.projectPath).toBe(projectPath);
       });
     });
   });
@@ -573,20 +565,23 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
     }
 
     describe("resolve-workspace", () => {
-      it("returns path for known workspace", async () => {
+      it("returns projectPath for known workspace", async () => {
         const { dispatcher, provider } = setup;
         const { projectPath } = await setupWithWorkspace(dispatcher, provider);
 
-        const result = await dispatchResolveWorkspace(dispatcher, projectPath, "feature-1");
-        expect(result.workspacePath).toBe(`${projectPath}/.worktrees/feature-1`);
+        const result = await dispatchResolveWorkspace(
+          dispatcher,
+          `${projectPath}/.worktrees/feature-1`
+        );
+        expect(result.projectPath).toBe(projectPath);
       });
 
       it("returns empty for unknown workspace", async () => {
         const { dispatcher, provider } = setup;
-        const { projectPath } = await setupWithWorkspace(dispatcher, provider);
+        await setupWithWorkspace(dispatcher, provider);
 
-        const result = await dispatchResolveWorkspace(dispatcher, projectPath, "nonexistent");
-        expect(result.workspacePath).toBeUndefined();
+        const result = await dispatchResolveWorkspace(dispatcher, "/nonexistent/path");
+        expect(result.projectPath).toBeUndefined();
       });
     });
 
@@ -598,10 +593,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            projectId: "my-app-12345678" as ProjectId,
-            workspaceName: "feature-1" as WorkspaceName,
             workspacePath: ws.path.toString(),
-            projectPath,
             keepBranch: false,
             force: false,
             removeWorktree: true,
@@ -615,15 +607,12 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       it("does not call removeWorkspace when removeWorktree=false", async () => {
         const { dispatcher, provider } = setup;
-        const { projectPath, ws } = await setupWithWorkspace(dispatcher, provider);
+        const { ws } = await setupWithWorkspace(dispatcher, provider);
 
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            projectId: "my-app-12345678" as ProjectId,
-            workspaceName: "feature-1" as WorkspaceName,
             workspacePath: ws.path.toString(),
-            projectPath,
             keepBranch: true,
             force: false,
             removeWorktree: false,
@@ -642,10 +631,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            projectId: "my-app-12345678" as ProjectId,
-            workspaceName: "feature-1" as WorkspaceName,
             workspacePath: ws.path.toString(),
-            projectPath,
             keepBranch: false,
             force: false,
             removeWorktree: true,
@@ -655,8 +641,11 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         await dispatchDeleteWorkspace(dispatcher, deleteIntent);
 
         // Workspace should no longer be resolvable
-        const resolveResult = await dispatchResolveWorkspace(dispatcher, projectPath, "feature-1");
-        expect(resolveResult.workspacePath).toBeUndefined();
+        const resolveResult = await dispatchResolveWorkspace(
+          dispatcher,
+          `${projectPath}/.worktrees/feature-1`
+        );
+        expect(resolveResult.projectPath).toBeUndefined();
       });
     });
 
@@ -670,10 +659,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            projectId: "my-app-12345678" as ProjectId,
-            workspaceName: "feature-1" as WorkspaceName,
             workspacePath: ws.path.toString(),
-            projectPath,
             keepBranch: false,
             force: true,
             removeWorktree: true,
@@ -685,8 +671,11 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(result.error).toBe("git error");
 
         // Workspace should still be unregistered from state
-        const resolveResult = await dispatchResolveWorkspace(dispatcher, projectPath, "feature-1");
-        expect(resolveResult.workspacePath).toBeUndefined();
+        const resolveResult = await dispatchResolveWorkspace(
+          dispatcher,
+          `${projectPath}/.worktrees/feature-1`
+        );
+        expect(resolveResult.projectPath).toBeUndefined();
       });
     });
   });
@@ -730,7 +719,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       provider.isDirty.mockResolvedValue(true);
 
-      const result = await dispatchGetStatus(dispatcher, projectPath, "feature-1");
+      const result = await dispatchGetStatus(dispatcher, ws.path.toString());
 
       expect(provider.isDirty).toHaveBeenCalledWith(ws.path);
       expect(result.isDirty).toBe(true);
@@ -746,7 +735,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       provider.isDirty.mockResolvedValue(false);
 
-      const result = await dispatchGetStatus(dispatcher, projectPath, "feature-1");
+      const result = await dispatchGetStatus(dispatcher, ws.path.toString());
 
       expect(result.isDirty).toBe(false);
     });

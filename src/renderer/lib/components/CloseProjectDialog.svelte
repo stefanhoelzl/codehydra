@@ -53,7 +53,7 @@
       if (removeAll && project && project.workspaces.length > 0) {
         const removalPromises = project.workspaces.map((workspace) =>
           workspaces
-            .remove(projectId, workspace.name, { keepBranch: false })
+            .remove(workspace.path, { keepBranch: false })
             .then(() => ({ name: workspace.name, success: true as const }))
             .catch((error: Error) => ({
               name: workspace.name,

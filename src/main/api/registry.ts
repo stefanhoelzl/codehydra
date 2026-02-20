@@ -177,27 +177,23 @@ export class ApiRegistry implements IApiRegistry {
       },
       workspaces: {
         create: (projectId, name, base, options) =>
-          get("workspaces.create")({ projectId, name, base, ...options }),
-        remove: (projectId, workspaceName, options) =>
-          get("workspaces.remove")({
-            projectId,
-            workspaceName,
+          get("workspaces.create")({
+            ...(projectId !== undefined && { projectId }),
+            name,
+            base,
             ...options,
           }),
-        getStatus: (projectId, workspaceName) =>
-          get("workspaces.getStatus")({ projectId, workspaceName }),
-        getAgentSession: (projectId, workspaceName) =>
-          get("workspaces.getAgentSession")({ projectId, workspaceName }),
-        restartAgentServer: (projectId, workspaceName) =>
-          get("workspaces.restartAgentServer")({ projectId, workspaceName }),
-        setMetadata: (projectId, workspaceName, key, value) =>
-          get("workspaces.setMetadata")({ projectId, workspaceName, key, value }),
-        getMetadata: (projectId, workspaceName) =>
-          get("workspaces.getMetadata")({ projectId, workspaceName }),
-        executeCommand: (projectId, workspaceName, command, args) =>
+        remove: (workspacePath, options) => get("workspaces.remove")({ workspacePath, ...options }),
+        getStatus: (workspacePath) => get("workspaces.getStatus")({ workspacePath }),
+        getAgentSession: (workspacePath) => get("workspaces.getAgentSession")({ workspacePath }),
+        restartAgentServer: (workspacePath) =>
+          get("workspaces.restartAgentServer")({ workspacePath }),
+        setMetadata: (workspacePath, key, value) =>
+          get("workspaces.setMetadata")({ workspacePath, key, value }),
+        getMetadata: (workspacePath) => get("workspaces.getMetadata")({ workspacePath }),
+        executeCommand: (workspacePath, command, args) =>
           get("workspaces.executeCommand")({
-            projectId,
-            workspaceName,
+            workspacePath,
             command,
             ...(args !== undefined && { args }),
           }),
@@ -205,10 +201,9 @@ export class ApiRegistry implements IApiRegistry {
       ui: {
         selectFolder: () => get("ui.selectFolder")({}),
         getActiveWorkspace: () => get("ui.getActiveWorkspace")({}),
-        switchWorkspace: (projectId, workspaceName, focus) =>
+        switchWorkspace: (workspacePath, focus) =>
           get("ui.switchWorkspace")({
-            projectId,
-            workspaceName,
+            workspacePath,
             ...(focus !== undefined && { focus }),
           }),
         setMode: (mode) => get("ui.setMode")({ mode }),

@@ -147,7 +147,7 @@
       logger.debug("Dialog submitted", { type: "create-workspace" });
       const workspace = await workspaces.create(selectedProjectId, name, selectedBranch);
       // Switch to the newly created workspace to load its view
-      await ui.switchWorkspace(selectedProjectId, workspace.name);
+      await ui.switchWorkspace(workspace.path);
       closeDialog();
     } catch (error) {
       const message = getErrorMessage(error);

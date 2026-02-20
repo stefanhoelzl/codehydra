@@ -21,7 +21,7 @@ import type {
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
-  WorkspaceRefPayload,
+  WorkspacePathPayload,
   UiSwitchWorkspacePayload,
   UiSetModePayload,
   EmptyPayload,
@@ -52,20 +52,11 @@ import {
   INTENT_GET_ACTIVE_WORKSPACE,
 } from "./operations/get-active-workspace";
 import type { GetActiveWorkspaceIntent } from "./operations/get-active-workspace";
-import {
-  OpenWorkspaceOperation,
-  INTENT_OPEN_WORKSPACE,
-  EVENT_WORKSPACE_CREATED,
-} from "./operations/open-workspace";
-import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "./operations/open-workspace";
-import {
-  DeleteWorkspaceOperation,
-  INTENT_DELETE_WORKSPACE,
-  EVENT_WORKSPACE_DELETED,
-} from "./operations/delete-workspace";
+import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./operations/open-workspace";
+import type { OpenWorkspaceIntent } from "./operations/open-workspace";
+import { DeleteWorkspaceOperation, INTENT_DELETE_WORKSPACE } from "./operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
-  WorkspaceDeletedEvent,
   DeletionProgressCallback,
 } from "./operations/delete-workspace";
 import {
@@ -109,12 +100,12 @@ import { SetupOperation, INTENT_SETUP } from "./operations/setup";
 import type { IpcEventHandler } from "../services/platform/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
 import { wireModules } from "./intents/infrastructure/wire";
-import { generateProjectId, extractWorkspaceName } from "../shared/api/id-utils";
+import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { IntentModule } from "./intents/infrastructure/module";
 import type { HookContext } from "./intents/infrastructure/operation";
 import type { DomainEvent } from "./intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../services/git/git-worktree-provider";
-import { type ProjectId, type Workspace } from "../shared/api/types";
+import type { Workspace } from "../shared/api/types";
 import { Path } from "../services/platform/path";
 import { expandGitUrl } from "../services/project/url-utils";
 import type { MountSignal } from "./modules/view-module";
@@ -281,13 +272,8 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     return 0;
   };
 
-  // --- Workspace Index (Maps for API boundary resolution) ---
+  // --- Project Index (for projectCloseIndexModule's otherProjectsExist check) ---
   const projectsById = new Map<string, { path: string; name: string }>();
-  const workspacesByKey = new Map<string, string>();
-
-  function wsKey(projectId: string, workspaceName: string): string {
-    return `${projectId}/${workspaceName}`;
-  }
 
   const indexModule: IntentModule = {
     events: {
@@ -298,20 +284,6 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
         const { projectId } = (event as ProjectClosedEvent).payload;
         projectsById.delete(projectId);
-        for (const key of workspacesByKey.keys()) {
-          if (key.startsWith(projectId + "/")) {
-            workspacesByKey.delete(key);
-          }
-        }
-      },
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const p = (event as WorkspaceCreatedEvent).payload;
-        const normalized = new Path(p.workspacePath).toString();
-        workspacesByKey.set(wsKey(p.projectId, p.workspaceName), normalized);
-      },
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const p = (event as WorkspaceDeletedEvent).payload;
-        workspacesByKey.delete(wsKey(p.projectId, p.workspaceName));
       },
     },
   };
@@ -331,7 +303,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
   dispatcher.registerOperation(
     INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId, agentStatusScorer)
+    new SwitchWorkspaceOperation(extractWorkspaceName, agentStatusScorer)
   );
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
@@ -411,12 +383,15 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: payload.projectId,
+          ...(payload.projectId !== undefined && { projectId: payload.projectId }),
           workspaceName: payload.name,
           base: payload.base,
           ...(payload.initialPrompt !== undefined && { initialPrompt: payload.initialPrompt }),
           ...(payload.keepInBackground !== undefined && {
             keepInBackground: payload.keepInBackground,
+          }),
+          ...(payload.callerWorkspacePath !== undefined && {
+            callerWorkspacePath: payload.callerWorkspacePath,
           }),
         },
       };
@@ -433,8 +408,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     "workspaces.remove",
     async (payload: WorkspaceRemovePayload) => {
       // If pipeline is waiting for user choice, signal it instead of dispatching new intent.
-      // workspacePath is provided by the renderer on retry/dismiss calls only.
-      if (payload.workspacePath && deleteOp.hasPendingRetry(payload.workspacePath)) {
+      if (deleteOp.hasPendingRetry(payload.workspacePath)) {
         if (payload.force) {
           deleteOp.signalDismiss(payload.workspacePath);
           // Fall through to dispatch force intent after pipeline exits
@@ -447,8 +421,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       const intent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
           keepBranch: payload.keepBranch ?? true,
           force: payload.force ?? false,
           removeWorktree: true,
@@ -474,8 +447,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       const intent: SetMetadataIntent = {
         type: INTENT_SET_METADATA,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
           key: payload.key,
           value: payload.value,
         },
@@ -487,12 +459,11 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   registry.register(
     "workspaces.getMetadata",
-    async (payload: WorkspaceRefPayload) => {
+    async (payload: WorkspacePathPayload) => {
       const intent: GetMetadataIntent = {
         type: INTENT_GET_METADATA,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
         },
       };
       const result = await dispatcher.dispatch(intent);
@@ -506,12 +477,11 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   registry.register(
     "workspaces.getStatus",
-    async (payload: WorkspaceRefPayload) => {
+    async (payload: WorkspacePathPayload) => {
       const intent: GetWorkspaceStatusIntent = {
         type: INTENT_GET_WORKSPACE_STATUS,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
         },
       };
       const result = await dispatcher.dispatch(intent);
@@ -525,12 +495,11 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   registry.register(
     "workspaces.getAgentSession",
-    async (payload: WorkspaceRefPayload) => {
+    async (payload: WorkspacePathPayload) => {
       const intent: GetAgentSessionIntent = {
         type: INTENT_GET_AGENT_SESSION,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
         },
       };
       return dispatcher.dispatch(intent);
@@ -540,12 +509,11 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
 
   registry.register(
     "workspaces.restartAgentServer",
-    async (payload: WorkspaceRefPayload) => {
+    async (payload: WorkspacePathPayload) => {
       const intent: RestartAgentIntent = {
         type: INTENT_RESTART_AGENT,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
         },
       };
       const result = await dispatcher.dispatch(intent);
@@ -590,8 +558,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
       const intent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
+          workspacePath: payload.workspacePath,
           ...(payload.focus !== undefined && { focus: payload.focus }),
         },
       };
@@ -738,20 +705,7 @@ export function initializeBootstrap(deps: BootstrapDeps): BootstrapResult {
     { ipc: ApiIpcChannels.LIFECYCLE_READY }
   );
 
-  // Workspace resolver function for CoreModule
-  const workspaceResolver = (
-    projectId: ProjectId,
-    workspaceName: import("../shared/api/types").WorkspaceName
-  ): string => {
-    const path = workspacesByKey.get(wsKey(projectId, workspaceName));
-    if (!path) {
-      throw new Error(`Workspace not found: ${workspaceName} in project ${projectId}`);
-    }
-    return path;
-  };
-
   const coreDeps: CoreModuleDeps = {
-    resolveWorkspace: workspaceResolver,
     codeServerPort: 0, // Updated by CodeServerLifecycleModule
     wrapperPath: deps.wrapperPath,
     ...(deps.dialog ? { dialog: deps.dialog } : {}),

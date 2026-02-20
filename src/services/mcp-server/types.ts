@@ -2,22 +2,7 @@
  * Type definitions for the MCP Server.
  */
 
-import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { IDisposable } from "../../shared/types";
-
-// =============================================================================
-// Resolved Workspace
-// =============================================================================
-
-/**
- * A workspace resolved from an MCP workspace path.
- * Contains all identifiers needed to call ICoreApi methods.
- */
-export interface McpResolvedWorkspace {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
-}
 
 // =============================================================================
 // MCP Error Types

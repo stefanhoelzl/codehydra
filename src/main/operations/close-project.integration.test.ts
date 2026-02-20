@@ -48,9 +48,10 @@ import type {
   DeletionProgressCallback,
   ShutdownHookResult,
   DeletePipelineHookInput,
+  ResolveHookInput,
+  ResolveHookResult,
+  ResolveProjectHookInput,
   ResolveProjectHookResult,
-  ResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput,
 } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
@@ -214,36 +215,36 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation(emitProgress));
 
   // Delete-workspace resolve modules
-  const deleteResolveProjectModule: IntentModule = {
+  const deleteResolveModule: IntentModule = {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const projects = await appState.getAllProjects();
-            const match = projects.find(
-              (p: { path: string }) => generateProjectId(p.path) === payload.projectId
-            );
-            return match ? { projectPath: match.path } : {};
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const { workspacePath: wsPath } = ctx as ResolveHookInput;
+            // Reverse lookup: find which project owns this workspace path
+            const projects: Project[] = await appState.getAllProjects();
+            for (const p of projects) {
+              const workspace = p.workspaces?.find((w: { path: string }) => w.path === wsPath);
+              if (workspace) {
+                const workspaceName = extractWorkspaceName(wsPath);
+                return { projectPath: p.path, workspaceName: workspaceName as WorkspaceName };
+              }
+            }
+            return {};
           },
         },
       },
     },
   };
 
-  const deleteResolveWorkspaceModule: IntentModule = {
+  const deleteResolveProjectModule: IntentModule = {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { projectPath } = ctx as ResolveWorkspaceHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const found = appState.getProject(projectPath);
-            if (!found) return {};
-            const workspace = found.workspaces?.find(
-              (w: { path: string }) => extractWorkspaceName(w.path) === payload.workspaceName
-            );
-            return workspace ? { workspacePath: workspace.path } : {};
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
+            const projectId = generateProjectId(projectPath);
+            return { projectId };
           },
         },
       },
@@ -427,8 +428,8 @@ function createTestHarness(options?: {
 
   wireModules(
     [
+      deleteResolveModule,
       deleteResolveProjectModule,
-      deleteResolveWorkspaceModule,
       deleteViewModule,
       deleteAgentModule,
       deleteStateModule,

@@ -44,43 +44,26 @@ export interface Api {
      * Progress is emitted via workspace:deletion-progress events.
      * Returns { started: true } on success, { started: false } if blocked by idempotency.
      *
-     * @param projectId Project containing the workspace
-     * @param workspaceName Name of the workspace to remove
+     * @param workspacePath Absolute path to the workspace to remove
      * @param options Optional removal options
      */
     remove(
-      projectId: string,
-      workspaceName: string,
+      workspacePath: string,
       options?: {
         keepBranch?: boolean;
         skipSwitch?: boolean;
         force?: boolean;
-        workspacePath?: string;
       }
     ): Promise<{ started: boolean }>;
-    getStatus(projectId: string, workspaceName: string): Promise<WorkspaceStatus>;
-    /**
-     * Get the OpenCode server port for a workspace.
-     * @param projectId Project containing the workspace
-     * @param workspaceName Name of the workspace
-     * @returns Port number if server is running, null if not running or not initialized
-     */
-    getOpencodePort(projectId: string, workspaceName: string): Promise<number | null>;
-    setMetadata(
-      projectId: string,
-      workspaceName: string,
-      key: string,
-      value: string | null
-    ): Promise<void>;
-    getMetadata(
-      projectId: string,
-      workspaceName: string
-    ): Promise<Readonly<Record<string, string>>>;
+    getStatus(workspacePath: string): Promise<WorkspaceStatus>;
+    getAgentSession(workspacePath: string): Promise<unknown>;
+    setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
+    getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
   };
   ui: {
     selectFolder(): Promise<string | null>;
     getActiveWorkspace(): Promise<WorkspaceRef | null>;
-    switchWorkspace(projectId: string, workspaceName: string, focus?: boolean): Promise<void>;
+    switchWorkspace(workspacePath: string, focus?: boolean): Promise<void>;
     setMode(mode: UIMode): Promise<void>;
   };
   lifecycle: {

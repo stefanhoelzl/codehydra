@@ -69,9 +69,8 @@ import {
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceHookResult,
+  ResolveHookResult as SwitchResolveHookResult,
   ResolveProjectHookResult as SwitchResolveProjectHookResult,
-  ResolveWorkspaceHookInput,
-  ResolveWorkspaceHookResult,
   ActivateHookInput,
 } from "./switch-workspace";
 
@@ -210,28 +209,32 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(
     INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(extractWorkspaceName, (path: string) => generateProjectId(path))
+    new SwitchWorkspaceOperation(extractWorkspaceName)
   );
 
   // Minimal switch modules for workspace:switch (satisfy 3 hook points)
-  const switchResolveProjectModule: IntentModule = {
+  const switchResolveModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (): Promise<SwitchResolveProjectHookResult> => {
-            return { projectPath: PROJECT_ROOT, projectName: "test" };
+        resolve: {
+          handler: async (ctx: HookContext): Promise<SwitchResolveHookResult> => {
+            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+            const workspaceName = extractWorkspaceName(wsPath);
+            return {
+              projectPath: PROJECT_ROOT,
+              workspaceName: workspaceName as import("../../shared/api/types").WorkspaceName,
+            };
           },
         },
       },
     },
   };
-  const switchResolveWorkspaceModule: IntentModule = {
+  const switchResolveProjectModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspaceName } = ctx as ResolveWorkspaceHookInput;
-            return { workspacePath: `/workspaces/${workspaceName}` };
+        "resolve-project": {
+          handler: async (): Promise<SwitchResolveProjectHookResult> => {
+            return { projectId: generateProjectId(PROJECT_ROOT), projectName: "test" };
           },
         },
       },
@@ -423,8 +426,8 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   };
 
   const modules: IntentModule[] = [
+    switchResolveModule,
     switchResolveProjectModule,
-    switchResolveWorkspaceModule,
     switchViewModule,
     resolveProjectModule,
     fetchBasesModule,
@@ -908,30 +911,32 @@ describe("OpenWorkspace Operation", () => {
       dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
       dispatcher.registerOperation(
         INTENT_SWITCH_WORKSPACE,
-        new SwitchWorkspaceOperation(extractWorkspaceName, (path: string) =>
-          generateProjectId(path)
-        )
+        new SwitchWorkspaceOperation(extractWorkspaceName)
       );
 
       // Minimal switch modules
-      const switchResolveProjectModule: IntentModule = {
+      const switchResolveModule: IntentModule = {
         hooks: {
           [SWITCH_WORKSPACE_OPERATION_ID]: {
-            "resolve-project": {
-              handler: async (): Promise<SwitchResolveProjectHookResult> => {
-                return { projectPath: PROJECT_ROOT, projectName: "test" };
+            resolve: {
+              handler: async (ctx: HookContext): Promise<SwitchResolveHookResult> => {
+                const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+                const workspaceName = extractWorkspaceName(wsPath);
+                return {
+                  projectPath: PROJECT_ROOT,
+                  workspaceName: workspaceName as import("../../shared/api/types").WorkspaceName,
+                };
               },
             },
           },
         },
       };
-      const switchResolveWorkspaceModule: IntentModule = {
+      const switchResolveProjectModule: IntentModule = {
         hooks: {
           [SWITCH_WORKSPACE_OPERATION_ID]: {
-            "resolve-workspace": {
-              handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-                const { workspaceName } = ctx as ResolveWorkspaceHookInput;
-                return { workspacePath: `/workspaces/${workspaceName}` };
+            "resolve-project": {
+              handler: async (): Promise<SwitchResolveProjectHookResult> => {
+                return { projectId: generateProjectId(PROJECT_ROOT), projectName: "test" };
               },
             },
           },
@@ -1013,8 +1018,8 @@ describe("OpenWorkspace Operation", () => {
 
       wireModules(
         [
+          switchResolveModule,
           switchResolveProjectModule,
-          switchResolveWorkspaceModule,
           switchViewModule,
           resolveProjectModule,
           fetchBasesModule,

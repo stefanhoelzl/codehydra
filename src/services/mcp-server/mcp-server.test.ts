@@ -10,7 +10,7 @@ import {
   type McpServerFactory,
 } from "./mcp-server";
 import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
-import { type ProjectId, type WorkspaceName, initialPromptSchema } from "../../shared/api/types";
+import { type ProjectId, initialPromptSchema } from "../../shared/api/types";
 import { createMockLogger } from "../logging";
 
 /**
@@ -147,17 +147,10 @@ describe("McpServer", () => {
     });
 
     it("workspace_restart_agent_server tool calls API and returns port", async () => {
-      // Set up workspace identity via register
       const workspacePath = "/project/workspaces/test-workspace";
-      const projectPath = "/project";
 
-      // Create server and register workspace
+      // Create server
       const server = new McpServer(mockApi, mockFactory, mockLogger);
-      server.registerWorkspace({
-        projectId: `${projectPath}-12345678` as ProjectId,
-        workspaceName: "test-workspace" as WorkspaceName,
-        workspacePath,
-      });
 
       await server.start(0);
       await server.stop();

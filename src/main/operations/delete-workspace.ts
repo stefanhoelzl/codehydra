@@ -2,8 +2,8 @@
  * DeleteWorkspaceOperation - Orchestrates workspace deletion.
  *
  * Runs hook points in sequence using collect():
- * 1. "resolve-project" - Resolves projectId to projectPath
- * 2. "resolve-workspace" - Resolves workspaceName to workspacePath (with enriched projectPath)
+ * 1. "resolve" - Resolves workspacePath to projectPath + workspaceName
+ * 2. "resolve-project" - Resolves projectPath to projectId
  * 3. "shutdown" - ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
  * 4. "release" - WindowsLockModule (detect CWD + kill) [Windows-only]
  * 5. "delete" - WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
@@ -40,10 +40,7 @@ import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-wo
 // =============================================================================
 
 export interface DeleteWorkspacePayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly workspacePath?: string;
-  readonly projectPath?: string;
+  readonly workspacePath: string;
   readonly keepBranch: boolean;
   readonly force: boolean;
   /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
@@ -124,23 +121,29 @@ export interface FlushHookResult {
   readonly error?: string;
 }
 
+/** Input for the "resolve" hook point (workspacePath → projectPath + workspaceName). */
+export interface ResolveHookInput extends HookContext {
+  readonly workspacePath: string;
+}
+
+/**
+ * Per-handler result for the "resolve" hook point.
+ */
+export interface ResolveHookResult {
+  readonly projectPath?: string;
+  readonly workspaceName?: WorkspaceName;
+}
+
+/** Input for the "resolve-project" hook point (projectPath → projectId). */
+export interface ResolveProjectHookInput extends HookContext {
+  readonly projectPath: string;
+}
+
 /**
  * Per-handler result for the "resolve-project" hook point.
  */
 export interface ResolveProjectHookResult {
-  readonly projectPath?: string;
-}
-
-/**
- * Per-handler result for the "resolve-workspace" hook point.
- */
-export interface ResolveWorkspaceHookResult {
-  readonly workspacePath?: string;
-}
-
-/** Input for resolve-workspace hook (enriched with projectPath from resolve-project). */
-export interface ResolveWorkspaceHookInput extends HookContext {
-  readonly projectPath: string;
+  readonly projectId?: ProjectId;
 }
 
 /** Input for shutdown/release/delete/detect hooks (enriched with both resolved paths). */
@@ -158,13 +161,14 @@ export interface FlushHookInput extends DeletePipelineHookInput {
 // Merged Result Types (internal to operation)
 // =============================================================================
 
-interface MergedResolveProject {
+interface MergedResolve {
   readonly projectPath?: string;
+  readonly workspaceName?: WorkspaceName;
   readonly errors: readonly string[];
 }
 
-interface MergedResolveWorkspace {
-  readonly workspacePath?: string;
+interface MergedResolveProject {
+  readonly projectId?: ProjectId;
   readonly errors: readonly string[];
 }
 
@@ -195,34 +199,40 @@ interface MergedFlush {
 // Merge Functions
 // =============================================================================
 
-function mergeResolveProject(
-  results: readonly ResolveProjectHookResult[],
+function mergeResolve(
+  results: readonly ResolveHookResult[],
   collectErrors: readonly Error[]
-): MergedResolveProject {
+): MergedResolve {
   let projectPath: string | undefined;
+  let workspaceName: WorkspaceName | undefined;
   const errors: string[] = [];
 
   for (const e of collectErrors) errors.push(e.message);
   for (const r of results) {
     if (r.projectPath !== undefined) projectPath = r.projectPath;
+    if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
   }
 
-  return { ...(projectPath !== undefined && { projectPath }), errors };
+  return {
+    ...(projectPath !== undefined && { projectPath }),
+    ...(workspaceName !== undefined && { workspaceName }),
+    errors,
+  };
 }
 
-function mergeResolveWorkspace(
-  results: readonly ResolveWorkspaceHookResult[],
+function mergeResolveProject(
+  results: readonly ResolveProjectHookResult[],
   collectErrors: readonly Error[]
-): MergedResolveWorkspace {
-  let workspacePath: string | undefined;
+): MergedResolveProject {
+  let projectId: ProjectId | undefined;
   const errors: string[] = [];
 
   for (const e of collectErrors) errors.push(e.message);
   for (const r of results) {
-    if (r.workspacePath !== undefined) workspacePath = r.workspacePath;
+    if (r.projectId !== undefined) projectId = r.projectId;
   }
 
-  return { ...(workspacePath !== undefined && { workspacePath }), errors };
+  return { ...(projectId !== undefined && { projectId }), errors };
 }
 
 function mergeShutdown(
@@ -318,8 +328,6 @@ export type DeletionProgressCallback = (progress: DeletionProgress) => void;
 // =============================================================================
 
 interface PipelineState {
-  readonly resolveProject?: MergedResolveProject;
-  readonly resolveWorkspace?: MergedResolveWorkspace;
   readonly shutdown?: MergedShutdown;
   readonly release?: MergedRelease;
   readonly del?: MergedDelete;
@@ -331,11 +339,17 @@ interface PipelineState {
 // Operation
 // =============================================================================
 
-/** Return value of runPipeline, carrying resolved paths for emitEvent. */
+/** Resolved identity from hooks, needed for events and progress. */
+interface ResolvedIdentity {
+  readonly projectId: ProjectId;
+  readonly workspaceName: WorkspaceName;
+  readonly projectPath: string;
+}
+
+/** Return value of runPipeline, carrying resolved identity for emitEvent. */
 interface PipelineResult {
   readonly hasErrors: boolean;
-  readonly resolvedProjectPath: string;
-  readonly resolvedWorkspacePath: string;
+  readonly identity: ResolvedIdentity;
 }
 
 export class DeleteWorkspaceOperation implements Operation<
@@ -385,36 +399,36 @@ export class DeleteWorkspaceOperation implements Operation<
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
     const { payload } = ctx.intent;
 
-    const emitEvent = (projectPath: string, workspacePath: string): void => {
+    const emitEvent = (identity: ResolvedIdentity): void => {
       const event: WorkspaceDeletedEvent = {
         type: EVENT_WORKSPACE_DELETED,
         payload: {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
-          workspacePath,
-          projectPath,
+          projectId: identity.projectId,
+          workspaceName: identity.workspaceName,
+          workspacePath: payload.workspacePath,
+          projectPath: identity.projectPath,
         },
       };
       ctx.emit(event);
     };
 
     if (payload.force) {
-      let resolvedProjectPath = payload.projectPath ?? "";
-      let resolvedWorkspacePath = payload.workspacePath ?? "";
+      let identity: ResolvedIdentity | undefined;
       try {
         const result = await this.runPipeline(ctx);
-        resolvedProjectPath = result.resolvedProjectPath;
-        resolvedWorkspacePath = result.resolvedWorkspacePath;
+        identity = result.identity;
       } finally {
-        // Force mode: always emit workspace:deleted for state cleanup
-        emitEvent(resolvedProjectPath, resolvedWorkspacePath);
+        // Force mode: always emit workspace:deleted for state cleanup (if identity resolved)
+        if (identity) {
+          emitEvent(identity);
+        }
       }
     } else {
       const result = await this.runPipeline(ctx);
 
       // Normal mode: only emit if no errors
       if (!result.hasErrors) {
-        emitEvent(result.resolvedProjectPath, result.resolvedWorkspacePath);
+        emitEvent(result.identity);
       }
     }
 
@@ -423,51 +437,54 @@ export class DeleteWorkspaceOperation implements Operation<
 
   private async runPipeline(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<PipelineResult> {
     const { payload } = ctx.intent;
-    const hookCtx: HookContext = { intent: ctx.intent };
 
-    // --- Resolve Project ---
+    // --- Resolve (workspacePath → projectPath + workspaceName) ---
+    const resolveCtx: ResolveHookInput = {
+      intent: ctx.intent,
+      workspacePath: payload.workspacePath,
+    };
+    const { results: resolveResults, errors: resolveErrors } =
+      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+    const resolve = mergeResolve(resolveResults, resolveErrors);
+
+    const projectPath = resolve.projectPath;
+    if (!projectPath) {
+      throw new Error("resolve hook did not provide projectPath");
+    }
+    const workspaceName = resolve.workspaceName;
+    if (!workspaceName) {
+      throw new Error("resolve hook did not provide workspaceName");
+    }
+
+    // --- Resolve Project (projectPath → projectId) ---
+    const resolveProjectCtx: ResolveProjectHookInput = {
+      intent: ctx.intent,
+      projectPath,
+    };
     const { results: resolveProjectResults, errors: resolveProjectErrors } =
-      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", hookCtx);
+      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveProjectCtx);
     const resolveProject = mergeResolveProject(resolveProjectResults, resolveProjectErrors);
 
-    // --- Resolve Workspace ---
-    const resolvedProjectPath = resolveProject.projectPath ?? payload.projectPath;
-    if (!resolvedProjectPath) {
-      throw new Error("resolve-project hook did not provide projectPath");
+    const projectId = resolveProject.projectId;
+    if (!projectId) {
+      throw new Error("resolve-project hook did not provide projectId");
     }
-    const resolveWsCtx: ResolveWorkspaceHookInput = {
-      intent: ctx.intent,
-      projectPath: resolvedProjectPath,
-    };
-    const { results: resolveWorkspaceResults, errors: resolveWorkspaceErrors } =
-      await ctx.hooks.collect<ResolveWorkspaceHookResult>("resolve-workspace", resolveWsCtx);
-    const resolveWorkspace = mergeResolveWorkspace(resolveWorkspaceResults, resolveWorkspaceErrors);
 
-    const resolvedWorkspacePath = resolveWorkspace.workspacePath ?? payload.workspacePath;
-    if (!resolvedWorkspacePath) {
-      throw new Error("resolve-workspace hook did not provide workspacePath");
-    }
+    const identity: ResolvedIdentity = { projectId, workspaceName, projectPath };
 
     // Build enriched context for downstream hooks
     const pipelineCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: resolvedProjectPath,
-      workspacePath: resolvedWorkspacePath,
+      projectPath,
+      workspacePath: payload.workspacePath,
     };
 
     // --- Shutdown ---
-    this.emitPipelineProgress(payload, resolvedWorkspacePath, {}, false, false, "kill-terminals");
+    this.emitPipelineProgress(identity, payload, {}, false, false, "kill-terminals");
     const { results: shutdownResults, errors: shutdownCollectErrors } =
       await ctx.hooks.collect<ShutdownHookResult>("shutdown", pipelineCtx);
     const shutdown = mergeShutdown(shutdownResults, shutdownCollectErrors);
-    this.emitPipelineProgress(
-      payload,
-      resolvedWorkspacePath,
-      { shutdown },
-      false,
-      false,
-      "cleanup-workspace"
-    );
+    this.emitPipelineProgress(identity, payload, { shutdown }, false, false, "cleanup-workspace");
 
     // Dispatch workspace:switch(auto) if deleted workspace was the active one.
     // Auto-select mode finds the best candidate via find-candidates hook.
@@ -475,7 +492,7 @@ export class DeleteWorkspaceOperation implements Operation<
       try {
         const switchIntent: SwitchWorkspaceIntent = {
           type: INTENT_SWITCH_WORKSPACE,
-          payload: { auto: true, currentPath: resolvedWorkspacePath, focus: true },
+          payload: { auto: true, currentPath: payload.workspacePath, focus: true },
         };
         await ctx.dispatch(switchIntent);
       } catch {
@@ -485,14 +502,14 @@ export class DeleteWorkspaceOperation implements Operation<
 
     const shutdownFailed = shutdown.errors.length > 0;
     if (shutdownFailed && !payload.force) {
-      this.emitPipelineProgress(payload, resolvedWorkspacePath, { shutdown }, true, true);
-      return { hasErrors: true, resolvedProjectPath, resolvedWorkspacePath };
+      this.emitPipelineProgress(identity, payload, { shutdown }, true, true);
+      return { hasErrors: true, identity };
     }
 
     // When removeWorktree is false, skip "release" and "delete" hooks (runtime teardown only)
     if (!payload.removeWorktree) {
-      this.emitPipelineProgress(payload, resolvedWorkspacePath, { shutdown }, true, false);
-      return { hasErrors: false, resolvedProjectPath, resolvedWorkspacePath };
+      this.emitPipelineProgress(identity, payload, { shutdown }, true, false);
+      return { hasErrors: false, identity };
     }
 
     // --- Release (CWD scan + kill) ---
@@ -500,8 +517,8 @@ export class DeleteWorkspaceOperation implements Operation<
       await ctx.hooks.collect<ReleaseHookResult>("release", pipelineCtx);
     const release = mergeRelease(releaseResults, releaseCollectErrors);
     this.emitPipelineProgress(
+      identity,
       payload,
-      resolvedWorkspacePath,
       { shutdown, release },
       false,
       false,
@@ -516,27 +533,15 @@ export class DeleteWorkspaceOperation implements Operation<
     const deleteFailed = del.errors.length > 0;
     if (!deleteFailed) {
       // Success
-      this.emitPipelineProgress(
-        payload,
-        resolvedWorkspacePath,
-        { shutdown, release, del },
-        true,
-        false
-      );
-      return { hasErrors: false, resolvedProjectPath, resolvedWorkspacePath };
+      this.emitPipelineProgress(identity, payload, { shutdown, release, del }, true, false);
+      return { hasErrors: false, identity };
     }
 
     // Delete failed — if force mode, emit and return
     if (payload.force) {
       const hasErrors = shutdownFailed || deleteFailed;
-      this.emitPipelineProgress(
-        payload,
-        resolvedWorkspacePath,
-        { shutdown, release, del },
-        true,
-        hasErrors
-      );
-      return { hasErrors, resolvedProjectPath, resolvedWorkspacePath };
+      this.emitPipelineProgress(identity, payload, { shutdown, release, del }, true, hasErrors);
+      return { hasErrors, identity };
     }
 
     // --- Retry loop: detect → emit → wait → flush → delete ---
@@ -544,8 +549,8 @@ export class DeleteWorkspaceOperation implements Operation<
     for (;;) {
       // Detect
       this.emitPipelineProgress(
+        identity,
         payload,
-        resolvedWorkspacePath,
         { shutdown, release, del: currentDel },
         false,
         false,
@@ -557,22 +562,22 @@ export class DeleteWorkspaceOperation implements Operation<
 
       // Emit progress with blockers and wait for user choice
       this.emitPipelineProgress(
+        identity,
         payload,
-        resolvedWorkspacePath,
         { shutdown, release, del: currentDel, detect },
         true,
         true
       );
 
-      const choice = await this.waitForRetryChoice(resolvedWorkspacePath);
+      const choice = await this.waitForRetryChoice(payload.workspacePath);
       if (choice === "dismiss") {
-        return { hasErrors: true, resolvedProjectPath, resolvedWorkspacePath };
+        return { hasErrors: true, identity };
       }
 
       // Flush (kill collected PIDs)
       this.emitPipelineProgress(
+        identity,
         payload,
-        resolvedWorkspacePath,
         { shutdown, release, del: currentDel, detect },
         false,
         false,
@@ -588,7 +593,7 @@ export class DeleteWorkspaceOperation implements Operation<
       const flush = mergeFlush(flushResults, flushCollectErrors);
 
       // Emit progress showing kill completed
-      this.emitPipelineProgress(payload, resolvedWorkspacePath, {
+      this.emitPipelineProgress(identity, payload, {
         shutdown,
         release,
         del: currentDel,
@@ -598,8 +603,8 @@ export class DeleteWorkspaceOperation implements Operation<
 
       // Re-attempt delete
       this.emitPipelineProgress(
+        identity,
         payload,
-        resolvedWorkspacePath,
         { shutdown, release, del: currentDel, detect, flush },
         false,
         false,
@@ -612,13 +617,13 @@ export class DeleteWorkspaceOperation implements Operation<
       if (retryDel.errors.length === 0) {
         // Success
         this.emitPipelineProgress(
+          identity,
           payload,
-          resolvedWorkspacePath,
           { shutdown, release, del: retryDel },
           true,
           false
         );
-        return { hasErrors: false, resolvedProjectPath, resolvedWorkspacePath };
+        return { hasErrors: false, identity };
       }
 
       // Still failing — loop back to detect
@@ -630,8 +635,8 @@ export class DeleteWorkspaceOperation implements Operation<
    * Build DeletionOperation[] from pipeline state and emit progress.
    */
   private emitPipelineProgress(
+    identity: ResolvedIdentity,
     payload: DeleteWorkspacePayload,
-    resolvedWorkspacePath: string,
     state: PipelineState,
     completed = false,
     hasErrors = false,
@@ -724,9 +729,9 @@ export class DeleteWorkspaceOperation implements Operation<
         : undefined;
 
     this.emitProgress({
-      workspacePath: resolvedWorkspacePath as WorkspacePath,
-      workspaceName: payload.workspaceName,
-      projectId: payload.projectId,
+      workspacePath: payload.workspacePath as WorkspacePath,
+      workspaceName: identity.workspaceName,
+      projectId: identity.projectId,
       keepBranch: payload.keepBranch,
       operations,
       completed,

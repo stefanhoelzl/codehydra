@@ -172,11 +172,7 @@ async function handleNavigation(key: NavigationKey): Promise<void> {
   _switchingWorkspace = true;
   try {
     // Pass false to keep UI focused (shortcut mode active)
-    await api.ui.switchWorkspace(
-      targetWorkspaceRef.projectId,
-      targetWorkspaceRef.workspaceName,
-      false
-    );
+    await api.ui.switchWorkspace(targetWorkspaceRef.path, false);
   } catch (error) {
     logWorkspaceSwitchError("switch workspace", error);
   } finally {
@@ -207,11 +203,7 @@ async function handleIdleNavigation(direction: -1 | 1): Promise<void> {
 
   _switchingWorkspace = true;
   try {
-    await api.ui.switchWorkspace(
-      targetWorkspaceRef.projectId,
-      targetWorkspaceRef.workspaceName,
-      false
-    );
+    await api.ui.switchWorkspace(targetWorkspaceRef.path, false);
   } catch (error) {
     logWorkspaceSwitchError("navigate to idle workspace", error);
   } finally {
@@ -255,7 +247,7 @@ async function handleJump(key: JumpKey): Promise<void> {
   _switchingWorkspace = true;
   try {
     // Pass false to keep UI focused (shortcut mode active)
-    await api.ui.switchWorkspace(workspaceRef.projectId, workspaceRef.workspaceName, false);
+    await api.ui.switchWorkspace(workspaceRef.path, false);
   } catch (error) {
     logWorkspaceSwitchError("jump to workspace", error);
   } finally {

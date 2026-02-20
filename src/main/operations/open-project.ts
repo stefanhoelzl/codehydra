@@ -26,7 +26,6 @@ import {
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { toIpcWorkspaces } from "../api/workspace-conversion";
 import { Path } from "../../services/platform/path";
-import { extractWorkspaceName } from "../../shared/api/id-utils";
 
 // =============================================================================
 // Intent Types
@@ -227,8 +226,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
         const switchIntent: SwitchWorkspaceIntent = {
           type: INTENT_SWITCH_WORKSPACE,
           payload: {
-            projectId,
-            workspaceName: extractWorkspaceName(firstWorkspace.path),
+            workspacePath: firstWorkspace.path,
           },
         };
         try {

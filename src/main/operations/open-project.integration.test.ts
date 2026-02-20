@@ -63,14 +63,13 @@ import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
-  isAutoSwitch,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
+  ResolveHookResult as SwitchResolveHookResult,
+  ResolveProjectHookInput as SwitchResolveProjectHookInput,
   ResolveProjectHookResult as SwitchResolveProjectHookResult,
-  ResolveWorkspaceHookInput as SwitchResolveWorkspaceHookInput,
-  ResolveWorkspaceHookResult as SwitchResolveWorkspaceHookResult,
   ActivateHookInput,
 } from "./switch-workspace";
 
@@ -328,7 +327,7 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(
     INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId)
+    new SwitchWorkspaceOperation(extractWorkspaceName)
   );
 
   // ---------------------------------------------------------------------------
@@ -585,33 +584,40 @@ function createTestHarness(options?: {
     },
   };
 
-  // Switch modules: resolve-project, resolve-workspace, activate
-  const switchResolveProjectModule: IntentModule = {
+  // Switch modules: resolve, resolve-project, activate
+  const switchResolveModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
-            const { payload } = ctx.intent as SwitchWorkspaceIntent;
-            if (isAutoSwitch(payload)) return {};
-            const project = projectState.registeredProjects.find(
-              (p) => generateProjectId(p.path) === payload.projectId
-            );
-            return project ? { projectPath: project.path, projectName: project.name } : {};
+        resolve: {
+          handler: async (ctx: HookContext): Promise<SwitchResolveHookResult> => {
+            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+            // Reverse lookup: find which project owns this workspace path
+            for (const project of projectState.registeredProjects) {
+              const workspace = project.workspaces.find((w) => w.path === wsPath);
+              if (workspace) {
+                const workspaceName = extractWorkspaceName(wsPath);
+                return {
+                  projectPath: project.path,
+                  workspaceName: workspaceName as import("../../shared/api/types").WorkspaceName,
+                };
+              }
+            }
+            return {};
           },
         },
       },
     },
   };
-  const switchResolveWorkspaceModule: IntentModule = {
+  const switchResolveProjectModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<SwitchResolveWorkspaceHookResult> => {
-            const { projectPath, workspaceName } = ctx as SwitchResolveWorkspaceHookInput;
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
+            const { projectPath } = ctx as SwitchResolveProjectHookInput;
             const project = projectState.registeredProjects.find((p) => p.path === projectPath);
-            if (!project) return {};
-            const workspace = project.workspaces.find((w) => w.path.endsWith(`/${workspaceName}`));
-            return workspace ? { workspacePath: workspace.path } : {};
+            return project
+              ? { projectId: generateProjectId(project.path), projectName: project.name }
+              : {};
           },
         },
       },
@@ -651,8 +657,8 @@ function createTestHarness(options?: {
       stateModule,
       viewModule,
       projectViewModule,
+      switchResolveModule,
       switchResolveProjectModule,
-      switchResolveWorkspaceModule,
       switchViewModule,
     ],
     hookRegistry,
@@ -783,7 +789,7 @@ describe("OpenProjectOperation", () => {
     dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
     dispatcher.registerOperation(
       INTENT_SWITCH_WORKSPACE,
-      new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId)
+      new SwitchWorkspaceOperation(extractWorkspaceName)
     );
 
     // Resolve module that always returns alreadyOpen: true

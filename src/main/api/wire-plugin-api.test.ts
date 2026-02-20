@@ -5,12 +5,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { wirePluginApi, type PluginApiRegistry } from "./wire-plugin-api";
+import { wirePluginApi } from "./wire-plugin-api";
 import type { PluginServer, ApiCallHandlers } from "../../services/plugin-server";
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
-import type { WorkspaceName } from "../../shared/api/types";
 import { SILENT_LOGGER } from "../../services/logging";
-import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 
 // =============================================================================
 // Mock Factories
@@ -63,35 +61,22 @@ function createMockApi(): ICodeHydraApi {
 // Tests
 // =============================================================================
 
-const testProjectPath = "/home/user/projects/my-app";
 const testWorkspacePath = "/home/user/.codehydra/workspaces/my-feature";
 
 describe("wirePluginApi", () => {
   let pluginServer: PluginServer & { registeredHandlers: ApiCallHandlers | null };
   let api: ICodeHydraApi;
-  let registry: PluginApiRegistry;
   const logger = SILENT_LOGGER;
 
   beforeEach(() => {
     pluginServer = createMockPluginServer();
     api = createMockApi();
-    registry = wirePluginApi(pluginServer, api, logger);
-    // Register test workspace
-    registry.registerWorkspace(
-      testWorkspacePath,
-      generateProjectId(testProjectPath),
-      extractWorkspaceName(testWorkspacePath)
-    );
+    wirePluginApi(pluginServer, api, logger);
   });
 
   it("should register handlers with plugin server", () => {
     expect(pluginServer.onApiCall).toHaveBeenCalledTimes(1);
     expect(pluginServer.registeredHandlers).not.toBeNull();
-  });
-
-  it("should return registry with register and unregister functions", () => {
-    expect(typeof registry.registerWorkspace).toBe("function");
-    expect(typeof registry.unregisterWorkspace).toBe("function");
   });
 
   describe("getAgentSession handler", () => {
@@ -122,7 +107,8 @@ describe("wirePluginApi", () => {
       }
     });
 
-    it("should return error result when workspace not found", async () => {
+    it("should return error result when API throws for unknown workspace", async () => {
+      vi.mocked(api.workspaces.getAgentSession).mockRejectedValue(new Error("Workspace not found"));
       const handlers = pluginServer.registeredHandlers!;
 
       const result = await handlers.getAgentSession("/unknown/workspace");
@@ -147,15 +133,12 @@ describe("wirePluginApi", () => {
       }
     });
 
-    it("should call API with correct projectId and workspaceName", async () => {
+    it("should call API with workspacePath", async () => {
       const handlers = pluginServer.registeredHandlers!;
 
       await handlers.getAgentSession(testWorkspacePath);
 
-      expect(api.workspaces.getAgentSession).toHaveBeenCalledWith(
-        expect.any(String), // projectId (generated from path)
-        "my-feature" as WorkspaceName
-      );
+      expect(api.workspaces.getAgentSession).toHaveBeenCalledWith(testWorkspacePath);
     });
   });
 
@@ -172,7 +155,10 @@ describe("wirePluginApi", () => {
       }
     });
 
-    it("should return error result when workspace not found", async () => {
+    it("should return error result when API throws for unknown workspace", async () => {
+      vi.mocked(api.workspaces.restartAgentServer).mockRejectedValue(
+        new Error("Workspace not found")
+      );
       const handlers = pluginServer.registeredHandlers!;
 
       const result = await handlers.restartAgentServer("/unknown/workspace");
@@ -197,15 +183,12 @@ describe("wirePluginApi", () => {
       }
     });
 
-    it("should call API with correct projectId and workspaceName", async () => {
+    it("should call API with workspacePath", async () => {
       const handlers = pluginServer.registeredHandlers!;
 
       await handlers.restartAgentServer(testWorkspacePath);
 
-      expect(api.workspaces.restartAgentServer).toHaveBeenCalledWith(
-        expect.any(String), // projectId (generated from path)
-        "my-feature" as WorkspaceName
-      );
+      expect(api.workspaces.restartAgentServer).toHaveBeenCalledWith(testWorkspacePath);
     });
   });
 
@@ -228,24 +211,18 @@ describe("wirePluginApi", () => {
 
       await handlers.delete(testWorkspacePath, { keepBranch: true });
 
-      expect(api.workspaces.remove).toHaveBeenCalledWith(
-        expect.any(String), // projectId
-        "my-feature" as WorkspaceName,
-        { keepBranch: true }
-      );
+      expect(api.workspaces.remove).toHaveBeenCalledWith(testWorkspacePath, { keepBranch: true });
     });
 
-    it("should return error result when workspace not found", async () => {
+    it("should pass workspacePath directly to API without identity lookup", async () => {
+      vi.mocked(api.workspaces.remove).mockResolvedValue({ started: true });
       const handlers = pluginServer.registeredHandlers!;
 
       const result = await handlers.delete("/unknown/workspace", {});
 
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toBe("Workspace not found");
-      }
-      // API should not be called when workspace not found
-      expect(api.workspaces.remove).not.toHaveBeenCalled();
+      // Delete no longer requires resolveIdentity - passes workspacePath directly
+      expect(result.success).toBe(true);
+      expect(api.workspaces.remove).toHaveBeenCalledWith("/unknown/workspace", {});
     });
 
     it("should return error result when API throws", async () => {
@@ -298,15 +275,14 @@ describe("wirePluginApi", () => {
         args: ["/path/to/file", { preview: true }],
       });
 
-      expect(api.workspaces.executeCommand).toHaveBeenCalledWith(
-        expect.any(String), // projectId
-        "my-feature" as WorkspaceName,
-        "vscode.open",
-        ["/path/to/file", { preview: true }]
-      );
+      expect(api.workspaces.executeCommand).toHaveBeenCalledWith(testWorkspacePath, "vscode.open", [
+        "/path/to/file",
+        { preview: true },
+      ]);
     });
 
-    it("should return error result when workspace not found", async () => {
+    it("should return error result when API throws for unknown workspace", async () => {
+      vi.mocked(api.workspaces.executeCommand).mockRejectedValue(new Error("Workspace not found"));
       const handlers = pluginServer.registeredHandlers!;
 
       const result = await handlers.executeCommand("/unknown/workspace", {
@@ -317,8 +293,6 @@ describe("wirePluginApi", () => {
       if (!result.success) {
         expect(result.error).toBe("Workspace not found");
       }
-      // API should not be called when workspace not found
-      expect(api.workspaces.executeCommand).not.toHaveBeenCalled();
     });
 
     it("should return error result when API throws", async () => {

@@ -29,14 +29,13 @@ import {
   SWITCH_WORKSPACE_OPERATION_ID,
   INTENT_SWITCH_WORKSPACE,
   EVENT_WORKSPACE_SWITCHED,
-  isAutoSwitch,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
+  ResolveHookResult,
+  ResolveProjectHookInput,
   ResolveProjectHookResult,
-  ResolveWorkspaceHookInput,
-  ResolveWorkspaceHookResult,
   ActivateHookInput,
   WorkspaceSwitchedEvent,
   FindCandidatesHookResult,
@@ -208,41 +207,41 @@ function createTestSetup(opts?: {
 
   dispatcher.registerOperation(
     INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(extractWorkspaceName, generateProjectId)
+    new SwitchWorkspaceOperation(extractWorkspaceName)
   );
 
-  // ResolveProjectModule: "resolve-project" hook -- resolves projectId → projectPath + projectName
-  const resolveProjectModule: IntentModule = {
+  // ResolveModule: "resolve" hook -- resolves workspacePath → projectPath + workspaceName
+  const resolveModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { payload } = ctx.intent as SwitchWorkspaceIntent;
-            if (isAutoSwitch(payload)) return {};
-            const projectPath = await resolveProjectPath(payload.projectId, appState);
-            if (!projectPath) return {};
-            const project = appState.getProject(projectPath);
-            if (!project) return {};
-            return { projectPath, projectName: project.name };
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+            // Reverse lookup: find which project owns this workspace path
+            for (const project of appState.projects) {
+              const workspace = project.workspaces.find((w) => w.path === wsPath);
+              if (workspace) {
+                const workspaceName = extractWorkspaceName(wsPath);
+                return { projectPath: project.path, workspaceName: workspaceName as WorkspaceName };
+              }
+            }
+            return {};
           },
         },
       },
     },
   };
 
-  // ResolveWorkspaceModule: "resolve-workspace" hook -- resolves workspaceName → workspacePath
-  const resolveWorkspaceModule: IntentModule = {
+  // ResolveProjectModule: "resolve-project" hook -- resolves projectPath → projectId + projectName
+  const resolveProjectModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { projectPath, workspaceName } = ctx as ResolveWorkspaceHookInput;
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
             const project = appState.getProject(projectPath);
             if (!project) return {};
-            const workspace = project.workspaces.find(
-              (w) => extractWorkspaceName(w.path) === workspaceName
-            );
-            return workspace ? { workspacePath: workspace.path } : {};
+            return { projectId: generateProjectId(project.path), projectName: project.name };
           },
         },
       },
@@ -281,7 +280,7 @@ function createTestSetup(opts?: {
   };
 
   const mockApiRegistry = createMockApiRegistry();
-  const modules: IntentModule[] = [resolveProjectModule, resolveWorkspaceModule, switchViewModule];
+  const modules: IntentModule[] = [resolveModule, resolveProjectModule, switchViewModule];
 
   if (opts?.withAutoSelect) {
     const findCandidatesModule: IntentModule = {
@@ -355,24 +354,11 @@ function extractWorkspaceName(path: string): string {
   return parts[parts.length - 1] ?? "";
 }
 
-async function resolveProjectPath(
-  projectId: string,
-  accessor: { getAllProjects(): Promise<ReadonlyArray<{ path: string }>> }
-): Promise<string | undefined> {
-  const projects = await accessor.getAllProjects();
-  return projects.find((p) => generateProjectId(p.path) === projectId)?.path;
-}
-
-function switchIntent(
-  projectId?: ProjectId,
-  workspaceName?: WorkspaceName,
-  focus?: boolean
-): SwitchWorkspaceIntent {
+function switchIntent(workspacePath?: string, focus?: boolean): SwitchWorkspaceIntent {
   return {
     type: INTENT_SWITCH_WORKSPACE,
     payload: {
-      projectId: projectId ?? (generateProjectId(TEST_PROJECT_PATH) as ProjectId),
-      workspaceName: workspaceName ?? TEST_WORKSPACE_NAME,
+      workspacePath: workspacePath ?? TEST_WORKSPACE_PATH,
       ...(focus !== undefined && { focus }),
     },
   };
@@ -429,7 +415,7 @@ describe("SwitchWorkspace Operation", () => {
       const setup = createTestSetup();
       const { dispatcher, viewManager } = setup;
 
-      await dispatcher.dispatch(switchIntent(undefined, undefined, undefined));
+      await dispatcher.dispatch(switchIntent(undefined, undefined));
 
       expect(viewManager.focusState).toBe(true);
     });
@@ -440,7 +426,7 @@ describe("SwitchWorkspace Operation", () => {
       const setup = createTestSetup();
       const { dispatcher, viewManager } = setup;
 
-      await dispatcher.dispatch(switchIntent(undefined, undefined, false));
+      await dispatcher.dispatch(switchIntent(undefined, false));
 
       expect(viewManager.focusState).toBe(false);
     });
@@ -452,13 +438,8 @@ describe("SwitchWorkspace Operation", () => {
       const { dispatcher, viewManager } = setup;
 
       await expect(
-        dispatcher.dispatch(
-          switchIntent(
-            generateProjectId(TEST_PROJECT_PATH) as ProjectId,
-            "nonexistent" as WorkspaceName
-          )
-        )
-      ).rejects.toThrow("Workspace not found: nonexistent");
+        dispatcher.dispatch(switchIntent("/projects/my-app/workspaces/nonexistent"))
+      ).rejects.toThrow("Workspace not found: /projects/my-app/workspaces/nonexistent");
 
       expect(viewManager.activeWorkspacePath).toBeNull();
     });
@@ -468,10 +449,8 @@ describe("SwitchWorkspace Operation", () => {
       const { dispatcher, viewManager } = setup;
 
       await expect(
-        dispatcher.dispatch(
-          switchIntent(generateProjectId("/nonexistent") as ProjectId, TEST_WORKSPACE_NAME)
-        )
-      ).rejects.toThrow("Project not found");
+        dispatcher.dispatch(switchIntent("/nonexistent/workspaces/feature-login"))
+      ).rejects.toThrow("Workspace not found: /nonexistent/workspaces/feature-login");
 
       expect(viewManager.activeWorkspacePath).toBeNull();
     });
@@ -503,8 +482,7 @@ describe("SwitchWorkspace Operation", () => {
       const intent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: generateProjectId(TEST_PROJECT_PATH) as ProjectId,
-          workspaceName: TEST_WORKSPACE_NAME,
+          workspacePath: TEST_WORKSPACE_PATH,
         },
       };
       await dispatcher.dispatch(intent);

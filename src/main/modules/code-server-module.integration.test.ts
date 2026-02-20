@@ -168,7 +168,7 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
     const { payload } = ctx.intent;
     const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath ?? "",
+      projectPath: "/projects/test",
       workspacePath: payload.workspacePath ?? "",
     };
     const { results, errors } = await ctx.hooks.collect<DeleteHookResult>("delete", hookCtx);

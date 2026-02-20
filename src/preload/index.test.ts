@@ -152,21 +152,16 @@ describe("preload API", () => {
     });
 
     it("workspaces.remove calls api:workspace:remove", async () => {
-      const mockResult = { branchDeleted: false };
+      const mockResult = { started: true };
       mockIpcRenderer.invoke.mockResolvedValue(mockResult);
 
       const workspaces = exposedApi.workspaces as {
-        remove: (
-          projectId: string,
-          workspaceName: string,
-          options?: { keepBranch?: boolean }
-        ) => Promise<unknown>;
+        remove: (workspacePath: string, options?: { keepBranch?: boolean }) => Promise<unknown>;
       };
-      const result = await workspaces.remove("my-app-12345678", "feature", { keepBranch: true });
+      const result = await workspaces.remove("/test/.worktrees/feature", { keepBranch: true });
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:remove", {
-        projectId: "my-app-12345678",
-        workspaceName: "feature",
+        workspacePath: "/test/.worktrees/feature",
         keepBranch: true,
       });
       expect(result).toEqual(mockResult);
@@ -180,13 +175,12 @@ describe("preload API", () => {
       mockIpcRenderer.invoke.mockResolvedValue(mockStatus);
 
       const workspaces = exposedApi.workspaces as {
-        getStatus: (projectId: string, workspaceName: string) => Promise<unknown>;
+        getStatus: (workspacePath: string) => Promise<unknown>;
       };
-      const result = await workspaces.getStatus("my-app-12345678", "feature");
+      const result = await workspaces.getStatus("/test/.worktrees/feature");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-status", {
-        projectId: "my-app-12345678",
-        workspaceName: "feature",
+        workspacePath: "/test/.worktrees/feature",
       });
       expect(result).toEqual(mockStatus);
     });
@@ -196,32 +190,28 @@ describe("preload API", () => {
 
       const workspaces = exposedApi.workspaces as {
         getAgentSession: (
-          projectId: string,
-          workspaceName: string
+          workspacePath: string
         ) => Promise<{ port: number; sessionId: string } | null>;
       };
-      await workspaces.getAgentSession("my-app-12345678", "feature");
+      await workspaces.getAgentSession("/test/.worktrees/feature");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-agent-session", {
-        projectId: "my-app-12345678",
-        workspaceName: "feature",
+        workspacePath: "/test/.worktrees/feature",
       });
     });
 
-    it("workspaces.getAgentSession should pass projectId and workspaceName parameters", async () => {
+    it("workspaces.getAgentSession should pass workspacePath parameter", async () => {
       mockIpcRenderer.invoke.mockResolvedValue({ port: 54321, sessionId: "ses-456" });
 
       const workspaces = exposedApi.workspaces as {
         getAgentSession: (
-          projectId: string,
-          workspaceName: string
+          workspacePath: string
         ) => Promise<{ port: number; sessionId: string } | null>;
       };
-      await workspaces.getAgentSession("other-project-aaaabbbb", "main-workspace");
+      await workspaces.getAgentSession("/other/.worktrees/main-workspace");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-agent-session", {
-        projectId: "other-project-aaaabbbb",
-        workspaceName: "main-workspace",
+        workspacePath: "/other/.worktrees/main-workspace",
       });
     });
 
@@ -230,11 +220,10 @@ describe("preload API", () => {
 
       const workspaces = exposedApi.workspaces as {
         getAgentSession: (
-          projectId: string,
-          workspaceName: string
+          workspacePath: string
         ) => Promise<{ port: number; sessionId: string } | null>;
       };
-      const result = await workspaces.getAgentSession("my-app-12345678", "feature");
+      const result = await workspaces.getAgentSession("/test/.worktrees/feature");
 
       expect(result).toBeNull();
     });
@@ -243,18 +232,12 @@ describe("preload API", () => {
       mockIpcRenderer.invoke.mockResolvedValue(undefined);
 
       const workspaces = exposedApi.workspaces as {
-        setMetadata: (
-          projectId: string,
-          workspaceName: string,
-          key: string,
-          value: string | null
-        ) => Promise<void>;
+        setMetadata: (workspacePath: string, key: string, value: string | null) => Promise<void>;
       };
-      await workspaces.setMetadata("my-app-12345678", "feature", "note", "test value");
+      await workspaces.setMetadata("/test/.worktrees/feature", "note", "test value");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:set-metadata", {
-        projectId: "my-app-12345678",
-        workspaceName: "feature",
+        workspacePath: "/test/.worktrees/feature",
         key: "note",
         value: "test value",
       });
@@ -265,13 +248,12 @@ describe("preload API", () => {
       mockIpcRenderer.invoke.mockResolvedValue(mockMetadata);
 
       const workspaces = exposedApi.workspaces as {
-        getMetadata: (projectId: string, workspaceName: string) => Promise<Record<string, string>>;
+        getMetadata: (workspacePath: string) => Promise<Record<string, string>>;
       };
-      const result = await workspaces.getMetadata("my-app-12345678", "feature");
+      const result = await workspaces.getMetadata("/test/.worktrees/feature");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-metadata", {
-        projectId: "my-app-12345678",
-        workspaceName: "feature",
+        workspacePath: "/test/.worktrees/feature",
       });
       expect(result).toEqual(mockMetadata);
     });
@@ -307,17 +289,12 @@ describe("preload API", () => {
       mockIpcRenderer.invoke.mockResolvedValue(undefined);
 
       const ui = exposedApi.ui as {
-        switchWorkspace: (
-          projectId: string,
-          workspaceName: string,
-          focus?: boolean
-        ) => Promise<void>;
+        switchWorkspace: (workspacePath: string, focus?: boolean) => Promise<void>;
       };
-      await ui.switchWorkspace("my-app-12345678", "feature", false);
+      await ui.switchWorkspace("/test/.worktrees/feature", false);
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:ui:switch-workspace", {
-        projectId: "my-app-12345678",
-        workspaceName: "feature",
+        workspacePath: "/test/.worktrees/feature",
         focus: false,
       });
     });
