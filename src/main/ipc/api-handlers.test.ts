@@ -134,7 +134,7 @@ describe("formatWindowTitle", () => {
 
 describe("wireApiEvents", () => {
   let mockApi: ICodeHydraApi;
-  let mockWebContents: { send: ReturnType<typeof vi.fn>; isDestroyed: ReturnType<typeof vi.fn> };
+  let sendToUI: ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
   let eventHandlers: Map<string, (event: unknown) => void>;
 
   beforeEach(() => {
@@ -150,14 +150,11 @@ describe("wireApiEvents", () => {
       }),
     };
 
-    mockWebContents = {
-      send: vi.fn(),
-      isDestroyed: vi.fn().mockReturnValue(false),
-    };
+    sendToUI = vi.fn();
   });
 
   it("subscribes to all API events", () => {
-    wireApiEvents(mockApi, () => mockWebContents as never);
+    wireApiEvents(mockApi, sendToUI);
 
     expect(mockApi.on).toHaveBeenCalledWith("project:opened", expect.any(Function));
     expect(mockApi.on).toHaveBeenCalledWith("project:closed", expect.any(Function));
@@ -172,62 +169,43 @@ describe("wireApiEvents", () => {
     // IpcEventBridge domain event subscriptions, not wireApiEvents.
   });
 
-  it("forwards project:opened events to webContents", () => {
-    wireApiEvents(mockApi, () => mockWebContents as never);
+  it("forwards project:opened events via sendToUI", () => {
+    wireApiEvents(mockApi, sendToUI);
 
     const handler = eventHandlers.get("project:opened");
     handler?.({ project: TEST_PROJECT });
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:project:opened", {
+    expect(sendToUI).toHaveBeenCalledWith("api:project:opened", {
       project: TEST_PROJECT,
     });
   });
 
-  it("forwards workspace:created events to webContents", () => {
-    wireApiEvents(mockApi, () => mockWebContents as never);
+  it("forwards workspace:created events via sendToUI", () => {
+    wireApiEvents(mockApi, sendToUI);
 
     const handler = eventHandlers.get("workspace:created");
     handler?.({ projectId: TEST_PROJECT_ID, workspace: TEST_WORKSPACE });
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:created", {
+    expect(sendToUI).toHaveBeenCalledWith("api:workspace:created", {
       projectId: TEST_PROJECT_ID,
       workspace: TEST_WORKSPACE,
     });
   });
 
-  it("forwards ui:mode-changed events to webContents", () => {
-    wireApiEvents(mockApi, () => mockWebContents as never);
+  it("forwards ui:mode-changed events via sendToUI", () => {
+    wireApiEvents(mockApi, sendToUI);
 
     const handler = eventHandlers.get("ui:mode-changed");
     handler?.({ mode: "shortcut", previousMode: "workspace" });
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:ui:mode-changed", {
+    expect(sendToUI).toHaveBeenCalledWith("api:ui:mode-changed", {
       mode: "shortcut",
       previousMode: "workspace",
     });
   });
 
-  it("does not send to destroyed webContents", () => {
-    mockWebContents.isDestroyed.mockReturnValue(true);
-    wireApiEvents(mockApi, () => mockWebContents as never);
-
-    const handler = eventHandlers.get("project:opened");
-    handler?.({ project: TEST_PROJECT });
-
-    expect(mockWebContents.send).not.toHaveBeenCalled();
-  });
-
-  it("does not send when webContents is null", () => {
-    wireApiEvents(mockApi, () => null);
-
-    const handler = eventHandlers.get("project:opened");
-    handler?.({ project: TEST_PROJECT });
-
-    expect(mockWebContents.send).not.toHaveBeenCalled();
-  });
-
   it("returns cleanup function that unsubscribes from all events", () => {
-    const cleanup = wireApiEvents(mockApi, () => mockWebContents as never);
+    const cleanup = wireApiEvents(mockApi, sendToUI);
 
     cleanup();
 

@@ -221,7 +221,7 @@ function createStatusTestSetup(): StatusTestSetup {
     getApi: () => {
       throw new Error("not wired");
     },
-    getUIWebContents: () => null,
+    sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
     pluginServer: null,
     logger: SILENT_LOGGER,
     dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -289,7 +289,7 @@ function createLifecycleTestSetup(
   const ipcEventBridge = createIpcEventBridge({
     apiRegistry: mockApiRegistry as unknown as IApiRegistry,
     getApi: () => mockApi,
-    getUIWebContents: () => null,
+    sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
     pluginServer:
       overrides?.pluginServer !== undefined
         ? overrides.pluginServer
@@ -464,10 +464,9 @@ describe("IpcEventBridge - workspace:deleted", () => {
 
 describe("IpcEventBridge - workspace:deletion-progress", () => {
   function createMockWebContents(): {
-    send: ReturnType<typeof vi.fn>;
-    isDestroyed: ReturnType<typeof vi.fn>;
+    send: ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
   } {
-    return { send: vi.fn(), isDestroyed: vi.fn().mockReturnValue(false) };
+    return { send: vi.fn<(channel: string, ...args: unknown[]) => void>() };
   }
 
   it("sends deletion progress to webContents via IPC", () => {
@@ -478,8 +477,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       getApi: () => {
         throw new Error("not wired");
       },
-      getUIWebContents: () =>
-        mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
+      sendToUI: mockWebContents.send,
       pluginServer: null,
       logger: SILENT_LOGGER,
       dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -525,14 +523,14 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
     );
   });
 
-  it("ignores when webContents is null", () => {
+  it("ignores when sendToUI is a no-op", () => {
     const mockApiRegistry = createMockApiRegistry();
     const ipcEventBridge = createIpcEventBridge({
       apiRegistry: mockApiRegistry as unknown as IApiRegistry,
       getApi: () => {
         throw new Error("not wired");
       },
-      getUIWebContents: () => null,
+      sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
       pluginServer: null,
       logger: SILENT_LOGGER,
       dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -549,7 +547,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       } as unknown as IpcEventBridgeDeps["deleteOp"],
     });
 
-    // Should not throw when webContents is null
+    // Should not throw when sendToUI is a no-op
     const event: WorkspaceDeletionProgressEvent = {
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
       payload: {
@@ -627,7 +625,7 @@ describe("IpcEventBridge - lifecycle", () => {
       const ipcEventBridge = createIpcEventBridge({
         apiRegistry: mockApiRegistry as unknown as IApiRegistry,
         getApi: () => mockApi,
-        getUIWebContents: () => null,
+        sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
         pluginServer: null,
         logger: SILENT_LOGGER,
         dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -701,7 +699,7 @@ describe("IpcEventBridge - lifecycle", () => {
       const ipcEventBridge = createIpcEventBridge({
         apiRegistry: mockApiRegistry as unknown as IApiRegistry,
         getApi: () => mockApi,
-        getUIWebContents: () => null,
+        sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
         pluginServer: null,
         logger: mockLogger,
         dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -756,10 +754,9 @@ describe("IpcEventBridge - lifecycle", () => {
 
 describe("IpcEventBridge - setup:error", () => {
   function createMockWebContents(): {
-    send: ReturnType<typeof vi.fn>;
-    isDestroyed: ReturnType<typeof vi.fn>;
+    send: ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
   } {
-    return { send: vi.fn(), isDestroyed: vi.fn().mockReturnValue(false) };
+    return { send: vi.fn<(channel: string, ...args: unknown[]) => void>() };
   }
 
   function createSetupErrorTestSetup(): {
@@ -778,8 +775,7 @@ describe("IpcEventBridge - setup:error", () => {
       getApi: () => {
         throw new Error("getApi not available in setup-error test");
       },
-      getUIWebContents: () =>
-        mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
+      sendToUI: mockWebContents.send,
       pluginServer: null,
       logger: SILENT_LOGGER,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -844,8 +840,7 @@ describe("IpcEventBridge - setup:error", () => {
       getApi: () => {
         throw new Error("getApi not available in setup-error test");
       },
-      getUIWebContents: () =>
-        mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
+      sendToUI: mockWebContents.send,
       pluginServer: null,
       logger: SILENT_LOGGER,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -905,7 +900,7 @@ function createApiTestSetup(overrides?: { pluginServer?: IpcEventBridgeDeps["plu
   const ipcEventBridge = createIpcEventBridge({
     apiRegistry: registry,
     getApi: () => registry.getInterface(),
-    getUIWebContents: () => null,
+    sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
     pluginServer: overrides?.pluginServer ?? null,
     logger: SILENT_LOGGER,
     dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],

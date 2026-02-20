@@ -212,6 +212,16 @@ export interface WindowLayer {
   onClose(handle: WindowHandle, callback: () => void): Unsubscribe;
 
   /**
+   * Subscribe to window blur events (window loses OS focus).
+   *
+   * @param handle - Handle to the window
+   * @param callback - Called when window loses focus
+   * @returns Unsubscribe function
+   * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
+   */
+  onBlur(handle: WindowHandle, callback: () => void): Unsubscribe;
+
+  /**
    * Get the content view of a window.
    * The content view is the container for child views.
    *
@@ -466,6 +476,16 @@ export class DefaultWindowLayer implements WindowLayerInternal {
     return () => {
       if (!state.window.isDestroyed()) {
         state.window.off("close", callback);
+      }
+    };
+  }
+
+  onBlur(handle: WindowHandle, callback: () => void): Unsubscribe {
+    const state = this.getWindowState(handle);
+    state.window.on("blur", callback);
+    return () => {
+      if (!state.window.isDestroyed()) {
+        state.window.off("blur", callback);
       }
     };
   }

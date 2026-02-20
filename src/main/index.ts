@@ -101,7 +101,7 @@ import { createMcpModule } from "./modules/mcp-module";
 import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
-import { createRetryModule } from "./modules/retry-module";
+import { createShortcutModule } from "./modules/shortcut-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
@@ -325,7 +325,6 @@ const viewManager = new ViewManager({
     codeServerPort: 0,
   },
   logger: loggingService.createLogger("view"),
-  dispatcher,
 });
 
 const badgeManager = new BadgeManager(
@@ -384,19 +383,17 @@ const { module: viewModule, readyHandler } = createViewModule({
   uiHtmlPath,
   devToolsHandler: buildInfo.isDevelopment
     ? () => {
-        const uiWebContents = viewManager.getUIWebContents();
-        if (uiWebContents) {
-          uiWebContents.on("before-input-event", (event: Electron.Event, input: Electron.Input) => {
-            if (input.control && input.shift && input.key === "I") {
-              if (uiWebContents.isDevToolsOpened()) {
-                uiWebContents.closeDevTools();
-              } else {
-                uiWebContents.openDevTools({ mode: "detach" });
-              }
-              event.preventDefault();
+        const uiHandle = viewManager.getUIViewHandle();
+        viewLayer.onBeforeInputEvent(uiHandle, (input, preventDefault) => {
+          if (input.control && input.shift && input.key === "I") {
+            if (viewLayer.isDevToolsOpened(uiHandle)) {
+              viewLayer.closeDevTools(uiHandle);
+            } else {
+              viewLayer.openDevTools(uiHandle, { mode: "detach" });
             }
-          });
-        }
+            preventDefault();
+          }
+        });
       }
     : null,
 });
@@ -505,7 +502,14 @@ const scriptModule = createScriptModule({
   pathProvider,
 });
 
-const retryModule = createRetryModule({ ipcLayer });
+const shortcutModule = createShortcutModule({
+  viewManager,
+  viewLayer,
+  windowLayer,
+  getWindowHandle: () => windowManager.getWindowHandle(),
+  dispatch: (intent) => dispatcher.dispatch(intent),
+  logger: loggingService.createLogger("shortcut"),
+});
 
 // 9. ApiRegistry + Operation registration
 
@@ -547,7 +551,7 @@ const ipcEventBridge = createIpcEventBridge({
     }
     return codeHydraApi;
   },
-  getUIWebContents: () => viewManager.getUIWebContents(),
+  sendToUI: (...args) => viewManager.sendToUI(...args),
   pluginServer,
   logger: apiLogger,
   dispatcher,
@@ -579,7 +583,7 @@ dispatcher.registerModule(mcpModule);
 dispatcher.registerModule(electronLifecycleModule);
 dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
-dispatcher.registerModule(retryModule);
+dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(ipcEventBridge);
 
 // Register lifecycle.ready handler (bridges mount signal + projects-loaded deferred)

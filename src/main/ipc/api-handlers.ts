@@ -8,7 +8,6 @@
  * IPC forwarding still goes through wireApiEvents like all other events.
  */
 
-import type { WebContents } from "electron";
 import type { ICodeHydraApi, Unsubscribe } from "../../shared/api/interfaces";
 import { ApiIpcChannels } from "../../shared/ipc";
 
@@ -52,25 +51,22 @@ export function formatWindowTitle(
 /**
  * Wire API events to IPC emission.
  *
- * Subscribes to API events and forwards them to the renderer via webContents.send().
+ * Subscribes to API events and forwards them to the renderer via sendToUI.
  * Note: workspace:switched title updates are handled by WindowTitleModule in modules/window-title-module.ts.
  *
  * @param api - The ICodeHydraApi instance to subscribe to
- * @param getWebContents - Function to get the WebContents to send events to
+ * @param sendToUI - Function to send IPC messages to the UI layer
  * @returns Cleanup function that unsubscribes from all events
  */
 export function wireApiEvents(
   api: ICodeHydraApi,
-  getWebContents: () => WebContents | null
+  sendToUI: (channel: string, ...args: unknown[]) => void
 ): Unsubscribe {
   const unsubscribers: Unsubscribe[] = [];
 
   // Helper to send events to renderer
   const send = (channel: string, payload?: unknown): void => {
-    const webContents = getWebContents();
-    if (webContents && !webContents.isDestroyed()) {
-      webContents.send(channel, payload);
-    }
+    sendToUI(channel, payload);
   };
 
   // Project events

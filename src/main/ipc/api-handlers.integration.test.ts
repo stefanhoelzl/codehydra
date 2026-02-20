@@ -121,27 +121,13 @@ function createMockApiWithEvents(): {
 }
 
 // =============================================================================
-// Mock WebContents Factory
-// =============================================================================
-
-function createMockWebContents(): {
-  send: ReturnType<typeof vi.fn>;
-  isDestroyed: ReturnType<typeof vi.fn>;
-} {
-  return {
-    send: vi.fn(),
-    isDestroyed: vi.fn().mockReturnValue(false),
-  };
-}
-
-// =============================================================================
 // Integration Tests
 // =============================================================================
 
 describe("API → IPC → Renderer event flow", () => {
   let api: ICodeHydraApi;
   let emitEvent: <E extends keyof ApiEvents>(event: E, ...args: Parameters<ApiEvents[E]>) => void;
-  let mockWebContents: ReturnType<typeof createMockWebContents>;
+  let sendToUI: ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
   let cleanup: () => void;
 
   beforeEach(() => {
@@ -149,8 +135,8 @@ describe("API → IPC → Renderer event flow", () => {
     api = mock.api;
     emitEvent = mock.emitEvent;
 
-    mockWebContents = createMockWebContents();
-    cleanup = wireApiEvents(api, () => mockWebContents as never);
+    sendToUI = vi.fn();
+    cleanup = wireApiEvents(api, sendToUI);
   });
 
   afterEach(() => {
@@ -161,7 +147,7 @@ describe("API → IPC → Renderer event flow", () => {
   it("should forward project:opened event to renderer", () => {
     emitEvent("project:opened", { project: TEST_PROJECT });
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:project:opened", {
+    expect(sendToUI).toHaveBeenCalledWith("api:project:opened", {
       project: TEST_PROJECT,
     });
   });
@@ -169,7 +155,7 @@ describe("API → IPC → Renderer event flow", () => {
   it("should forward project:closed event to renderer", () => {
     emitEvent("project:closed", { projectId: TEST_PROJECT_ID });
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:project:closed", {
+    expect(sendToUI).toHaveBeenCalledWith("api:project:closed", {
       projectId: TEST_PROJECT_ID,
     });
   });
@@ -178,7 +164,7 @@ describe("API → IPC → Renderer event flow", () => {
     const bases = [{ name: "main", isRemote: false }];
     emitEvent("project:bases-updated", { projectId: TEST_PROJECT_ID, bases });
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:project:bases-updated", {
+    expect(sendToUI).toHaveBeenCalledWith("api:project:bases-updated", {
       projectId: TEST_PROJECT_ID,
       bases,
     });
@@ -187,7 +173,7 @@ describe("API → IPC → Renderer event flow", () => {
   it("should forward workspace:created event to renderer", () => {
     emitEvent("workspace:created", { projectId: TEST_PROJECT_ID, workspace: TEST_WORKSPACE });
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:created", {
+    expect(sendToUI).toHaveBeenCalledWith("api:workspace:created", {
       projectId: TEST_PROJECT_ID,
       workspace: TEST_WORKSPACE,
     });
@@ -196,19 +182,19 @@ describe("API → IPC → Renderer event flow", () => {
   it("should forward workspace:removed event to renderer", () => {
     emitEvent("workspace:removed", TEST_WORKSPACE_REF);
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:removed", TEST_WORKSPACE_REF);
+    expect(sendToUI).toHaveBeenCalledWith("api:workspace:removed", TEST_WORKSPACE_REF);
   });
 
   it("should forward workspace:switched event to renderer", () => {
     emitEvent("workspace:switched", TEST_WORKSPACE_REF);
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:switched", TEST_WORKSPACE_REF);
+    expect(sendToUI).toHaveBeenCalledWith("api:workspace:switched", TEST_WORKSPACE_REF);
   });
 
   it("should forward workspace:switched with null to renderer", () => {
     emitEvent("workspace:switched", null);
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:switched", null);
+    expect(sendToUI).toHaveBeenCalledWith("api:workspace:switched", null);
   });
 
   it("should forward workspace:status-changed event to renderer", () => {
@@ -221,7 +207,7 @@ describe("API → IPC → Renderer event flow", () => {
     };
     emitEvent("workspace:status-changed", event);
 
-    expect(mockWebContents.send).toHaveBeenCalledWith("api:workspace:status-changed", event);
+    expect(sendToUI).toHaveBeenCalledWith("api:workspace:status-changed", event);
   });
 
   it("should not forward events after cleanup", () => {
@@ -229,14 +215,6 @@ describe("API → IPC → Renderer event flow", () => {
 
     emitEvent("project:opened", { project: TEST_PROJECT });
 
-    expect(mockWebContents.send).not.toHaveBeenCalled();
-  });
-
-  it("should not send to destroyed webContents", () => {
-    mockWebContents.isDestroyed.mockReturnValue(true);
-
-    emitEvent("project:opened", { project: TEST_PROJECT });
-
-    expect(mockWebContents.send).not.toHaveBeenCalled();
+    expect(sendToUI).not.toHaveBeenCalled();
   });
 });

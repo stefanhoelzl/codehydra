@@ -11,7 +11,6 @@
  * 5. Registers all dispatcher bridge handlers in the API registry
  */
 
-import type { WebContents } from "electron";
 import type { IntentModule, EventDeclarations } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type {
@@ -95,7 +94,7 @@ import { expandGitUrl } from "../../services/project/url-utils";
 export interface IpcEventBridgeDeps {
   readonly apiRegistry: IApiRegistry;
   readonly getApi: () => ICodeHydraApi;
-  readonly getUIWebContents: () => WebContents | null;
+  readonly sendToUI: (channel: string, ...args: unknown[]) => void;
   readonly pluginServer: PluginServer | null;
   readonly logger: Logger;
 
@@ -171,14 +170,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     },
     [EVENT_WORKSPACE_DELETION_PROGRESS]: (event: DomainEvent) => {
       const progress = (event as WorkspaceDeletionProgressEvent).payload;
-      try {
-        const webContents = deps.getUIWebContents();
-        if (webContents && !webContents.isDestroyed()) {
-          webContents.send(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
-        }
-      } catch {
-        // Ignore - deletion continues even if UI disconnected
-      }
+      deps.sendToUI(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
     },
     [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
       const p = (event as ProjectOpenedEvent).payload;
@@ -202,21 +194,15 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     },
     [EVENT_SETUP_PROGRESS]: (event: DomainEvent) => {
       const payload = (event as SetupProgressEvent).payload;
-      const webContents = deps.getUIWebContents();
-      if (webContents && !webContents.isDestroyed()) {
-        webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
-      }
+      deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
     },
     [EVENT_SETUP_ERROR]: (event: DomainEvent) => {
       const { message, code } = (event as SetupErrorEvent).payload;
-      const payload: SetupErrorPayload = {
+      const errorPayload: SetupErrorPayload = {
         message,
         ...(code !== undefined && { code }),
       };
-      const webContents = deps.getUIWebContents();
-      if (webContents && !webContents.isDestroyed()) {
-        webContents.send(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, payload);
-      }
+      deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
     },
     [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
       const {
@@ -601,7 +587,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         start: {
           handler: async (): Promise<StartHookResult> => {
             const api = deps.getApi();
-            apiEventCleanupFn = wireApiEvents(api, deps.getUIWebContents);
+            apiEventCleanupFn = wireApiEvents(api, deps.sendToUI);
             if (deps.pluginServer) {
               wirePluginApi(deps.pluginServer, api, deps.logger);
             }

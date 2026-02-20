@@ -55,6 +55,19 @@ export type WindowOpenHandler = (details: WindowOpenDetails) => WindowOpenAction
  */
 export type Unsubscribe = () => void;
 
+/**
+ * Keyboard input descriptor (no Electron types).
+ */
+export interface KeyboardInput {
+  readonly type: "keyDown" | "keyUp";
+  readonly key: string;
+  readonly isAutoRepeat: boolean;
+  readonly control: boolean;
+  readonly shift: boolean;
+  readonly alt: boolean;
+  readonly meta: boolean;
+}
+
 // ============================================================================
 // Interface
 // ============================================================================
@@ -233,23 +246,64 @@ export interface ViewLayer {
    */
   send(handle: ViewHandle, channel: string, ...args: unknown[]): void;
 
-  // Internal access
+  // Events (continued)
   /**
-   * Get the WebContents for a view.
-   *
-   * @internal This is exposed for ShortcutController integration only.
-   * Prefer using ViewLayer methods for normal operations.
-   *
-   * TODO(SHORTCUT_CONTROLLER_ABSTRACTION): This method exposes raw WebContents because
-   * ShortcutController requires direct access to register keyboard handlers on webContents.
-   * Once ShortcutController is abstracted behind a layer interface that handles keyboard
-   * registration through ViewLayer methods, this method can be removed.
-   * See planning/SHORTCUT_CONTROLLER_ABSTRACTION.md (to be created).
+   * Subscribe to before-input-event for keyboard interception.
    *
    * @param handle - Handle to the view
-   * @returns The WebContents or null if view is destroyed
+   * @param callback - Called with keyboard input and a preventDefault function
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
    */
-  getWebContents(handle: ViewHandle): Electron.WebContents | null;
+  onBeforeInputEvent(
+    handle: ViewHandle,
+    callback: (input: KeyboardInput, preventDefault: () => void) => void
+  ): Unsubscribe;
+
+  /**
+   * Subscribe to view destruction.
+   *
+   * @param handle - Handle to the view
+   * @param callback - Called when the view is destroyed
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe;
+
+  /**
+   * Check if a view handle refers to a valid, non-destroyed view.
+   *
+   * @param handle - Handle to the view
+   * @returns True if the view exists and is not destroyed
+   */
+  isAvailable(handle: ViewHandle): boolean;
+
+  // DevTools
+  /**
+   * Open DevTools for a view.
+   *
+   * @param handle - Handle to the view
+   * @param options - DevTools options
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  openDevTools(handle: ViewHandle, options?: { mode?: string }): void;
+
+  /**
+   * Close DevTools for a view.
+   *
+   * @param handle - Handle to the view
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  closeDevTools(handle: ViewHandle): void;
+
+  /**
+   * Check if DevTools are open for a view.
+   *
+   * @param handle - Handle to the view
+   * @returns True if DevTools are open
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  isDevToolsOpened(handle: ViewHandle): boolean;
 
   // Cleanup
   /**
@@ -545,28 +599,60 @@ export class DefaultViewLayer implements ViewLayer {
     }
   }
 
-  getWebContents(handle: ViewHandle): Electron.WebContents | null {
-    this.logger.debug("getWebContents called", {
-      viewId: handle.id,
-      viewsCount: this.views.size,
-      hasView: this.views.has(handle.id),
-    });
-    try {
-      const state = this.getView(handle);
-      if (state.view.webContents.isDestroyed()) {
-        this.logger.warn("webContents already destroyed", { viewId: handle.id });
-        return null;
+  onBeforeInputEvent(
+    handle: ViewHandle,
+    callback: (input: KeyboardInput, preventDefault: () => void) => void
+  ): Unsubscribe {
+    const state = this.getView(handle);
+    const handler = (event: Electron.Event, electronInput: Electron.Input) => {
+      const input: KeyboardInput = {
+        type: electronInput.type as "keyDown" | "keyUp",
+        key: electronInput.key,
+        isAutoRepeat: electronInput.isAutoRepeat,
+        control: electronInput.control,
+        shift: electronInput.shift,
+        alt: electronInput.alt,
+        meta: electronInput.meta,
+      };
+      callback(input, () => event.preventDefault());
+    };
+    state.view.webContents.on("before-input-event", handler);
+    return () => {
+      if (!state.view.webContents.isDestroyed()) {
+        state.view.webContents.off("before-input-event", handler);
       }
-      return state.view.webContents;
-    } catch (error) {
-      // Log errors to help diagnose registration failures
-      this.logger.warn("Failed to get webContents", {
-        viewId: handle.id,
-        error: error instanceof Error ? error.message : String(error),
-        knownViews: Array.from(this.views.keys()).join(", "),
-      });
-      return null;
-    }
+    };
+  }
+
+  onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe {
+    const state = this.getView(handle);
+    state.view.webContents.on("destroyed", callback);
+    return () => {
+      if (!state.view.webContents.isDestroyed()) {
+        state.view.webContents.off("destroyed", callback);
+      }
+    };
+  }
+
+  isAvailable(handle: ViewHandle): boolean {
+    const state = this.views.get(handle.id);
+    if (!state) return false;
+    return !state.view.webContents.isDestroyed();
+  }
+
+  openDevTools(handle: ViewHandle, options?: { mode?: string }): void {
+    const state = this.getView(handle);
+    state.view.webContents.openDevTools(options as Electron.OpenDevToolsOptions);
+  }
+
+  closeDevTools(handle: ViewHandle): void {
+    const state = this.getView(handle);
+    state.view.webContents.closeDevTools();
+  }
+
+  isDevToolsOpened(handle: ViewHandle): boolean {
+    const state = this.getView(handle);
+    return state.view.webContents.isDevToolsOpened();
   }
 
   async dispose(): Promise<void> {

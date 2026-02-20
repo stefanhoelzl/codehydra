@@ -21,20 +21,6 @@ import {
   type MockWindowLayerInternal,
 } from "../../services/shell/window.state-mock";
 import type { WindowHandle } from "../../services/shell/types";
-import type { IDispatcher } from "../intents/infrastructure";
-
-// Mock ShortcutController before imports
-const mockShortcutController = vi.hoisted(() => ({
-  registerView: vi.fn(),
-  unregisterView: vi.fn(),
-  dispose: vi.fn(),
-}));
-
-vi.mock("../shortcut-controller", () => ({
-  ShortcutController: vi.fn(function () {
-    return mockShortcutController;
-  }),
-}));
 
 // Mock external-url
 const mockOpenExternal = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -56,10 +42,6 @@ function createMockWindowManager(windowHandle: WindowHandle) {
 
 /**
  * Creates a test window layer with a pre-created window for ViewManager tests.
- *
- * This extends the shared createWindowLayerInternalMock() with:
- * - A pre-created window handle (ViewManager needs an existing window)
- * - A mock _getRawWindow that returns a mock BaseWindow for ShortcutController
  */
 function createViewManagerWindowLayer(): MockWindowLayerInternal & {
   _createdWindowHandle: WindowHandle;
@@ -74,21 +56,9 @@ function createViewManagerWindowLayer(): MockWindowLayerInternal & {
     show: false,
   });
 
-  // Override _getRawWindow to return a mock BaseWindow for ShortcutController
-  // Use 'unknown' cast since we're mocking for tests
-  const extended = Object.assign(behavioralLayer, {
-    _getRawWindow: () =>
-      ({
-        // Mock BaseWindow for ShortcutController
-        webContents: {
-          on: vi.fn(),
-          off: vi.fn(),
-        },
-      }) as unknown as import("electron").BaseWindow,
+  return Object.assign(behavioralLayer, {
     _createdWindowHandle: windowHandle,
-  });
-
-  return extended as unknown as MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
+  }) as unknown as MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
 }
 
 /**
@@ -114,7 +84,6 @@ function createViewManagerDeps(): ViewManagerDeps & {
       codeServerPort: 8080,
     },
     logger: SILENT_LOGGER,
-    dispatcher: { dispatch: vi.fn() } as unknown as IDispatcher,
   };
 }
 
@@ -1185,15 +1154,6 @@ describe("ViewManager", () => {
       // Views should be destroyed (this is async internally, but we check state)
       expect(manager.getWorkspaceView("/path/to/workspace1")).toBeUndefined();
       expect(manager.getWorkspaceView("/path/to/workspace2")).toBeUndefined();
-    });
-
-    it("disposes shortcut controller", () => {
-      const deps = createViewManagerDeps();
-      const manager = createViewManager(deps);
-
-      manager.destroy();
-
-      expect(mockShortcutController.dispose).toHaveBeenCalled();
     });
   });
 
