@@ -36,6 +36,7 @@ import type {
   CheckConfigResult,
   CheckDepsHookContext,
   CheckDepsResult,
+  ConfigureResult,
   StartHookResult,
   ActivateHookContext,
   ActivateHookResult,
@@ -101,7 +102,7 @@ const AVAILABLE_AGENTS: readonly LifecycleAgentType[] = ["opencode", "claude"];
 export type KillTerminalsCallback = (workspacePath: string) => Promise<void>;
 
 /**
- * Dependencies available at creation time (initializeBootstrap scope).
+ * Dependencies available at creation time (composition root scope).
  */
 export interface AgentModuleDeps {
   readonly configService: Pick<ConfigService, "load" | "setAgent">;
@@ -323,6 +324,25 @@ export function createAgentModule(deps: AgentModuleDeps): IntentModule {
           handler: async (): Promise<CheckConfigResult> => {
             const config = await configService.load();
             return { configuredAgent: config.agent };
+          },
+        },
+
+        // -------------------------------------------------------------------
+        // app-start → configure: declare required agent scripts
+        // -------------------------------------------------------------------
+        configure: {
+          handler: async (): Promise<ConfigureResult> => {
+            return {
+              scripts: [
+                "ch-claude",
+                "ch-claude.cjs",
+                "ch-claude.cmd",
+                "ch-opencode",
+                "ch-opencode.cjs",
+                "ch-opencode.cmd",
+                "claude-code-hook-handler.cjs",
+              ],
+            };
           },
         },
 

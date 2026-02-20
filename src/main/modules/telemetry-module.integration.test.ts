@@ -19,6 +19,7 @@ import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
+  type ConfigureResult,
   type StartHookResult,
 } from "../operations/app-start";
 import {
@@ -47,6 +48,21 @@ class MinimalStartOperation implements Operation<AppStartIntent, void> {
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
     const { errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    if (errors.length > 0) {
+      throw errors[0]!;
+    }
+  }
+}
+
+/**
+ * Minimal configure operation that only runs the "configure" hook point.
+ */
+class MinimalConfigureOperation implements Operation<AppStartIntent, void> {
+  readonly id = APP_START_OPERATION_ID;
+
+  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
+    const hookCtx: HookContext = { intent: ctx.intent };
+    const { errors } = await ctx.hooks.collect<ConfigureResult>("configure", hookCtx);
     if (errors.length > 0) {
       throw errors[0]!;
     }
@@ -214,5 +230,91 @@ describe("TelemetryModule Integration", () => {
       message: "Telemetry lifecycle shutdown failed (non-fatal)",
       error: shutdownError,
     });
+  });
+
+  it("configure registers global error handlers that call captureError", async () => {
+    const capturedErrors: Error[] = [];
+    const service: TelemetryService = {
+      capture() {},
+      captureError(error: Error) {
+        capturedErrors.push(error);
+      },
+      async shutdown() {},
+    };
+
+    // Replace prependListener to capture the registered handlers
+    type Handler = (...args: unknown[]) => void;
+    const registeredHandlers: { event: string; handler: Handler }[] = [];
+    const originalPrependListener = process.prependListener;
+    process.prependListener = ((event: string, handler: Handler) => {
+      registeredHandlers.push({ event, handler });
+      return process;
+    }) as typeof process.prependListener;
+
+    try {
+      const telemetryModule = createTelemetryModule({
+        telemetryService: service,
+        platformInfo: createMockPlatformInfo({ platform: "linux", arch: "x64" }),
+        buildInfo: { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" },
+        configService: { load: async () => ({ agent: "opencode" }) as never },
+        logger: SILENT_LOGGER,
+      });
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+      wireModules([telemetryModule], hookRegistry, dispatcher);
+
+      await dispatcher.dispatch(startIntent());
+
+      // Verify both handlers were registered
+      const exceptionHandler = registeredHandlers.find((h) => h.event === "uncaughtException");
+      const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
+      expect(exceptionHandler).toBeDefined();
+      expect(rejectionHandler).toBeDefined();
+
+      // Invoke uncaughtException handler — should call captureError and re-throw
+      const testError = new Error("test uncaught");
+      expect(() => exceptionHandler!.handler(testError)).toThrow(testError);
+      expect(capturedErrors).toContain(testError);
+
+      // Invoke unhandledRejection handler — should wrap non-Error and re-throw
+      expect(() => rejectionHandler!.handler("test rejection")).toThrow();
+      expect(capturedErrors).toHaveLength(2);
+    } finally {
+      process.prependListener = originalPrependListener;
+    }
+  });
+
+  it("configure with null telemetryService still registers handlers", async () => {
+    const registeredEvents: string[] = [];
+    const originalPrependListener = process.prependListener;
+    process.prependListener = ((event: string) => {
+      registeredEvents.push(event);
+      return process;
+    }) as typeof process.prependListener;
+
+    try {
+      const telemetryModule = createTelemetryModule({
+        telemetryService: null,
+        platformInfo: createMockPlatformInfo({ platform: "linux", arch: "x64" }),
+        buildInfo: { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" },
+        configService: { load: async () => ({ agent: "opencode" }) as never },
+        logger: SILENT_LOGGER,
+      });
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+      wireModules([telemetryModule], hookRegistry, dispatcher);
+
+      await dispatcher.dispatch(startIntent());
+
+      // Verify handlers were registered even with null service
+      expect(registeredEvents).toContain("uncaughtException");
+      expect(registeredEvents).toContain("unhandledRejection");
+    } finally {
+      process.prependListener = originalPrependListener;
+    }
   });
 });

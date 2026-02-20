@@ -2,12 +2,15 @@
  * AppStartOperation - Orchestrates application startup.
  *
  * Runs hook points in sequence:
- * 1. "show-ui" - Show starting screen
- * 2. "check-config" - Load configuration (collect, isolated contexts)
- * 3. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 4. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
+ * 1. "configure" - Collect script declarations and Electron config (pre-ready)
+ * 2. "await-ready" - Wait for Electron ready event
+ * 3. "init" - Post-ready initialization (logging, shell, scripts)
+ * 4. "show-ui" - Show starting screen
+ * 5. "check-config" - Load configuration (collect, isolated contexts)
+ * 6. "check-deps" - Check binaries and extensions (collect, isolated contexts)
+ * 7. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
  *              Telemetry, AutoUpdater, IpcBridge)
- * 5. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
+ * 8. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
  *
  * After "activate", dispatches project:open for each saved project path
  * (best-effort, skips invalid projects). The mount handler in activate
@@ -91,6 +94,19 @@ export interface CheckDepsResult {
 }
 
 /**
+ * Per-handler result for "configure" hook point.
+ * Returns optional script declarations to be copied to bin directory.
+ */
+export interface ConfigureResult {
+  readonly scripts?: readonly string[];
+}
+
+/** Input context for "init" -- carries requiredScripts collected from configure results. */
+export interface InitHookContext extends HookContext {
+  readonly requiredScripts: readonly string[];
+}
+
+/**
  * Per-handler result for "show-ui" hook point.
  * Only the retry module returns a value; UI module returns void.
  */
@@ -145,7 +161,25 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       intent: ctx.intent,
     };
 
-    // Hook 1: "show-ui" -- Show starting screen, capture waitForRetry
+    // --- Hook 1: "configure" (pre-ready) ---
+    // Electron config + script declarations. All independent.
+    const { results: configResults, errors: configErrors } =
+      await ctx.hooks.collect<ConfigureResult>("configure", hookCtx);
+    if (configErrors.length > 0) throw configErrors[0]!;
+    const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
+
+    // --- Hook 2: "await-ready" ---
+    // Module provides app.whenReady(). Decouples operation from Electron.
+    const { errors: readyErrors } = await ctx.hooks.collect<void>("await-ready", hookCtx);
+    if (readyErrors.length > 0) throw readyErrors[0]!;
+
+    // --- Hook 3: "init" (post-ready) ---
+    // All independent. Receives requiredScripts from configure results.
+    const initCtx: InitHookContext = { ...hookCtx, requiredScripts };
+    const { errors: initErrors } = await ctx.hooks.collect<void>("init", initCtx);
+    if (initErrors.length > 0) throw initErrors[0]!;
+
+    // Hook 4: "show-ui" -- Show starting screen, capture waitForRetry
     const { results: showUiResults, errors: showUiErrors } =
       await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
     if (showUiErrors.length > 0) {
@@ -156,7 +190,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       if (result.waitForRetry !== undefined) waitForRetry = result.waitForRetry;
     }
 
-    // Hooks 2-3: "check-config" + "check-deps" (collect, isolated contexts)
+    // Hooks 5-6: "check-config" + "check-deps" (collect, isolated contexts)
     let checkResult = await this.runChecks(ctx);
 
     // Dispatch app:setup if needed (blocking sub-operation)
@@ -201,7 +235,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 4: "start" -- Start servers and wire services
+    // Hook 7: "start" -- Start servers and wire services
     const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
       "start",
       hookCtx
@@ -213,7 +247,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // Extract mcpPort from start results for activate handlers
     const mcpPort = startResults.find((r) => r.mcpPort !== undefined)?.mcpPort ?? null;
 
-    // Hook 5: "activate" -- Wire callbacks, gather project paths, mount renderer
+    // Hook 8: "activate" -- Wire callbacks, gather project paths, mount renderer
     const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort };
     const { results: activateResults, errors: activateErrors } =
       await ctx.hooks.collect<ActivateHookResult>("activate", activateCtx);

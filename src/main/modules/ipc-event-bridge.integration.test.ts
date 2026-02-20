@@ -209,6 +209,19 @@ function createStatusTestSetup(): StatusTestSetup {
     getUIWebContents: () => null,
     pluginServer: null,
     logger: SILENT_LOGGER,
+    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    agentStatusManager: {
+      getStatus: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+    globalWorktreeProvider: {
+      listWorktrees: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+    emitDeletionProgress: vi.fn(),
+    deleteOp: {
+      hasPendingRetry: vi.fn().mockReturnValue(false),
+      signalDismiss: vi.fn(),
+      signalRetry: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["deleteOp"],
   });
   const resolveModule = createMockResolveModule();
 
@@ -267,6 +280,19 @@ function createLifecycleTestSetup(
         ? overrides.pluginServer
         : (mockPluginServer as unknown as IpcEventBridgeDeps["pluginServer"]),
     logger: overrides?.logger ?? SILENT_LOGGER,
+    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    agentStatusManager: {
+      getStatus: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+    globalWorktreeProvider: {
+      listWorktrees: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+    emitDeletionProgress: vi.fn(),
+    deleteOp: {
+      hasPendingRetry: vi.fn().mockReturnValue(false),
+      signalDismiss: vi.fn(),
+      signalRetry: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["deleteOp"],
   });
 
   // Wire quit module to prevent app.quit() error on shutdown
@@ -481,6 +507,19 @@ describe("IpcEventBridge - lifecycle", () => {
         getUIWebContents: () => null,
         pluginServer: null,
         logger: SILENT_LOGGER,
+        dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+        agentStatusManager: {
+          getStatus: vi.fn(),
+        } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+        globalWorktreeProvider: {
+          listWorktrees: vi.fn(),
+        } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+        emitDeletionProgress: vi.fn(),
+        deleteOp: {
+          hasPendingRetry: vi.fn().mockReturnValue(false),
+          signalDismiss: vi.fn(),
+          signalRetry: vi.fn(),
+        } as unknown as IpcEventBridgeDeps["deleteOp"],
       });
 
       const quitModule: IntentModule = {
@@ -544,6 +583,19 @@ describe("IpcEventBridge - lifecycle", () => {
         getUIWebContents: () => null,
         pluginServer: null,
         logger: mockLogger,
+        dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+        agentStatusManager: {
+          getStatus: vi.fn(),
+        } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+        globalWorktreeProvider: {
+          listWorktrees: vi.fn(),
+        } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+        emitDeletionProgress: vi.fn(),
+        deleteOp: {
+          hasPendingRetry: vi.fn().mockReturnValue(false),
+          signalDismiss: vi.fn(),
+          signalRetry: vi.fn(),
+        } as unknown as IpcEventBridgeDeps["deleteOp"],
       });
 
       const quitModule: IntentModule = {
@@ -609,6 +661,19 @@ describe("IpcEventBridge - setup:error", () => {
         mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
       pluginServer: null,
       logger: SILENT_LOGGER,
+      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      agentStatusManager: {
+        getStatus: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+      globalWorktreeProvider: {
+        listWorktrees: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+      emitDeletionProgress: vi.fn(),
+      deleteOp: {
+        hasPendingRetry: vi.fn().mockReturnValue(false),
+        signalDismiss: vi.fn(),
+        signalRetry: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["deleteOp"],
     });
 
     // Hook module that throws to trigger the setup:error domain event
@@ -662,6 +727,19 @@ describe("IpcEventBridge - setup:error", () => {
         mockWebContents as unknown as ReturnType<IpcEventBridgeDeps["getUIWebContents"]>,
       pluginServer: null,
       logger: SILENT_LOGGER,
+      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      agentStatusManager: {
+        getStatus: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+      globalWorktreeProvider: {
+        listWorktrees: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
+      emitDeletionProgress: vi.fn(),
+      deleteOp: {
+        hasPendingRetry: vi.fn().mockReturnValue(false),
+        signalDismiss: vi.fn(),
+        signalRetry: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["deleteOp"],
     });
 
     const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
