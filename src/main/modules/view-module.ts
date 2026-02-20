@@ -34,6 +34,7 @@ import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
 import type {
   ConfigureResult,
   ShowUIHookResult,
+  ActivateHookContext,
   ActivateHookResult,
 } from "../operations/app-start";
 import type { GetActiveWorkspaceHookResult } from "../operations/get-active-workspace";
@@ -274,7 +275,13 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
           },
         },
         activate: {
-          handler: async (): Promise<ActivateHookResult> => {
+          handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
+            // Update code-server port from start results
+            const { codeServerPort } = ctx as ActivateHookContext;
+            if (codeServerPort !== null) {
+              viewManager.updateCodeServerPort(codeServerPort);
+            }
+
             // Wire loading state changes to IPC
             loadingChangeCleanupFn = viewManager.onLoadingChange(
               (path: string, loading: boolean) => {

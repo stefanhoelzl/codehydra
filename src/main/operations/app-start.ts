@@ -124,9 +124,10 @@ export interface StartHookResult {
   readonly mcpPort?: number;
 }
 
-/** Input context for "activate" -- carries mcpPort from start results. */
+/** Input context for "activate" -- carries ports from start results. */
 export interface ActivateHookContext extends HookContext {
   readonly mcpPort: number | null;
+  readonly codeServerPort: number | null;
 }
 
 /**
@@ -244,11 +245,13 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       throw startErrors[0]!;
     }
 
-    // Extract mcpPort from start results for activate handlers
+    // Extract ports from start results for activate handlers
     const mcpPort = startResults.find((r) => r.mcpPort !== undefined)?.mcpPort ?? null;
+    const codeServerPort =
+      startResults.find((r) => r.codeServerPort !== undefined)?.codeServerPort ?? null;
 
     // Hook 8: "activate" -- Wire callbacks, gather project paths, mount renderer
-    const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort };
+    const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort, codeServerPort };
     const { results: activateResults, errors: activateErrors } =
       await ctx.hooks.collect<ActivateHookResult>("activate", activateCtx);
     if (activateErrors.length > 0) {

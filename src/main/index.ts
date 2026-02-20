@@ -410,19 +410,11 @@ const { module: viewModule, mountSignal } = createViewModule({
 const codeServerModule = createCodeServerModule({
   codeServerManager,
   extensionManager: setupExtensionManager,
+  pluginServer,
+  fileSystemLayer,
+  workspaceFileService,
+  wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
   logger: apiLogger,
-  getLifecycleDeps: () => ({
-    pluginServer,
-    codeServerManager,
-    fileSystemLayer,
-    onPortChanged: (port: number) => {
-      viewManager.updateCodeServerPort(port);
-    },
-  }),
-  getWorkspaceDeps: () => ({
-    workspaceFileService,
-    wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
-  }),
 });
 
 const agentModule = createAgentModule({

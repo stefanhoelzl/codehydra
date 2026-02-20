@@ -40,42 +40,28 @@ import { SetupError, getErrorMessage } from "../../services/errors";
 // =============================================================================
 
 /**
- * Dependencies resolved when lifecycle hooks execute (after startServices).
- */
-export interface CodeServerLifecycleDeps {
-  readonly pluginServer: PluginServer | null;
-  readonly codeServerManager: Pick<
-    CodeServerManager,
-    "ensureRunning" | "port" | "getConfig" | "setPluginPort" | "stop"
-  >;
-  readonly fileSystemLayer: Pick<FileSystemLayer, "mkdir">;
-  readonly onPortChanged: (port: number) => void;
-}
-
-/**
- * Dependencies resolved when per-workspace hooks execute (after startServices).
- */
-export interface CodeServerWorkspaceDeps {
-  readonly workspaceFileService: IWorkspaceFileService;
-  readonly wrapperPath: string;
-}
-
-/**
  * All dependencies for CodeServerModule.
- *
- * Split into eager (available at creation) and lazy (resolved at hook execution).
  */
 export interface CodeServerModuleDeps {
-  // Eager: available at creation time
-  readonly codeServerManager: Pick<CodeServerManager, "preflight" | "downloadBinary">;
+  readonly codeServerManager: Pick<
+    CodeServerManager,
+    | "preflight"
+    | "downloadBinary"
+    | "ensureRunning"
+    | "port"
+    | "getConfig"
+    | "setPluginPort"
+    | "stop"
+  >;
   readonly extensionManager: Pick<ExtensionManager, "preflight" | "install" | "cleanOutdated">;
+  readonly pluginServer: Pick<
+    PluginServer,
+    "start" | "close" | "setWorkspaceConfig" | "removeWorkspaceConfig"
+  > | null;
+  readonly fileSystemLayer: Pick<FileSystemLayer, "mkdir">;
+  readonly workspaceFileService: IWorkspaceFileService;
+  readonly wrapperPath: string;
   readonly logger: Logger;
-
-  // Lazy: resolved when lifecycle hooks execute (after startServices)
-  readonly getLifecycleDeps: () => CodeServerLifecycleDeps;
-
-  // Lazy: resolved when per-workspace hooks execute (after startServices)
-  readonly getWorkspaceDeps: () => CodeServerWorkspaceDeps;
 }
 
 // =============================================================================
@@ -87,7 +73,7 @@ export interface CodeServerModuleDeps {
  * and per-workspace .code-workspace files.
  */
 export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule {
-  const { codeServerManager, extensionManager, logger } = deps;
+  const { codeServerManager, extensionManager, pluginServer, fileSystemLayer, logger } = deps;
 
   // Internal state: port set by start hook, read by finalize hook
   let codeServerPort = 0;
@@ -137,17 +123,15 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         // -------------------------------------------------------------------
         start: {
           handler: async (): Promise<StartHookResult> => {
-            const lifecycle = deps.getLifecycleDeps();
-
             // Start PluginServer BEFORE code-server (graceful degradation)
             let pluginPort: number | undefined;
-            if (lifecycle.pluginServer) {
+            if (pluginServer) {
               try {
-                pluginPort = await lifecycle.pluginServer.start();
+                pluginPort = await pluginServer.start();
                 logger.info("PluginServer started", { port: pluginPort });
 
                 // Pass pluginPort to CodeServerManager so extensions can connect
-                lifecycle.codeServerManager.setPluginPort(pluginPort);
+                codeServerManager.setPluginPort(pluginPort);
               } catch (error) {
                 const message = error instanceof Error ? error.message : "Unknown error";
                 logger.warn("PluginServer start failed", { error: message });
@@ -156,20 +140,19 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             }
 
             // Ensure required directories exist
-            const config = lifecycle.codeServerManager.getConfig();
+            const config = codeServerManager.getConfig();
             await Promise.all([
-              lifecycle.fileSystemLayer.mkdir(config.runtimeDir),
-              lifecycle.fileSystemLayer.mkdir(config.extensionsDir),
-              lifecycle.fileSystemLayer.mkdir(config.userDataDir),
+              fileSystemLayer.mkdir(config.runtimeDir),
+              fileSystemLayer.mkdir(config.extensionsDir),
+              fileSystemLayer.mkdir(config.userDataDir),
             ]);
 
             // Start code-server
-            await lifecycle.codeServerManager.ensureRunning();
-            const port = lifecycle.codeServerManager.port()!;
+            await codeServerManager.ensureRunning();
+            const port = codeServerManager.port()!;
 
-            // Update internal port and notify
+            // Update internal port (consumed by finalize hook for workspace URLs)
             codeServerPort = port;
-            lifecycle.onPortChanged(port);
 
             return { codeServerPort: port };
           },
@@ -183,14 +166,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         stop: {
           handler: async () => {
             try {
-              const lifecycle = deps.getLifecycleDeps();
-
               // Stop code-server
-              await lifecycle.codeServerManager.stop();
+              await codeServerManager.stop();
 
               // Close PluginServer AFTER code-server (extensions disconnect first)
-              if (lifecycle.pluginServer) {
-                await lifecycle.pluginServer.close();
+              if (pluginServer) {
+                await pluginServer.close();
               }
             } catch (error) {
               logger.error(
@@ -293,12 +274,10 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         finalize: {
           handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
             const finalizeCtx = ctx as FinalizeHookInput;
-            const workspace = deps.getWorkspaceDeps();
 
             // Push config to PluginServer so connecting extensions get env vars + agent type
-            const lifecycle = deps.getLifecycleDeps();
-            if (lifecycle.pluginServer && finalizeCtx.agentType) {
-              lifecycle.pluginServer.setWorkspaceConfig(
+            if (pluginServer && finalizeCtx.agentType) {
+              pluginServer.setWorkspaceConfig(
                 finalizeCtx.workspacePath,
                 finalizeCtx.envVars,
                 finalizeCtx.agentType
@@ -314,10 +293,10 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               }));
               const agentSettings: Record<string, unknown> = {
                 "claudeCode.useTerminal": true,
-                "claudeCode.claudeProcessWrapper": workspace.wrapperPath,
+                "claudeCode.claudeProcessWrapper": deps.wrapperPath,
                 "claudeCode.environmentVariables": envVarsArray,
               };
-              const workspaceFilePath = await workspace.workspaceFileService.ensureWorkspaceFile(
+              const workspaceFilePath = await deps.workspaceFileService.ensureWorkspaceFile(
                 workspacePathObj,
                 projectWorkspacesDir,
                 agentSettings
@@ -346,19 +325,17 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const workspace = deps.getWorkspaceDeps();
 
             // Clean up PluginServer config for this workspace
-            const lifecycle = deps.getLifecycleDeps();
-            if (lifecycle.pluginServer) {
-              lifecycle.pluginServer.removeWorkspaceConfig(wsPath);
+            if (pluginServer) {
+              pluginServer.removeWorkspaceConfig(wsPath);
             }
 
             try {
               const workspacePath = new Path(wsPath);
               const workspaceName = workspacePath.basename;
               const projectWorkspacesDir = workspacePath.dirname;
-              await workspace.workspaceFileService.deleteWorkspaceFile(
+              await deps.workspaceFileService.deleteWorkspaceFile(
                 workspaceName,
                 projectWorkspacesDir
               );
