@@ -207,10 +207,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  dispatcher.registerOperation(
-    INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(extractWorkspaceName)
-  );
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // Minimal switch modules for workspace:switch (satisfy 3 hook points)
   const switchResolveModule: IntentModule = {
@@ -909,10 +906,7 @@ describe("OpenWorkspace Operation", () => {
       const dispatcher = new Dispatcher(hookRegistry);
 
       dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-      dispatcher.registerOperation(
-        INTENT_SWITCH_WORKSPACE,
-        new SwitchWorkspaceOperation(extractWorkspaceName)
-      );
+      dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
       // Minimal switch modules
       const switchResolveModule: IntentModule = {

@@ -102,6 +102,7 @@ import { createQuitModule } from "./modules/quit-module";
 import { createRetryModule } from "./modules/retry-module";
 import { createLifecycleReadyModule } from "./modules/lifecycle-ready-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
+import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
@@ -135,10 +136,9 @@ import {
   INTENT_UPDATE_AGENT_STATUS,
 } from "./operations/update-agent-status";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import type { ConfigAgentType } from "../shared/api/types";
-import { ApiIpcChannels, type WorkspacePath } from "../shared/ipc";
+import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
 import { getErrorMessage } from "../shared/error-utils";
@@ -468,6 +468,7 @@ const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   apiLogger
 );
 const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
+const workspaceSelectionModule = createWorkspaceSelectionModule(agentStatusManager);
 const mcpModule = createMcpModule({
   mcpServerManager,
   logger: lifecycleLogger,
@@ -522,16 +523,7 @@ dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
 dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
 dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
 
-const agentStatusScorer = (workspacePath: WorkspacePath): number => {
-  const status = agentStatusManager.getStatus(workspacePath);
-  if (status === undefined || status.status === "none") return 2;
-  if (status.status === "busy") return 1;
-  return 0;
-};
-dispatcher.registerOperation(
-  INTENT_SWITCH_WORKSPACE,
-  new SwitchWorkspaceOperation(extractWorkspaceName, agentStatusScorer)
-);
+dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
 
@@ -560,6 +552,7 @@ dispatcher.registerModule(viewModule);
 dispatcher.registerModule(codeServerModule);
 dispatcher.registerModule(agentModule);
 dispatcher.registerModule(badgeModule);
+dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(keepFilesModule);
 dispatcher.registerModule(deleteWindowsLockModule);

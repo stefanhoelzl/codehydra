@@ -134,6 +134,17 @@ export interface FindCandidatesHookResult {
   readonly candidates?: readonly WorkspaceCandidate[];
 }
 
+/** Input context for the "select-next" hook point. */
+export interface SelectNextHookInput extends HookContext {
+  readonly currentPath: string;
+  readonly candidates: readonly WorkspaceCandidate[];
+}
+
+/** Per-handler result for the "select-next" hook point. */
+export interface SelectNextHookResult {
+  readonly selected?: WorkspaceCandidate;
+}
+
 /**
  * Agent status scorer function. Given a workspace path, returns a numeric score:
  * 0 = idle (preferred), 1 = busy, 2 = none/unknown.
@@ -223,11 +234,6 @@ export function selectNextWorkspace(
 export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent, void> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
 
-  constructor(
-    private readonly extractName: (path: string) => string,
-    private readonly scorer?: AgentStatusScorer
-  ) {}
-
   async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
     const { payload } = ctx.intent;
 
@@ -261,7 +267,7 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       if (r.projectPath !== undefined) projectPath = r.projectPath;
       if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
     }
-    if (!projectPath) {
+    if (!projectPath || !workspaceName) {
       throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
@@ -324,7 +330,7 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
         projectId,
         projectName: projectName ?? "",
         projectPath,
-        workspaceName: workspaceName ?? (this.extractName(payload.workspacePath) as WorkspaceName),
+        workspaceName,
         path: resolvedPath,
       },
     };
@@ -346,13 +352,20 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       if (r.candidates) allCandidates.push(...r.candidates);
     }
 
-    // 2. Select best candidate
-    const best = selectNextWorkspace(
-      payload.currentPath,
-      allCandidates,
-      this.extractName,
-      this.scorer
+    // 2. Select best candidate via hook
+    const selectCtx: SelectNextHookInput = {
+      intent: ctx.intent,
+      currentPath: payload.currentPath,
+      candidates: allCandidates,
+    };
+    const { results: selectResults } = await ctx.hooks.collect<SelectNextHookResult>(
+      "select-next",
+      selectCtx
     );
+    let best: WorkspaceCandidate | undefined;
+    for (const r of selectResults) {
+      if (r.selected !== undefined) best = r.selected;
+    }
 
     if (best) {
       // 3. Dispatch specific-target switch with workspacePath

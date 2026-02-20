@@ -327,10 +327,7 @@ function createTestHarness(options?: {
   // Register operations
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  dispatcher.registerOperation(
-    INTENT_SWITCH_WORKSPACE,
-    new SwitchWorkspaceOperation(extractWorkspaceName)
-  );
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
   // ---------------------------------------------------------------------------
   // Self-selecting resolve modules (local vs remote)
@@ -787,10 +784,7 @@ describe("OpenProjectOperation", () => {
 
     dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
     dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-    dispatcher.registerOperation(
-      INTENT_SWITCH_WORKSPACE,
-      new SwitchWorkspaceOperation(extractWorkspaceName)
-    );
+    dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
     // Resolve module that always returns alreadyOpen: true
     const alreadyOpenResolveModule: IntentModule = {
