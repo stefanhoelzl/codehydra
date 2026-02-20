@@ -1,6 +1,10 @@
 /**
  * View manager for managing WebContentsViews.
  * Handles UI layer, workspace views, bounds, and focus management.
+ *
+ * Uses two-phase initialization:
+ * 1. Constructor: stores deps (pure, no Electron calls)
+ * 2. create(): creates views, ShortcutController, and wires events
  */
 
 import type { WebContents } from "electron";
@@ -112,10 +116,12 @@ export class ViewManager implements IViewManager {
   private readonly windowLayer: WindowLayerInternal;
   private readonly viewLayer: ViewLayer;
   private readonly sessionLayer: SessionLayer;
-  private readonly uiViewHandle: ViewHandle;
-  private readonly shortcutController: ShortcutController;
+  private readonly config: ViewManagerConfig;
+  private readonly setModeFn: ((mode: UIMode) => void) | undefined;
+  private uiViewHandle!: ViewHandle;
+  private shortcutController!: ShortcutController;
   private codeServerPort: number;
-  private readonly windowHandle: WindowHandle;
+  private windowHandle!: WindowHandle;
   /**
    * Map of workspace paths to their state.
    */
@@ -146,7 +152,7 @@ export class ViewManager implements IViewManager {
    * Flag to skip focus operations during shutdown.
    */
   private destroying = false;
-  private readonly unsubscribeResize: Unsubscribe;
+  private unsubscribeResize!: Unsubscribe;
   private readonly logger: Logger;
   /**
    * Tracks workspaces that are loading (waiting for OpenCode client to attach).
@@ -158,39 +164,26 @@ export class ViewManager implements IViewManager {
    */
   private readonly loadingChangeCallbacks: Set<LoadingChangeCallback> = new Set();
 
-  private constructor(
-    deps: ViewManagerDeps,
-    uiViewHandle: ViewHandle,
-    windowHandle: WindowHandle,
-    shortcutController: ShortcutController
-  ) {
+  constructor(deps: ViewManagerDeps) {
     this.windowManager = deps.windowManager;
     this.windowLayer = deps.windowLayer;
     this.viewLayer = deps.viewLayer;
     this.sessionLayer = deps.sessionLayer;
-    this.uiViewHandle = uiViewHandle;
-    this.windowHandle = windowHandle;
-    this.shortcutController = shortcutController;
+    this.config = deps.config;
+    this.setModeFn = deps.setModeFn;
     this.codeServerPort = deps.config.codeServerPort;
     this.logger = deps.logger;
-
-    // Subscribe to resize events
-    this.unsubscribeResize = this.windowManager.onResize(() => {
-      this.updateBounds();
-    });
   }
 
   /**
-   * Creates a new ViewManager with a UI layer view.
-   *
-   * @param deps - Dependencies
-   * @returns A new ViewManager instance
+   * Creates UI view, ShortcutController, and wires event subscriptions.
+   * Must be called before using any view operations.
    */
-  static create(deps: ViewManagerDeps): ViewManager {
-    const { windowManager, windowLayer, viewLayer, config } = deps;
+  create(): void {
+    const { windowManager, windowLayer, viewLayer, config } = this;
 
     // Create UI layer with security settings
-    const uiViewHandle = viewLayer.createView({
+    this.uiViewHandle = viewLayer.createView({
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -200,51 +193,45 @@ export class ViewManager implements IViewManager {
     });
 
     // Set transparent background for UI layer
-    viewLayer.setBackgroundColor(uiViewHandle, "#00000000");
+    viewLayer.setBackgroundColor(this.uiViewHandle, "#00000000");
 
     // Get window handle
-    const windowHandle = windowManager.getWindowHandle();
+    this.windowHandle = windowManager.getWindowHandle();
 
     // Add UI layer to window
-    viewLayer.attachToWindow(uiViewHandle, windowHandle);
-
-    // Use a holder object to break the circular dependency:
-    // ShortcutController needs ViewManager methods, ViewManager needs ShortcutController
-    const viewManagerHolder: { instance: ViewManager | null } = { instance: null };
+    viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
 
     // Get raw window for ShortcutController (internal API)
-    const rawWindow = windowLayer._getRawWindow(windowHandle);
+    const rawWindow = windowLayer._getRawWindow(this.windowHandle);
 
-    // Create ShortcutController with deps that reference the holder
+    // Create ShortcutController — `this` already exists, no holder hack needed
     // When setModeFn is provided, route mode changes through the intent dispatcher
     // so domain events (ui:mode-changed) are emitted to the renderer.
-    const shortcutController = new ShortcutController(rawWindow, {
-      focusUI: () => viewManagerHolder.instance?.focusUI(),
-      getUIWebContents: () => viewManagerHolder.instance?.getUIWebContents() ?? null,
-      setMode: deps.setModeFn
-        ? (mode) => deps.setModeFn!(mode)
-        : (mode) => viewManagerHolder.instance?.setMode(mode),
-      getMode: () => viewManagerHolder.instance?.getMode() ?? "workspace",
+    this.shortcutController = new ShortcutController(rawWindow, {
+      focusUI: () => this.focusUI(),
+      getUIWebContents: () => this.getUIWebContents(),
+      setMode: this.setModeFn ? (mode) => this.setModeFn!(mode) : (mode) => this.setMode(mode),
+      getMode: () => this.getMode(),
       // Shortcut key callback - sends IPC event to renderer
       onShortcut: (key) => {
-        viewManagerHolder.instance?.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
+        this.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
       },
-      logger: deps.logger,
+      logger: this.logger,
     });
 
-    const viewManager = new ViewManager(deps, uiViewHandle, windowHandle, shortcutController);
-    viewManagerHolder.instance = viewManager;
-
     // Register UI view's webContents with shortcut controller for keyboard shortcuts
-    const uiWebContents = viewManager.getUIWebContents();
+    const uiWebContents = this.getUIWebContents();
     if (uiWebContents) {
-      shortcutController.registerView(uiWebContents);
+      this.shortcutController.registerView(uiWebContents);
     }
+
+    // Subscribe to resize events
+    this.unsubscribeResize = this.windowManager.onResize(() => {
+      this.updateBounds();
+    });
 
     // Don't call updateBounds() here - let the resize event from maximize() trigger it.
     // On Linux, maximize() is async and bounds aren't available immediately.
-
-    return viewManager;
   }
 
   /**

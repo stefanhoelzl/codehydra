@@ -34,6 +34,19 @@ function createWindowManagerDeps(
   };
 }
 
+/**
+ * Creates a WindowManager with two-phase init (constructor + create).
+ */
+function createWindowManager(
+  deps: WindowManagerDeps,
+  title?: string,
+  iconPath?: string
+): WindowManager {
+  const manager = new WindowManager(deps, title, iconPath);
+  manager.create();
+  return manager;
+}
+
 describe("WindowManager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -42,7 +55,7 @@ describe("WindowManager", () => {
   describe("create", () => {
     it("creates a window with default title", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       expect(deps.windowLayer).toHaveWindowCount(1);
       expect(deps.windowLayer).toHaveWindowTitle(manager.getWindowHandle().id, "CodeHydra");
@@ -50,7 +63,7 @@ describe("WindowManager", () => {
 
     it("creates a window with custom title", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps, "CodeHydra (feature-branch)");
+      const manager = createWindowManager(deps, "CodeHydra (feature-branch)");
 
       expect(deps.windowLayer).toHaveWindowTitle(
         manager.getWindowHandle().id,
@@ -60,14 +73,14 @@ describe("WindowManager", () => {
 
     it("returns a WindowManager instance", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       expect(manager).toBeInstanceOf(WindowManager);
     });
 
     it("creates window with correct dimensions", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       expect(deps.windowLayer).toHaveWindowBounds(manager.getWindowHandle().id, {
         width: 1200,
@@ -86,7 +99,7 @@ describe("WindowManager", () => {
       };
       const depsWithMockImage = { ...deps, imageLayer: mockImageLayer };
 
-      WindowManager.create(depsWithMockImage, "CodeHydra", "/app/resources/icon.png");
+      createWindowManager(depsWithMockImage, "CodeHydra", "/app/resources/icon.png");
 
       expect(mockImageLayer.createFromPath).toHaveBeenCalledWith("/app/resources/icon.png");
       expect(mockImageLayer.release).toHaveBeenCalled();
@@ -104,7 +117,7 @@ describe("WindowManager", () => {
 
       // Should not throw
       expect(() =>
-        WindowManager.create(depsWithMockImage, "CodeHydra", "/app/resources/icon.png")
+        createWindowManager(depsWithMockImage, "CodeHydra", "/app/resources/icon.png")
       ).not.toThrow();
     });
 
@@ -120,7 +133,7 @@ describe("WindowManager", () => {
 
       // Should not throw
       expect(() =>
-        WindowManager.create(depsWithMockImage, "CodeHydra", "/app/resources/icon.png")
+        createWindowManager(depsWithMockImage, "CodeHydra", "/app/resources/icon.png")
       ).not.toThrow();
     });
 
@@ -132,7 +145,7 @@ describe("WindowManager", () => {
       };
       const depsWithMockImage = { ...deps, imageLayer: mockImageLayer };
 
-      WindowManager.create(depsWithMockImage, "CodeHydra");
+      createWindowManager(depsWithMockImage, "CodeHydra");
 
       expect(mockImageLayer.createFromPath).not.toHaveBeenCalled();
     });
@@ -142,7 +155,7 @@ describe("WindowManager", () => {
     it("maximizes the window and notifies resize callbacks after delay", async () => {
       vi.useFakeTimers();
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
       const callback = vi.fn();
       manager.onResize(callback);
       callback.mockClear();
@@ -166,7 +179,7 @@ describe("WindowManager", () => {
   describe("getWindow", () => {
     it("returns the underlying BaseWindow", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       // The behavioral mock doesn't have _getRawWindow, so this will throw
       // In production, this returns the real BaseWindow
@@ -177,7 +190,7 @@ describe("WindowManager", () => {
   describe("getWindowHandle", () => {
     it("returns the WindowHandle", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       const handle = manager.getWindowHandle();
 
@@ -189,7 +202,7 @@ describe("WindowManager", () => {
   describe("getBounds", () => {
     it("returns window content bounds", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       const bounds = manager.getBounds();
 
@@ -201,7 +214,7 @@ describe("WindowManager", () => {
   describe("onResize", () => {
     it("calls callback when resize is triggered", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
       const callback = vi.fn();
 
       manager.onResize(callback);
@@ -216,7 +229,7 @@ describe("WindowManager", () => {
 
     it("returns unsubscribe function that removes listener", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
       const callback = vi.fn();
 
       const unsubscribe = manager.onResize(callback);
@@ -237,7 +250,7 @@ describe("WindowManager", () => {
   describe("setTitle", () => {
     it("sets the window title", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       manager.setTitle("CodeHydra - my-app / feature - (main)");
 
@@ -253,7 +266,7 @@ describe("WindowManager", () => {
     it("calls windowLayer.setOverlayIcon on Windows", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const deps = createWindowManagerDeps({ platformInfo });
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
       const imageHandle: ImageHandle = { id: "image-1", __brand: "ImageHandle" };
 
       // Should not throw - overlay icon is handled by WindowLayer
@@ -263,7 +276,7 @@ describe("WindowManager", () => {
     it("clears overlay when null passed on Windows", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       const deps = createWindowManagerDeps({ platformInfo });
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
 
       // Should not throw
       expect(() => manager.setOverlayIcon(null, "")).not.toThrow();
@@ -272,7 +285,7 @@ describe("WindowManager", () => {
     it("no-ops on macOS", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       const deps = createWindowManagerDeps({ platformInfo });
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
       const imageHandle: ImageHandle = { id: "image-1", __brand: "ImageHandle" };
 
       // Should not throw and not call windowLayer (no-op)
@@ -282,7 +295,7 @@ describe("WindowManager", () => {
     it("no-ops on Linux", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const deps = createWindowManagerDeps({ platformInfo });
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
       const imageHandle: ImageHandle = { id: "image-1", __brand: "ImageHandle" };
 
       // Should not throw and not call windowLayer (no-op)
@@ -293,7 +306,7 @@ describe("WindowManager", () => {
   describe("close", () => {
     it("closes the window", () => {
       const deps = createWindowManagerDeps();
-      const manager = WindowManager.create(deps);
+      const manager = createWindowManager(deps);
       const handle = manager.getWindowHandle();
 
       manager.close();
