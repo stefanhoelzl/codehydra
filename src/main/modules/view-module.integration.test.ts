@@ -18,7 +18,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { Path } from "../../services/platform/path";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
@@ -33,7 +32,6 @@ import {
 } from "../operations/app-start";
 import type {
   AppStartIntent,
-  ConfigureResult,
   ShowUIHookResult,
   ActivateHookContext,
   ActivateHookResult,
@@ -181,27 +179,6 @@ class MinimalShowUIOperation implements Operation<Intent, ShowUIHookResult> {
     for (const r of results) {
       if (r.waitForRetry !== undefined) {
         (merged as Record<string, unknown>).waitForRetry = r.waitForRetry;
-      }
-    }
-    return merged;
-  }
-}
-
-/** Runs "configure" hook point only. */
-class MinimalConfigureOperation implements Operation<Intent, ConfigureResult> {
-  readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<ConfigureResult> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    const merged: ConfigureResult = {};
-    for (const r of results) {
-      if (r.scripts) {
-        (merged as Record<string, unknown>).scripts = [
-          ...((merged.scripts as string[]) ?? []),
-          ...r.scripts,
-        ];
       }
     }
     return merged;
@@ -1136,191 +1113,7 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 17: app-start/configure → sets process.noAsar and calls applyElectronFlags
-  // -------------------------------------------------------------------------
-  describe("app-start/configure", () => {
-    it("sets process.noAsar when not packaged", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-
-      const { module } = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        buildInfo: { isPackaged: false, isDevelopment: true, gitBranch: "main" },
-      });
-
-      dispatcher.registerModule(module);
-
-      const originalNoAsar = process.noAsar;
-      try {
-        await dispatcher.dispatch({
-          type: INTENT_APP_START,
-          payload: {},
-        } as AppStartIntent);
-
-        expect(process.noAsar).toBe(true);
-      } finally {
-        process.noAsar = originalNoAsar;
-      }
-    });
-
-    it("applies electron flags from environment", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-
-      const electronApp = {
-        commandLine: { appendSwitch: vi.fn() },
-        setPath: vi.fn(),
-      };
-
-      const { module } = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        electronApp,
-      });
-
-      dispatcher.registerModule(module);
-
-      const originalFlags = process.env.CODEHYDRA_ELECTRON_FLAGS;
-      try {
-        process.env.CODEHYDRA_ELECTRON_FLAGS = "--disable-gpu --use-gl=swiftshader";
-        await dispatcher.dispatch({
-          type: INTENT_APP_START,
-          payload: {},
-        } as AppStartIntent);
-
-        expect(electronApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
-        expect(electronApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
-      } finally {
-        if (originalFlags === undefined) {
-          delete process.env.CODEHYDRA_ELECTRON_FLAGS;
-        } else {
-          process.env.CODEHYDRA_ELECTRON_FLAGS = originalFlags;
-        }
-      }
-    });
-
-    it("redirects electron data paths when pathProvider is available", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-
-      const electronApp = {
-        commandLine: { appendSwitch: vi.fn() },
-        setPath: vi.fn(),
-      };
-
-      const { module } = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        electronApp,
-        pathProvider: { electronDataDir: { toNative: () => "/data/electron" } },
-      });
-
-      dispatcher.registerModule(module);
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      const electronDir = new Path("/data/electron");
-      expect(electronApp.setPath).toHaveBeenCalledWith(
-        "userData",
-        new Path(electronDir, "userData").toNative()
-      );
-      expect(electronApp.setPath).toHaveBeenCalledWith(
-        "sessionData",
-        new Path(electronDir, "sessionData").toNative()
-      );
-      expect(electronApp.setPath).toHaveBeenCalledWith(
-        "logs",
-        new Path(electronDir, "logs").toNative()
-      );
-      expect(electronApp.setPath).toHaveBeenCalledWith(
-        "crashDumps",
-        new Path(electronDir, "crashDumps").toNative()
-      );
-    });
-
-    it("does not set process.noAsar when packaged", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-
-      const { module } = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        buildInfo: { isPackaged: true, isDevelopment: false },
-      });
-
-      dispatcher.registerModule(module);
-
-      const originalNoAsar = process.noAsar;
-      try {
-        process.noAsar = false;
-        await dispatcher.dispatch({
-          type: INTENT_APP_START,
-          payload: {},
-        } as AppStartIntent);
-
-        expect(process.noAsar).toBe(false);
-      } finally {
-        process.noAsar = originalNoAsar;
-      }
-    });
-
-    it("skips when buildInfo and electronApp are not provided", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-
-      const { module } = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-      });
-
-      dispatcher.registerModule(module);
-
-      // Should not throw when optional deps are omitted
-      await expect(
-        dispatcher.dispatch({
-          type: INTENT_APP_START,
-          payload: {},
-        } as AppStartIntent)
-      ).resolves.not.toThrow();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 18: app-start/init → creates window/views, maximizes, loads UI, focuses
+  // Test 17: app-start/init → creates window/views, maximizes, loads UI, focuses
   // -------------------------------------------------------------------------
   describe("app-start/init", () => {
     it("calls menuLayer, windowManager, viewManager, and viewLayer in order", async () => {
