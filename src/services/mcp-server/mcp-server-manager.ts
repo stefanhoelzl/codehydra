@@ -10,9 +10,7 @@ import type { ICoreApi } from "../../shared/api/interfaces";
 import type { Logger } from "../logging";
 import { SILENT_LOGGER } from "../logging";
 import type { IDisposable } from "../../shared/types";
-import type { McpResolvedWorkspace } from "./types";
 import { McpServer, createDefaultMcpServer, type McpServerFactory } from "./mcp-server";
-import { Path } from "../platform/path";
 
 /**
  * Configuration options for McpServerManager.
@@ -38,9 +36,6 @@ export class McpServerManager implements IDisposable {
 
   private mcpServer: McpServer | null = null;
   private port: number | null = null;
-
-  // Workspace identity registry (queued until server starts)
-  private pendingRegistrations = new Map<string, McpResolvedWorkspace>();
 
   constructor(
     portManager: PortManager,
@@ -77,13 +72,6 @@ export class McpServerManager implements IDisposable {
 
       // Create and start the MCP server
       this.mcpServer = new McpServer(this.apiFactory(), this.serverFactory, this.logger);
-
-      // Replay any registrations that arrived before the server started
-      for (const identity of this.pendingRegistrations.values()) {
-        this.mcpServer.registerWorkspace(identity);
-      }
-      this.pendingRegistrations.clear();
-
       await this.mcpServer.start(this.port);
 
       this.logger.info("Manager started", {
@@ -108,32 +96,7 @@ export class McpServerManager implements IDisposable {
     }
 
     this.port = null;
-    this.pendingRegistrations.clear();
     this.logger.info("Manager stopped");
-  }
-
-  /**
-   * Register a workspace for MCP tool resolution.
-   * If the server is running, delegates immediately; otherwise queues for replay on start.
-   */
-  registerWorkspace(identity: McpResolvedWorkspace): void {
-    if (this.mcpServer) {
-      this.mcpServer.registerWorkspace(identity);
-    } else {
-      this.pendingRegistrations.set(new Path(identity.workspacePath).toString(), identity);
-    }
-  }
-
-  /**
-   * Unregister a workspace from MCP tool resolution.
-   */
-  unregisterWorkspace(workspacePath: string): void {
-    const normalizedPath = new Path(workspacePath).toString();
-    if (this.mcpServer) {
-      this.mcpServer.unregisterWorkspace(workspacePath);
-    } else {
-      this.pendingRegistrations.delete(normalizedPath);
-    }
   }
 
   /**

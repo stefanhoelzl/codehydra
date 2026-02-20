@@ -14,10 +14,8 @@
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ProjectId } from "../../shared/api/types";
-import type { WorkspaceName } from "../../shared/api/types";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
-import { extractWorkspaceName } from "../../shared/api/id-utils";
 
 // =============================================================================
 // Intent Types
@@ -124,10 +122,7 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
         const deleteIntent: DeleteWorkspaceIntent = {
           type: INTENT_DELETE_WORKSPACE,
           payload: {
-            projectId: payload.projectId,
-            workspaceName: extractWorkspaceName(workspace.path) as WorkspaceName,
             workspacePath: workspace.path,
-            projectPath,
             keepBranch: true,
             force: true,
             removeWorktree: false,

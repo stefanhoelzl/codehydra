@@ -435,8 +435,8 @@ const idempotencyModule = createIdempotencyModule([
   {
     intentType: INTENT_DELETE_WORKSPACE,
     getKey: (p) => {
-      const { projectId, workspaceName } = p as DeleteWorkspacePayload;
-      return `${projectId}/${workspaceName}`;
+      const { workspacePath } = p as DeleteWorkspacePayload;
+      return workspacePath;
     },
     resetOn: EVENT_WORKSPACE_DELETED,
     isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,

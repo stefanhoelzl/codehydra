@@ -5,7 +5,6 @@
 
 import type {
   ProjectId,
-  WorkspaceName,
   Project,
   Workspace,
   WorkspaceRef,
@@ -48,54 +47,49 @@ export interface ProjectIdPayload {
 
 /** workspaces.create */
 export interface WorkspaceCreatePayload {
-  readonly projectId: ProjectId;
+  readonly projectId?: ProjectId;
   readonly name: string;
   readonly base: string;
   /** Optional initial prompt to send after workspace is created */
   readonly initialPrompt?: InitialPrompt;
   /** If true, don't switch to the new workspace (default: false = switch to it) */
   readonly keepInBackground?: boolean;
+  /** Workspace path of the calling workspace (Plugin API / MCP alternative to projectId) */
+  readonly callerWorkspacePath?: string;
 }
 
 /** workspaces.remove */
 export interface WorkspaceRemovePayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+  readonly workspacePath: string;
   readonly keepBranch?: boolean;
   /** If true, don't switch away from this workspace when it's active. Used for retry. */
   readonly skipSwitch?: boolean;
   /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
   readonly force?: boolean;
-  /** Workspace path for retry/dismiss signaling. Provided by renderer on retry/dismiss only. */
-  readonly workspacePath?: string;
 }
 
-/** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata */
-export interface WorkspaceRefPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+/** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata, workspaces.restartAgentServer */
+export interface WorkspacePathPayload {
+  readonly workspacePath: string;
 }
 
 /** workspaces.setMetadata */
 export interface WorkspaceSetMetadataPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+  readonly workspacePath: string;
   readonly key: string;
   readonly value: string | null;
 }
 
 /** workspaces.executeCommand */
 export interface WorkspaceExecuteCommandPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+  readonly workspacePath: string;
   readonly command: string;
   readonly args?: readonly unknown[];
 }
 
 /** ui.switchWorkspace */
 export interface UiSwitchWorkspacePayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+  readonly workspacePath: string;
   readonly focus?: boolean;
 }
 
@@ -130,12 +124,12 @@ export interface MethodRegistry {
   // Workspaces
   "workspaces.create": (payload: WorkspaceCreatePayload) => Promise<Workspace>;
   "workspaces.remove": (payload: WorkspaceRemovePayload) => Promise<{ started: boolean }>;
-  "workspaces.getStatus": (payload: WorkspaceRefPayload) => Promise<WorkspaceStatus>;
-  "workspaces.getAgentSession": (payload: WorkspaceRefPayload) => Promise<AgentSession | null>;
-  "workspaces.restartAgentServer": (payload: WorkspaceRefPayload) => Promise<number>;
+  "workspaces.getStatus": (payload: WorkspacePathPayload) => Promise<WorkspaceStatus>;
+  "workspaces.getAgentSession": (payload: WorkspacePathPayload) => Promise<AgentSession | null>;
+  "workspaces.restartAgentServer": (payload: WorkspacePathPayload) => Promise<number>;
   "workspaces.setMetadata": (payload: WorkspaceSetMetadataPayload) => Promise<void>;
   "workspaces.getMetadata": (
-    payload: WorkspaceRefPayload
+    payload: WorkspacePathPayload
   ) => Promise<Readonly<Record<string, string>>>;
   "workspaces.executeCommand": (payload: WorkspaceExecuteCommandPayload) => Promise<unknown>;
 

@@ -41,9 +41,9 @@ export function createMockApi(): Api {
       create: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
       remove: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.removeResult),
       getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
+      getAgentSession: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn().mockResolvedValue(undefined),
       getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
-      getOpencodePort: vi.fn().mockResolvedValue(null),
     },
     ui: {
       selectFolder: vi.fn().mockResolvedValue(null),

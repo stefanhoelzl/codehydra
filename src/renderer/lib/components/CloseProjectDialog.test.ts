@@ -340,15 +340,15 @@ describe("CloseProjectDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      // Should call remove for each workspace with keepBranch=false
+      // Should call remove for each workspace with keepBranch=false (using workspace path)
       expect(mockRemoveWorkspace).toHaveBeenCalledTimes(3);
-      expect(mockRemoveWorkspace).toHaveBeenCalledWith(testProjectId, "ws1" as WorkspaceName, {
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith("/test/project/.worktrees/ws1", {
         keepBranch: false,
       });
-      expect(mockRemoveWorkspace).toHaveBeenCalledWith(testProjectId, "ws2" as WorkspaceName, {
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith("/test/project/.worktrees/ws2", {
         keepBranch: false,
       });
-      expect(mockRemoveWorkspace).toHaveBeenCalledWith(testProjectId, "ws3" as WorkspaceName, {
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith("/test/project/.worktrees/ws3", {
         keepBranch: false,
       });
     });

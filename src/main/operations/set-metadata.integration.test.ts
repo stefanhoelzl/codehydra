@@ -27,9 +27,9 @@ import {
 import type {
   SetMetadataIntent,
   MetadataChangedEvent,
+  ResolveHookResult as SetResolveHookResult,
   ResolveProjectHookResult as SetResolveProjectHookResult,
-  ResolveWorkspaceHookResult as SetResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput as SetResolveWorkspaceHookInput,
+  ResolveProjectHookInput as SetResolveProjectHookInput,
   SetHookInput,
 } from "./set-metadata";
 import {
@@ -40,9 +40,7 @@ import {
 import type {
   GetMetadataIntent,
   GetMetadataHookResult,
-  ResolveProjectHookResult as GetResolveProjectHookResult,
-  ResolveWorkspaceHookResult as GetResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput as GetResolveWorkspaceHookInput,
+  ResolveHookResult as GetResolveHookResult,
   GetHookInput,
 } from "./get-metadata";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
@@ -96,6 +94,7 @@ interface TestSetup {
   mockApiRegistry: MockApiRegistry;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
+  workspacePath: string;
 }
 
 function createTestSetup(): TestSetup {
@@ -139,26 +138,26 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
 
-  // resolve-project module: resolves projectId → projectPath
-  const resolveProjectModule: IntentModule = {
+  // resolve module: validates workspacePath → returns projectPath + workspaceName
+  const resolveModule: IntentModule = {
     hooks: {
       [SET_METADATA_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SetResolveProjectHookResult> => {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<SetResolveHookResult> => {
             const intent = ctx.intent as SetMetadataIntent;
-            if (intent.payload.projectId === projectId) {
-              return { projectPath: PROJECT_ROOT.toString() };
+            if (intent.payload.workspacePath === workspacePath.toString()) {
+              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
             }
             return {};
           },
         },
       },
       [GET_METADATA_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<GetResolveProjectHookResult> => {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<GetResolveHookResult> => {
             const intent = ctx.intent as GetMetadataIntent;
-            if (intent.payload.projectId === projectId) {
-              return { projectPath: PROJECT_ROOT.toString() };
+            if (intent.payload.workspacePath === workspacePath.toString()) {
+              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
             }
             return {};
           },
@@ -167,26 +166,15 @@ function createTestSetup(): TestSetup {
     },
   };
 
-  // resolve-workspace module: resolves workspaceName → workspacePath
-  const resolveWorkspaceModule: IntentModule = {
+  // resolve-project module: resolves projectPath → projectId (for set-metadata commands)
+  const resolveProjectModule: IntentModule = {
     hooks: {
       [SET_METADATA_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<SetResolveWorkspaceHookResult> => {
-            const { workspaceName: name } = ctx as SetResolveWorkspaceHookInput;
-            if (name === workspaceName) {
-              return { workspacePath: workspacePath.toString() };
-            }
-            return {};
-          },
-        },
-      },
-      [GET_METADATA_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<GetResolveWorkspaceHookResult> => {
-            const { workspaceName: name } = ctx as GetResolveWorkspaceHookInput;
-            if (name === workspaceName) {
-              return { workspacePath: workspacePath.toString() };
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<SetResolveProjectHookResult> => {
+            const { projectPath } = ctx as SetResolveProjectHookInput;
+            if (projectPath === PROJECT_ROOT.toString()) {
+              return { projectId };
             }
             return {};
           },
@@ -235,7 +223,7 @@ function createTestSetup(): TestSetup {
     logger: SILENT_LOGGER,
   });
   wireModules(
-    [resolveProjectModule, resolveWorkspaceModule, metadataModule, ipcEventBridge],
+    [resolveModule, resolveProjectModule, metadataModule, ipcEventBridge],
     hookRegistry,
     dispatcher
   );
@@ -246,6 +234,7 @@ function createTestSetup(): TestSetup {
     mockApiRegistry,
     projectId,
     workspaceName,
+    workspacePath: workspacePath.toString(),
   };
 }
 
@@ -254,14 +243,13 @@ function createTestSetup(): TestSetup {
 // =============================================================================
 
 function setMetadataIntent(
-  projectId: ProjectId,
-  workspaceName: WorkspaceName,
+  workspacePath: string,
   key: string,
   value: string | null
 ): SetMetadataIntent {
   return {
     type: INTENT_SET_METADATA,
-    payload: { projectId, workspaceName, key, value },
+    payload: { workspacePath, key, value },
   };
 }
 
@@ -277,11 +265,9 @@ describe("SetMetadata Operation", () => {
   });
 
   it("writes to git config via provider (#9)", async () => {
-    const { dispatcher, mockClient, projectId, workspaceName } = setup;
+    const { dispatcher, mockClient, workspacePath } = setup;
 
-    await dispatcher.dispatch(
-      setMetadataIntent(projectId, workspaceName, "description", "my workspace")
-    );
+    await dispatcher.dispatch(setMetadataIntent(workspacePath, "description", "my workspace"));
 
     // Verify git config was written
     expect(mockClient).toHaveBranchConfig(
@@ -293,11 +279,9 @@ describe("SetMetadata Operation", () => {
   });
 
   it("emits workspace:metadata-changed domain event to IpcEventBridge (#10)", async () => {
-    const { dispatcher, mockApiRegistry, projectId, workspaceName } = setup;
+    const { dispatcher, mockApiRegistry, projectId, workspaceName, workspacePath } = setup;
 
-    await dispatcher.dispatch(
-      setMetadataIntent(projectId, workspaceName, "description", "my workspace")
-    );
+    await dispatcher.dispatch(setMetadataIntent(workspacePath, "description", "my workspace"));
 
     // Verify ApiRegistry.emit was called via IpcEventBridge
     expect(mockApiRegistry.emit).toHaveBeenCalledWith("workspace:metadata-changed", {
@@ -309,9 +293,9 @@ describe("SetMetadata Operation", () => {
   });
 
   it("emits domain event with null value for deletion", async () => {
-    const { dispatcher, mockApiRegistry, projectId, workspaceName } = setup;
+    const { dispatcher, mockApiRegistry, projectId, workspaceName, workspacePath } = setup;
 
-    await dispatcher.dispatch(setMetadataIntent(projectId, workspaceName, "description", null));
+    await dispatcher.dispatch(setMetadataIntent(workspacePath, "description", null));
 
     expect(mockApiRegistry.emit).toHaveBeenCalledWith("workspace:metadata-changed", {
       projectId,
@@ -322,14 +306,14 @@ describe("SetMetadata Operation", () => {
   });
 
   it("domain event subscriber receives event directly (#10)", async () => {
-    const { dispatcher, projectId, workspaceName } = setup;
+    const { dispatcher, projectId, workspacePath } = setup;
 
     const receivedEvents: DomainEvent[] = [];
     dispatcher.subscribe(EVENT_METADATA_CHANGED, (event) => {
       receivedEvents.push(event);
     });
 
-    await dispatcher.dispatch(setMetadataIntent(projectId, workspaceName, "description", "test"));
+    await dispatcher.dispatch(setMetadataIntent(workspacePath, "description", "test"));
 
     expect(receivedEvents).toHaveLength(1);
     const event = receivedEvents[0] as MetadataChangedEvent;
@@ -341,38 +325,26 @@ describe("SetMetadata Operation", () => {
 
   describe("error cases", () => {
     it("invalid metadata key throws (#12)", async () => {
-      const { dispatcher, projectId, workspaceName } = setup;
+      const { dispatcher, workspacePath } = setup;
 
       await expect(
-        dispatcher.dispatch(setMetadataIntent(projectId, workspaceName, "invalid key!", "value"))
+        dispatcher.dispatch(setMetadataIntent(workspacePath, "invalid key!", "value"))
       ).rejects.toThrow("Invalid metadata key");
     });
 
-    it("unknown workspace throws (#13)", async () => {
-      const { dispatcher, projectId } = setup;
+    it("unknown workspace path throws (#13)", async () => {
+      const { dispatcher } = setup;
 
       await expect(
-        dispatcher.dispatch(
-          setMetadataIntent(projectId, "nonexistent" as WorkspaceName, "key", "value")
-        )
-      ).rejects.toThrow("Workspace not found");
-    });
-
-    it("unknown project throws (#13)", async () => {
-      const { dispatcher, workspaceName } = setup;
-
-      await expect(
-        dispatcher.dispatch(
-          setMetadataIntent("nonexistent-12345678" as ProjectId, workspaceName, "key", "value")
-        )
-      ).rejects.toThrow("Project not found");
+        dispatcher.dispatch(setMetadataIntent("/nonexistent/path", "key", "value"))
+      ).rejects.toThrow("Workspace not found: /nonexistent/path");
     });
 
     it("no event emitted on error", async () => {
-      const { dispatcher, mockApiRegistry, projectId, workspaceName } = setup;
+      const { dispatcher, mockApiRegistry, workspacePath } = setup;
 
       await expect(
-        dispatcher.dispatch(setMetadataIntent(projectId, workspaceName, "invalid key!", "value"))
+        dispatcher.dispatch(setMetadataIntent(workspacePath, "invalid key!", "value"))
       ).rejects.toThrow();
 
       expect(mockApiRegistry.emit).not.toHaveBeenCalled();
@@ -381,7 +353,7 @@ describe("SetMetadata Operation", () => {
 
   describe("interceptor", () => {
     it("cancels metadata intent - no state change, no event (#15)", async () => {
-      const { dispatcher, mockClient, mockApiRegistry, projectId, workspaceName } = setup;
+      const { dispatcher, mockClient, mockApiRegistry, workspacePath } = setup;
 
       // Add cancel interceptor
       const cancelInterceptor: IntentInterceptor = {
@@ -394,7 +366,7 @@ describe("SetMetadata Operation", () => {
 
       // Dispatch should return undefined (cancelled)
       const result = await dispatcher.dispatch(
-        setMetadataIntent(projectId, workspaceName, "description", "my workspace")
+        setMetadataIntent(workspacePath, "description", "my workspace")
       );
 
       expect(result).toBeUndefined();

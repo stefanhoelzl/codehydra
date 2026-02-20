@@ -3,7 +3,7 @@
  * Integration tests for IpcEventBridge.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> domain event -> IpcEventBridge -> registry.emit.
- * Also covers lifecycle hooks (app:start/app:shutdown) and plugin registry wiring.
+ * Also covers lifecycle hooks (app:start/app:shutdown) and plugin API wiring.
  *
  * Test plan items covered:
  * #2a: Renderer receives workspace status (idle)
@@ -11,8 +11,6 @@
  * #2c: Renderer receives workspace status (mixed)
  * #2d: Renderer receives workspace status (none)
  * workspace:deleted emits workspace:removed
- * workspace:created registers with plugin registry
- * workspace:deleted unregisters from plugin registry
  * app:start wires API events
  * app:start with null pluginServer is safe
  * app:shutdown cleans up
@@ -35,8 +33,6 @@ import type {
   ResolveHookInput,
   ResolveProjectHookInput,
 } from "../operations/update-agent-status";
-import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
-import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../operations/open-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
@@ -104,41 +100,24 @@ function createMockApiRegistry(): MockApiRegistry {
 // Minimal operations that emit events for testing
 // =============================================================================
 
-class MinimalOpenOperation implements Operation<OpenWorkspaceIntent, unknown> {
-  readonly id = "open-workspace";
-
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<unknown> {
-    const { payload } = ctx.intent;
-    const event: WorkspaceCreatedEvent = {
-      type: EVENT_WORKSPACE_CREATED,
-      payload: {
-        projectId: payload.projectId as unknown as ProjectId,
-        workspaceName: payload.workspaceName as unknown as WorkspaceName,
-        workspacePath: `/workspaces/${payload.workspaceName}`,
-        projectPath: `/projects/test`,
-        branch: payload.base ?? "main",
-        base: payload.base ?? "main",
-        metadata: {},
-        workspaceUrl: `http://127.0.0.1:0/?folder=/workspaces/${payload.workspaceName}`,
-      },
-    };
-    ctx.emit(event);
-    return {};
-  }
-}
-
 class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { started: true }> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
+
+  constructor(
+    private readonly projectId: ProjectId,
+    private readonly workspaceName: WorkspaceName,
+    private readonly projectPath: string
+  ) {}
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
     const { payload } = ctx.intent;
     const event: WorkspaceDeletedEvent = {
       type: EVENT_WORKSPACE_DELETED,
       payload: {
-        projectId: payload.projectId,
-        workspaceName: payload.workspaceName,
-        workspacePath: payload.workspacePath ?? "",
-        projectPath: payload.projectPath ?? "",
+        projectId: this.projectId,
+        workspaceName: this.workspaceName,
+        workspacePath: payload.workspacePath,
+        projectPath: this.projectPath,
       },
     };
     ctx.emit(event);
@@ -268,8 +247,10 @@ function createLifecycleTestSetup(
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new MinimalOpenOperation());
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());
+  dispatcher.registerOperation(
+    INTENT_DELETE_WORKSPACE,
+    new MinimalDeleteOperation(TEST_PROJECT_ID, TEST_WORKSPACE_NAME, TEST_PROJECT_PATH)
+  );
   dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
@@ -415,10 +396,7 @@ describe("IpcEventBridge - workspace:deleted", () => {
     await dispatcher.dispatch({
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        projectId: TEST_PROJECT_ID,
-        workspaceName: TEST_WORKSPACE_NAME,
         workspacePath: TEST_WORKSPACE_PATH,
-        projectPath: TEST_PROJECT_PATH,
         keepBranch: false,
         force: false,
         removeWorktree: true,
@@ -436,71 +414,6 @@ describe("IpcEventBridge - workspace:deleted", () => {
         },
       },
     ]);
-  });
-});
-
-// =============================================================================
-// Tests - plugin registry integration
-// =============================================================================
-
-describe("IpcEventBridge - plugin registry", () => {
-  it("workspace:created registers with plugin registry after app:start", async () => {
-    const { dispatcher, mockPluginServer } = createLifecycleTestSetup();
-
-    // Start app (wires plugin API, which returns a real PluginApiRegistry)
-    await dispatcher.dispatch({
-      type: INTENT_APP_START,
-      payload: {},
-    } as AppStartIntent);
-
-    expect(mockPluginServer.onApiCall).toHaveBeenCalled();
-
-    // Create a workspace -- plugin registry should get registerWorkspace call
-    // We verify via the plugin server being wired (onApiCall was called)
-    // The real PluginApiRegistry is created by wirePluginApi using the mock plugin server
-    await dispatcher.dispatch({
-      type: INTENT_OPEN_WORKSPACE,
-      payload: {
-        projectId: TEST_PROJECT_ID as unknown as ProjectId,
-        workspaceName: "ws1" as unknown as WorkspaceName,
-        base: "main",
-      },
-    } as OpenWorkspaceIntent);
-
-    // The workspace:created event should have emitted workspace:created to registry
-    const createdEvents = mockPluginServer.onApiCall.mock.calls;
-    expect(createdEvents.length).toBe(1); // wirePluginApi called onApiCall once
-  });
-
-  it("workspace:deleted unregisters from plugin registry after app:start", async () => {
-    const { dispatcher, mockPluginServer } = createLifecycleTestSetup();
-
-    // Start app
-    await dispatcher.dispatch({
-      type: INTENT_APP_START,
-      payload: {},
-    } as AppStartIntent);
-
-    expect(mockPluginServer.onApiCall).toHaveBeenCalled();
-
-    // Delete a workspace -- PluginApiRegistry.unregisterWorkspace is called internally
-    // We verify indirectly: no error thrown when unregistering from a real PluginApiRegistry
-    await dispatcher.dispatch({
-      type: INTENT_DELETE_WORKSPACE,
-      payload: {
-        projectId: TEST_PROJECT_ID,
-        workspaceName: TEST_WORKSPACE_NAME,
-        workspacePath: TEST_WORKSPACE_PATH,
-        projectPath: TEST_PROJECT_PATH,
-        keepBranch: false,
-        force: false,
-        removeWorktree: true,
-      },
-    } as DeleteWorkspaceIntent);
-
-    // Verify workspace:removed was emitted (IPC bridge side)
-    const removedEvents = mockPluginServer.onApiCall.mock.calls;
-    expect(removedEvents.length).toBe(1); // wirePluginApi only called once during start
   });
 });
 

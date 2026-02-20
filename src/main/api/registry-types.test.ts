@@ -15,7 +15,7 @@ import type {
   ProjectIdPayload,
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
-  WorkspaceRefPayload,
+  WorkspacePathPayload,
   WorkspaceSetMetadataPayload,
   UiSwitchWorkspacePayload,
   UiSetModePayload,
@@ -32,7 +32,6 @@ import type {
 import { ALL_METHOD_PATHS } from "./registry-types";
 import type {
   ProjectId,
-  WorkspaceName,
   Project,
   Workspace,
   WorkspaceRef,
@@ -131,22 +130,20 @@ describe("registry-types.payload", () => {
   it("extracts WorkspaceRemovePayload for workspaces.remove", () => {
     expectTypeOf<MethodPayload<"workspaces.remove">>().toEqualTypeOf<WorkspaceRemovePayload>();
     // Verify shape
-    expectTypeOf<MethodPayload<"workspaces.remove">>().toHaveProperty("projectId");
-    expectTypeOf<MethodPayload<"workspaces.remove">>().toHaveProperty("workspaceName");
+    expectTypeOf<MethodPayload<"workspaces.remove">>().toHaveProperty("workspacePath");
     // keepBranch is optional
     type RemovePayload = MethodPayload<"workspaces.remove">;
     expectTypeOf<{
-      projectId: ProjectId;
-      workspaceName: WorkspaceName;
+      workspacePath: string;
     }>().toExtend<RemovePayload>();
   });
 
-  it("extracts WorkspaceRefPayload for workspace ref methods", () => {
-    expectTypeOf<MethodPayload<"workspaces.getStatus">>().toEqualTypeOf<WorkspaceRefPayload>();
+  it("extracts WorkspacePathPayload for workspace path methods", () => {
+    expectTypeOf<MethodPayload<"workspaces.getStatus">>().toEqualTypeOf<WorkspacePathPayload>();
     expectTypeOf<
       MethodPayload<"workspaces.getAgentSession">
-    >().toEqualTypeOf<WorkspaceRefPayload>();
-    expectTypeOf<MethodPayload<"workspaces.getMetadata">>().toEqualTypeOf<WorkspaceRefPayload>();
+    >().toEqualTypeOf<WorkspacePathPayload>();
+    expectTypeOf<MethodPayload<"workspaces.getMetadata">>().toEqualTypeOf<WorkspacePathPayload>();
   });
 
   it("extracts WorkspaceSetMetadataPayload for workspaces.setMetadata", () => {
@@ -164,8 +161,7 @@ describe("registry-types.payload", () => {
     // focus is optional
     type SwitchPayload = MethodPayload<"ui.switchWorkspace">;
     expectTypeOf<{
-      projectId: ProjectId;
-      workspaceName: WorkspaceName;
+      workspacePath: string;
     }>().toExtend<SwitchPayload>();
   });
 

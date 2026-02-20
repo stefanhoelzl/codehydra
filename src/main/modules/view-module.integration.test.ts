@@ -179,9 +179,10 @@ class MinimalSetupOperation implements Operation<SetupIntent, void> {
 class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
   async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
+    const workspacePath = (ctx.intent.payload as { workspacePath: string }).workspacePath;
     const activateCtx: ActivateHookInput = {
       intent: ctx.intent,
-      workspacePath: `/workspaces/${(ctx.intent.payload as { workspaceName: string }).workspaceName}`,
+      workspacePath,
     };
     const { results, errors } = await ctx.hooks.collect<SwitchWorkspaceHookResult>(
       "activate",
@@ -193,14 +194,15 @@ class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
       if (r.resolvedPath !== undefined) resolvedPath = r.resolvedPath;
     }
     if (resolvedPath) {
+      // Extract workspace name from path for test event (real operation uses resolve hooks)
+      const workspaceName = resolvedPath.split("/").pop() ?? "";
       const event: WorkspaceSwitchedEvent = {
         type: EVENT_WORKSPACE_SWITCHED,
         payload: {
           projectId: "test-project" as ProjectId,
           projectName: "test",
           projectPath: "/projects/test",
-          workspaceName: (ctx.intent.payload as { workspaceName: string })
-            .workspaceName as WorkspaceName,
+          workspaceName: workspaceName as WorkspaceName,
           path: resolvedPath,
         },
       };
@@ -216,8 +218,8 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, Shutdow
     const { payload } = ctx.intent;
     const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath ?? "",
-      workspacePath: payload.workspacePath ?? "",
+      projectPath: "/projects/test",
+      workspacePath: payload.workspacePath,
     };
     const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", hookCtx);
     if (errors.length > 0) throw errors[0]!;
@@ -456,10 +458,7 @@ describe("ViewModule Integration", () => {
       const result = await dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
           workspacePath: "/workspaces/ws1",
-          projectPath: "/projects/test",
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -484,10 +483,7 @@ describe("ViewModule Integration", () => {
       const result = await dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
           workspacePath: "/workspaces/ws1",
-          projectPath: "/projects/test",
           keepBranch: false,
           force: true,
           removeWorktree: true,
@@ -511,8 +507,7 @@ describe("ViewModule Integration", () => {
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: "test-project" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
+          workspacePath: "/workspaces/ws1",
         },
       } as SwitchWorkspaceIntent);
 
@@ -534,8 +529,7 @@ describe("ViewModule Integration", () => {
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: "test-project" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
+          workspacePath: "/workspaces/ws1",
         },
       } as SwitchWorkspaceIntent);
 
@@ -562,8 +556,7 @@ describe("ViewModule Integration", () => {
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: "test-project" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
+          workspacePath: "/workspaces/ws1",
         },
       } as SwitchWorkspaceIntent);
 
@@ -620,8 +613,7 @@ describe("ViewModule Integration", () => {
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId: "test-project" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
+          workspacePath: "/workspaces/ws1",
         },
       } as SwitchWorkspaceIntent);
 

@@ -424,12 +424,10 @@ describe("Integration tests", () => {
       ) as HTMLElement;
       await fireEvent.click(removeConfirmButton);
 
-      // Verify v2.workspaces.remove was called with correct params
-      // (projectId is generated, workspaceName matches, keepBranch is false by default)
+      // Verify workspaces.remove was called with workspace path and options
       await waitFor(() => {
         expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
-          expect.any(String), // projectId (generated)
-          workspace.name, // workspaceName
+          workspace.path, // workspacePath
           { keepBranch: false } // keepBranch (default is unchecked, so keepBranch=false)
         );
       });
@@ -470,10 +468,10 @@ describe("Integration tests", () => {
       const featureButton = screen.getByRole("button", { name: "feature-x" });
       await fireEvent.click(featureButton);
 
-      // Verify switchWorkspace was called (v2 API uses projectId, workspaceName)
+      // Verify switchWorkspace was called with workspacePath
       // Note: focus parameter is optional, MainView doesn't pass it (defaults to true)
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, ws2.name);
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(ws2.path);
       });
 
       // Simulate workspace:switched event (v2 format uses WorkspaceRef)
@@ -610,8 +608,7 @@ describe("Integration tests", () => {
 
       // API was called
       expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
-        project.id,
-        workspace.name,
+        workspace.path, // workspacePath
         { keepBranch: false } // keepBranch default
       );
     });
@@ -961,11 +958,10 @@ describe("Integration tests", () => {
       // Step 2: Fire shortcut key event (keys now come from main process via onShortcut)
       fireApiEvent("shortcut:key", "down");
 
-      // Step 3: Verify workspace switch was called (v2 API: projectId, workspaceName, focus)
+      // Step 3: Verify workspace switch was called (workspacePath, focus)
       await waitFor(() => {
         expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-          actualProjectId,
-          ws2.name,
+          ws2.path,
           false // focus=false to keep shortcut mode active
         );
       });
@@ -998,9 +994,6 @@ describe("Integration tests", () => {
         expect(screen.getByText("ws1")).toBeInTheDocument();
       });
 
-      // Get actual projectId from store (ID is regenerated from path)
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
       // Activate shortcut mode
       fireApiEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
@@ -1010,11 +1003,7 @@ describe("Integration tests", () => {
       // Fire shortcut key events (keys now come from main process via onShortcut)
       fireApiEvent("shortcut:key", "1");
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-          actualProjectId,
-          workspaces[0]!.name,
-          false
-        );
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(workspaces[0]!.path, false);
       });
 
       // Clear and fire key "2"
@@ -1022,11 +1011,7 @@ describe("Integration tests", () => {
       fireApiEvent("shortcut:key", "2");
 
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(
-          actualProjectId,
-          workspaces[1]!.name,
-          false
-        );
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(workspaces[1]!.path, false);
       });
 
       // Verify overlay is still visible
@@ -1113,7 +1098,7 @@ describe("Integration tests", () => {
       fireApiEvent("shortcut:key", "down");
 
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, ws1.name, false);
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(ws1.path, false);
       });
     });
 
@@ -1159,9 +1144,6 @@ describe("Integration tests", () => {
         expect(screen.getByText("only")).toBeInTheDocument();
       });
 
-      // Get actual projectId from store (ID is regenerated from path)
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
       // Activate shortcut mode
       fireApiEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
@@ -1172,11 +1154,11 @@ describe("Integration tests", () => {
       const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
       expect(navigateHint).toHaveClass("shortcut-hint--hidden");
 
-      // Jump should still work for index 1 (v2 API: projectId, workspaceName, focus)
+      // Jump should still work for index 1 (workspacePath, focus)
       fireApiEvent("shortcut:key", "1");
 
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(actualProjectId, ws.name, false);
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(ws.path, false);
       });
     });
   });

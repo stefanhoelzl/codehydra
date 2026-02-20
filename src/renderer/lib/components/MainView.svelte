@@ -228,7 +228,7 @@
   // Handle switching workspace
   async function handleSwitchWorkspace(workspaceRef: WorkspaceRef): Promise<void> {
     logger.debug("Workspace selected", { workspaceName: workspaceRef.workspaceName });
-    await api.ui.switchWorkspace(workspaceRef.projectId, workspaceRef.workspaceName);
+    await api.ui.switchWorkspace(workspaceRef.path);
   }
 
   // Handle opening create dialog
@@ -250,10 +250,9 @@
       workspaceName: activeDeletionState.workspaceName,
     });
     // Fire-and-forget - signals the waiting pipeline via workspaces.remove handler
-    void api.workspaces.remove(activeDeletionState.projectId, activeDeletionState.workspaceName, {
+    void api.workspaces.remove(activeDeletionState.workspacePath, {
       keepBranch: activeDeletionState.keepBranch,
       skipSwitch: true,
-      workspacePath: activeDeletionState.workspacePath,
     });
   }
 
@@ -261,9 +260,8 @@
   function handleDismiss(): void {
     if (!activeDeletionState) return;
     logger.debug("Dismissing deletion", { workspaceName: activeDeletionState.workspaceName });
-    void api.workspaces.remove(activeDeletionState.projectId, activeDeletionState.workspaceName, {
+    void api.workspaces.remove(activeDeletionState.workspacePath, {
       force: true,
-      workspacePath: activeDeletionState.workspacePath,
     });
     clearDeletion(activeDeletionState.workspacePath);
   }

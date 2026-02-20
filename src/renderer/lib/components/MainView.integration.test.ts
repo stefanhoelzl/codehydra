@@ -282,18 +282,14 @@ describe("MainView close project integration", () => {
 
       await vi.runAllTimersAsync();
 
-      // Should call remove for each workspace with keepBranch=false
+      // Should call remove for each workspace with keepBranch=false (using workspace path)
       expect(mockApi.workspaces.remove).toHaveBeenCalledTimes(2);
-      expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
-        projectWithWorkspaces.id,
-        "feature-1",
-        { keepBranch: false }
-      );
-      expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
-        projectWithWorkspaces.id,
-        "feature-2",
-        { keepBranch: false }
-      );
+      expect(mockApi.workspaces.remove).toHaveBeenCalledWith("/test/.worktrees/feature-1", {
+        keepBranch: false,
+      });
+      expect(mockApi.workspaces.remove).toHaveBeenCalledWith("/test/.worktrees/feature-2", {
+        keepBranch: false,
+      });
 
       // Then close the project
       expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.id, undefined);

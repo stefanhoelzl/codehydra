@@ -20,7 +20,6 @@ import type {
 } from "../../api/registry-types";
 import type { PluginResult } from "../../../shared/plugin-protocol";
 import { ApiIpcChannels } from "../../../shared/ipc";
-import type { ProjectId, WorkspaceName } from "../../../shared/api/types";
 
 // =============================================================================
 // Types
@@ -52,8 +51,6 @@ export interface MinimalDialog {
  * Dependencies for CoreModule.
  */
 export interface CoreModuleDeps {
-  /** Resolves (projectId, workspaceName) → workspacePath. Throws if not found. */
-  readonly resolveWorkspace: (projectId: ProjectId, workspaceName: WorkspaceName) => string;
   /** Code-server port for URL generation (updated by CodeServerLifecycleModule) */
   readonly codeServerPort: number;
   /** Wrapper path for Claude Code wrapper script */
@@ -111,14 +108,12 @@ export class CoreModule implements IApiModule {
   // ===========================================================================
 
   private async workspaceExecuteCommand(payload: WorkspaceExecuteCommandPayload): Promise<unknown> {
-    const workspacePath = this.deps.resolveWorkspace(payload.projectId, payload.workspaceName);
-
     if (!this.deps.pluginServer) {
       throw new Error("Plugin server not available");
     }
 
     const result = await this.deps.pluginServer.sendCommand(
-      workspacePath,
+      payload.workspacePath,
       payload.command,
       payload.args
     );

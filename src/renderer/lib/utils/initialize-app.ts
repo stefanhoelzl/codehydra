@@ -25,7 +25,7 @@ export interface InitializeAppOptions {
 
 export interface InitializeAppApi {
   lifecycle: { ready(): Promise<void> };
-  workspaces: { getStatus(projectId: string, name: string): Promise<WorkspaceStatus> };
+  workspaces: { getStatus(workspacePath: string): Promise<WorkspaceStatus> };
 }
 
 /**
@@ -56,7 +56,7 @@ async function fetchAllAgentStatuses(
     for (const workspace of project.workspaces) {
       promises.push(
         apiImpl.workspaces
-          .getStatus(project.id, workspace.name)
+          .getStatus(workspace.path)
           .then((status) => {
             result[workspace.path] = status.agent;
           })

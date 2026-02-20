@@ -30,7 +30,7 @@
     isDirty = false;
 
     workspaces
-      .getStatus(workspaceRef.projectId, workspaceRef.workspaceName)
+      .getStatus(workspaceRef.path)
       .then((status) => {
         isDirty = status.isDirty;
       })
@@ -48,7 +48,7 @@
     logger.debug("Dialog submitted", { type: "remove-workspace" });
     // Fire-and-forget: start deletion and close dialog immediately
     // Progress is shown via DeletionProgressView in MainView
-    void workspaces.remove(workspaceRef.projectId, workspaceRef.workspaceName, { keepBranch });
+    void workspaces.remove(workspaceRef.path, { keepBranch });
     closeDialog();
   }
 

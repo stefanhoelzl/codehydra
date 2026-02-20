@@ -703,8 +703,8 @@ describe("CreateWorkspaceDialog component", () => {
 
       await completeAllLoading();
 
-      // Should switch to the newly created workspace
-      expect(mockSwitchWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature");
+      // Should switch to the newly created workspace (uses workspace.path)
+      expect(mockSwitchWorkspace).toHaveBeenCalledWith("/test/project/.worktrees/my-feature");
       expect(mockCloseDialog).toHaveBeenCalled();
     });
   });

@@ -3,7 +3,7 @@
  * Integration tests for get-workspace-status operation through the Dispatcher.
  *
  * Tests verify the full dispatch pipeline: intent -> operation -> hooks -> result,
- * using the 3-stage hook pipeline: resolve-project → resolve-workspace → get.
+ * using the 2-stage hook pipeline: resolve → get.
  *
  * Test plan items covered:
  * #1: get-workspace-status returns dirty + agent status
@@ -22,18 +22,16 @@ import {
 } from "./get-workspace-status";
 import type {
   GetWorkspaceStatusIntent,
-  ResolveProjectHookResult,
-  ResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput,
+  ResolveHookResult,
   GetStatusHookResult,
   GetStatusHookInput,
 } from "./get-workspace-status";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
-import type { ProjectId, WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
+import type { WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
-import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 
 // =============================================================================
@@ -82,7 +80,6 @@ function createMockAgentStatusManager(
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  projectId: ProjectId;
   workspaceName: WorkspaceName;
 }
 
@@ -90,7 +87,6 @@ function createTestSetup(opts: {
   workspaceProvider?: MockWorkspaceProvider | null;
   agentStatusManager?: MockAgentStatusManager | null;
 }): TestSetup {
-  const projectId = generateProjectId(PROJECT_ROOT);
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
   const hookRegistry = new HookRegistry();
@@ -98,32 +94,15 @@ function createTestSetup(opts: {
 
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
 
-  // resolve-project module: resolves projectId → projectPath
-  const resolveProjectModule: IntentModule = {
+  // resolve module: validates workspacePath → returns projectPath + workspaceName
+  const resolveModule: IntentModule = {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
             const intent = ctx.intent as GetWorkspaceStatusIntent;
-            if (intent.payload.projectId === projectId) {
-              return { projectPath: PROJECT_ROOT };
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
-
-  // resolve-workspace module: resolves workspaceName → workspacePath
-  const resolveWorkspaceModule: IntentModule = {
-    hooks: {
-      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspaceName: name } = ctx as ResolveWorkspaceHookInput;
-            if (name === workspaceName) {
-              return { workspacePath: WORKSPACE_PATH };
+            if (intent.payload.workspacePath === WORKSPACE_PATH) {
+              return { projectPath: PROJECT_ROOT, workspaceName };
             }
             return {};
           },
@@ -166,26 +145,19 @@ function createTestSetup(opts: {
     },
   };
 
-  wireModules(
-    [resolveProjectModule, resolveWorkspaceModule, getStatusModule, agentStatusModule],
-    hookRegistry,
-    dispatcher
-  );
+  wireModules([resolveModule, getStatusModule, agentStatusModule], hookRegistry, dispatcher);
 
-  return { dispatcher, projectId, workspaceName };
+  return { dispatcher, workspaceName };
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-function statusIntent(
-  projectId: ProjectId,
-  workspaceName: WorkspaceName
-): GetWorkspaceStatusIntent {
+function statusIntent(workspacePath: string): GetWorkspaceStatusIntent {
   return {
     type: INTENT_GET_WORKSPACE_STATUS,
-    payload: { projectId, workspaceName },
+    payload: { workspacePath },
   };
 }
 
@@ -209,11 +181,9 @@ describe("GetWorkspaceStatus Operation", () => {
     });
 
     it("returns combined dirty + agent status", async () => {
-      const { dispatcher, projectId, workspaceName } = setup;
+      const { dispatcher } = setup;
 
-      const result = (await dispatcher.dispatch(
-        statusIntent(projectId, workspaceName)
-      )) as WorkspaceStatus;
+      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_PATH))) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(true);
       expect(result.agent).toEqual({
@@ -233,7 +203,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await cleanSetup.dispatcher.dispatch(
-        statusIntent(cleanSetup.projectId, cleanSetup.workspaceName)
+        statusIntent(WORKSPACE_PATH)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(false);
@@ -254,7 +224,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        statusIntent(setup.projectId, setup.workspaceName)
+        statusIntent(WORKSPACE_PATH)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(true);
@@ -272,7 +242,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        statusIntent(setup.projectId, setup.workspaceName)
+        statusIntent(WORKSPACE_PATH)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(false);
@@ -288,7 +258,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        statusIntent(setup.projectId, setup.workspaceName)
+        statusIntent(WORKSPACE_PATH)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(false);
@@ -297,34 +267,19 @@ describe("GetWorkspaceStatus Operation", () => {
   });
 
   describe("error cases", () => {
-    it("unknown workspace throws", async () => {
+    it("unknown workspace path throws", async () => {
       const setup = createTestSetup({
         workspaceProvider: createMockWorkspaceProvider(),
         agentStatusManager: null,
       });
 
       const error = await setup.dispatcher
-        .dispatch(statusIntent(setup.projectId, "nonexistent" as WorkspaceName))
+        .dispatch(statusIntent("/nonexistent/path"))
         .then(() => expect.unreachable("should have thrown"))
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain("Workspace not found");
-    });
-
-    it("unknown project throws", async () => {
-      const setup = createTestSetup({
-        workspaceProvider: createMockWorkspaceProvider(),
-        agentStatusManager: null,
-      });
-
-      const error = await setup.dispatcher
-        .dispatch(statusIntent("nonexistent-12345678" as ProjectId, setup.workspaceName))
-        .then(() => expect.unreachable("should have thrown"))
-        .catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain("Project not found");
+      expect((error as Error).message).toContain("Workspace not found: /nonexistent/path");
     });
   });
 
@@ -347,9 +302,7 @@ describe("GetWorkspaceStatus Operation", () => {
       };
       setup.dispatcher.addInterceptor(cancelInterceptor);
 
-      const result = await setup.dispatcher.dispatch(
-        statusIntent(setup.projectId, setup.workspaceName)
-      );
+      const result = await setup.dispatcher.dispatch(statusIntent(WORKSPACE_PATH));
 
       expect(result).toBeUndefined();
     });

@@ -51,6 +51,12 @@ export interface ExistingWorkspaceData {
 
 export interface OpenWorkspacePayload {
   readonly projectId?: ProjectId;
+  /**
+   * Workspace path of the calling workspace.
+   * Used by Plugin API / MCP server as an alternative to projectId.
+   * When present, resolved via hooks to determine projectId and projectPath.
+   */
+  readonly callerWorkspacePath?: string;
   readonly workspaceName?: string;
   readonly base?: string;
   readonly initialPrompt?: InitialPrompt;
@@ -115,6 +121,27 @@ export interface ResolveProjectHookResult {
   readonly projectPath?: string;
 }
 
+/** Input context for the "resolve-caller" hook point (callerWorkspacePath resolution). */
+export interface ResolveCallerHookInput extends HookContext {
+  readonly callerWorkspacePath: string;
+}
+
+/** Result from the "resolve-caller" hook point. */
+export interface ResolveCallerHookResult {
+  readonly projectPath?: string;
+  readonly workspaceName?: WorkspaceName;
+}
+
+/** Input context for the "resolve-caller-project" hook point. */
+export interface ResolveCallerProjectHookInput extends HookContext {
+  readonly projectPath: string;
+}
+
+/** Result from the "resolve-caller-project" hook point. */
+export interface ResolveCallerProjectHookResult {
+  readonly projectId?: ProjectId;
+}
+
 /** Input context for the "fetch-bases" hook point (enriched with resolved project path). */
 export interface FetchBasesHookInput extends HookContext {
   readonly projectPath: string;
@@ -176,17 +203,60 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
-    // Hook 1: "resolve-project" — resolve projectId to projectPath (fatal on error)
-    const resolveCtx: HookContext = { intent: ctx.intent };
-    const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveCtx);
+    let projectPath: string | undefined;
+    let resolvedProjectId: ProjectId | undefined = ctx.intent.payload.projectId;
 
-    if (resolveErrors.length > 0) throw resolveErrors[0]!;
+    // If callerWorkspacePath provided (Plugin API / MCP), resolve it to projectPath + projectId
+    if (ctx.intent.payload.callerWorkspacePath && !resolvedProjectId) {
+      // Hook 0a: "resolve-caller" — resolve callerWorkspacePath to projectPath
+      const callerCtx: ResolveCallerHookInput = {
+        intent: ctx.intent,
+        callerWorkspacePath: ctx.intent.payload.callerWorkspacePath,
+      };
+      const { results: callerResults, errors: callerErrors } =
+        await ctx.hooks.collect<ResolveCallerHookResult>("resolve-caller", callerCtx);
 
-    const resolve = mergeHookResults(resolveResults, "resolve-project");
-    const { projectPath } = resolve;
-    if (projectPath === undefined) {
-      throw new Error("resolve-project hook did not provide projectPath");
+      if (callerErrors.length > 0) throw callerErrors[0]!;
+
+      const callerResolved = mergeHookResults(callerResults, "resolve-caller");
+      if (!callerResolved.projectPath) {
+        throw new Error(`Caller workspace not found: ${ctx.intent.payload.callerWorkspacePath}`);
+      }
+      projectPath = callerResolved.projectPath;
+
+      // Hook 0b: "resolve-caller-project" — resolve projectPath to projectId
+      const callerProjectCtx: ResolveCallerProjectHookInput = {
+        intent: ctx.intent,
+        projectPath,
+      };
+      const { results: projResults, errors: projErrors } =
+        await ctx.hooks.collect<ResolveCallerProjectHookResult>(
+          "resolve-caller-project",
+          callerProjectCtx
+        );
+
+      if (projErrors.length > 0) throw projErrors[0]!;
+
+      const projResolved = mergeHookResults(projResults, "resolve-caller-project");
+      if (!projResolved.projectId) {
+        throw new Error("resolve-caller-project hook did not provide projectId");
+      }
+      resolvedProjectId = projResolved.projectId;
+    }
+
+    // Hook 1: "resolve-project" — resolve projectId to projectPath (skip if already resolved)
+    if (!projectPath) {
+      const resolveCtx: HookContext = { intent: ctx.intent };
+      const { results: resolveResults, errors: resolveErrors } =
+        await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveCtx);
+
+      if (resolveErrors.length > 0) throw resolveErrors[0]!;
+
+      const resolve = mergeHookResults(resolveResults, "resolve-project");
+      projectPath = resolve.projectPath;
+      if (projectPath === undefined) {
+        throw new Error("resolve-project hook did not provide projectPath");
+      }
     }
 
     // Check if payload is incomplete (missing workspaceName or base)
@@ -275,10 +345,10 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
 
     // Build Workspace return value
     const resolvedWorkspaceName = extractWorkspaceName(workspacePath);
-    const projectId = ctx.intent.payload.projectId;
-    if (!projectId) {
+    if (!resolvedProjectId) {
       throw new Error("projectId is required for complete workspace creation");
     }
+    const projectId = resolvedProjectId;
 
     const workspace: Workspace = {
       projectId,
@@ -317,8 +387,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       const switchIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          projectId,
-          workspaceName: resolvedWorkspaceName,
+          workspacePath,
           focus: true,
         },
       };

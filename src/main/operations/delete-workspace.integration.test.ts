@@ -34,9 +34,10 @@ import type {
   DetectHookResult,
   FlushHookResult,
   FlushHookInput,
+  ResolveHookInput,
+  ResolveHookResult,
+  ResolveProjectHookInput,
   ResolveProjectHookResult,
-  ResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput,
   DeletePipelineHookInput,
 } from "./delete-workspace";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -57,15 +58,14 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_SWITCHED,
-  isAutoSwitch,
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
   WorkspaceSwitchedEvent,
+  ResolveHookResult as SwitchResolveHookResult,
+  ResolveProjectHookInput as SwitchResolveProjectHookInput,
   ResolveProjectHookResult as SwitchResolveProjectHookResult,
-  ResolveWorkspaceHookInput as SwitchResolveWorkspaceHookInput,
-  ResolveWorkspaceHookResult as SwitchResolveWorkspaceHookResult,
   ActivateHookInput,
   FindCandidatesHookResult,
 } from "./switch-workspace";
@@ -80,7 +80,6 @@ const WORKSPACE_PATH = "/test/project/workspaces/feature-a";
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 
 const WORKSPACE_PATH_B = "/test/project/workspaces/feature-b";
-const WORKSPACE_NAME_B = "feature-b" as WorkspaceName;
 
 // =============================================================================
 // Helper: Build Intent
@@ -92,10 +91,7 @@ function buildDeleteIntent(
   return {
     type: INTENT_DELETE_WORKSPACE,
     payload: {
-      projectId: PROJECT_ID,
-      workspaceName: WORKSPACE_NAME,
       workspacePath: WORKSPACE_PATH,
-      projectPath: PROJECT_PATH,
       keepBranch: true,
       force: false,
       removeWorktree: true,
@@ -360,7 +356,6 @@ function createTestHarness(options?: {
     INTENT_SWITCH_WORKSPACE,
     new SwitchWorkspaceOperation(
       extractWorkspaceName,
-      (path: string) => generateProjectId(path),
       // Agent status scorer: returns score from mock appState
       (workspacePath) => {
         const agentStatusManager = appState.getAgentStatusManager();
@@ -384,7 +379,7 @@ function createTestHarness(options?: {
             return intent;
           }
           const deleteIntent = intent as DeleteWorkspaceIntent;
-          const key = `${deleteIntent.payload.projectId}/${deleteIntent.payload.workspaceName}`;
+          const key = deleteIntent.payload.workspacePath;
 
           if (deleteIntent.payload.force) {
             inProgressDeletions.add(key);
@@ -403,7 +398,7 @@ function createTestHarness(options?: {
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
-        inProgressDeletions.delete(`${payload.projectId}/${payload.workspaceName}`);
+        inProgressDeletions.delete(payload.workspacePath);
       },
     },
   };
@@ -412,36 +407,31 @@ function createTestHarness(options?: {
   const killTerminalsCallback = options?.killTerminalsCallback ?? undefined;
   const workspaceLockHandler = options?.workspaceLockHandler ?? undefined;
 
-  const deleteResolveProjectModule: IntentModule = {
+  const deleteResolveModule: IntentModule = {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const projects = await appState.getAllProjects();
-            const match = projects.find(
-              (p: { path: string }) => generateProjectId(p.path) === payload.projectId
-            );
-            return match ? { projectPath: match.path } : {};
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const { workspacePath: wsPath } = ctx as ResolveHookInput;
+            // Reverse lookup: find which project owns this workspace path
+            const project = appState.findProjectForWorkspace(wsPath);
+            if (!project) return {};
+            const workspaceName = extractWorkspaceName(wsPath);
+            return { projectPath: project.path, workspaceName: workspaceName as WorkspaceName };
           },
         },
       },
     },
   };
 
-  const deleteResolveWorkspaceModule: IntentModule = {
+  const deleteResolveProjectModule: IntentModule = {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { projectPath } = ctx as ResolveWorkspaceHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const project = appState.getProject(projectPath);
-            if (!project) return {};
-            const workspace = project.workspaces.find(
-              (w) => extractWorkspaceName(w.path) === payload.workspaceName
-            );
-            return workspace ? { workspacePath: workspace.path } : {};
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
+            const projectId = generateProjectId(projectPath);
+            return { projectId };
           },
         },
       },
@@ -669,36 +659,34 @@ function createTestHarness(options?: {
     },
   };
 
-  // Switch modules: resolve-project, resolve-workspace, activate
-  const switchResolveProjectModule: IntentModule = {
+  // Switch modules: resolve, resolve-project, activate
+  const switchResolveModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
-            const { payload } = ctx.intent as SwitchWorkspaceIntent;
-            if (isAutoSwitch(payload)) return {};
-            const allProjects = await appState.getAllProjects();
-            const project = allProjects.find(
-              (p) => generateProjectId(p.path) === payload.projectId
-            );
-            return project ? { projectPath: project.path, projectName: project.name } : {};
+        resolve: {
+          handler: async (ctx: HookContext): Promise<SwitchResolveHookResult> => {
+            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+            // Reverse lookup: find which project owns this workspace path
+            const project = appState.findProjectForWorkspace(wsPath);
+            if (!project) return {};
+            const workspaceName = extractWorkspaceName(wsPath);
+            return { projectPath: project.path, workspaceName: workspaceName as WorkspaceName };
           },
         },
       },
     },
   };
-  const switchResolveWorkspaceModule: IntentModule = {
+  const switchResolveProjectModule: IntentModule = {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<SwitchResolveWorkspaceHookResult> => {
-            const { projectPath, workspaceName } = ctx as SwitchResolveWorkspaceHookInput;
-            const project = appState.getProject(projectPath);
-            if (!project) return {};
-            const ws = project.workspaces.find(
-              (w) => extractWorkspaceName(w.path) === workspaceName
-            );
-            return ws ? { workspacePath: ws.path } : {};
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
+            const { projectPath } = ctx as SwitchResolveProjectHookInput;
+            const allProjects = await appState.getAllProjects();
+            const project = allProjects.find((p) => p.path === projectPath);
+            return project
+              ? { projectId: generateProjectId(project.path), projectName: project.name }
+              : {};
           },
         },
       },
@@ -763,8 +751,8 @@ function createTestHarness(options?: {
   wireModules(
     [
       idempotencyModule,
+      deleteResolveModule,
       deleteResolveProjectModule,
-      deleteResolveWorkspaceModule,
       deleteViewModule,
       deleteAgentModule,
       deleteWindowsLockModule,
@@ -772,8 +760,8 @@ function createTestHarness(options?: {
       deleteCodeServerModule,
       deleteStateModule,
       deleteIpcBridge,
+      switchResolveModule,
       switchResolveProjectModule,
-      switchResolveWorkspaceModule,
       switchViewModule,
       switchFindCandidatesModule,
     ],
@@ -879,7 +867,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Manually mark workspace as in-progress (simulate concurrent dispatch)
-    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -896,7 +884,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace as in-progress
-    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     const forceIntent = buildDeleteIntent({ force: true });
     const result = await harness.dispatcher.dispatch(forceIntent);
@@ -918,7 +906,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     await harness.dispatcher.dispatch(intent);
 
     // After completion, the in-progress flag should be cleared
-    expect(harness.inProgressDeletions.has(`${PROJECT_ID}/${WORKSPACE_NAME}`)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
 
     // Should be able to dispatch again (e.g., for a new workspace with same path)
     // Reset state for second dispatch
@@ -936,11 +924,10 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace A as in-progress
-    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     // Dispatch delete for workspace B -- should NOT be blocked
     const intentB = buildDeleteIntent({
-      workspaceName: WORKSPACE_NAME_B,
       workspacePath: WORKSPACE_PATH_B,
     });
 
@@ -1428,7 +1415,7 @@ describe("DeleteWorkspaceOperation.ipcHandler", () => {
     const harness = createTestHarness();
 
     // Simulate interceptor blocking by pre-adding to in-progress
-    harness.inProgressDeletions.add(`${PROJECT_ID}/${WORKSPACE_NAME}`);
+    harness.inProgressDeletions.add(WORKSPACE_PATH);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -1525,32 +1512,28 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     expect(finalProgress.workspacePath).toBe(WORKSPACE_PATH);
   });
 
-  it("test 21: resolve hooks fall back to payload when project not found", async () => {
+  it("test 21: throws when resolve hook cannot find workspace", async () => {
     // Create harness with no projects (resolve hooks return empty)
     const harness = createTestHarness({
       initialProjects: [],
     });
 
-    // Provide explicit paths in payload (the fallback path)
     const intent = buildDeleteIntent();
 
-    const result = await harness.dispatcher.dispatch(intent);
-    expect(result).toEqual({ started: true });
-
-    // Pipeline still runs with payload values as fallback
-    // Server stopped (shutdown hook runs)
-    expect(harness.testState.serverStopped).toBe(true);
+    // Resolve hook returns empty -> operation throws because projectPath is missing
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
+      "resolve hook did not provide projectPath"
+    );
   });
 
-  it("test 27: deletion succeeds without paths in payload (resolve hooks provide them)", async () => {
+  it("test 27: deletion succeeds with only workspacePath in payload (resolve hooks provide identity)", async () => {
     const harness = createTestHarness();
 
-    // Build intent without paths (simulates bridge handler after refactor)
+    // Build intent with only workspacePath (the new payload format)
     const intent: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        projectId: PROJECT_ID,
-        workspaceName: WORKSPACE_NAME,
+        workspacePath: WORKSPACE_PATH,
         keepBranch: true,
         force: false,
         removeWorktree: true,
@@ -1560,7 +1543,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     const result = await harness.dispatcher.dispatch(intent);
     expect(result).toEqual({ started: true });
 
-    // Resolve hooks populated paths from appState, pipeline ran successfully
+    // Resolve hooks populated identity from appState, pipeline ran successfully
     expect(harness.testState.worktreeRemoved).toBe(true);
     expect(harness.testState.removedWorkspaces).toContainEqual({
       projectPath: PROJECT_PATH,
@@ -1572,8 +1555,8 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     expect(finalProgress.workspacePath).toBe(WORKSPACE_PATH);
   });
 
-  it("test 28: throws when resolve hooks return nothing and payload has no paths", async () => {
-    // No projects to resolve from, and no paths in payload
+  it("test 28: throws when resolve hooks return nothing for unknown workspace path", async () => {
+    // No projects to resolve from
     const harness = createTestHarness({
       initialProjects: [],
     });
@@ -1581,18 +1564,16 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     const intent: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        projectId: PROJECT_ID,
-        workspaceName: WORKSPACE_NAME,
+        workspacePath: "/unknown/workspace",
         keepBranch: true,
         force: false,
         removeWorktree: true,
       },
     };
 
-    // Force mode: operation should still emit event (with empty paths)
-    // Normal mode: operation should throw
+    // Normal mode: operation should throw when resolve returns empty
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      "resolve-project hook did not provide projectPath"
+      "resolve hook did not provide projectPath"
     );
   });
 });

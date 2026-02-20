@@ -273,15 +273,9 @@ describe("MainView component", () => {
       render(MainView);
 
       await waitFor(() => {
-        // Should call getStatus for each workspace
-        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith(
-          "test-project-12345678",
-          "feature"
-        );
-        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith(
-          "test-project-12345678",
-          "bugfix"
-        );
+        // Should call getStatus for each workspace (using workspacePath)
+        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("/test/.worktrees/feature");
+        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("/test/.worktrees/bugfix");
       });
     });
 
@@ -436,21 +430,19 @@ describe("MainView component", () => {
       ];
       mockApi.projects.list.mockResolvedValue(mockProjects);
 
-      // Mock getStatus to return different statuses per workspace
-      mockApi.workspaces.getStatus.mockImplementation(
-        async (_projectId: string, workspaceName: string) => {
-          if (workspaceName === "feature") {
-            return {
-              isDirty: false,
-              agent: { type: "busy", counts: { idle: 0, busy: 2, total: 2 } },
-            };
-          }
+      // Mock getStatus to return different statuses per workspace (uses workspacePath)
+      mockApi.workspaces.getStatus.mockImplementation(async (workspacePath: string) => {
+        if (workspacePath === "/test/.worktrees/feature") {
           return {
             isDirty: false,
-            agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
+            agent: { type: "busy", counts: { idle: 0, busy: 2, total: 2 } },
           };
         }
-      );
+        return {
+          isDirty: false,
+          agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
+        };
+      });
 
       render(MainView);
 
@@ -1137,10 +1129,9 @@ describe("MainView component", () => {
 
       // Should have called workspaces.remove with stored values
       await waitFor(() => {
-        expect(mockApi.workspaces.remove).toHaveBeenCalledWith("test-project-12345678", "feature", {
+        expect(mockApi.workspaces.remove).toHaveBeenCalledWith("/test/.worktrees/feature", {
           keepBranch: false, // from the stored progress
           skipSwitch: true, // retry keeps user on this workspace
-          workspacePath: "/test/.worktrees/feature", // for retry/dismiss signaling
         });
       });
     });
@@ -1199,9 +1190,8 @@ describe("MainView component", () => {
 
       // remove with force should be called to close the workspace
       await waitFor(() => {
-        expect(mockApi.workspaces.remove).toHaveBeenCalledWith("test-project-12345678", "feature", {
+        expect(mockApi.workspaces.remove).toHaveBeenCalledWith("/test/.worktrees/feature", {
           force: true,
-          workspacePath: "/test/.worktrees/feature", // for retry/dismiss signaling
         });
       });
 

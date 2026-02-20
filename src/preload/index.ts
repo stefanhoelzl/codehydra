@@ -47,42 +47,35 @@ contextBridge.exposeInMainWorld("api", {
     create: (projectId: string, name: string, base: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_CREATE, { projectId, name, base }),
     remove: (
-      projectId: string,
-      workspaceName: string,
+      workspacePath: string,
       options?: {
         keepBranch?: boolean;
         skipSwitch?: boolean;
         force?: boolean;
-        workspacePath?: string;
       }
     ): Promise<{ started: boolean }> =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_REMOVE, {
-        projectId,
-        workspaceName,
+        workspacePath,
         ...options,
       }),
-    getStatus: (projectId: string, workspaceName: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, { projectId, workspaceName }),
-    getAgentSession: (projectId: string, workspaceName: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION, {
-        projectId,
-        workspaceName,
-      }),
-    setMetadata: (projectId: string, workspaceName: string, key: string, value: string | null) =>
+    getStatus: (workspacePath: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, { workspacePath }),
+    getAgentSession: (workspacePath: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION, { workspacePath }),
+    setMetadata: (workspacePath: string, key: string, value: string | null) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_SET_METADATA, {
-        projectId,
-        workspaceName,
+        workspacePath,
         key,
         value,
       }),
-    getMetadata: (projectId: string, workspaceName: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_METADATA, { projectId, workspaceName }),
+    getMetadata: (workspacePath: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_METADATA, { workspacePath }),
   },
   ui: {
     selectFolder: () => ipcRenderer.invoke(ApiIpcChannels.UI_SELECT_FOLDER),
     getActiveWorkspace: () => ipcRenderer.invoke(ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE),
-    switchWorkspace: (projectId: string, workspaceName: string, focus?: boolean) =>
-      ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { projectId, workspaceName, focus }),
+    switchWorkspace: (workspacePath: string, focus?: boolean) =>
+      ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { workspacePath, focus }),
     setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),
   },
   lifecycle: {

@@ -16,10 +16,9 @@ import {
   waitForConnect,
   type TestClientSocket,
 } from "./plugin-server.test-utils";
-import { wirePluginApi, type PluginApiRegistry } from "../../main/api/wire-plugin-api";
+import { wirePluginApi } from "../../main/api/wire-plugin-api";
 import type { ICodeHydraApi } from "../../shared/api/interfaces";
 import type { WorkspaceStatus } from "../../shared/api/types";
-import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 import type { PluginConfig } from "../../shared/plugin-protocol";
 
 // Longer timeout for integration tests
@@ -166,7 +165,6 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
   let port: number;
   let clients: TestClientSocket[] = [];
   let mockApi: ICodeHydraApi;
-  let pluginApiRegistry: PluginApiRegistry;
 
   beforeEach(async () => {
     networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
@@ -193,16 +191,7 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
     };
 
     // Wire up the plugin API
-    pluginApiRegistry = wirePluginApi(server, mockApi, SILENT_LOGGER);
-
-    // Register known workspaces
-    const projectPath = "/projects/myproject";
-    const workspacePath = "/projects/myproject/workspaces/test";
-    pluginApiRegistry.registerWorkspace(
-      workspacePath,
-      generateProjectId(projectPath),
-      extractWorkspaceName(workspacePath)
-    );
+    wirePluginApi(server, mockApi, SILENT_LOGGER);
   });
 
   afterEach(async () => {
@@ -249,7 +238,10 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
       expect(mockApi.workspaces.getStatus).toHaveBeenCalled();
     });
 
-    it("returns error when workspace not found", async () => {
+    it("returns error when API throws for unknown workspace", async () => {
+      // API now receives workspacePath directly; it throws for unknown workspaces
+      vi.mocked(mockApi.workspaces.getStatus).mockRejectedValue(new Error("Workspace not found"));
+
       const client = createClient("/unknown/workspace");
       await waitForConnect(client);
 
@@ -263,7 +255,7 @@ describe("wirePluginApi (integration)", { timeout: TEST_TIMEOUT }, () => {
             }
           });
         })
-      ).rejects.toThrow();
+      ).rejects.toThrow("Workspace not found");
     });
   });
 

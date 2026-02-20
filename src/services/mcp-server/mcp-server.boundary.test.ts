@@ -11,7 +11,6 @@ import type { ICoreApi } from "../../shared/api/interfaces";
 import { createMockLogger } from "../logging";
 import { createMockCoreApi } from "../test-utils";
 import { delay } from "@shared/test-fixtures";
-import { generateProjectId, extractWorkspaceName } from "../../shared/api/id-utils";
 
 /**
  * Find a free port for testing.
@@ -39,7 +38,6 @@ describe("McpServer Boundary Tests", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
   const testWorkspacePath = "/home/user/projects/my-app/.worktrees/feature-branch";
-  const testProjectPath = "/home/user/projects/my-app";
 
   beforeEach(async () => {
     port = await findFreePort();
@@ -47,11 +45,6 @@ describe("McpServer Boundary Tests", () => {
     logger = createMockLogger();
 
     server = new McpServer(mockApi, createDefaultMcpServer, logger);
-    server.registerWorkspace({
-      projectId: generateProjectId(testProjectPath),
-      workspaceName: extractWorkspaceName(testWorkspacePath),
-      workspacePath: testWorkspacePath,
-    });
     await server.start(port);
   });
 

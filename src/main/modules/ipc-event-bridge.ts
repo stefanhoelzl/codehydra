@@ -20,7 +20,7 @@ import type { StartHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { wireApiEvents } from "../ipc/api-handlers";
-import { wirePluginApi, type PluginApiRegistry } from "../api/wire-plugin-api";
+import { wirePluginApi } from "../api/wire-plugin-api";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations/set-metadata";
 import { EVENT_METADATA_CHANGED } from "../operations/set-metadata";
 import type { ModeChangedPayload, ModeChangedEvent } from "../operations/set-mode";
@@ -66,7 +66,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
 
   // Closure state for lifecycle management
   let apiEventCleanupFn: Unsubscribe | null = null;
-  let pluginApiRegistry: PluginApiRegistry | null = null;
 
   const events: EventDeclarations = {
     [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
@@ -99,7 +98,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         ...(p.initialPrompt && { hasInitialPrompt: true }),
         ...(p.keepInBackground && { keepInBackground: true }),
       });
-      pluginApiRegistry?.registerWorkspace(p.workspacePath, p.projectId, p.workspaceName);
     },
     [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
       const payload = (event as WorkspaceDeletedEvent).payload;
@@ -108,7 +106,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         workspaceName: payload.workspaceName,
         path: payload.workspacePath,
       });
-      pluginApiRegistry?.unregisterWorkspace(payload.workspacePath);
     },
     [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
       const p = (event as ProjectOpenedEvent).payload;
@@ -189,7 +186,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
             const api = deps.getApi();
             apiEventCleanupFn = wireApiEvents(api, deps.getUIWebContents);
             if (deps.pluginServer) {
-              pluginApiRegistry = wirePluginApi(deps.pluginServer, api, deps.logger);
+              wirePluginApi(deps.pluginServer, api, deps.logger);
             }
             return {};
           },
@@ -203,7 +200,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
                 apiEventCleanupFn();
                 apiEventCleanupFn = null;
               }
-              pluginApiRegistry = null;
             } catch (error) {
               deps.logger.error(
                 "IpcBridge lifecycle shutdown failed (non-fatal)",

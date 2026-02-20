@@ -16,17 +16,15 @@ import { wireModules } from "../intents/infrastructure/wire";
 import { SetMetadataOperation, INTENT_SET_METADATA } from "../operations/set-metadata";
 import type {
   SetMetadataIntent,
+  ResolveHookResult as SetResolveHookResult,
   ResolveProjectHookResult as SetResolveProjectHookResult,
-  ResolveWorkspaceHookResult as SetResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput as SetResolveWorkspaceHookInput,
+  ResolveProjectHookInput as SetResolveProjectHookInput,
 } from "../operations/set-metadata";
 import { SET_METADATA_OPERATION_ID } from "../operations/set-metadata";
 import { GetMetadataOperation, INTENT_GET_METADATA } from "../operations/get-metadata";
 import type {
   GetMetadataIntent,
-  ResolveProjectHookResult as GetResolveProjectHookResult,
-  ResolveWorkspaceHookResult as GetResolveWorkspaceHookResult,
-  ResolveWorkspaceHookInput as GetResolveWorkspaceHookInput,
+  ResolveHookResult as GetResolveHookResult,
 } from "../operations/get-metadata";
 import { GET_METADATA_OPERATION_ID } from "../operations/get-metadata";
 import { createMetadataModule } from "./metadata-module";
@@ -56,6 +54,7 @@ interface TestSetup {
   mockClient: ReturnType<typeof createMockGitClient>;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
+  workspacePath: string;
 }
 
 function createTestSetup(): TestSetup {
@@ -96,26 +95,26 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
 
-  // resolve-project stub
-  const resolveProjectModule: IntentModule = {
+  // resolve stub: validates workspacePath → returns projectPath + workspaceName
+  const resolveModule: IntentModule = {
     hooks: {
       [SET_METADATA_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SetResolveProjectHookResult> => {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<SetResolveHookResult> => {
             const intent = ctx.intent as SetMetadataIntent;
-            if (intent.payload.projectId === projectId) {
-              return { projectPath: PROJECT_ROOT.toString() };
+            if (intent.payload.workspacePath === workspacePath.toString()) {
+              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
             }
             return {};
           },
         },
       },
       [GET_METADATA_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<GetResolveProjectHookResult> => {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<GetResolveHookResult> => {
             const intent = ctx.intent as GetMetadataIntent;
-            if (intent.payload.projectId === projectId) {
-              return { projectPath: PROJECT_ROOT.toString() };
+            if (intent.payload.workspacePath === workspacePath.toString()) {
+              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
             }
             return {};
           },
@@ -124,26 +123,15 @@ function createTestSetup(): TestSetup {
     },
   };
 
-  // resolve-workspace stub
-  const resolveWorkspaceModule: IntentModule = {
+  // resolve-project stub: resolves projectPath → projectId (for set-metadata commands)
+  const resolveProjectModule: IntentModule = {
     hooks: {
       [SET_METADATA_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<SetResolveWorkspaceHookResult> => {
-            const { workspaceName: name } = ctx as SetResolveWorkspaceHookInput;
-            if (name === workspaceName) {
-              return { workspacePath: workspacePath.toString() };
-            }
-            return {};
-          },
-        },
-      },
-      [GET_METADATA_OPERATION_ID]: {
-        "resolve-workspace": {
-          handler: async (ctx: HookContext): Promise<GetResolveWorkspaceHookResult> => {
-            const { workspaceName: name } = ctx as GetResolveWorkspaceHookInput;
-            if (name === workspaceName) {
-              return { workspacePath: workspacePath.toString() };
+        "resolve-project": {
+          handler: async (ctx: HookContext): Promise<SetResolveProjectHookResult> => {
+            const { projectPath } = ctx as SetResolveProjectHookInput;
+            if (projectPath === PROJECT_ROOT.toString()) {
+              return { projectId };
             }
             return {};
           },
@@ -155,13 +143,15 @@ function createTestSetup(): TestSetup {
   // Module under test
   const metadataModule = createMetadataModule({ globalProvider });
 
-  wireModules(
-    [resolveProjectModule, resolveWorkspaceModule, metadataModule],
-    hookRegistry,
-    dispatcher
-  );
+  wireModules([resolveModule, resolveProjectModule, metadataModule], hookRegistry, dispatcher);
 
-  return { dispatcher, mockClient, projectId, workspaceName };
+  return {
+    dispatcher,
+    mockClient,
+    projectId,
+    workspaceName,
+    workspacePath: workspacePath.toString(),
+  };
 }
 
 // =============================================================================
@@ -170,17 +160,17 @@ function createTestSetup(): TestSetup {
 
 describe("MetadataModule Integration", () => {
   it("set then get returns correct metadata (round-trip)", async () => {
-    const { dispatcher, projectId, workspaceName } = createTestSetup();
+    const { dispatcher, workspacePath } = createTestSetup();
 
     const setIntent: SetMetadataIntent = {
       type: INTENT_SET_METADATA,
-      payload: { projectId, workspaceName, key: "description", value: "my workspace" },
+      payload: { workspacePath, key: "description", value: "my workspace" },
     };
     await dispatcher.dispatch(setIntent);
 
     const getIntent: GetMetadataIntent = {
       type: INTENT_GET_METADATA,
-      payload: { projectId, workspaceName },
+      payload: { workspacePath },
     };
     const metadata = await dispatcher.dispatch(getIntent);
 
@@ -188,24 +178,24 @@ describe("MetadataModule Integration", () => {
   });
 
   it("set with null value deletes key", async () => {
-    const { dispatcher, projectId, workspaceName } = createTestSetup();
+    const { dispatcher, workspacePath } = createTestSetup();
 
     // Set a value first
     await dispatcher.dispatch({
       type: INTENT_SET_METADATA,
-      payload: { projectId, workspaceName, key: "description", value: "to be deleted" },
+      payload: { workspacePath, key: "description", value: "to be deleted" },
     } satisfies SetMetadataIntent);
 
     // Delete it
     await dispatcher.dispatch({
       type: INTENT_SET_METADATA,
-      payload: { projectId, workspaceName, key: "description", value: null },
+      payload: { workspacePath, key: "description", value: null },
     } satisfies SetMetadataIntent);
 
     // Get should not contain the deleted key
     const metadata = await dispatcher.dispatch({
       type: INTENT_GET_METADATA,
-      payload: { projectId, workspaceName },
+      payload: { workspacePath },
     } satisfies GetMetadataIntent);
 
     expect(metadata).not.toHaveProperty("description");

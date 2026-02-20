@@ -57,79 +57,55 @@ describe("IProjectApi Interface", () => {
 describe("IWorkspaceApi Interface", () => {
   it("should have correct method signatures", () => {
     const api: IWorkspaceApi = {
-      async create(projectId: ProjectId, name: string, base: string): Promise<Workspace> {
+      async create(
+        projectId: ProjectId | undefined,
+        name: string,
+        base: string
+      ): Promise<Workspace> {
         void projectId;
         void name;
         void base;
         throw new Error("mock");
       },
       async remove(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName,
+        workspacePath: string,
         options?: {
           keepBranch?: boolean;
           skipSwitch?: boolean;
           force?: boolean;
-          unblock?: "kill" | "close" | "ignore";
-          isRetry?: boolean;
         }
       ): Promise<{ started: boolean }> {
-        void projectId;
-        void workspaceName;
+        void workspacePath;
         void options;
         return { started: true };
       },
-      async getStatus(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName
-      ): Promise<WorkspaceStatus> {
-        void projectId;
-        void workspaceName;
+      async getStatus(workspacePath: string): Promise<WorkspaceStatus> {
+        void workspacePath;
         return { isDirty: false, agent: { type: "none" } };
       },
-      async setMetadata(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName,
-        key: string,
-        value: string | null
-      ): Promise<void> {
-        void projectId;
-        void workspaceName;
+      async setMetadata(workspacePath: string, key: string, value: string | null): Promise<void> {
+        void workspacePath;
         void key;
         void value;
       },
-      async getMetadata(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName
-      ): Promise<Readonly<Record<string, string>>> {
-        void projectId;
-        void workspaceName;
+      async getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>> {
+        void workspacePath;
         return { base: "main" };
       },
-      async getAgentSession(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName
-      ): Promise<AgentSession | null> {
-        void projectId;
-        void workspaceName;
+      async getAgentSession(workspacePath: string): Promise<AgentSession | null> {
+        void workspacePath;
         return null;
       },
-      async restartAgentServer(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName
-      ): Promise<number> {
-        void projectId;
-        void workspaceName;
+      async restartAgentServer(workspacePath: string): Promise<number> {
+        void workspacePath;
         return 14001;
       },
       async executeCommand(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName,
+        workspacePath: string,
         command: string,
         args?: readonly unknown[]
       ): Promise<unknown> {
-        void projectId;
-        void workspaceName;
+        void workspacePath;
         void command;
         void args;
         return undefined;
@@ -157,13 +133,8 @@ describe("IUiApi Interface", () => {
       async getActiveWorkspace(): Promise<WorkspaceRef | null> {
         return null;
       },
-      async switchWorkspace(
-        projectId: ProjectId,
-        workspaceName: WorkspaceName,
-        focus?: boolean
-      ): Promise<void> {
-        void projectId;
-        void workspaceName;
+      async switchWorkspace(workspacePath: string, focus?: boolean): Promise<void> {
+        void workspacePath;
         void focus;
       },
       async setMode(mode: UIMode): Promise<void> {

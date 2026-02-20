@@ -120,7 +120,7 @@ describe("RemoveWorkspaceDialog component", () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      expect(workspaces.getStatus).toHaveBeenCalledWith(testProjectId, testWorkspaceName);
+      expect(workspaces.getStatus).toHaveBeenCalledWith(testWorkspaceRef.path);
     });
 
     it("shows spinner while checking dirty status", async () => {
@@ -213,7 +213,7 @@ describe("RemoveWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
 
       // API uses keepBranch (inverted from old deleteBranch)
-      expect(workspaces.remove).toHaveBeenCalledWith(testProjectId, testWorkspaceName, {
+      expect(workspaces.remove).toHaveBeenCalledWith(testWorkspaceRef.path, {
         keepBranch: false,
       });
     });
@@ -234,7 +234,7 @@ describe("RemoveWorkspaceDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(workspaces.remove).toHaveBeenCalledWith(testProjectId, testWorkspaceName, {
+      expect(workspaces.remove).toHaveBeenCalledWith(testWorkspaceRef.path, {
         keepBranch: true,
       });
     });

@@ -41,45 +41,31 @@ import {
 } from "../operations/close-project";
 import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
 import {
-  GET_WORKSPACE_STATUS_OPERATION_ID,
-  type ResolveProjectHookResult as GetStatusResolveProjectHookResult,
-} from "../operations/get-workspace-status";
-import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
-import {
-  SET_METADATA_OPERATION_ID,
-  type ResolveProjectHookResult as SetMetadataResolveProjectHookResult,
-} from "../operations/set-metadata";
-import type { SetMetadataIntent } from "../operations/set-metadata";
-import {
-  GET_METADATA_OPERATION_ID,
-  type ResolveProjectHookResult as GetMetadataResolveProjectHookResult,
-} from "../operations/get-metadata";
-import type { GetMetadataIntent } from "../operations/get-metadata";
-import {
   SWITCH_WORKSPACE_OPERATION_ID,
-  isAutoSwitch,
-  type SwitchWorkspaceIntent,
-  type ResolveProjectHookResult,
+  type ResolveProjectHookInput as SwitchWorkspaceResolveProjectInput,
+  type ResolveProjectHookResult as SwitchWorkspaceResolveProjectResult,
 } from "../operations/switch-workspace";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   type OpenWorkspaceIntent,
   type ResolveProjectHookResult as OpenWorkspaceResolveProjectHookResult,
+  type ResolveCallerProjectHookInput,
+  type ResolveCallerProjectHookResult,
 } from "../operations/open-workspace";
 import {
-  GET_AGENT_SESSION_OPERATION_ID,
-  type GetAgentSessionIntent,
-  type ResolveProjectHookResult as GetAgentSessionResolveProjectHookResult,
-} from "../operations/get-agent-session";
+  SET_METADATA_OPERATION_ID,
+  type ResolveProjectHookInput as SetMetadataResolveProjectInput,
+  type ResolveProjectHookResult as SetMetadataResolveProjectResult,
+} from "../operations/set-metadata";
 import {
   RESTART_AGENT_OPERATION_ID,
-  type RestartAgentIntent,
-  type ResolveProjectHookResult as RestartAgentResolveProjectHookResult,
+  type ResolveProjectHookInput as RestartAgentResolveProjectInput,
+  type ResolveProjectHookResult as RestartAgentResolveProjectResult,
 } from "../operations/restart-agent";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
-  type DeleteWorkspaceIntent,
-  type ResolveProjectHookResult as DeleteWorkspaceResolveProjectHookResult,
+  type ResolveProjectHookInput as DeleteWorkspaceResolveProjectInput,
+  type ResolveProjectHookResult as DeleteWorkspaceResolveProjectResult,
 } from "../operations/delete-workspace";
 import {
   UPDATE_AGENT_STATUS_OPERATION_ID,
@@ -302,6 +288,19 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
   /** Internal state: all projects keyed by normalized path string. */
   const projects = new Map<string, LocalProject>();
 
+  /**
+   * Shared helper: resolve projectPath → projectId by matching against internal state.
+   */
+  function resolveProjectIdFromPath(projectPath: string): ProjectId | undefined {
+    const normalizedKey = new Path(projectPath).toString();
+    for (const project of projects.values()) {
+      if (project.path.toString() === normalizedKey) {
+        return project.id;
+      }
+    }
+    return undefined;
+  }
+
   return {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
@@ -418,19 +417,20 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [SWITCH_WORKSPACE_OPERATION_ID]: {
+        // resolve-project: resolve projectPath → projectId + projectName (for domain events)
         "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { payload } = ctx.intent as SwitchWorkspaceIntent;
-            if (isAutoSwitch(payload)) return {};
-            const { projectId } = payload;
+          handler: async (ctx: HookContext): Promise<SwitchWorkspaceResolveProjectResult> => {
+            const { projectPath } = ctx as SwitchWorkspaceResolveProjectInput;
+            const projectId = resolveProjectIdFromPath(projectPath);
+            if (!projectId) return {};
 
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString(), projectName: project.name };
-              }
-            }
-
-            return {};
+            // Also return projectName from state
+            const normalizedKey = new Path(projectPath).toString();
+            const project = projects.get(normalizedKey);
+            return {
+              projectId,
+              ...(project ? { projectName: project.name } : {}),
+            };
           },
         },
       },
@@ -445,54 +445,24 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         },
       },
 
-      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        // resolve-project: look up projectId in internal state
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<GetStatusResolveProjectHookResult> => {
-            const intent = ctx.intent as GetWorkspaceStatusIntent;
-            const { projectId } = intent.payload;
-
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
-              }
-            }
-
-            return {};
-          },
-        },
-      },
-
       [SET_METADATA_OPERATION_ID]: {
+        // resolve-project: resolve projectPath → projectId (for domain events)
         "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SetMetadataResolveProjectHookResult> => {
-            const intent = ctx.intent as SetMetadataIntent;
-            const { projectId } = intent.payload;
-
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
-              }
-            }
-
-            return {};
+          handler: async (ctx: HookContext): Promise<SetMetadataResolveProjectResult> => {
+            const { projectPath } = ctx as SetMetadataResolveProjectInput;
+            const projectId = resolveProjectIdFromPath(projectPath);
+            return projectId ? { projectId } : {};
           },
         },
       },
 
-      [GET_METADATA_OPERATION_ID]: {
+      [RESTART_AGENT_OPERATION_ID]: {
+        // resolve-project: resolve projectPath → projectId (for domain events)
         "resolve-project": {
-          handler: async (ctx: HookContext): Promise<GetMetadataResolveProjectHookResult> => {
-            const intent = ctx.intent as GetMetadataIntent;
-            const { projectId } = intent.payload;
-
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
-              }
-            }
-
-            return {};
+          handler: async (ctx: HookContext): Promise<RestartAgentResolveProjectResult> => {
+            const { projectPath } = ctx as RestartAgentResolveProjectInput;
+            const projectId = resolveProjectIdFromPath(projectPath);
+            return projectId ? { projectId } : {};
           },
         },
       },
@@ -520,55 +490,23 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             return {};
           },
         },
-      },
-
-      [GET_AGENT_SESSION_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<GetAgentSessionResolveProjectHookResult> => {
-            const intent = ctx.intent as GetAgentSessionIntent;
-            const { projectId } = intent.payload;
-
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
-              }
-            }
-
-            return {};
-          },
-        },
-      },
-
-      [RESTART_AGENT_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<RestartAgentResolveProjectHookResult> => {
-            const intent = ctx.intent as RestartAgentIntent;
-            const { projectId } = intent.payload;
-
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
-              }
-            }
-
-            return {};
+        // resolve-caller-project: resolve projectPath → projectId (for callerWorkspacePath flow)
+        "resolve-caller-project": {
+          handler: async (ctx: HookContext): Promise<ResolveCallerProjectHookResult> => {
+            const { projectPath } = ctx as ResolveCallerProjectHookInput;
+            const projectId = resolveProjectIdFromPath(projectPath);
+            return projectId ? { projectId } : {};
           },
         },
       },
 
       [DELETE_WORKSPACE_OPERATION_ID]: {
+        // resolve-project: resolve projectPath → projectId (for domain events)
         "resolve-project": {
-          handler: async (ctx: HookContext): Promise<DeleteWorkspaceResolveProjectHookResult> => {
-            const intent = ctx.intent as DeleteWorkspaceIntent;
-            const { projectId } = intent.payload;
-
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
-              }
-            }
-
-            return {};
+          handler: async (ctx: HookContext): Promise<DeleteWorkspaceResolveProjectResult> => {
+            const { projectPath } = ctx as DeleteWorkspaceResolveProjectInput;
+            const projectId = resolveProjectIdFromPath(projectPath);
+            return projectId ? { projectId } : {};
           },
         },
       },
@@ -577,15 +515,8 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<UpdateAgentStatusResolveProjectResult> => {
             const { projectPath } = ctx as UpdateAgentStatusResolveProjectInput;
-            const normalizedKey = new Path(projectPath).toString();
-
-            for (const project of projects.values()) {
-              if (project.path.toString() === normalizedKey) {
-                return { projectId: project.id };
-              }
-            }
-
-            return {};
+            const projectId = resolveProjectIdFromPath(projectPath);
+            return projectId ? { projectId } : {};
           },
         },
       },
