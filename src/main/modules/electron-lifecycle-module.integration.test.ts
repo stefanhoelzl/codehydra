@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Integration tests for ElectronReadyModule through the Dispatcher.
+ * Integration tests for ElectronLifecycleModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
  */
@@ -13,7 +13,9 @@ import type { Operation, OperationContext } from "../intents/infrastructure/oper
 import type { Intent } from "../intents/infrastructure/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
-import { createElectronReadyModule } from "./electron-ready-module";
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
+import type { AppShutdownIntent } from "../operations/app-shutdown";
+import { createElectronLifecycleModule } from "./electron-lifecycle-module";
 
 // =============================================================================
 // Minimal Test Operation
@@ -34,16 +36,16 @@ class MinimalAwaitReadyOperation implements Operation<Intent, void> {
 // Tests
 // =============================================================================
 
-describe("ElectronReadyModule Integration", () => {
+describe("ElectronLifecycleModule Integration", () => {
   it("calls whenReady during await-ready hook", async () => {
-    const whenReady = vi.fn().mockResolvedValue(undefined);
+    const mockApp = { whenReady: vi.fn().mockResolvedValue(undefined), quit: vi.fn() };
 
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAwaitReadyOperation());
 
-    const module = createElectronReadyModule({ whenReady });
+    const module = createElectronLifecycleModule({ app: mockApp });
     dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
@@ -51,18 +53,21 @@ describe("ElectronReadyModule Integration", () => {
       payload: {},
     } as AppStartIntent);
 
-    expect(whenReady).toHaveBeenCalledOnce();
+    expect(mockApp.whenReady).toHaveBeenCalledOnce();
   });
 
   it("propagates whenReady rejection", async () => {
-    const whenReady = vi.fn().mockRejectedValue(new Error("app failed to initialize"));
+    const mockApp = {
+      whenReady: vi.fn().mockRejectedValue(new Error("app failed to initialize")),
+      quit: vi.fn(),
+    };
 
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAwaitReadyOperation());
 
-    const module = createElectronReadyModule({ whenReady });
+    const module = createElectronLifecycleModule({ app: mockApp });
     dispatcher.registerModule(module);
 
     await expect(
@@ -71,5 +76,24 @@ describe("ElectronReadyModule Integration", () => {
         payload: {},
       } as AppStartIntent)
     ).rejects.toThrow("app failed to initialize");
+  });
+
+  it("calls app.quit() when dispatching app:shutdown", async () => {
+    const mockApp = { whenReady: vi.fn().mockResolvedValue(undefined), quit: vi.fn() };
+
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+    const module = createElectronLifecycleModule({ app: mockApp });
+    dispatcher.registerModule(module);
+
+    await dispatcher.dispatch({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    } as AppShutdownIntent);
+
+    expect(mockApp.quit).toHaveBeenCalledOnce();
   });
 });

@@ -10,7 +10,7 @@
  * 5. Service construction
  * 6. Manager construction (two-phase: constructor only, no Electron resources)
  * 7. Intent modules (existing extracted modules)
- * 8. New modules (electron-ready, logging, script, quit, retry)
+ * 8. New modules (electron-lifecycle, logging, script, retry, lifecycle-ready)
  * 9. ApiRegistry + Operation registration + IPC event bridge
  * 10. Wire all modules + get API interface
  * 11. Cleanup + dispatch app:start
@@ -98,10 +98,9 @@ import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createBadgeModule } from "./modules/badge-module";
 import { createMcpModule } from "./modules/mcp-module";
-import { createElectronReadyModule } from "./modules/electron-ready-module";
+import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
-import { createQuitModule } from "./modules/quit-module";
 import { createRetryModule } from "./modules/retry-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
@@ -486,9 +485,7 @@ const mcpModule = createMcpModule({
 
 // 8. New modules
 
-const electronReadyModule = createElectronReadyModule({
-  whenReady: () => app.whenReady(),
-});
+const electronLifecycleModule = createElectronLifecycleModule({ app });
 
 const loggingModule = createLoggingModule({
   loggingService,
@@ -499,8 +496,6 @@ const scriptModule = createScriptModule({
   fileSystem: fileSystemLayer,
   pathProvider,
 });
-
-const quitModule = createQuitModule({ app });
 
 const retryModule = createRetryModule({ ipcLayer });
 
@@ -571,10 +566,9 @@ dispatcher.registerModule(windowTitleModule);
 dispatcher.registerModule(telemetryLifecycleModule);
 dispatcher.registerModule(autoUpdaterLifecycleModule);
 dispatcher.registerModule(mcpModule);
-dispatcher.registerModule(electronReadyModule);
+dispatcher.registerModule(electronLifecycleModule);
 dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
-dispatcher.registerModule(quitModule);
 dispatcher.registerModule(retryModule);
 dispatcher.registerModule(ipcEventBridge);
 
