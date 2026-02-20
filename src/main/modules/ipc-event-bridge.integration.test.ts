@@ -23,16 +23,24 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import {
   UpdateAgentStatusOperation,
-  UPDATE_AGENT_STATUS_OPERATION_ID,
   INTENT_UPDATE_AGENT_STATUS,
 } from "../operations/update-agent-status";
+import type { UpdateAgentStatusIntent } from "../operations/update-agent-status";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "../operations/resolve-workspace";
 import type {
-  UpdateAgentStatusIntent,
-  ResolveHookResult,
-  ResolveProjectHookResult,
-  ResolveHookInput,
-  ResolveProjectHookInput,
-} from "../operations/update-agent-status";
+  ResolveHookResult as ResolveWorkspaceHookResult,
+  ResolveHookInput as ResolveWorkspaceHookInput,
+} from "../operations/resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "../operations/resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "../operations/resolve-project";
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
@@ -177,19 +185,20 @@ const TEST_WORKSPACE_PATH = "/projects/test/workspaces/feature-branch";
 function createMockResolveModule(): IntentModule {
   return {
     hooks: {
-      [UPDATE_AGENT_STATUS_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            void (ctx as ResolveHookInput);
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            void (ctx as ResolveWorkspaceHookInput);
             return {
               projectPath: TEST_PROJECT_PATH,
               workspaceName: TEST_WORKSPACE_NAME,
             };
           },
         },
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            void (ctx as ResolveProjectHookInput);
+      },
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (): Promise<ResolveProjectHookResult> => {
             return { projectId: TEST_PROJECT_ID };
           },
         },
@@ -203,6 +212,8 @@ function createStatusTestSetup(): StatusTestSetup {
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   const mockApiRegistry = createMockApiRegistry();
   const ipcEventBridge = createIpcEventBridge({

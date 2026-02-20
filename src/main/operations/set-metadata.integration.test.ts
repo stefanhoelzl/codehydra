@@ -24,25 +24,28 @@ import {
   INTENT_SET_METADATA,
   EVENT_METADATA_CHANGED,
 } from "./set-metadata";
-import type {
-  SetMetadataIntent,
-  MetadataChangedEvent,
-  ResolveHookResult as SetResolveHookResult,
-  ResolveProjectHookResult as SetResolveProjectHookResult,
-  ResolveProjectHookInput as SetResolveProjectHookInput,
-  SetHookInput,
-} from "./set-metadata";
+import type { SetMetadataIntent, MetadataChangedEvent, SetHookInput } from "./set-metadata";
 import {
   GetMetadataOperation,
   GET_METADATA_OPERATION_ID,
   INTENT_GET_METADATA,
 } from "./get-metadata";
+import type { GetMetadataHookResult, GetHookInput } from "./get-metadata";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "./resolve-project";
 import type {
-  GetMetadataIntent,
-  GetMetadataHookResult,
-  ResolveHookResult as GetResolveHookResult,
-  GetHookInput,
-} from "./get-metadata";
+  ResolveHookInput as ResolveProjectHookInput,
+  ResolveHookResult as ResolveProjectHookResult,
+} from "./resolve-project";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
@@ -137,25 +140,16 @@ function createTestSetup(): TestSetup {
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   // resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
     hooks: {
-      [SET_METADATA_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<SetResolveHookResult> => {
-            const intent = ctx.intent as SetMetadataIntent;
-            if (intent.payload.workspacePath === workspacePath.toString()) {
-              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
-            }
-            return {};
-          },
-        },
-      },
-      [GET_METADATA_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<GetResolveHookResult> => {
-            const intent = ctx.intent as GetMetadataIntent;
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const intent = ctx.intent as { payload: { workspacePath: string } };
             if (intent.payload.workspacePath === workspacePath.toString()) {
               return { projectPath: PROJECT_ROOT.toString(), workspaceName };
             }
@@ -166,13 +160,13 @@ function createTestSetup(): TestSetup {
     },
   };
 
-  // resolve-project module: resolves projectPath → projectId (for set-metadata commands)
+  // resolve-project module: resolves projectPath → projectId
   const resolveProjectModule: IntentModule = {
     hooks: {
-      [SET_METADATA_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SetResolveProjectHookResult> => {
-            const { projectPath } = ctx as SetResolveProjectHookInput;
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
             if (projectPath === PROJECT_ROOT.toString()) {
               return { projectId };
             }

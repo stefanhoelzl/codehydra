@@ -137,6 +137,11 @@ import {
   INTENT_UPDATE_AGENT_STATUS,
 } from "./operations/update-agent-status";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
+import {
+  ResolveWorkspaceOperation,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./operations/resolve-workspace";
+import { ResolveProjectOperation, INTENT_RESOLVE_PROJECT } from "./operations/resolve-project";
 import type { ICodeHydraApi } from "../shared/api/interfaces";
 import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
@@ -511,6 +516,8 @@ const registry = new ApiRegistry({
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
 dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());

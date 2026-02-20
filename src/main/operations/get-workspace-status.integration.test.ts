@@ -22,10 +22,15 @@ import {
 } from "./get-workspace-status";
 import type {
   GetWorkspaceStatusIntent,
-  ResolveHookResult,
   GetStatusHookResult,
   GetStatusHookInput,
 } from "./get-workspace-status";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult } from "./resolve-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -93,14 +98,15 @@ function createTestSetup(opts: {
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 
   // resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
     hooks: {
-      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const intent = ctx.intent as GetWorkspaceStatusIntent;
+            const intent = ctx.intent as { payload: { workspacePath: string } };
             if (intent.payload.workspacePath === WORKSPACE_PATH) {
               return { projectPath: PROJECT_ROOT, workspaceName };
             }

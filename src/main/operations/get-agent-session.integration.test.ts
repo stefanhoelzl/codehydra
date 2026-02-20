@@ -24,8 +24,13 @@ import type {
   GetAgentSessionIntent,
   GetAgentSessionHookInput,
   GetAgentSessionHookResult,
-  ResolveHookResult,
 } from "./get-agent-session";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult } from "./resolve-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -80,14 +85,15 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 
   // Resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
     hooks: {
-      [GET_AGENT_SESSION_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const intent = ctx.intent as GetAgentSessionIntent;
+            const intent = ctx.intent as { payload: { workspacePath: string } };
             if (intent.payload.workspacePath === WORKSPACE_PATH) {
               return { projectPath: PROJECT_ROOT, workspaceName };
             }

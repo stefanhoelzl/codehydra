@@ -67,11 +67,23 @@ import {
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
-  ResolveHookResult as SwitchResolveHookResult,
-  ResolveProjectHookInput as SwitchResolveProjectHookInput,
-  ResolveProjectHookResult as SwitchResolveProjectHookResult,
   ActivateHookInput,
 } from "./switch-workspace";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "./resolve-project";
+import type {
+  ResolveHookResult as SharedResolveProjectHookResult,
+  ResolveHookInput as SharedResolveProjectHookInput,
+} from "./resolve-project";
 
 // =============================================================================
 // Test Helpers
@@ -331,6 +343,8 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   // ---------------------------------------------------------------------------
   // Self-selecting resolve modules (local vs remote)
@@ -586,12 +600,12 @@ function createTestHarness(options?: {
     },
   };
 
-  // Switch modules: resolve, resolve-project, activate
+  // Resolve modules: workspace:resolve and project:resolve (shared across all operations)
   const switchResolveModule: IntentModule = {
     hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<SwitchResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
             const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
             // Reverse lookup: find which project owns this workspace path
             for (const project of projectState.registeredProjects) {
@@ -612,10 +626,10 @@ function createTestHarness(options?: {
   };
   const switchResolveProjectModule: IntentModule = {
     hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SwitchResolveProjectHookResult> => {
-            const { projectPath } = ctx as SwitchResolveProjectHookInput;
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<SharedResolveProjectHookResult> => {
+            const { projectPath } = ctx as SharedResolveProjectHookInput;
             const project = projectState.registeredProjects.find((p) => p.path === projectPath);
             return project
               ? { projectId: testProjectId(project.path), projectName: project.name }

@@ -30,17 +30,10 @@ import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
 } from "../operations/delete-workspace";
-import type {
-  DeleteHookResult,
-  ResolveHookInput as DeleteResolveInput,
-} from "../operations/delete-workspace";
-import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
+import type { DeleteHookResult } from "../operations/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
-import type {
-  GetStatusHookInput,
-  GetStatusHookResult,
-  ResolveHookResult as GetStatusResolveHookResult,
-} from "../operations/get-workspace-status";
+import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
+import { RESOLVE_WORKSPACE_OPERATION_ID } from "../operations/resolve-workspace";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
 import type { FetchBasesHookResult } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../../services/logging";
@@ -137,7 +130,7 @@ interface DeleteResult extends DeleteHookResult {
 }
 
 /**
- * Delete-workspace operation: runs "resolve-workspace" then "delete" hook points.
+ * Delete-workspace operation: dispatches workspace:resolve then runs "delete" hook point.
  */
 class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent, DeleteResult> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
@@ -145,16 +138,17 @@ class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<DeleteResult> {
     const { payload } = ctx.intent;
 
-    // resolve (workspacePath → projectPath + workspaceName, matching real operation)
-    const resolveInput: DeleteResolveInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results: resolveResults } = await ctx.hooks.collect<{
-      projectPath?: string;
-    }>("resolve", resolveInput);
-    const resolved = resolveResults[0];
-    const resolvedProjectPath = resolved?.projectPath ?? "";
+    // Dispatch workspace:resolve (matching real operation)
+    let resolvedProjectPath = "";
+    try {
+      const resolved = (await ctx.dispatch({
+        type: "workspace:resolve",
+        payload: { workspacePath: payload.workspacePath },
+      } as Intent)) as ResolveResult;
+      resolvedProjectPath = resolved.projectPath ?? "";
+    } catch {
+      // Workspace not found — continue with empty projectPath
+    }
 
     // delete (enriched with both paths, matching real operation's DeletePipelineHookInput)
     const deleteInput: DeletePipelineHookInput = {
@@ -180,14 +174,14 @@ interface ResolveResult {
 }
 
 /**
- * Resolve-workspace operation: runs "resolve" hook point via switch-workspace.
+ * Resolve-workspace operation: runs "resolve" hook point.
  *
- * Uses SWITCH_WORKSPACE_OPERATION_ID because the module registers its
+ * Uses RESOLVE_WORKSPACE_OPERATION_ID because the module registers its
  * resolve hook under that operation. Accepts workspacePath and reverse-looks
  * up projectPath + workspaceName.
  */
 class MinimalResolveWorkspaceOperation implements Operation<Intent, ResolveResult> {
-  readonly id = SWITCH_WORKSPACE_OPERATION_ID;
+  readonly id = RESOLVE_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<ResolveResult> {
     const payload = ctx.intent.payload as { workspacePath: string };
@@ -229,7 +223,7 @@ interface GetStatusResult {
 }
 
 /**
- * Get-workspace-status operation: runs "resolve" then "get" hook points.
+ * Get-workspace-status operation: dispatches workspace:resolve then runs "get" hook point.
  * Mirrors the real GetWorkspaceStatusOperation.
  */
 class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
@@ -238,20 +232,12 @@ class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
   async execute(ctx: OperationContext<Intent>): Promise<GetStatusResult> {
     const payload = ctx.intent.payload as { workspacePath: string };
 
-    // resolve (workspacePath → projectPath + workspaceName)
-    const resolveInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results: resolveResults } = await ctx.hooks.collect<GetStatusResolveHookResult>(
-      "resolve",
-      resolveInput
-    );
-    let found = false;
-    for (const r of resolveResults) {
-      if (r.projectPath !== undefined) found = true;
-    }
-    if (!found) {
+    // Dispatch workspace:resolve (matching real operation)
+    const resolved = (await ctx.dispatch({
+      type: "workspace:resolve",
+      payload: { workspacePath: payload.workspacePath },
+    } as Intent)) as ResolveResult;
+    if (!resolved.projectPath) {
       throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 

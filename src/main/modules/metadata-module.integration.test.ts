@@ -14,19 +14,24 @@ import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import { SetMetadataOperation, INTENT_SET_METADATA } from "../operations/set-metadata";
-import type {
-  SetMetadataIntent,
-  ResolveHookResult as SetResolveHookResult,
-  ResolveProjectHookResult as SetResolveProjectHookResult,
-  ResolveProjectHookInput as SetResolveProjectHookInput,
-} from "../operations/set-metadata";
-import { SET_METADATA_OPERATION_ID } from "../operations/set-metadata";
+import type { SetMetadataIntent } from "../operations/set-metadata";
 import { GetMetadataOperation, INTENT_GET_METADATA } from "../operations/get-metadata";
+import type { GetMetadataIntent } from "../operations/get-metadata";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "../operations/resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../operations/resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "../operations/resolve-project";
 import type {
-  GetMetadataIntent,
-  ResolveHookResult as GetResolveHookResult,
-} from "../operations/get-metadata";
-import { GET_METADATA_OPERATION_ID } from "../operations/get-metadata";
+  ResolveHookResult as ResolveProjectHookResult,
+  ResolveHookInput as ResolveProjectHookInput,
+} from "../operations/resolve-project";
 import { createMetadataModule } from "./metadata-module";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
@@ -94,26 +99,17 @@ function createTestSetup(): TestSetup {
 
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   // resolve stub: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
     hooks: {
-      [SET_METADATA_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<SetResolveHookResult> => {
-            const intent = ctx.intent as SetMetadataIntent;
-            if (intent.payload.workspacePath === workspacePath.toString()) {
-              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
-            }
-            return {};
-          },
-        },
-      },
-      [GET_METADATA_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<GetResolveHookResult> => {
-            const intent = ctx.intent as GetMetadataIntent;
-            if (intent.payload.workspacePath === workspacePath.toString()) {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+            if (wsPath === workspacePath.toString()) {
               return { projectPath: PROJECT_ROOT.toString(), workspaceName };
             }
             return {};
@@ -126,10 +122,10 @@ function createTestSetup(): TestSetup {
   // resolve-project stub: resolves projectPath → projectId (for set-metadata commands)
   const resolveProjectModule: IntentModule = {
     hooks: {
-      [SET_METADATA_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<SetResolveProjectHookResult> => {
-            const { projectPath } = ctx as SetResolveProjectHookInput;
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
             if (projectPath === PROJECT_ROOT.toString()) {
               return { projectId };
             }

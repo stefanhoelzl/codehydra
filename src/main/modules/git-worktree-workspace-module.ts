@@ -2,13 +2,13 @@
  * GitWorktreeWorkspaceModule - Manages workspace-related git worktree operations.
  *
  * Consolidates worktree lifecycle hooks across multiple operations:
+ * - resolve-workspace: shared workspace resolution (workspacePath → projectPath + workspaceName)
  * - open-project: register project, discover workspaces, fire-and-forget cleanup
  * - close-project: unregister project, clear state
- * - create-workspace: create worktree or activate existing workspace
- * - delete-workspace: resolve workspace path, remove worktree
- * - switch-workspace: resolve workspace path
- * - get-workspace-status: resolve workspace, check dirty status
- * - open-workspace: fetch bases and default base branch
+ * - open-workspace: resolve caller, create worktree, fetch bases
+ * - delete-workspace: remove worktree
+ * - switch-workspace: find candidates
+ * - get-workspace-status: check dirty status
  *
  * Uses GitWorktreeProvider directly (no ProjectScopedWorkspaceProvider adapter).
  * Maintains its own workspace state in closure-scoped maps.
@@ -30,12 +30,7 @@ import type {
 } from "../operations/open-workspace";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
-import type {
-  DeleteHookResult,
-  DeletePipelineHookInput,
-  ResolveHookInput as DeleteResolveHookInput,
-  ResolveHookResult as DeleteResolveHookResult,
-} from "../operations/delete-workspace";
+import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import type { DiscoverHookResult, DiscoverHookInput } from "../operations/open-project";
 import type { CloseHookInput } from "../operations/close-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
@@ -43,31 +38,23 @@ import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
 import type { FindCandidatesHookResult } from "../operations/switch-workspace";
-import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
-import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
-import { SET_METADATA_OPERATION_ID } from "../operations/set-metadata";
-import { GET_METADATA_OPERATION_ID } from "../operations/get-metadata";
+import {
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  type ResolveHookInput,
+  type ResolveHookResult,
+} from "../operations/resolve-workspace";
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   type GetStatusHookInput,
   type GetStatusHookResult,
 } from "../operations/get-workspace-status";
-import {
-  UPDATE_AGENT_STATUS_OPERATION_ID,
-  type ResolveHookInput as UpdateAgentStatusResolveInput,
-  type ResolveHookResult as UpdateAgentStatusResolveResult,
-} from "../operations/update-agent-status";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
 
 // =============================================================================
-// Hook Context Types (target architecture)
+// Hook Context Types
 // =============================================================================
-
-interface ResolveFromPathInput extends HookContext {
-  readonly workspacePath: string;
-}
 
 interface FetchBasesInput extends HookContext {
   readonly projectPath: string;
@@ -81,12 +68,6 @@ interface FetchBasesInput extends HookContext {
 export interface WorkspaceSetupHookResult {
   readonly workspaces: readonly Workspace[];
   readonly defaultBaseBranch?: string;
-}
-
-/** Result from a resolve-from-path hook (workspacePath → projectPath + workspaceName). */
-interface ResolveFromPathResult {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
 }
 
 /** Result from the open-workspace "fetch-bases" hook point. */
@@ -122,7 +103,7 @@ export function createGitWorktreeWorkspaceModule(
 
   /**
    * Shared reverse-lookup: workspacePath → (projectPath, workspaceName).
-   * Used by all operations that accept workspacePath in their payload.
+   * Used by the resolve-workspace operation.
    */
   function resolveFromWorkspacePath(workspacePath: string):
     | {
@@ -164,7 +145,18 @@ export function createGitWorktreeWorkspaceModule(
 
   return {
     hooks: {
-      // open-project -> discover (renamed from "setup" in plan; using existing hook point name)
+      // resolve-workspace -> resolve (single registration replaces 8 per-operation hooks)
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const { workspacePath } = ctx as ResolveHookInput;
+            const resolved = resolveFromWorkspacePath(workspacePath);
+            return resolved ?? {};
+          },
+        },
+      },
+
+      // open-project -> discover
       [OPEN_PROJECT_OPERATION_ID]: {
         discover: {
           handler: async (ctx: HookContext): Promise<DiscoverHookResult> => {
@@ -214,7 +206,7 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // open-workspace -> resolve-caller + create
+      // open-workspace -> resolve-caller + create + fetch-bases
       [OPEN_WORKSPACE_OPERATION_ID]: {
         "resolve-caller": {
           handler: async (ctx: HookContext): Promise<ResolveCallerHookResult> => {
@@ -307,15 +299,8 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // delete-workspace -> resolve + delete
+      // delete-workspace -> delete (resolve hook removed, now uses resolve-workspace dispatch)
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<DeleteResolveHookResult> => {
-            const { workspacePath: wsPath } = ctx as DeleteResolveHookInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
-          },
-        },
         delete: {
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
             const { projectPath, workspacePath: wsPath } = ctx as DeletePipelineHookInput;
@@ -346,15 +331,8 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // switch-workspace -> resolve + find-candidates
+      // switch-workspace -> find-candidates (resolve hook removed)
       [SWITCH_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveFromPathResult> => {
-            const { workspacePath: wsPath } = ctx as ResolveFromPathInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
-          },
-        },
         "find-candidates": {
           handler: async (): Promise<FindCandidatesHookResult> => {
             const candidates: Array<{
@@ -377,75 +355,13 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // get-agent-session -> resolve (workspacePath → projectPath + workspaceName)
-      [GET_AGENT_SESSION_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveFromPathResult> => {
-            const { workspacePath: wsPath } = ctx as ResolveFromPathInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
-          },
-        },
-      },
-
-      // restart-agent -> resolve (workspacePath → projectPath + workspaceName)
-      [RESTART_AGENT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveFromPathResult> => {
-            const { workspacePath: wsPath } = ctx as ResolveFromPathInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
-          },
-        },
-      },
-
-      // set-metadata -> resolve (workspacePath → projectPath + workspaceName)
-      [SET_METADATA_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveFromPathResult> => {
-            const { workspacePath: wsPath } = ctx as ResolveFromPathInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
-          },
-        },
-      },
-
-      // get-workspace-status -> resolve + get
+      // get-workspace-status -> get (resolve hook removed)
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveFromPathResult> => {
-            const { workspacePath: wsPath } = ctx as ResolveFromPathInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
-          },
-        },
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const { workspacePath: wsPath } = ctx as GetStatusHookInput;
             const isDirty = await globalProvider.isDirty(new Path(wsPath));
             return { isDirty };
-          },
-        },
-      },
-
-      // get-metadata -> resolve (workspacePath → projectPath + workspaceName)
-      [GET_METADATA_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveFromPathResult> => {
-            const { workspacePath: wsPath } = ctx as ResolveFromPathInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
-          },
-        },
-      },
-
-      // update-agent-status -> resolve: find project + workspace name from workspace path
-      [UPDATE_AGENT_STATUS_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<UpdateAgentStatusResolveResult> => {
-            const { workspacePath: wsPath } = ctx as UpdateAgentStatusResolveInput;
-            const resolved = resolveFromWorkspacePath(wsPath);
-            return resolved ?? {};
           },
         },
       },

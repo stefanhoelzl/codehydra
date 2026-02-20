@@ -26,11 +26,23 @@ import type {
   RestartAgentIntent,
   RestartAgentHookInput,
   RestartAgentHookResult,
-  ResolveHookResult,
-  ResolveProjectHookResult,
-  ResolveProjectHookInput,
   AgentRestartedEvent,
 } from "./restart-agent";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "./resolve-project";
+import type {
+  ResolveHookInput as ResolveProjectHookInput,
+  ResolveHookResult as ResolveProjectHookResult,
+} from "./resolve-project";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
@@ -82,14 +94,16 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   // Resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
     hooks: {
-      [RESTART_AGENT_OPERATION_ID]: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const intent = ctx.intent as RestartAgentIntent;
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const intent = ctx.intent as { payload: { workspacePath: string } };
             if (intent.payload.workspacePath === WORKSPACE_PATH) {
               return { projectPath: PROJECT_ROOT, workspaceName };
             }
@@ -103,8 +117,8 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
   // Resolve-project module: resolves projectPath → projectId (for domain events)
   const resolveProjectModule: IntentModule = {
     hooks: {
-      [RESTART_AGENT_OPERATION_ID]: {
-        "resolve-project": {
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
           handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
             const { projectPath } = ctx as ResolveProjectHookInput;
             if (projectPath === PROJECT_ROOT) {
