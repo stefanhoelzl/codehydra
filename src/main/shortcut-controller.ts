@@ -11,11 +11,12 @@
  * reliable keyUp detection for exiting shortcut mode when Alt is released.
  */
 
-import type { WebContents, Event as ElectronEvent, Input, BaseWindow } from "electron";
 import type { UIMode } from "../shared/ipc";
 import type { ShortcutKey } from "../shared/shortcuts";
 import { isShortcutKey } from "../shared/shortcuts";
 import type { Logger } from "../services/logging";
+import type { KeyboardInput, Unsubscribe } from "../services/shell/view";
+import type { ViewHandle, WindowHandle } from "../services/shell/types";
 
 type ShortcutActivationState = "NORMAL" | "ALT_WAITING";
 
@@ -54,10 +55,9 @@ function normalizeKey(key: string): ShortcutKey | null {
   return null;
 }
 
-interface ShortcutControllerDeps {
+export interface ShortcutControllerDeps {
   /** Focuses the UI layer */
   focusUI: () => void;
-  getUIWebContents: () => WebContents | null;
   /** Sets the UI mode (workspace, shortcut, dialog) */
   setMode: (mode: UIMode) => void;
   /** Gets the current UI mode */
@@ -66,6 +66,20 @@ interface ShortcutControllerDeps {
   onShortcut?: (key: ShortcutKey) => void;
   /** Logger for debugging */
   logger?: Logger;
+  /** ViewLayer methods for event subscription */
+  viewLayer: {
+    onBeforeInputEvent(
+      handle: ViewHandle,
+      callback: (input: KeyboardInput, preventDefault: () => void) => void
+    ): Unsubscribe;
+    onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe;
+  };
+  /** WindowLayer methods for blur subscription */
+  windowLayer: {
+    onBlur(handle: WindowHandle, callback: () => void): Unsubscribe;
+  };
+  /** Handle to the main window */
+  windowHandle: WindowHandle;
 }
 
 /**
@@ -78,65 +92,54 @@ interface ShortcutControllerDeps {
  */
 export class ShortcutController {
   private state: ShortcutActivationState = "NORMAL";
-  private readonly registeredViews = new Set<WebContents>();
-  private readonly inputHandlers = new Map<
-    WebContents,
-    (event: ElectronEvent, input: Input) => void
-  >();
-  private readonly destroyedHandlers = new Map<WebContents, () => void>();
+  /** Map of view handle ID → cleanup functions */
+  private readonly cleanups = new Map<string, Unsubscribe[]>();
   private readonly deps: ShortcutControllerDeps;
-  private readonly window: BaseWindow;
-  private readonly boundHandleWindowBlur: () => void;
+  private readonly unsubscribeBlur: Unsubscribe;
   private readonly logger: Logger | undefined;
-  constructor(window: BaseWindow, deps: ShortcutControllerDeps) {
-    this.window = window;
+
+  constructor(deps: ShortcutControllerDeps) {
     this.deps = deps;
     this.logger = deps.logger;
-    this.boundHandleWindowBlur = this.handleWindowBlur.bind(this);
-    this.window.on("blur", this.boundHandleWindowBlur);
+    this.unsubscribeBlur = deps.windowLayer.onBlur(deps.windowHandle, () => {
+      this.handleWindowBlur();
+    });
   }
 
   /**
-   * Registers a workspace view to listen for Alt+X shortcut.
-   * Also listens for 'destroyed' event to auto-cleanup stale references.
-   * @param webContents - WebContents of the workspace view
+   * Registers a view to listen for Alt+X shortcut.
+   * Auto-unregisters when the view is destroyed.
+   * @param handle - ViewHandle of the workspace/UI view
    */
-  registerView(webContents: WebContents): void {
-    if (this.registeredViews.has(webContents)) return;
+  registerView(handle: ViewHandle): void {
+    if (this.cleanups.has(handle.id)) return;
 
-    const inputHandler = (event: ElectronEvent, input: Input) => {
-      this.handleInput(event, input);
-    };
-    const destroyedHandler = () => {
-      this.unregisterView(webContents);
-    };
-
-    webContents.on("before-input-event", inputHandler);
-    webContents.on("destroyed", destroyedHandler);
-
-    this.registeredViews.add(webContents);
-    this.inputHandlers.set(webContents, inputHandler);
-    this.destroyedHandlers.set(webContents, destroyedHandler);
+    const unsubs: Unsubscribe[] = [];
+    unsubs.push(
+      this.deps.viewLayer.onBeforeInputEvent(handle, (input) => {
+        this.handleInput(input);
+      })
+    );
+    unsubs.push(
+      this.deps.viewLayer.onDestroyed(handle, () => {
+        this.unregisterView(handle);
+      })
+    );
+    this.cleanups.set(handle.id, unsubs);
   }
 
   /**
-   * Unregisters a workspace view from shortcut detection.
-   * @param webContents - WebContents of the workspace view
+   * Unregisters a view from shortcut detection.
+   * @param handle - ViewHandle of the workspace/UI view
    */
-  unregisterView(webContents: WebContents): void {
-    const inputHandler = this.inputHandlers.get(webContents);
-    const destroyedHandler = this.destroyedHandlers.get(webContents);
-
-    if (inputHandler && !webContents.isDestroyed()) {
-      webContents.off("before-input-event", inputHandler);
+  unregisterView(handle: ViewHandle): void {
+    const unsubs = this.cleanups.get(handle.id);
+    if (unsubs) {
+      for (const unsub of unsubs) {
+        unsub();
+      }
+      this.cleanups.delete(handle.id);
     }
-    if (destroyedHandler && !webContents.isDestroyed()) {
-      webContents.off("destroyed", destroyedHandler);
-    }
-
-    this.registeredViews.delete(webContents);
-    this.inputHandlers.delete(webContents);
-    this.destroyedHandlers.delete(webContents);
   }
 
   /**
@@ -161,7 +164,7 @@ export class ShortcutController {
    * 5. In ALT_WAITING + X keydown: activate shortcut (no suppress)
    * 6. In ALT_WAITING + other key: exit to NORMAL, let through
    */
-  private handleInput(_event: ElectronEvent, input: Input): void {
+  private handleInput(input: KeyboardInput): void {
     const isAltKey = input.key === SHORTCUT_MODIFIER_KEY;
     const currentMode = this.getCurrentMode();
 
@@ -256,16 +259,21 @@ export class ShortcutController {
 
   /**
    * Cleans up event listeners and resets state.
-   * Should be called from ViewManager.destroy() during shutdown.
    */
   dispose(): void {
-    // Unregister all workspace views (makes copies to avoid mutation during iteration)
-    for (const webContents of [...this.registeredViews]) {
-      this.unregisterView(webContents);
+    // Unregister all views (makes copy to avoid mutation during iteration)
+    for (const id of [...this.cleanups.keys()]) {
+      const unsubs = this.cleanups.get(id);
+      if (unsubs) {
+        for (const unsub of unsubs) {
+          unsub();
+        }
+      }
     }
+    this.cleanups.clear();
 
     // Remove window blur listener
-    this.window.off("blur", this.boundHandleWindowBlur);
+    this.unsubscribeBlur();
     this.state = "NORMAL";
   }
 }

@@ -117,7 +117,7 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
       getApi: () => {
         throw new Error("not wired");
       },
-      getUIWebContents: () => null,
+      sendToUI: vi.fn(),
       pluginServer: null,
       logger: SILENT_LOGGER,
       dispatcher:

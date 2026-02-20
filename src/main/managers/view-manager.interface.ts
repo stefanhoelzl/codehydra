@@ -3,7 +3,6 @@
  * Allows mocking in handler tests.
  */
 
-import type { WebContents } from "electron";
 import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
 import type { ViewHandle } from "../../services/shell/types";
 
@@ -36,17 +35,11 @@ export interface IViewManager {
   getUIViewHandle(): ViewHandle;
 
   /**
-   * Returns the UI layer WebContents for IPC communication.
-   * Returns null if the view is destroyed.
+   * Checks if the UI layer view is available (not destroyed).
    *
-   * @deprecated Use sendToUI() for IPC communication when possible.
-   *
-   * TODO(SHORTCUT_CONTROLLER_ABSTRACTION): This method exposes raw WebContents because
-   * ShortcutController requires direct access to register keyboard handlers. Once
-   * ShortcutController is abstracted behind a layer interface, this method can be removed.
-   * See planning/SHORTCUT_CONTROLLER_ABSTRACTION.md (to be created).
+   * @returns True if the UI view is available
    */
-  getUIWebContents(): WebContents | null;
+  isUIAvailable(): boolean;
 
   /**
    * Sends an IPC message to the UI layer.

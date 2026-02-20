@@ -18,7 +18,7 @@
  */
 
 import { expect } from "vitest";
-import type { ViewLayer, ViewOptions, WindowOpenHandler, Unsubscribe } from "./view";
+import type { ViewLayer, ViewOptions, WindowOpenHandler, Unsubscribe, KeyboardInput } from "./view";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { ShellError } from "./errors";
 import type {
@@ -107,6 +107,20 @@ export interface ViewLayerMockState extends MockState {
    */
   triggerWillNavigate(handle: ViewHandle, url: string): boolean;
 
+  /**
+   * Simulates Electron's 'before-input-event' event.
+   * Invokes all registered handlers for the specified view.
+   *
+   * @returns Object with defaultPrevented boolean
+   */
+  triggerBeforeInputEvent(handle: ViewHandle, input: KeyboardInput): { defaultPrevented: boolean };
+
+  /**
+   * Simulates a view being destroyed.
+   * Invokes all registered destroyed handlers and removes the view.
+   */
+  triggerDestroyed(handle: ViewHandle): void;
+
   snapshot(): Snapshot;
   toString(): string;
 }
@@ -143,6 +157,12 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
   private readonly _didFinishLoadCallbacks: Map<string, Set<() => void>>;
   private readonly _domReadyCallbacks: Map<string, Set<() => void>>;
   private readonly _willNavigateCallbacks: Map<string, Set<(url: string) => boolean>>;
+  private readonly _beforeInputEventCallbacks: Map<
+    string,
+    Set<(input: KeyboardInput, preventDefault: () => void) => void>
+  >;
+  private readonly _destroyedCallbacks: Map<string, Set<() => void>>;
+  private readonly _devToolsOpen: Set<string>;
 
   constructor() {
     this._views = new Map();
@@ -150,6 +170,9 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
     this._didFinishLoadCallbacks = new Map();
     this._domReadyCallbacks = new Map();
     this._willNavigateCallbacks = new Map();
+    this._beforeInputEventCallbacks = new Map();
+    this._destroyedCallbacks = new Map();
+    this._devToolsOpen = new Set();
   }
 
   // Expose internals for the mock layer to mutate
@@ -171,6 +194,21 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
 
   get willNavigateCallbacks(): Map<string, Set<(url: string) => boolean>> {
     return this._willNavigateCallbacks;
+  }
+
+  get beforeInputEventCallbacks(): Map<
+    string,
+    Set<(input: KeyboardInput, preventDefault: () => void) => void>
+  > {
+    return this._beforeInputEventCallbacks;
+  }
+
+  get destroyedCallbacks(): Map<string, Set<() => void>> {
+    return this._destroyedCallbacks;
+  }
+
+  get devToolsOpen(): Set<string> {
+    return this._devToolsOpen;
   }
 
   triggerDidFinishLoad(handle: ViewHandle): void {
@@ -202,6 +240,32 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
       }
     }
     return true; // Navigation allowed
+  }
+
+  triggerBeforeInputEvent(handle: ViewHandle, input: KeyboardInput): { defaultPrevented: boolean } {
+    let defaultPrevented = false;
+    const preventDefault = () => {
+      defaultPrevented = true;
+    };
+    const callbacks = this._beforeInputEventCallbacks.get(handle.id);
+    if (callbacks) {
+      for (const callback of callbacks) {
+        callback(input, preventDefault);
+      }
+    }
+    return { defaultPrevented };
+  }
+
+  triggerDestroyed(handle: ViewHandle): void {
+    const callbacks = this._destroyedCallbacks.get(handle.id);
+    if (callbacks) {
+      for (const callback of [...callbacks]) {
+        callback();
+      }
+    }
+    // Clean up callbacks for the destroyed view
+    this._beforeInputEventCallbacks.delete(handle.id);
+    this._destroyedCallbacks.delete(handle.id);
   }
 
   snapshot(): Snapshot {
@@ -331,6 +395,8 @@ export function createViewLayerMock(): MockViewLayer {
       state.didFinishLoadCallbacks.set(id, new Set());
       state.domReadyCallbacks.set(id, new Set());
       state.willNavigateCallbacks.set(id, new Set());
+      state.beforeInputEventCallbacks.set(id, new Set());
+      state.destroyedCallbacks.set(id, new Set());
       return { id, __brand: "ViewHandle" };
     },
 
@@ -353,6 +419,8 @@ export function createViewLayerMock(): MockViewLayer {
       state.didFinishLoadCallbacks.delete(handle.id);
       state.domReadyCallbacks.delete(handle.id);
       state.willNavigateCallbacks.delete(handle.id);
+      state.beforeInputEventCallbacks.delete(handle.id);
+      state.destroyedCallbacks.delete(handle.id);
     },
 
     destroyAll(): void {
@@ -360,6 +428,8 @@ export function createViewLayerMock(): MockViewLayer {
       state.didFinishLoadCallbacks.clear();
       state.domReadyCallbacks.clear();
       state.willNavigateCallbacks.clear();
+      state.beforeInputEventCallbacks.clear();
+      state.destroyedCallbacks.clear();
       state.windowChildren.clear();
     },
 
@@ -491,11 +561,44 @@ export function createViewLayerMock(): MockViewLayer {
       // No-op in mock - IPC is not simulated
     },
 
-    getWebContents(_handle: ViewHandle): Electron.WebContents | null {
-      getView(_handle); // Validate handle exists
-      // Return null in mock - WebContents are not available in behavioral mocks
-      // Integration tests should not rely on raw WebContents access
-      return null;
+    onBeforeInputEvent(
+      handle: ViewHandle,
+      callback: (input: KeyboardInput, preventDefault: () => void) => void
+    ): Unsubscribe {
+      getView(handle); // Validate handle exists
+      const callbacks = state.beforeInputEventCallbacks.get(handle.id);
+      callbacks?.add(callback);
+      return () => {
+        callbacks?.delete(callback);
+      };
+    },
+
+    onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe {
+      getView(handle); // Validate handle exists
+      const callbacks = state.destroyedCallbacks.get(handle.id);
+      callbacks?.add(callback);
+      return () => {
+        callbacks?.delete(callback);
+      };
+    },
+
+    isAvailable(handle: ViewHandle): boolean {
+      return state.views.has(handle.id);
+    },
+
+    openDevTools(handle: ViewHandle, _options?: { mode?: string }): void {
+      getView(handle); // Validate handle exists
+      state.devToolsOpen.add(handle.id);
+    },
+
+    closeDevTools(handle: ViewHandle): void {
+      getView(handle); // Validate handle exists
+      state.devToolsOpen.delete(handle.id);
+    },
+
+    isDevToolsOpened(handle: ViewHandle): boolean {
+      getView(handle); // Validate handle exists
+      return state.devToolsOpen.has(handle.id);
     },
 
     async dispose(): Promise<void> {
@@ -503,6 +606,8 @@ export function createViewLayerMock(): MockViewLayer {
       state.didFinishLoadCallbacks.clear();
       state.domReadyCallbacks.clear();
       state.willNavigateCallbacks.clear();
+      state.beforeInputEventCallbacks.clear();
+      state.destroyedCallbacks.clear();
       state.windowChildren.clear();
     },
   };

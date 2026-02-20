@@ -101,6 +101,14 @@ export interface WindowLayerMockState extends MockState {
   triggerClose(handle: WindowHandle): void;
 
   /**
+   * Trigger a blur callback for a window (window loses OS focus).
+   *
+   * @example
+   * mock.$.triggerBlur(handle);
+   */
+  triggerBlur(handle: WindowHandle): void;
+
+  /**
    * Capture current state as snapshot for later comparison.
    */
   snapshot(): Snapshot;
@@ -152,7 +160,8 @@ class WindowLayerMockStateImpl implements WindowLayerMockState {
     private readonly _resizeCallbacks: Map<string, Set<() => void>>,
     private readonly _maximizeCallbacks: Map<string, Set<() => void>>,
     private readonly _unmaximizeCallbacks: Map<string, Set<() => void>>,
-    private readonly _closeCallbacks: Map<string, Set<() => void>>
+    private readonly _closeCallbacks: Map<string, Set<() => void>>,
+    private readonly _blurCallbacks: Map<string, Set<() => void>>
   ) {}
 
   get windows(): ReadonlyMap<string, WindowMockState> {
@@ -215,6 +224,15 @@ class WindowLayerMockStateImpl implements WindowLayerMockState {
     }
   }
 
+  triggerBlur(handle: WindowHandle): void {
+    const callbacks = this._blurCallbacks.get(handle.id);
+    if (callbacks) {
+      for (const callback of callbacks) {
+        callback();
+      }
+    }
+  }
+
   snapshot(): Snapshot {
     return { __brand: "Snapshot", value: this.toString() } as Snapshot;
   }
@@ -263,6 +281,7 @@ export function createWindowLayerMock(): MockWindowLayer {
   const maximizeCallbacks = new Map<string, Set<() => void>>();
   const unmaximizeCallbacks = new Map<string, Set<() => void>>();
   const closeCallbacks = new Map<string, Set<() => void>>();
+  const blurCallbacks = new Map<string, Set<() => void>>();
   const contentViews = new Map<string, ContentView>();
   let nextId = 1;
 
@@ -310,7 +329,8 @@ export function createWindowLayerMock(): MockWindowLayer {
     resizeCallbacks,
     maximizeCallbacks,
     unmaximizeCallbacks,
-    closeCallbacks
+    closeCallbacks,
+    blurCallbacks
   );
 
   const layer: WindowLayer = {
@@ -336,6 +356,7 @@ export function createWindowLayerMock(): MockWindowLayer {
       maximizeCallbacks.set(id, new Set());
       unmaximizeCallbacks.set(id, new Set());
       closeCallbacks.set(id, new Set());
+      blurCallbacks.set(id, new Set());
       return { id, __brand: "WindowHandle" };
     },
 
@@ -355,6 +376,7 @@ export function createWindowLayerMock(): MockWindowLayer {
       maximizeCallbacks.delete(handle.id);
       unmaximizeCallbacks.delete(handle.id);
       closeCallbacks.delete(handle.id);
+      blurCallbacks.delete(handle.id);
     },
 
     destroyAll(): void {
@@ -379,6 +401,7 @@ export function createWindowLayerMock(): MockWindowLayer {
       maximizeCallbacks.clear();
       unmaximizeCallbacks.clear();
       closeCallbacks.clear();
+      blurCallbacks.clear();
     },
 
     getBounds(handle: WindowHandle): Rectangle {
@@ -478,6 +501,15 @@ export function createWindowLayerMock(): MockWindowLayer {
       };
     },
 
+    onBlur(handle: WindowHandle, callback: () => void): Unsubscribe {
+      getWindow(handle); // Validate handle exists
+      const callbacks = blurCallbacks.get(handle.id);
+      callbacks?.add(callback);
+      return () => {
+        callbacks?.delete(callback);
+      };
+    },
+
     getContentView(handle: WindowHandle): ContentView {
       getWindow(handle); // Validate handle exists
       const contentView = contentViews.get(handle.id);
@@ -512,6 +544,7 @@ export function createWindowLayerMock(): MockWindowLayer {
       maximizeCallbacks.clear();
       unmaximizeCallbacks.clear();
       closeCallbacks.clear();
+      blurCallbacks.clear();
     },
   };
 

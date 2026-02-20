@@ -4,26 +4,21 @@
  *
  * Uses two-phase initialization:
  * 1. Constructor: stores deps (pure, no Electron calls)
- * 2. create(): creates views, ShortcutController, and wires events
+ * 2. create(): creates views and wires event subscriptions
  */
 
-import type { WebContents } from "electron";
 import { basename } from "node:path";
 import type { IViewManager, Unsubscribe, LoadingChangeCallback } from "./view-manager.interface";
 import { WORKSPACE_LOADING_TIMEOUT_MS } from "./view-manager.interface";
 import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
-import { ApiIpcChannels } from "../../shared/ipc";
 import type { WindowManager } from "./window-manager";
 import { openExternal } from "../utils/external-url";
-import { ShortcutController } from "../shortcut-controller";
 import type { Logger } from "../../services/logging";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { ViewLayer, WindowOpenDetails } from "../../services/shell/view";
 import type { SessionLayer } from "../../services/shell/session";
 import type { WindowLayerInternal } from "../../services/shell/window";
 import type { ViewHandle, SessionHandle, WindowHandle } from "../../services/shell/types";
-import type { IDispatcher } from "../intents/infrastructure";
-import { INTENT_SET_MODE, type SetModeIntent } from "../operations/set-mode";
 
 /**
  * Sidebar minimized width in pixels.
@@ -85,8 +80,6 @@ export interface ViewManagerDeps {
   readonly config: ViewManagerConfig;
   /** Logger */
   readonly logger: Logger;
-  /** Dispatcher for dispatching intents through the intent pipeline. */
-  readonly dispatcher: IDispatcher;
 }
 
 /**
@@ -115,9 +108,7 @@ export class ViewManager implements IViewManager {
   private readonly viewLayer: ViewLayer;
   private readonly sessionLayer: SessionLayer;
   private readonly config: ViewManagerConfig;
-  private readonly dispatcher: IDispatcher;
   private uiViewHandle!: ViewHandle;
-  private shortcutController!: ShortcutController;
   private codeServerPort: number;
   private windowHandle!: WindowHandle;
   /**
@@ -168,17 +159,16 @@ export class ViewManager implements IViewManager {
     this.viewLayer = deps.viewLayer;
     this.sessionLayer = deps.sessionLayer;
     this.config = deps.config;
-    this.dispatcher = deps.dispatcher;
     this.codeServerPort = deps.config.codeServerPort;
     this.logger = deps.logger;
   }
 
   /**
-   * Creates UI view, ShortcutController, and wires event subscriptions.
+   * Creates UI view and wires event subscriptions.
    * Must be called before using any view operations.
    */
   create(): void {
-    const { windowManager, windowLayer, viewLayer, config } = this;
+    const { windowManager, viewLayer, config } = this;
 
     // Create UI layer with security settings
     this.uiViewHandle = viewLayer.createView({
@@ -199,33 +189,6 @@ export class ViewManager implements IViewManager {
     // Add UI layer to window
     viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
 
-    // Get raw window for ShortcutController (internal API)
-    const rawWindow = windowLayer._getRawWindow(this.windowHandle);
-
-    // Create ShortcutController — `this` already exists, no holder hack needed
-    this.shortcutController = new ShortcutController(rawWindow, {
-      focusUI: () => this.focusUI(),
-      getUIWebContents: () => this.getUIWebContents(),
-      setMode: (mode) => {
-        void this.dispatcher.dispatch({
-          type: INTENT_SET_MODE,
-          payload: { mode },
-        } as SetModeIntent);
-      },
-      getMode: () => this.getMode(),
-      // Shortcut key callback - sends IPC event to renderer
-      onShortcut: (key) => {
-        this.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
-      },
-      logger: this.logger,
-    });
-
-    // Register UI view's webContents with shortcut controller for keyboard shortcuts
-    const uiWebContents = this.getUIWebContents();
-    if (uiWebContents) {
-      this.shortcutController.registerView(uiWebContents);
-    }
-
     // Subscribe to resize events
     this.unsubscribeResize = this.windowManager.onResize(() => {
       this.updateBounds();
@@ -243,13 +206,10 @@ export class ViewManager implements IViewManager {
   }
 
   /**
-   * Returns the UI layer WebContents for IPC communication.
-   * Returns null if the view is destroyed.
-   *
-   * @deprecated Use sendToUI() for IPC communication when possible.
+   * Checks if the UI layer view is available (not destroyed).
    */
-  getUIWebContents(): WebContents | null {
-    return this.viewLayer.getWebContents(this.uiViewHandle);
+  isUIAvailable(): boolean {
+    return this.viewLayer.isAvailable(this.uiViewHandle);
   }
 
   /**
@@ -411,17 +371,6 @@ export class ViewManager implements IViewManager {
       partitionName,
     });
 
-    // Register with shortcut controller for Alt+X detection
-    const webContents = this.getWorkspaceWebContents(viewHandle);
-    if (webContents) {
-      this.shortcutController.registerView(webContents);
-    } else {
-      this.logger.warn("Failed to register workspace view with ShortcutController", {
-        workspace: workspaceName,
-        viewId: viewHandle.id,
-      });
-    }
-
     // Only mark as loading for newly created workspaces (not existing ones loaded on startup)
     if (isNew) {
       const timeout = setTimeout(
@@ -468,16 +417,6 @@ export class ViewManager implements IViewManager {
       clearTimeout(timeout);
       this.loadingWorkspaces.delete(workspacePath);
       this.notifyLoadingChange(workspacePath, false);
-    }
-
-    // Unregister from shortcut controller (safe even if view is destroyed)
-    try {
-      const webContents = this.getWorkspaceWebContents(state.handle);
-      if (webContents) {
-        this.shortcutController.unregisterView(webContents);
-      }
-    } catch {
-      // Ignore errors - view may be in inconsistent state
     }
 
     // If this was the active workspace, clear it via setActiveWorkspace to trigger callbacks
@@ -1070,9 +1009,6 @@ export class ViewManager implements IViewManager {
     // Unsubscribe from resize events
     this.unsubscribeResize();
 
-    // Dispose shortcut controller
-    this.shortcutController.dispose();
-
     // Destroy all workspace views (fire-and-forget - app is shutting down)
     for (const path of this.workspaceStates.keys()) {
       void this.destroyWorkspaceView(path);
@@ -1084,13 +1020,5 @@ export class ViewManager implements IViewManager {
     } catch {
       // Ignore errors during cleanup - view may be in an inconsistent state
     }
-  }
-
-  /**
-   * Gets the WebContents for a workspace view handle.
-   * This is a helper for ShortcutController registration.
-   */
-  private getWorkspaceWebContents(handle: ViewHandle): WebContents | null {
-    return this.viewLayer.getWebContents(handle);
   }
 }

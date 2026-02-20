@@ -212,11 +212,19 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         },
         "show-ui": {
           handler: async (): Promise<ShowUIHookResult> => {
-            const webContents = viewManager.getUIWebContents();
-            if (webContents && !webContents.isDestroyed()) {
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
-            }
-            return {};
+            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
+            if (!deps.ipcLayer) return {};
+            const ipcLayer = deps.ipcLayer;
+            return {
+              waitForRetry: () =>
+                new Promise<void>((resolve) => {
+                  const handleRetry: IpcEventHandler = () => {
+                    ipcLayer.removeListener(ApiIpcChannels.LIFECYCLE_RETRY, handleRetry);
+                    resolve();
+                  };
+                  ipcLayer.on(ApiIpcChannels.LIFECYCLE_RETRY, handleRetry);
+                }),
+            };
           },
         },
         activate: {
@@ -230,31 +238,23 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
             // Wire loading state changes to IPC
             loadingChangeCleanupFn = viewManager.onLoadingChange(
               (path: string, loading: boolean) => {
-                try {
-                  const webContents = viewManager.getUIWebContents();
-                  if (webContents && !webContents.isDestroyed()) {
-                    const payload: WorkspaceLoadingChangedPayload = {
-                      path: path as WorkspacePath,
-                      loading,
-                    };
-                    webContents.send(ApiIpcChannels.WORKSPACE_LOADING_CHANGED, payload);
-                  }
-                } catch {
-                  // Ignore errors - UI might be disconnected during shutdown
-                }
+                const payload: WorkspaceLoadingChangedPayload = {
+                  path: path as WorkspacePath,
+                  loading,
+                };
+                viewManager.sendToUI(ApiIpcChannels.WORKSPACE_LOADING_CHANGED, payload);
               }
             );
 
             // Mount: send show-main-view and block until lifecycle.ready resolves
-            const webContents = viewManager.getUIWebContents();
-            if (!webContents || webContents.isDestroyed()) {
+            if (!viewManager.isUIAvailable()) {
               logger.warn("UI not available for mount");
               return {};
             }
             logger.debug("Mounting renderer — waiting for lifecycle.ready");
             await new Promise<void>((resolve) => {
               mountSignal.resolve = resolve;
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
+              viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
             });
             return {};
           },
@@ -268,18 +268,14 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       [SETUP_OPERATION_ID]: {
         "show-ui": {
           handler: async () => {
-            const webContents = viewManager.getUIWebContents();
-            if (webContents && !webContents.isDestroyed()) {
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_SETUP);
-            }
+            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_SETUP);
           },
         },
         "agent-selection": {
           handler: async (ctx: HookContext): Promise<AgentSelectionHookResult> => {
             const { availableAgents } = ctx as AgentSelectionHookContext;
-            const webContents = viewManager.getUIWebContents();
 
-            if (!webContents || webContents.isDestroyed()) {
+            if (!viewManager.isUIAvailable()) {
               throw new SetupError("UI not available for agent selection", "TIMEOUT");
             }
 
@@ -303,14 +299,14 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
               ipcLayer.on(SetupIpcChannels.LIFECYCLE_AGENT_SELECTED, handleAgentSelected);
             });
 
-            const payload: ShowAgentSelectionPayload = {
+            const selectionPayload: ShowAgentSelectionPayload = {
               agents: availableAgents.map((a) => ({
                 agent: a.agent,
                 label: a.label,
                 icon: a.icon,
               })),
             };
-            webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION, payload);
+            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION, selectionPayload);
 
             const selectedAgent = await agentPromise;
             logger.info("Agent selected", { agent: selectedAgent });
@@ -320,11 +316,7 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         },
         "hide-ui": {
           handler: async () => {
-            const webContents = viewManager.getUIWebContents();
-            if (webContents && !webContents.isDestroyed()) {
-              // Return to starting screen
-              webContents.send(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
-            }
+            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
           },
         },
       },

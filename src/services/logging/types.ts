@@ -54,7 +54,8 @@ export type LoggerName =
   | "config" // ConfigService - application config
   | "telemetry" // TelemetryService - PostHog analytics
   | "updater" // AutoUpdater - auto-update service
-  | "agent"; // AgentServerManager / AgentStatusManager - agent lifecycle
+  | "agent" // AgentServerManager / AgentStatusManager - agent lifecycle
+  | "shortcut"; // ShortcutController - keyboard shortcut detection
 
 /**
  * Context data for log entries.

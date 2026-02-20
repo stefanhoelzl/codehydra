@@ -86,6 +86,10 @@ import { SILENT_LOGGER } from "../../services/logging";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { ApiIpcChannels } from "../../shared/ipc";
+import {
+  createBehavioralIpcLayer,
+  type BehavioralIpcLayer,
+} from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Mock IViewManager
@@ -95,17 +99,12 @@ function createMockViewManager() {
   let currentMode: "workspace" | "shortcut" | "dialog" = "workspace";
   let activePath: string | null = null;
 
-  const mockWebContents = {
-    isDestroyed: vi.fn().mockReturnValue(false),
-    send: vi.fn(),
-  };
-
   return {
     getMode: vi.fn(() => currentMode),
     setMode: vi.fn((mode: "workspace" | "shortcut" | "dialog") => {
       currentMode = mode;
     }),
-    getUIWebContents: vi.fn(() => mockWebContents),
+    isUIAvailable: vi.fn().mockReturnValue(true),
     getActiveWorkspacePath: vi.fn(() => activePath),
     setActiveWorkspace: vi.fn((path: string | null) => {
       activePath = path;
@@ -128,7 +127,6 @@ function createMockViewManager() {
     create: vi.fn(),
     destroy: vi.fn(),
     // Test accessors
-    _webContents: mockWebContents,
     _setActivePath: (p: string | null) => {
       activePath = p;
     },
@@ -485,9 +483,7 @@ describe("ViewModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      expect(viewManager._webContents.send).toHaveBeenCalledWith(
-        ApiIpcChannels.LIFECYCLE_SHOW_STARTING
-      );
+      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_STARTING);
     });
   });
 
@@ -506,9 +502,7 @@ describe("ViewModule Integration", () => {
         payload: {},
       } as SetupIntent);
 
-      expect(viewManager._webContents.send).toHaveBeenCalledWith(
-        ApiIpcChannels.LIFECYCLE_SHOW_SETUP
-      );
+      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_SETUP);
     });
   });
 
@@ -527,9 +521,7 @@ describe("ViewModule Integration", () => {
         payload: {},
       } as SetupIntent);
 
-      expect(viewManager._webContents.send).toHaveBeenCalledWith(
-        ApiIpcChannels.LIFECYCLE_SHOW_STARTING
-      );
+      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_STARTING);
     });
   });
 
@@ -576,7 +568,7 @@ describe("ViewModule Integration", () => {
         payload: {},
       } as SetupIntent);
 
-      expect(viewManager._webContents.send).toHaveBeenCalledWith(
+      expect(viewManager.sendToUI).toHaveBeenCalledWith(
         ApiIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION,
         {
           agents: [
@@ -926,9 +918,7 @@ describe("ViewModule Integration", () => {
       expect(viewManager.onLoadingChange).toHaveBeenCalled();
 
       // Verify webContents.send was called with LIFECYCLE_SHOW_MAIN_VIEW
-      expect(viewManager._webContents.send).toHaveBeenCalledWith(
-        ApiIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW
-      );
+      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
 
       // Call readyHandler to unblock mount (operation emits app:started to complete)
       await Promise.all([dispatchPromise, readyHandler()]);
@@ -1343,6 +1333,101 @@ describe("ViewModule Integration", () => {
 
       // Should complete immediately without error
       await readyHandler();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Retry (absorbed from RetryModule)
+  // -------------------------------------------------------------------------
+  describe("app-start/show-ui (retry)", () => {
+    function createRetrySetup(): {
+      dispatcher: Dispatcher;
+      viewManager: ReturnType<typeof createMockViewManager>;
+      ipcLayer: BehavioralIpcLayer;
+    } {
+      const ipcLayer = createBehavioralIpcLayer();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalShowUIOperation());
+
+      const { module } = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        ipcLayer,
+      });
+
+      dispatcher.registerModule(module);
+
+      return { dispatcher, viewManager, ipcLayer };
+    }
+
+    it("show-ui hook returns a waitForRetry function when ipcLayer is provided", async () => {
+      const { dispatcher } = createRetrySetup();
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent)) as unknown as ShowUIHookResult;
+
+      expect(result.waitForRetry).toBeTypeOf("function");
+    });
+
+    it("waitForRetry resolves when lifecycle:retry IPC is received", async () => {
+      const { dispatcher, ipcLayer } = createRetrySetup();
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent)) as unknown as ShowUIHookResult;
+
+      let resolved = false;
+      const retryPromise = result.waitForRetry!().then(() => {
+        resolved = true;
+      });
+
+      expect(resolved).toBe(false);
+
+      ipcLayer._emit(ApiIpcChannels.LIFECYCLE_RETRY);
+
+      await retryPromise;
+      expect(resolved).toBe(true);
+    });
+
+    it("waitForRetry removes IPC listener after receiving retry signal", async () => {
+      const { dispatcher, ipcLayer } = createRetrySetup();
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent)) as unknown as ShowUIHookResult;
+
+      const retryPromise = result.waitForRetry!();
+
+      expect(ipcLayer._getListeners(ApiIpcChannels.LIFECYCLE_RETRY).length).toBe(1);
+
+      ipcLayer._emit(ApiIpcChannels.LIFECYCLE_RETRY);
+      await retryPromise;
+
+      expect(ipcLayer._getListeners(ApiIpcChannels.LIFECYCLE_RETRY).length).toBe(0);
+    });
+
+    it("show-ui hook returns empty object when ipcLayer is not provided", async () => {
+      const { dispatcher } = createTestSetup({
+        intentType: INTENT_APP_START,
+        operation: new MinimalShowUIOperation(),
+      });
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent)) as unknown as ShowUIHookResult;
+
+      expect(result.waitForRetry).toBeUndefined();
     });
   });
 });
