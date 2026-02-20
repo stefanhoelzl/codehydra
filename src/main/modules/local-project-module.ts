@@ -1,25 +1,29 @@
 /**
- * LocalProjectModule - Sole owner of project state for ALL projects.
+ * LocalProjectModule - Sole owner of project state and persistence for ALL projects.
  *
- * Manages internal state (projects map) and responds to resolve-project
- * hook points across all operations. Completely unaware of remoteUrl —
- * remote-specific concerns (cloning, directory cleanup) stay in RemoteProjectModule.
+ * Manages internal state (projects map), persists project configs to disk,
+ * and responds to resolve-project hook points across all operations.
  *
  * Hook registrations:
  * - project:open  → resolve:  validate .git exists for local paths
  * - project:open  → register: generate ID, persist, add to internal state (all projects)
- * - project:close → resolve-project:  look up projectId in internal state
- * - project:close → close:    remove from internal state and ProjectStore (all projects)
+ * - project:close → resolve-project:  look up projectId in internal state + config
+ * - project:close → close:    remove from internal state and config (all projects)
  * - workspace:switch → resolve-project: look up projectId in internal state
- * - app:start     → activate: load ALL saved project paths from ProjectStore
+ * - app:start     → activate: load ALL saved project configs
  */
 
+import nodePath from "path";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { ProjectId } from "../../shared/api/types";
 import { generateProjectId } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
-import type { ProjectStore } from "../../services/project/project-store";
+import { projectDirName } from "../../services/platform/paths";
+import type { FileSystemLayer } from "../../services/platform/filesystem";
+import type { ProjectConfig } from "../../services/project/types";
+import { CURRENT_PROJECT_VERSION } from "../../services/project/types";
+import { ProjectStoreError, getErrorMessage } from "../../services/errors";
 import type { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import {
   OPEN_PROJECT_OPERATION_ID,
@@ -101,11 +105,185 @@ export interface LocalProject {
  * Dependencies for LocalProjectModule.
  */
 export interface LocalProjectModuleDeps {
-  readonly projectStore: Pick<
-    ProjectStore,
-    "loadAllProjectConfigs" | "saveProject" | "removeProject" | "getProjectConfig"
+  readonly projectsDir: string;
+  readonly fs: Pick<
+    FileSystemLayer,
+    "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm" | "rename"
   >;
   readonly globalProvider: Pick<GitWorktreeProvider, "validateRepository">;
+}
+
+// =============================================================================
+// Private Persistence Helpers
+// =============================================================================
+
+type ProjectFs = LocalProjectModuleDeps["fs"];
+
+async function saveProject(
+  fs: ProjectFs,
+  projectsDir: string,
+  projectPath: string,
+  remoteUrl?: string
+): Promise<void> {
+  const normalizedPath = new Path(projectPath).toString();
+  const projectDir = nodePath.join(projectsDir, projectDirName(normalizedPath));
+  const configPath = nodePath.join(projectDir, "config.json");
+
+  const config: ProjectConfig = {
+    version: CURRENT_PROJECT_VERSION,
+    path: normalizedPath,
+    ...(remoteUrl !== undefined && { remoteUrl }),
+  };
+
+  try {
+    await fs.mkdir(projectDir);
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+  } catch (error: unknown) {
+    throw new ProjectStoreError(`Failed to save project: ${getErrorMessage(error)}`);
+  }
+}
+
+async function internalLoadAllProjectConfigs(
+  fs: ProjectFs,
+  projectsDir: string
+): Promise<readonly { config: ProjectConfig; entryName: string }[]> {
+  const results: { config: ProjectConfig; entryName: string }[] = [];
+
+  try {
+    const entries = await fs.readdir(projectsDir);
+
+    for (const entry of entries) {
+      if (!entry.isDirectory) {
+        continue;
+      }
+
+      const configPath = nodePath.join(projectsDir, entry.name, "config.json");
+
+      try {
+        const content = await fs.readFile(configPath);
+        const parsed: unknown = JSON.parse(content);
+
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          "path" in parsed &&
+          typeof (parsed as Record<string, unknown>).path === "string"
+        ) {
+          const rawPath = (parsed as { path: string }).path;
+          try {
+            const normalizedPath = new Path(rawPath).toString();
+            const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
+
+            const config: ProjectConfig = {
+              version: (parsed as { version?: number }).version ?? 1,
+              path: normalizedPath,
+              ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
+            };
+            results.push({ config, entryName: entry.name });
+          } catch {
+            // Invalid path format - skip this entry
+            continue;
+          }
+        }
+      } catch {
+        // Skip invalid entries (ENOENT, malformed JSON, etc.)
+        continue;
+      }
+    }
+  } catch {
+    // Directory doesn't exist or other error - return empty array
+    return [];
+  }
+
+  return results;
+}
+
+async function loadAllProjectConfigs(
+  fs: ProjectFs,
+  projectsDir: string
+): Promise<readonly ProjectConfig[]> {
+  const internal = await internalLoadAllProjectConfigs(fs, projectsDir);
+  return internal.map((entry) => entry.config);
+}
+
+async function getProjectConfig(
+  fs: ProjectFs,
+  projectsDir: string,
+  projectPath: string
+): Promise<ProjectConfig | undefined> {
+  const normalizedPath = new Path(projectPath).toString();
+
+  // First, try the standard path-hashed location (most common case)
+  const dirName = projectDirName(normalizedPath);
+  const projectDir = nodePath.join(projectsDir, dirName);
+  const configPath = nodePath.join(projectDir, "config.json");
+
+  try {
+    const content = await fs.readFile(configPath);
+    const parsed: unknown = JSON.parse(content);
+
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "path" in parsed &&
+      typeof (parsed as Record<string, unknown>).path === "string"
+    ) {
+      const rawPath = (parsed as { path: string }).path;
+      const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
+
+      const config: ProjectConfig = {
+        version: (parsed as { version?: number }).version ?? 1,
+        path: new Path(rawPath).toString(),
+        ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
+      };
+      return config;
+    }
+  } catch {
+    // Config not found in standard location - try scanning all configs
+  }
+
+  // Fallback: scan all configs to find one with matching path
+  // This handles cloned projects where config is in URL-hashed directory
+  const allConfigs = await loadAllProjectConfigs(fs, projectsDir);
+  for (const config of allConfigs) {
+    if (config.path === normalizedPath) {
+      return config;
+    }
+  }
+
+  return undefined;
+}
+
+async function removeProject(
+  fs: ProjectFs,
+  projectsDir: string,
+  projectPath: string
+): Promise<void> {
+  const dirName = projectDirName(projectPath);
+  const projectDir = nodePath.join(projectsDir, dirName);
+  const configPath = nodePath.join(projectDir, "config.json");
+
+  try {
+    await fs.unlink(configPath);
+  } catch {
+    // Ignore if file doesn't exist
+    return;
+  }
+
+  // Try to remove the workspaces subdirectory (only succeeds if empty)
+  const workspacesDir = nodePath.join(projectDir, "workspaces");
+  try {
+    await fs.rm(workspacesDir);
+  } catch {
+    // ENOTEMPTY (workspaces exist) or ENOENT (doesn't exist) - that's fine
+  }
+
+  // Try to remove the project directory (only succeeds if empty)
+  try {
+    await fs.rm(projectDir);
+  } catch {
+    // ENOTEMPTY or ENOENT - that's fine
+  }
 }
 
 // =============================================================================
@@ -113,13 +291,13 @@ export interface LocalProjectModuleDeps {
 // =============================================================================
 
 /**
- * Create a LocalProjectModule that owns project state for ALL projects.
+ * Create a LocalProjectModule that owns project state and persistence for ALL projects.
  *
- * @param deps - ProjectStore for persistence, GitWorktreeProvider for .git validation
+ * @param deps - FileSystemLayer for persistence, GitWorktreeProvider for .git validation
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
-  const { projectStore, globalProvider } = deps;
+  const { projectsDir, fs, globalProvider } = deps;
 
   /** Internal state: all projects keyed by normalized path string. */
   const projects = new Map<string, LocalProject>();
@@ -152,7 +330,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         // register: generate ID, persist, add to internal state (all projects)
         register: {
           handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
-            const { projectPath: projectPathStr } = ctx as RegisterHookInput;
+            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
 
             const projectPath = new Path(projectPathStr);
             const normalizedKey = projectPath.toString();
@@ -163,10 +341,10 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               return { projectId, name: projectPath.basename, alreadyOpen: true };
             }
 
-            // Persist to store if new (remote projects already saved by RemoteProjectModule.resolve)
-            const existingConfig = await projectStore.getProjectConfig(projectPathStr);
+            // Persist to store if new
+            const existingConfig = await getProjectConfig(fs, projectsDir, projectPathStr);
             if (!existingConfig) {
-              await projectStore.saveProject(projectPathStr);
+              await saveProject(fs, projectsDir, projectPathStr, remoteUrl);
             }
 
             // Add to internal state
@@ -182,7 +360,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [CLOSE_PROJECT_OPERATION_ID]: {
-        // resolve-project: look up projectId in internal state
+        // resolve-project: look up projectId in internal state + load config for remoteUrl
         "resolve-project": {
           handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
@@ -191,7 +369,15 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             // Find project by ID in our state
             for (const project of projects.values()) {
               if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
+                const projectPath = project.path.toString();
+
+                // Look up config to get remoteUrl
+                const config = await getProjectConfig(fs, projectsDir, projectPath);
+
+                return {
+                  projectPath,
+                  ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
+                };
               }
             }
 
@@ -200,20 +386,30 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
           },
         },
 
-        // close: remove from internal state and ProjectStore (all projects)
+        // close: remove from internal state and config (all projects)
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
-            const { projectPath } = ctx as CloseHookInput;
+            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
             // Remove from internal state
             const normalizedKey = new Path(projectPath).toString();
             projects.delete(normalizedKey);
 
-            // Remove from persistent storage
-            try {
-              await projectStore.removeProject(projectPath);
-            } catch {
-              // Fail silently
+            if (removeLocalRepo && remoteUrl) {
+              // Remote project with removeLocalRepo: force-delete the config dir
+              const configDir = nodePath.join(projectsDir, projectDirName(projectPath));
+              try {
+                await fs.rm(configDir, { recursive: true, force: true });
+              } catch {
+                // Fail silently
+              }
+            } else {
+              // Normal removal: remove config.json and empty dirs
+              try {
+                await removeProject(fs, projectsDir, projectPath);
+              } catch {
+                // Fail silently
+              }
             }
 
             return {};
@@ -240,10 +436,10 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [APP_START_OPERATION_ID]: {
-        // activate: scan saved project configs and return paths for project:open dispatch
+        // activate: load all saved project configs
         activate: {
           handler: async (): Promise<ActivateHookResult> => {
-            const configs = await projectStore.loadAllProjectConfigs();
+            const configs = await loadAllProjectConfigs(fs, projectsDir);
             return { projectPaths: configs.map((c) => c.path) };
           },
         },
