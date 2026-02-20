@@ -310,9 +310,6 @@ const lifecycleLogger = loggingService.createLogger("lifecycle");
 
 // 6. Manager construction (two-phase: constructor only, no Electron resources)
 
-const windowTitle =
-  !buildInfo.isPackaged && buildInfo.gitBranch ? `CodeHydra (${buildInfo.gitBranch})` : "CodeHydra";
-
 const windowManager = new WindowManager(
   {
     windowLayer,
@@ -320,7 +317,7 @@ const windowManager = new WindowManager(
     logger: loggingService.createLogger("window"),
     platformInfo,
   },
-  windowTitle,
+  "CodeHydra",
   pathProvider.appIconPath.toNative()
 );
 

@@ -1,5 +1,8 @@
 /**
- * WindowTitleModule - Event subscriber module for updating the window title.
+ * WindowTitleModule - Lifecycle and event subscriber module for the window title.
+ *
+ * Hooks:
+ * - app:start → "start": sets the initial window title via updateTitle()
  *
  * Subscribes to:
  * - workspace:switched: updates internal project/workspace names, calls updateTitle()
@@ -13,14 +16,16 @@ import type { DomainEvent } from "../intents/infrastructure/types";
 import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_UPDATE_AVAILABLE } from "../operations/update-available";
+import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
 import { formatWindowTitle } from "../ipc/api-handlers";
 
 /**
- * Create a window title module that subscribes to workspace switch and update-available events.
+ * Create a window title module that sets the initial title on startup and
+ * subscribes to workspace switch and update-available events.
  *
  * @param setTitle - Callback to set the window title
  * @param titleVersion - Version suffix (branch in dev, version in packaged), or undefined
- * @returns IntentModule with event subscriptions
+ * @returns IntentModule with hooks and event subscriptions
  */
 export function createWindowTitleModule(
   setTitle: (title: string) => void,
@@ -41,6 +46,16 @@ export function createWindowTitleModule(
   }
 
   return {
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        start: {
+          handler: async (): Promise<StartHookResult> => {
+            updateTitle();
+            return {};
+          },
+        },
+      },
+    },
     events: {
       [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceSwitchedEvent).payload;
