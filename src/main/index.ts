@@ -109,7 +109,6 @@ import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shut
 import type { AppShutdownIntent } from "./operations/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
 import { SetModeOperation, INTENT_SET_MODE } from "./operations/set-mode";
-import type { SetModeIntent } from "./operations/set-mode";
 import { SetMetadataOperation, INTENT_SET_METADATA } from "./operations/set-metadata";
 import { GetMetadataOperation, INTENT_GET_METADATA } from "./operations/get-metadata";
 import {
@@ -335,12 +334,7 @@ const viewManager = new ViewManager({
     codeServerPort: 0,
   },
   logger: loggingService.createLogger("view"),
-  setModeFn: (mode) => {
-    void dispatcher.dispatch({
-      type: INTENT_SET_MODE,
-      payload: { mode },
-    } as SetModeIntent);
-  },
+  dispatcher,
 });
 
 const badgeManager = new BadgeManager(

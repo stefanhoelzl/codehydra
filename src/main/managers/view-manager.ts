@@ -22,6 +22,8 @@ import type { ViewLayer, WindowOpenDetails } from "../../services/shell/view";
 import type { SessionLayer } from "../../services/shell/session";
 import type { WindowLayerInternal } from "../../services/shell/window";
 import type { ViewHandle, SessionHandle, WindowHandle } from "../../services/shell/types";
+import type { IDispatcher } from "../intents/infrastructure";
+import { INTENT_SET_MODE, type SetModeIntent } from "../operations/set-mode";
 
 /**
  * Sidebar minimized width in pixels.
@@ -83,12 +85,8 @@ export interface ViewManagerDeps {
   readonly config: ViewManagerConfig;
   /** Logger */
   readonly logger: Logger;
-  /**
-   * Optional function to dispatch mode changes through the intent pipeline.
-   * When provided, ShortcutController routes mode changes through the dispatcher
-   * instead of calling ViewManager.setMode() directly.
-   */
-  readonly setModeFn?: (mode: UIMode) => void;
+  /** Dispatcher for dispatching intents through the intent pipeline. */
+  readonly dispatcher: IDispatcher;
 }
 
 /**
@@ -117,7 +115,7 @@ export class ViewManager implements IViewManager {
   private readonly viewLayer: ViewLayer;
   private readonly sessionLayer: SessionLayer;
   private readonly config: ViewManagerConfig;
-  private readonly setModeFn: ((mode: UIMode) => void) | undefined;
+  private readonly dispatcher: IDispatcher;
   private uiViewHandle!: ViewHandle;
   private shortcutController!: ShortcutController;
   private codeServerPort: number;
@@ -170,7 +168,7 @@ export class ViewManager implements IViewManager {
     this.viewLayer = deps.viewLayer;
     this.sessionLayer = deps.sessionLayer;
     this.config = deps.config;
-    this.setModeFn = deps.setModeFn;
+    this.dispatcher = deps.dispatcher;
     this.codeServerPort = deps.config.codeServerPort;
     this.logger = deps.logger;
   }
@@ -205,12 +203,15 @@ export class ViewManager implements IViewManager {
     const rawWindow = windowLayer._getRawWindow(this.windowHandle);
 
     // Create ShortcutController — `this` already exists, no holder hack needed
-    // When setModeFn is provided, route mode changes through the intent dispatcher
-    // so domain events (ui:mode-changed) are emitted to the renderer.
     this.shortcutController = new ShortcutController(rawWindow, {
       focusUI: () => this.focusUI(),
       getUIWebContents: () => this.getUIWebContents(),
-      setMode: this.setModeFn ? (mode) => this.setModeFn!(mode) : (mode) => this.setMode(mode),
+      setMode: (mode) => {
+        void this.dispatcher.dispatch({
+          type: INTENT_SET_MODE,
+          payload: { mode },
+        } as SetModeIntent);
+      },
       getMode: () => this.getMode(),
       // Shortcut key callback - sends IPC event to renderer
       onShortcut: (key) => {

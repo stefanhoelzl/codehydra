@@ -21,6 +21,7 @@ import {
   type MockWindowLayerInternal,
 } from "../../services/shell/window.state-mock";
 import type { WindowHandle } from "../../services/shell/types";
+import type { IDispatcher } from "../intents/infrastructure";
 
 // Mock ShortcutController before imports
 const mockShortcutController = vi.hoisted(() => ({
@@ -113,6 +114,7 @@ function createViewManagerDeps(): ViewManagerDeps & {
       codeServerPort: 8080,
     },
     logger: SILENT_LOGGER,
+    dispatcher: { dispatch: vi.fn() } as unknown as IDispatcher,
   };
 }
 
