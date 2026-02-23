@@ -231,6 +231,54 @@ describe("LocalProjectModule Integration", () => {
       expect(errors[0]!.message).toBe("Not a git repository");
     });
 
+    it("returns remoteUrl from persisted config on startup (#18)", async () => {
+      const setup = createTestSetup();
+
+      // Pre-populate config with remoteUrl (simulates saved remote project)
+      writeConfig(setup.fs, PROJECT_PATH, "https://github.com/user/repo.git");
+
+      // Resolve with local path only (no git URL) — like app startup
+      const { results, errors } = await setup.openHooks.collect<ResolveHookResult>("resolve", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        projectPath: new Path(PROJECT_PATH).toString(),
+        remoteUrl: "https://github.com/user/repo.git",
+      });
+    });
+
+    it("returns remoteUrl with alreadyOpen when project is in state (#19)", async () => {
+      const setup = createTestSetup();
+
+      // Pre-populate config with remoteUrl
+      writeConfig(setup.fs, PROJECT_PATH, "https://github.com/user/repo.git");
+
+      // Register so project is in internal state
+      const registerCtx: RegisterHookInput = {
+        intent: openLocalIntent(PROJECT_PATH),
+        projectPath: new Path(PROJECT_PATH).toString(),
+        remoteUrl: "https://github.com/user/repo.git",
+      };
+      await setup.openHooks.collect<RegisterHookResult>("register", registerCtx);
+
+      // Resolve again — should return alreadyOpen AND remoteUrl
+      const { results, errors } = await setup.openHooks.collect<ResolveHookResult>("resolve", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        projectPath: new Path(PROJECT_PATH).toString(),
+        alreadyOpen: true,
+        remoteUrl: "https://github.com/user/repo.git",
+      });
+      expect(setup.globalProvider.validateRepository).not.toHaveBeenCalled();
+    });
+
     it("returns alreadyOpen when path is in internal state (#14)", async () => {
       const setup = createTestSetup();
 

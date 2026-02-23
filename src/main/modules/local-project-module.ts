@@ -326,14 +326,25 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               return {};
             }
 
+            // Check persisted config for remoteUrl (restores icon on startup)
+            const config = await getProjectConfig(fs, projectsDir, path.toString());
+            const remoteUrl = config?.remoteUrl;
+
             // Already open — skip validation, signal short-circuit
             if (projects.has(path.toString())) {
-              return { projectPath: path.toString(), alreadyOpen: true };
+              return {
+                projectPath: path.toString(),
+                alreadyOpen: true,
+                ...(remoteUrl !== undefined && { remoteUrl }),
+              };
             }
 
             await globalProvider.validateRepository(path);
 
-            return { projectPath: path.toString() };
+            return {
+              projectPath: path.toString(),
+              ...(remoteUrl !== undefined && { remoteUrl }),
+            };
           },
         },
 
