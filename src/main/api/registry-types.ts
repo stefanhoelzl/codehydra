@@ -4,7 +4,6 @@
  */
 
 import type {
-  ProjectId,
   Project,
   Workspace,
   WorkspaceRef,
@@ -30,7 +29,7 @@ export interface ProjectOpenPayload {
 
 /** projects.close */
 export interface ProjectClosePayload {
-  readonly projectId: ProjectId;
+  readonly projectPath: string;
   /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
   readonly removeLocalRepo?: boolean;
 }
@@ -40,14 +39,14 @@ export interface ProjectClonePayload {
   readonly url: string;
 }
 
-/** projects.get, projects.fetchBases */
-export interface ProjectIdPayload {
-  readonly projectId: ProjectId;
+/** projects.fetchBases */
+export interface ProjectPathPayload {
+  readonly projectPath: string;
 }
 
 /** workspaces.create */
 export interface WorkspaceCreatePayload {
-  readonly projectId?: ProjectId;
+  readonly projectPath?: string;
   readonly name: string;
   readonly base: string;
   /** Optional initial prompt to send after workspace is created */
@@ -118,7 +117,7 @@ export interface MethodRegistry {
   "projects.close": (payload: ProjectClosePayload) => Promise<void>;
   "projects.clone": (payload: ProjectClonePayload) => Promise<Project>;
   "projects.fetchBases": (
-    payload: ProjectIdPayload
+    payload: ProjectPathPayload
   ) => Promise<{ readonly bases: readonly BaseInfo[] }>;
 
   // Workspaces

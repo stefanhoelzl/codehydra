@@ -53,7 +53,6 @@ import type {
   FinalizeHookResult,
   OpenWorkspaceIntent,
   WorkspaceCreatedEvent,
-  ResolveProjectHookResult,
 } from "./open-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { Project, ProjectId } from "../../shared/api/types";
@@ -495,23 +494,6 @@ function createTestHarness(options?: {
   // Workspace:open modules
   // ---------------------------------------------------------------------------
 
-  // ResolveProjectModule for workspace:open (resolves projectPath from payload)
-  const resolveProjectModule: IntentModule = {
-    hooks: {
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const intent = ctx.intent as OpenWorkspaceIntent;
-            if (intent.payload.projectPath) {
-              return { projectPath: intent.payload.projectPath };
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
-
   // WorktreeModule for workspace:open (handles existingWorkspace)
   const worktreeModule: IntentModule = {
     hooks: {
@@ -666,7 +648,6 @@ function createTestHarness(options?: {
     localRegisterModule,
     appStateRegisterModule,
     discoverModule,
-    resolveProjectModule,
     worktreeModule,
     codeServerModule,
     stateModule,

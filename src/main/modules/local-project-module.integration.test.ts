@@ -12,8 +12,8 @@
  * #4: register generates ID and persists new local projects
  * #5: register registers remote project (saves with remoteUrl from context)
  * #6: register skips save when project config already exists
- * #7: close resolve finds project by ID in internal state
- * #8: close resolve returns empty for unknown project ID
+ * #7: close resolve returns config for known project path
+ * #8: close resolve returns empty for unknown project path
  * #9: close removes from state and config
  * #10: close removes remote project from state and config
  * #11: activate returns all project paths including remote
@@ -166,10 +166,10 @@ function openGitIntent(url: string): OpenProjectIntent {
   };
 }
 
-function closeIntent(projectId: ProjectId): CloseProjectIntent {
+function closeIntent(projectPath: string): CloseProjectIntent {
   return {
     type: INTENT_CLOSE_PROJECT,
-    payload: { projectId },
+    payload: { projectPath },
   };
 }
 
@@ -420,36 +420,34 @@ describe("LocalProjectModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("project:close resolve", () => {
-    it("finds project by ID in internal state (#7)", async () => {
+    it("returns config for known project path (#7)", async () => {
       const setup = createTestSetup();
 
-      // First, register a project so it's in internal state
+      // Register a project so config is written to disk
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: new Path(PROJECT_PATH).toString(),
       };
       await setup.openHooks.collect<RegisterHookResult>("register", registerCtx);
 
-      // Now resolve by projectId
+      // Now resolve by projectPath - should return config data (empty for local projects without remoteUrl)
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve-project",
-        { intent: closeIntent(PROJECT_ID) }
+        "resolve",
+        { intent: closeIntent(PROJECT_PATH) }
       );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
-      expect(results[0]!.projectPath).toBe(new Path(PROJECT_PATH).toString());
+      // Local project has no remoteUrl, so result is empty
+      expect(results[0]).toEqual({});
     });
 
-    it("returns empty for unknown project ID (#8)", async () => {
+    it("returns empty for unknown project path (#8)", async () => {
       const { closeHooks } = createTestSetup();
 
-      const { results, errors } = await closeHooks.collect<CloseResolveHookResult>(
-        "resolve-project",
-        {
-          intent: closeIntent("unknown-00000000" as ProjectId),
-        }
-      );
+      const { results, errors } = await closeHooks.collect<CloseResolveHookResult>("resolve", {
+        intent: closeIntent("/unknown/project"),
+      });
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -472,13 +470,12 @@ describe("LocalProjectModule Integration", () => {
 
       // Resolve — should include remoteUrl from config
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve-project",
-        { intent: closeIntent(PROJECT_ID) }
+        "resolve",
+        { intent: closeIntent(PROJECT_PATH) }
       );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
-      expect(results[0]!.projectPath).toBe(new Path(PROJECT_PATH).toString());
       expect(results[0]!.remoteUrl).toBe("https://github.com/user/repo.git");
     });
   });
@@ -500,7 +497,7 @@ describe("LocalProjectModule Integration", () => {
 
       // Close the project
       const closeCtx: CloseHookInput = {
-        intent: closeIntent(PROJECT_ID),
+        intent: closeIntent(PROJECT_PATH),
         projectPath: new Path(PROJECT_PATH).toString(),
         removeLocalRepo: false,
       };
@@ -510,8 +507,8 @@ describe("LocalProjectModule Integration", () => {
 
       // Verify it's gone from internal state (close resolve should return empty)
       const { results: resolveResults } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve-project",
-        { intent: closeIntent(PROJECT_ID) }
+        "resolve",
+        { intent: closeIntent(PROJECT_PATH) }
       );
       expect(resolveResults[0]).toEqual({});
     });
@@ -532,7 +529,7 @@ describe("LocalProjectModule Integration", () => {
 
       // Close with remoteUrl present
       const closeCtx: CloseHookInput = {
-        intent: closeIntent(PROJECT_ID),
+        intent: closeIntent(PROJECT_PATH),
         projectPath: new Path(PROJECT_PATH).toString(),
         remoteUrl: "https://github.com/user/repo.git",
         removeLocalRepo: false,
@@ -543,8 +540,8 @@ describe("LocalProjectModule Integration", () => {
 
       // Verify it's gone from internal state
       const { results: resolveResults } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve-project",
-        { intent: closeIntent(PROJECT_ID) }
+        "resolve",
+        { intent: closeIntent(PROJECT_PATH) }
       );
       expect(resolveResults[0]).toEqual({});
     });
@@ -565,7 +562,7 @@ describe("LocalProjectModule Integration", () => {
 
       // Close with removeLocalRepo=true and remoteUrl
       const closeCtx: CloseHookInput = {
-        intent: closeIntent(PROJECT_ID),
+        intent: closeIntent(PROJECT_PATH),
         projectPath: new Path(PROJECT_PATH).toString(),
         remoteUrl: "https://github.com/user/repo.git",
         removeLocalRepo: true,
@@ -626,14 +623,16 @@ describe("LocalProjectModule Integration", () => {
         intent: appStartIntent(),
       });
 
-      // activate should NOT populate state — close-resolve should return empty
+      // activate should NOT populate internal state — resolve reads config from disk,
+      // so it returns {} for a local project (no remoteUrl)
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
-        "resolve-project",
-        { intent: closeIntent(PROJECT_ID) }
+        "resolve",
+        { intent: closeIntent(PROJECT_PATH) }
       );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
+      // Local project config has no remoteUrl, so result is empty
       expect(results[0]).toEqual({});
     });
   });

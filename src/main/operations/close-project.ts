@@ -1,10 +1,11 @@
 /**
  * CloseProjectOperation - Orchestrates project closing.
  *
- * Runs two hook points in sequence:
- * 1. "resolve-project" - Resolves projectId to projectPath, loads config, gets workspace list
- * 2. Dispatches workspace:delete per workspace (removeWorktree=false, skipSwitch=true)
- * 3. "close" - Disposes provider, removes state + store, clears active workspace
+ * Steps:
+ * 1. Dispatches project:resolve to get projectId from projectPath
+ * 2. "resolve" hook - Loads config (remoteUrl), gets workspace list
+ * 3. Dispatches workspace:delete per workspace (removeWorktree=false, skipSwitch=true)
+ * 4. "close" - Disposes provider, removes state + store, clears active workspace
  *
  * Emits project:closed after close hook completes.
  *
@@ -16,13 +17,14 @@ import type { Operation, OperationContext, HookContext } from "../intents/infras
 import type { ProjectId } from "../../shared/api/types";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
+import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 
 // =============================================================================
 // Intent Types
 // =============================================================================
 
 export interface CloseProjectPayload {
-  readonly projectId: ProjectId;
+  readonly projectPath: string;
   readonly removeLocalRepo?: boolean;
 }
 
@@ -55,10 +57,9 @@ export const EVENT_PROJECT_CLOSED = "project:closed" as const;
 export const CLOSE_PROJECT_OPERATION_ID = "close-project";
 
 /**
- * Per-handler result contract for the "resolve-project" hook point.
+ * Per-handler result contract for the "resolve" hook point.
  */
 export interface CloseResolveHookResult {
-  readonly projectPath?: string;
   readonly remoteUrl?: string;
   readonly workspaces?: ReadonlyArray<{ path: string }>;
 }
@@ -89,34 +90,35 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
 
   async execute(ctx: OperationContext<CloseProjectIntent>): Promise<void> {
     const { payload } = ctx.intent;
+    const projectPath = payload.projectPath;
 
+    // 1. Dispatch project:resolve to get projectId from projectPath
+    const projResolved = await ctx.dispatch({
+      type: INTENT_RESOLVE_PROJECT,
+      payload: { projectPath },
+    } as ResolveProjectIntent);
+    const projectId = projResolved.projectId;
+
+    // 2. Run "resolve" hook -- returns remoteUrl, workspaces
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
-
-    // 1. Run "resolve-project" hook -- returns projectPath, remoteUrl, workspaces
     const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<CloseResolveHookResult>("resolve-project", hookCtx);
+      await ctx.hooks.collect<CloseResolveHookResult>("resolve", hookCtx);
     if (resolveErrors.length > 0) {
       throw resolveErrors[0]!;
     }
 
     // Merge resolve results — last-write-wins
-    let projectPath: string | undefined;
     let remoteUrl: string | undefined;
     const removeLocalRepo = payload.removeLocalRepo ?? false;
     let workspaces: ReadonlyArray<{ path: string }> = [];
     for (const result of resolveResults) {
-      if (result.projectPath !== undefined) projectPath = result.projectPath;
       if (result.remoteUrl !== undefined) remoteUrl = result.remoteUrl;
       if (result.workspaces !== undefined) workspaces = result.workspaces;
     }
 
-    if (!projectPath) {
-      throw new Error("Resolve hook did not provide projectPath");
-    }
-
-    // 2. Dispatch workspace:delete per workspace (removeWorktree=false, skipSwitch=true)
+    // 3. Dispatch workspace:delete per workspace (removeWorktree=false, skipSwitch=true)
     for (const workspace of workspaces) {
       try {
         const deleteIntent: DeleteWorkspaceIntent = {
@@ -135,7 +137,7 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
       }
     }
 
-    // 3. Run "close" hook (dispose provider, remove state + store, clear active workspace)
+    // 4. Run "close" hook (dispose provider, remove state + store, clear active workspace)
     const closeHookInput: CloseHookInput = {
       intent: ctx.intent,
       projectPath,
@@ -156,7 +158,7 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
       if (result.otherProjectsExist !== undefined) otherProjectsExist = result.otherProjectsExist;
     }
 
-    // 4. Emit workspace:switched(null) if no other projects remain
+    // 5. Emit workspace:switched(null) if no other projects remain
     if (otherProjectsExist === false) {
       const nullEvent: WorkspaceSwitchedEvent = {
         type: EVENT_WORKSPACE_SWITCHED,
@@ -165,10 +167,10 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
       ctx.emit(nullEvent);
     }
 
-    // 5. Emit project:closed event
+    // 6. Emit project:closed event
     const event: ProjectClosedEvent = {
       type: EVENT_PROJECT_CLOSED,
-      payload: { projectId: payload.projectId },
+      payload: { projectId },
     };
     ctx.emit(event);
   }

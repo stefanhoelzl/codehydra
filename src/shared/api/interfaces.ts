@@ -35,7 +35,7 @@ export interface ProjectCloseOptions {
 
 export interface IProjectApi {
   open(path?: string): Promise<Project | null>;
-  close(projectId: ProjectId, options?: ProjectCloseOptions): Promise<void>;
+  close(projectPath: string, options?: ProjectCloseOptions): Promise<void>;
   /**
    * Clone a git repository and create a new project.
    * If the URL has already been cloned, returns the existing project.
@@ -45,7 +45,7 @@ export interface IProjectApi {
    * @throws Error if clone fails (network, auth, invalid URL)
    */
   clone(url: string): Promise<Project>;
-  fetchBases(projectId: ProjectId): Promise<{ readonly bases: readonly BaseInfo[] }>;
+  fetchBases(projectPath: string): Promise<{ readonly bases: readonly BaseInfo[] }>;
 }
 
 /**
@@ -68,13 +68,13 @@ export interface IWorkspaceApi {
   /**
    * Create a new workspace.
    *
-   * @param projectId Project to create the workspace in
+   * @param projectPath Project path to create the workspace in
    * @param name Name of the new workspace
    * @param base Base branch to create the workspace from
    * @param options Optional creation options (initialPrompt, keepInBackground)
    */
   create(
-    projectId: ProjectId | undefined,
+    projectPath: string | undefined,
     name: string,
     base: string,
     options?: WorkspaceCreateOptions
@@ -192,6 +192,7 @@ export interface ApiEvents {
   "project:closed": (event: { readonly projectId: ProjectId }) => void;
   "project:bases-updated": (event: {
     readonly projectId: ProjectId;
+    readonly projectPath: string;
     readonly bases: readonly BaseInfo[];
   }) => void;
   "workspace:created": (event: {

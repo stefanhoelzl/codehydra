@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { projects, type ProjectId, type BaseInfo } from "$lib/api";
+  import { projects, type BaseInfo } from "$lib/api";
   import FilterableDropdown, { type DropdownOption } from "./FilterableDropdown.svelte";
 
   /**
@@ -15,7 +15,7 @@
   }
 
   interface NameBranchDropdownProps {
-    projectId: ProjectId;
+    projectPath: string;
     value: string;
     onSelect: (selection: NameBranchSelection) => void;
     disabled?: boolean;
@@ -32,7 +32,7 @@
   }
 
   let {
-    projectId,
+    projectPath,
     value,
     onSelect,
     disabled = false,
@@ -52,7 +52,7 @@
     error = null;
 
     projects
-      .fetchBases(projectId)
+      .fetchBases(projectPath)
       .then((result: { bases: readonly BaseInfo[] }) => {
         branches = result.bases;
       })
@@ -169,7 +169,7 @@
       {disabled}
       placeholder="Enter name or select branch..."
       filterOption={filterBranch}
-      id={id ?? `name-branch-dropdown-${projectId}`}
+      id={id ?? `name-branch-dropdown-${projectPath}`}
       allowFreeText={true}
       {onEnter}
       {onInput}

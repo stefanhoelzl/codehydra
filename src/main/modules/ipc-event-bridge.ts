@@ -18,7 +18,7 @@ import type {
   ProjectOpenPayload,
   ProjectClosePayload,
   ProjectClonePayload,
-  ProjectIdPayload,
+  ProjectPathPayload,
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
@@ -258,7 +258,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          ...(payload.projectId !== undefined && { projectId: payload.projectId }),
+          ...(payload.projectPath !== undefined && { projectPath: payload.projectPath }),
           workspaceName: payload.name,
           base: payload.base,
           ...(payload.initialPrompt !== undefined && { initialPrompt: payload.initialPrompt }),
@@ -505,7 +505,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
       const intent: CloseProjectIntent = {
         type: INTENT_CLOSE_PROJECT,
         payload: {
-          projectId: payload.projectId,
+          projectPath: payload.projectPath,
           ...(payload.removeLocalRepo !== undefined && {
             removeLocalRepo: payload.removeLocalRepo,
           }),
@@ -518,13 +518,13 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
 
   apiRegistry.register(
     "projects.fetchBases",
-    async (payload: ProjectIdPayload) => {
+    async (payload: ProjectPathPayload) => {
       // Dispatch workspace:open with incomplete payload (missing workspaceName/base)
-      // This triggers the resolve-project + fetch-bases path
+      // This triggers the project:resolve + fetch-bases path
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: payload.projectId,
+          projectPath: payload.projectPath,
         },
       };
       const result = await dispatcher.dispatch(intent);
@@ -535,6 +535,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         bases: readonly { name: string; isRemote: boolean }[];
         defaultBaseBranch?: string;
         projectPath: string;
+        projectId: import("../../shared/api/types").ProjectId;
       };
 
       // Fire-and-forget background update
@@ -544,13 +545,14 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
           await deps.globalWorktreeProvider.updateBases(projectRoot);
           const updatedBases = await deps.globalWorktreeProvider.listBases(projectRoot);
           apiRegistry.emit("project:bases-updated", {
-            projectId: payload.projectId,
+            projectId: basesResult.projectId,
+            projectPath: basesResult.projectPath,
             bases: updatedBases,
           });
         } catch (error) {
           logger.error(
             "Failed to fetch bases for project",
-            { projectId: payload.projectId },
+            { projectPath: payload.projectPath },
             error instanceof Error ? error : undefined
           );
         }

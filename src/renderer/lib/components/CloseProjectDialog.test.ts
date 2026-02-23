@@ -198,7 +198,7 @@ describe("CloseProjectDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Should only call close, not remove
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
+      expect(mockCloseProject).toHaveBeenCalledWith("/test/projects/test-project", undefined);
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
       expect(mockCloseDialog).toHaveBeenCalled();
     });
@@ -308,7 +308,7 @@ describe("CloseProjectDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
+      expect(mockCloseProject).toHaveBeenCalledWith("/test/projects/test-project", undefined);
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
     });
 
@@ -366,7 +366,7 @@ describe("CloseProjectDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
+      expect(mockCloseProject).toHaveBeenCalledWith("/test/projects/test-project", undefined);
     });
   });
 
@@ -411,7 +411,7 @@ describe("CloseProjectDialog component", () => {
       await vi.runAllTimersAsync();
 
       // Should still close the project
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
+      expect(mockCloseProject).toHaveBeenCalledWith("/test/projects/test-project", undefined);
     });
 
     it("error display uses role='alert'", async () => {
@@ -627,7 +627,9 @@ describe("CloseProjectDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, { removeLocalRepo: true });
+      expect(mockCloseProject).toHaveBeenCalledWith("/test/projects/test-project", {
+        removeLocalRepo: true,
+      });
     });
 
     it("does not pass removeLocalRepo when delete is unchecked", async () => {
@@ -639,7 +641,7 @@ describe("CloseProjectDialog component", () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockCloseProject).toHaveBeenCalledWith(testProjectId, undefined);
+      expect(mockCloseProject).toHaveBeenCalledWith("/test/projects/test-project", undefined);
     });
   });
 });

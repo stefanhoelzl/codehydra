@@ -68,7 +68,7 @@ function openProjectIntent(payload: { git?: string; path?: Path }): OpenProjectI
 }
 
 function closeProjectIntent(payload: {
-  projectId: string;
+  projectPath: string;
   removeLocalRepo?: boolean;
 }): CloseProjectIntent {
   return {
@@ -193,7 +193,10 @@ describe("RemoteProjectModule Integration", () => {
       fs.$.setEntry(projectPath, { type: "directory" });
 
       const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
-      const closeIntnt = closeProjectIntent({ projectId: "test-id", removeLocalRepo: true });
+      const closeIntnt = closeProjectIntent({
+        projectPath: "/test/project",
+        removeLocalRepo: true,
+      });
 
       const closeCtx: CloseHookInput = {
         intent: closeIntnt,
@@ -218,7 +221,10 @@ describe("RemoteProjectModule Integration", () => {
       fs.$.setEntry(projectPath, { type: "directory" });
 
       const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
-      const closeIntnt = closeProjectIntent({ projectId: "test-id", removeLocalRepo: false });
+      const closeIntnt = closeProjectIntent({
+        projectPath: "/test/project",
+        removeLocalRepo: false,
+      });
 
       const closeCtx: CloseHookInput = {
         intent: closeIntnt,
@@ -242,7 +248,10 @@ describe("RemoteProjectModule Integration", () => {
       const projectPath = "/home/user/projects/local";
 
       const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
-      const closeIntnt = closeProjectIntent({ projectId: "test-id", removeLocalRepo: true });
+      const closeIntnt = closeProjectIntent({
+        projectPath: "/test/project",
+        removeLocalRepo: true,
+      });
 
       const closeCtx: CloseHookInput = {
         intent: closeIntnt,

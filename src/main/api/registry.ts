@@ -171,14 +171,14 @@ export class ApiRegistry implements IApiRegistry {
     return {
       projects: {
         open: (path) => get("projects.open")({ ...(path !== undefined && { path }) }),
-        close: (projectId, options) => get("projects.close")({ projectId, ...options }),
+        close: (projectPath, options) => get("projects.close")({ projectPath, ...options }),
         clone: (url) => get("projects.clone")({ url }),
-        fetchBases: (projectId) => get("projects.fetchBases")({ projectId }),
+        fetchBases: (projectPath) => get("projects.fetchBases")({ projectPath }),
       },
       workspaces: {
-        create: (projectId, name, base, options) =>
+        create: (projectPath, name, base, options) =>
           get("workspaces.create")({
-            ...(projectId !== undefined && { projectId }),
+            ...(projectPath !== undefined && { projectPath }),
             name,
             base,
             ...options,

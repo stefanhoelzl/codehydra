@@ -22,7 +22,7 @@
  * #15: existingWorkspace skips worktree creation
  * #16: existingWorkspace uses projectPath directly
  * #17: Incomplete payload returns bases
- * #18: Resolve-project failure propagates error
+ * #18: project:resolve failure propagates error
  *
  * Regression coverage (APP_LIFECYCLE_INTENTS #10):
  * The agentModule's setup hook behavior (starting per-workspace server) is tested
@@ -54,7 +54,6 @@ import type {
   FinalizeHookResult,
   WorkspaceCreatedEvent,
   ExistingWorkspaceData,
-  ResolveProjectHookResult,
 } from "./open-workspace";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -81,7 +80,10 @@ import {
   RESOLVE_PROJECT_OPERATION_ID,
   INTENT_RESOLVE_PROJECT,
 } from "./resolve-project";
-import type { ResolveHookResult as ResolveProjectResolveHookResult } from "./resolve-project";
+import type {
+  ResolveHookResult as ResolveProjectResolveHookResult,
+  ResolveHookInput as ResolveProjectHookInput,
+} from "./resolve-project";
 
 // =============================================================================
 // Test Constants
@@ -201,6 +203,8 @@ interface TestSetup {
   dispatcher: Dispatcher;
   projectId: ProjectId;
   keepFilesService: MockKeepFilesService;
+  /** Set of project paths recognized by the resolve module. Add paths here for custom project tests. */
+  knownProjectPaths: Set<string>;
 }
 
 function createTestSetup(opts?: TestSetupOptions): TestSetup {
@@ -237,12 +241,19 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       },
     },
   };
+  // Tracks known project paths for project:resolve resolution.
+  // Only PROJECT_ROOT is known by default; tests can add more.
+  const knownProjectPaths = new Set<string>([PROJECT_ROOT]);
   const resolveProjectResolveModule: IntentModule = {
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (): Promise<ResolveProjectResolveHookResult> => {
-            return { projectId: PROJECT_ID, projectName: "test" };
+          handler: async (ctx: HookContext): Promise<ResolveProjectResolveHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
+            if (knownProjectPaths.has(projectPath)) {
+              return { projectId: PROJECT_ID, projectName: "test" };
+            }
+            return {};
           },
         },
       },
@@ -255,28 +266,6 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const { workspacePath } = ctx as ActivateHookInput;
             return { resolvedPath: workspacePath };
-          },
-        },
-      },
-    },
-  };
-
-  // ResolveProjectModule: "resolve-project" hook — resolves projectId to project path
-  const resolveProjectModule: IntentModule = {
-    hooks: {
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const intent = ctx.intent as OpenWorkspaceIntent;
-            // Short-circuit: if projectPath is in payload, use it
-            if (intent.payload.projectPath) {
-              return { projectPath: intent.payload.projectPath };
-            }
-            // Check projectId
-            if (intent.payload.projectId === projectId) {
-              return { projectPath: PROJECT_ROOT };
-            }
-            return {};
           },
         },
       },
@@ -324,10 +313,6 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
                 branch: existing.branch ?? existing.name,
                 metadata: existing.metadata,
               };
-            }
-
-            if (intent.payload.projectId !== projectId) {
-              throw new Error(`Project not found: ${intent.payload.projectId}`);
             }
 
             if (opts?.throwOnCreate) {
@@ -437,7 +422,6 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     resolveWorkspaceModule,
     resolveProjectResolveModule,
     switchViewModule,
-    resolveProjectModule,
     fetchBasesModule,
     worktreeModule,
     keepFilesModule,
@@ -450,7 +434,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   }
   for (const m of modules) dispatcher.registerModule(m);
 
-  return { dispatcher, projectId, keepFilesService };
+  return { dispatcher, projectId, keepFilesService, knownProjectPaths };
 }
 
 // =============================================================================
@@ -458,13 +442,14 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 // =============================================================================
 
 function createIntent(
-  projectId: ProjectId,
+  _projectId: ProjectId,
   overrides?: Partial<OpenWorkspacePayload>
 ): OpenWorkspaceIntent {
+  void _projectId; // projectId no longer in payload; kept in signature for test compat
   return {
     type: INTENT_OPEN_WORKSPACE,
     payload: {
-      projectId,
+      projectPath: PROJECT_ROOT,
       workspaceName: "feature-x",
       base: "main",
       ...overrides,
@@ -584,9 +569,18 @@ describe("OpenWorkspace Operation", () => {
     it("throws Project not found error", async () => {
       const setup = createTestSetup();
 
-      await expect(
-        setup.dispatcher.dispatch(createIntent("nonexistent-12345678" as ProjectId))
-      ).rejects.toThrow("resolve-project hook did not provide projectPath");
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          projectPath: "/nonexistent/project",
+          workspaceName: "feature-x",
+          base: "main",
+        },
+      };
+
+      await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
+        "Project not found for path: /nonexistent/project"
+      );
     });
   });
 
@@ -763,7 +757,6 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: setup.projectId,
           workspaceName: "feature-y",
           base: "main",
           existingWorkspace,
@@ -791,6 +784,7 @@ describe("OpenWorkspace Operation", () => {
     it("populates context without projectId resolution", async () => {
       const setup = createTestSetup();
       const customProjectPath = "/custom/project/path";
+      setup.knownProjectPaths.add(customProjectPath);
 
       const existingWorkspace: ExistingWorkspaceData = {
         path: "/custom/workspace/my-ws",
@@ -807,7 +801,6 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: setup.projectId,
           workspaceName: "my-ws",
           base: "develop",
           existingWorkspace,
@@ -836,7 +829,7 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: setup.projectId,
+          projectPath: PROJECT_ROOT,
           // No workspaceName or base
         },
       };
@@ -862,7 +855,7 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: setup.projectId,
+          projectPath: PROJECT_ROOT,
           workspaceName: "feature-x",
           // No base
         },
@@ -877,21 +870,21 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
-  describe("resolve-project failure propagates error (#18)", () => {
-    it("throws when resolve-project provides no projectPath", async () => {
+  describe("project:resolve failure propagates error (#18)", () => {
+    it("throws when project:resolve finds no project for path", async () => {
       const setup = createTestSetup();
 
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: "nonexistent-12345678" as ProjectId,
+          projectPath: "/nonexistent/project",
           workspaceName: "feature-x",
           base: "main",
         },
       };
 
       await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
-        "resolve-project hook did not provide projectPath"
+        "Project not found for path: /nonexistent/project"
       );
     });
   });
@@ -961,17 +954,6 @@ describe("OpenWorkspace Operation", () => {
           },
         },
       };
-      const resolveProjectModule: IntentModule = {
-        hooks: {
-          [OPEN_WORKSPACE_OPERATION_ID]: {
-            "resolve-project": {
-              handler: async (): Promise<ResolveProjectHookResult> => {
-                return { projectPath: PROJECT_ROOT };
-              },
-            },
-          },
-        },
-      };
       const fetchBasesModule: IntentModule = {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
@@ -1026,7 +1008,6 @@ describe("OpenWorkspace Operation", () => {
       dispatcher.registerModule(resolveWorkspaceModule);
       dispatcher.registerModule(resolveProjectResolveModule);
       dispatcher.registerModule(switchViewModule);
-      dispatcher.registerModule(resolveProjectModule);
       dispatcher.registerModule(fetchBasesModule);
       dispatcher.registerModule(worktreeModule);
       dispatcher.registerModule(agentModule);

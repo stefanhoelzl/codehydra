@@ -138,15 +138,15 @@
 
   // Handle form submission
   async function handleSubmit(): Promise<void> {
-    // isFormValid includes hasProject check, so selectedProjectId is defined
-    if (!isFormValid || isSubmitting || !selectedProjectId) return;
+    // isFormValid includes hasProject check, so selectedProject is defined
+    if (!isFormValid || isSubmitting || !selectedProject) return;
 
     submitError = null;
     isSubmitting = true;
 
     try {
       logger.debug("Dialog submitted", { type: "create-workspace" });
-      const workspace = await workspaces.create(selectedProjectId, name, selectedBranch);
+      const workspace = await workspaces.create(selectedProject.path, name, selectedBranch);
       // Switch to the newly created workspace to load its view
       await ui.switchWorkspace(workspace.path);
       closeDialog();
@@ -253,10 +253,10 @@
 
     <div class="ch-form-field">
       <label for="workspace-name" class="ch-form-label">Name</label>
-      {#if selectedProjectId}
+      {#if selectedProject}
         <NameBranchDropdown
           id="workspace-name"
-          projectId={selectedProjectId}
+          projectPath={selectedProject.path}
           value={name}
           onSelect={handleNameSelect}
           onInput={handleNameInput}
@@ -277,9 +277,9 @@
 
     <div class="ch-form-field">
       <label for="branch-select" class="ch-form-label">Base Branch</label>
-      {#if selectedProjectId}
+      {#if selectedProject}
         <BranchDropdown
-          projectId={selectedProjectId}
+          projectPath={selectedProject.path}
           value={selectedBranch}
           onSelect={handleBranchSelect}
           disabled={isSubmitting || isOpeningProject}
