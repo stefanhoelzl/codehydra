@@ -94,12 +94,12 @@ function getRemoveAllCheckbox(): HTMLElement & { checked?: boolean } {
   return checkbox;
 }
 
-function getDeleteRepoCheckbox(): HTMLElement & { checked?: boolean } {
+function getKeepRepoCheckbox(): HTMLElement & { checked?: boolean } {
   const checkboxes = getAllCheckboxes();
   const checkbox = Array.from(checkboxes).find(
-    (cb) => getCheckboxLabel(cb)?.includes("Delete cloned") ?? false
+    (cb) => getCheckboxLabel(cb)?.includes("Keep cloned") ?? false
   );
-  if (!checkbox) throw new Error("Delete repo checkbox not found");
+  if (!checkbox) throw new Error("Keep repo checkbox not found");
   return checkbox;
 }
 
@@ -535,15 +535,15 @@ describe("CloseProjectDialog component", () => {
       mockProjects.mockReturnValue([remoteProject]);
     });
 
-    it("shows delete repo checkbox for remote projects", async () => {
+    it("shows keep repo checkbox for remote projects", async () => {
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const deleteCheckbox = getDeleteRepoCheckbox();
-      expect(deleteCheckbox).toBeInTheDocument();
+      const keepCheckbox = getKeepRepoCheckbox();
+      expect(keepCheckbox).toBeInTheDocument();
     });
 
-    it("hides delete repo checkbox for local projects", async () => {
+    it("hides keep repo checkbox for local projects", async () => {
       const localProject = createProject(testProjectId, "test-project", [
         createWorkspace("ws1", testProjectId),
       ]);
@@ -553,74 +553,87 @@ describe("CloseProjectDialog component", () => {
       await vi.runAllTimersAsync();
 
       const checkboxes = getAllCheckboxes();
-      const deleteCheckbox = Array.from(checkboxes).find(
-        (cb) => cb.getAttribute("label")?.includes("Delete cloned") ?? false
+      const keepCheckbox = Array.from(checkboxes).find(
+        (cb) => cb.getAttribute("label")?.includes("Keep cloned") ?? false
       );
-      expect(deleteCheckbox).toBeUndefined();
+      expect(keepCheckbox).toBeUndefined();
     });
 
-    it("shows warning message when delete checkbox is checked", async () => {
+    it("shows warning by default, hides when keep is checked", async () => {
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const deleteCheckbox = getDeleteRepoCheckbox();
-      deleteCheckbox.checked = true;
-      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
-
+      // Warning visible by default for remote projects
       expect(screen.getByText(/permanently delete/i)).toBeInTheDocument();
       expect(screen.getByText(/https:\/\/github.com\/org\/test-repo.git/)).toBeInTheDocument();
-    });
 
-    it("auto-checks removeAll when delete checkbox is checked", async () => {
-      render(CloseProjectDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
+      // Check "Keep" to hide warning
+      const keepCheckbox = getKeepRepoCheckbox();
+      keepCheckbox.checked = true;
+      await fireEvent(keepCheckbox, new Event("change", { bubbles: true }));
 
-      const removeAllCheckbox = getRemoveAllCheckbox();
-      const deleteCheckbox = getDeleteRepoCheckbox();
-
-      // Initially unchecked
-      expect(removeAllCheckbox.checked).toBe(false);
-
-      // Check delete checkbox
-      deleteCheckbox.checked = true;
-      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
-
-      // removeAll should now be checked
       await waitFor(() => {
-        expect(removeAllCheckbox.checked).toBe(true);
+        expect(screen.queryByText(/permanently delete/i)).not.toBeInTheDocument();
       });
     });
 
-    it("disables removeAll checkbox when delete is checked", async () => {
+    it("removeAll is auto-checked by default, unchecked when keep is checked", async () => {
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
-
-      const deleteCheckbox = getDeleteRepoCheckbox();
-      deleteCheckbox.checked = true;
-      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
 
       const removeAllCheckbox = getRemoveAllCheckbox();
+
+      // Auto-checked by default for remote projects (shouldDeleteRepo = true)
+      expect(removeAllCheckbox.checked).toBe(true);
+
+      // Check "Keep" to uncheck removeAll
+      const keepCheckbox = getKeepRepoCheckbox();
+      keepCheckbox.checked = true;
+      await fireEvent(keepCheckbox, new Event("change", { bubbles: true }));
+
+      await waitFor(() => {
+        expect(removeAllCheckbox.checked).toBe(false);
+      });
+    });
+
+    it("disables removeAll checkbox by default, enables when keep is checked", async () => {
+      render(CloseProjectDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const removeAllCheckbox = getRemoveAllCheckbox();
+      // Disabled by default (shouldDeleteRepo = true)
       expect(removeAllCheckbox).toBeDisabled();
+
+      // Check "Keep" to enable removeAll
+      const keepCheckbox = getKeepRepoCheckbox();
+      keepCheckbox.checked = true;
+      await fireEvent(keepCheckbox, new Event("change", { bubbles: true }));
+
+      await waitFor(() => {
+        expect(removeAllCheckbox).not.toBeDisabled();
+      });
     });
 
-    it('shows "Delete & Close" button when delete checkbox is checked', async () => {
+    it('shows "Delete & Close" button by default, "Close Project" when keep is checked', async () => {
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      const deleteCheckbox = getDeleteRepoCheckbox();
-      deleteCheckbox.checked = true;
-      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
-
+      // Default: Delete & Close
       expect(screen.getByRole("button", { name: /delete & close/i })).toBeInTheDocument();
+
+      // Check "Keep"
+      const keepCheckbox = getKeepRepoCheckbox();
+      keepCheckbox.checked = true;
+      await fireEvent(keepCheckbox, new Event("change", { bubbles: true }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /close project/i })).toBeInTheDocument();
+      });
     });
 
-    it("calls close with removeLocalRepo option when delete is checked", async () => {
+    it("calls close with removeLocalRepo by default", async () => {
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
-
-      const deleteCheckbox = getDeleteRepoCheckbox();
-      deleteCheckbox.checked = true;
-      await fireEvent(deleteCheckbox, new Event("change", { bubbles: true }));
 
       const submitButton = screen.getByRole("button", { name: /delete & close/i });
       await fireEvent.click(submitButton);
@@ -632,9 +645,14 @@ describe("CloseProjectDialog component", () => {
       });
     });
 
-    it("does not pass removeLocalRepo when delete is unchecked", async () => {
+    it("does not pass removeLocalRepo when keep is checked", async () => {
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
+
+      // Check "Keep"
+      const keepCheckbox = getKeepRepoCheckbox();
+      keepCheckbox.checked = true;
+      await fireEvent(keepCheckbox, new Event("change", { bubbles: true }));
 
       const submitButton = screen.getByRole("button", { name: /close project/i });
       await fireEvent.click(submitButton);
