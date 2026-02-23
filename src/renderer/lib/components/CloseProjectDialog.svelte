@@ -19,7 +19,7 @@
 
   // Form state
   let removeAll = $state(false);
-  let deleteLocalRepo = $state(false);
+  let keepLocalRepo = $state(false);
   let submitError = $state<string | null>(null);
   let isSubmitting = $state(false);
 
@@ -30,11 +30,12 @@
     workspaceCount === 1 ? "1 workspace" : `${workspaceCount} workspaces`
   );
   const isRemoteProject = $derived(Boolean(project?.remoteUrl));
+  const shouldDeleteRepo = $derived(isRemoteProject && !keepLocalRepo);
 
   // Dynamic button label
   const buttonLabel = $derived.by(() => {
     if (isSubmitting) return "Closing...";
-    if (deleteLocalRepo) return "Delete & Close";
+    if (shouldDeleteRepo) return "Delete & Close";
     if (removeAll) return "Remove & Close";
     return "Close Project";
   });
@@ -49,8 +50,8 @@
     logger.debug("Dialog submitted", { type: "close-project" });
 
     try {
-      // If removeAll is checked, remove all workspaces first
-      if (removeAll && project && project.workspaces.length > 0) {
+      // If removeAll or shouldDeleteRepo, remove all workspaces first
+      if ((shouldDeleteRepo || removeAll) && project && project.workspaces.length > 0) {
         const removalPromises = project.workspaces.map((workspace) =>
           workspaces
             .remove(workspace.path, { keepBranch: false })
@@ -83,7 +84,7 @@
       // Pass removeLocalRepo option if checked (and project is remote)
       await projectsApi.close(
         project!.path,
-        deleteLocalRepo ? { removeLocalRepo: true } : undefined
+        shouldDeleteRepo ? { removeLocalRepo: true } : undefined
       );
       closeDialog();
     } catch (error) {
@@ -105,13 +106,13 @@
     removeAll = (event.target as unknown as { checked: boolean }).checked;
   }
 
-  // Handle delete local repo checkbox change
-  function handleDeleteLocalRepoChange(event: Event): void {
+  // Handle keep local repo checkbox change
+  function handleKeepLocalRepoChange(event: Event): void {
     const checked = (event.target as unknown as { checked: boolean }).checked;
-    deleteLocalRepo = checked;
-    // When delete local repo is checked, also check remove all workspaces
+    keepLocalRepo = checked;
+    // When "Keep" is checked, unlock the workspace checkbox (uncheck removeAll)
     if (checked) {
-      removeAll = true;
+      removeAll = false;
     }
   }
 
@@ -140,9 +141,9 @@
 
       <div class="ch-checkbox-row">
         <vscode-checkbox
-          checked={removeAll}
+          checked={shouldDeleteRepo || removeAll}
           onchange={handleRemoveAllChange}
-          disabled={isSubmitting || deleteLocalRepo}
+          disabled={isSubmitting || shouldDeleteRepo}
           label="Remove all workspaces and their branches"
         ></vscode-checkbox>
       </div>
@@ -151,14 +152,14 @@
     {#if isRemoteProject}
       <div class="ch-checkbox-row">
         <vscode-checkbox
-          checked={deleteLocalRepo}
-          onchange={handleDeleteLocalRepoChange}
+          checked={keepLocalRepo}
+          onchange={handleKeepLocalRepoChange}
           disabled={isSubmitting}
-          label="Delete cloned repository and all local files"
+          label="Keep cloned repository"
         ></vscode-checkbox>
       </div>
 
-      {#if deleteLocalRepo}
+      {#if shouldDeleteRepo}
         <div class="ch-alert-box warning" role="alert">
           <span class="ch-alert-box-icon" aria-hidden="true">
             <Icon name="warning" />
