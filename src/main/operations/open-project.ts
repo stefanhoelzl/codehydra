@@ -231,7 +231,6 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
           const openWsIntent: OpenWorkspaceIntent = {
             type: INTENT_OPEN_WORKSPACE,
             payload: {
-              projectId,
               workspaceName: workspace.name,
               base: workspace.metadata.base ?? "",
               existingWorkspace,

@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
-import type { BaseInfo, ProjectId } from "@shared/api/types";
+import type { BaseInfo } from "@shared/api/types";
 
 // Create mock functions with vi.hoisted - required for vitest mocking pattern
 const { mockFetchBases } = vi.hoisted(() => ({
@@ -23,10 +23,10 @@ vi.mock("$lib/api", () => ({
 import NameBranchDropdown, { type NameBranchSelection } from "./NameBranchDropdown.svelte";
 
 describe("NameBranchDropdown component", () => {
-  const testProjectId = "test-project-12345678" as ProjectId;
+  const testProjectPath = "/test/project";
 
   const defaultProps = {
-    projectId: testProjectId,
+    projectPath: testProjectPath,
     value: "",
     onSelect: vi.fn(),
   };

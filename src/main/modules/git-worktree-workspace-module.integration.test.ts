@@ -38,7 +38,6 @@ import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-modul
 import type { FetchBasesHookResult } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
-import type { ProjectId } from "../../shared/api/types";
 
 // =============================================================================
 // Mock Dependencies
@@ -471,7 +470,6 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const createIntent: OpenWorkspaceIntent = {
           type: "workspace:open",
           payload: {
-            projectId: "my-app-12345678" as ProjectId,
             workspaceName: "new-feature",
             base: "origin/main",
             projectPath,
@@ -506,7 +504,6 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const createIntent: OpenWorkspaceIntent = {
           type: "workspace:open",
           payload: {
-            projectId: "my-app-12345678" as ProjectId,
             workspaceName: "existing-ws",
             base: "origin/main",
             projectPath,

@@ -33,12 +33,12 @@ export interface Api {
 
   projects: {
     open(path?: string): Promise<Project | null>;
-    close(projectId: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
+    close(projectPath: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
     clone(url: string): Promise<Project>;
-    fetchBases(projectId: string): Promise<{ readonly bases: readonly ApiBaseInfo[] }>;
+    fetchBases(projectPath: string): Promise<{ readonly bases: readonly ApiBaseInfo[] }>;
   };
   workspaces: {
-    create(projectId: string, name: string, base: string): Promise<Workspace>;
+    create(projectPath: string, name: string, base: string): Promise<Workspace>;
     /**
      * Start workspace removal (fire-and-forget).
      * Progress is emitted via workspace:deletion-progress events.

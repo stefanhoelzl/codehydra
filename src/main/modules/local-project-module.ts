@@ -8,10 +8,8 @@
  * - resolve-project: shared project resolution (projectPath → projectId + projectName)
  * - project:open  → resolve:  validate .git exists for local paths
  * - project:open  → register: generate ID, persist, add to internal state (all projects)
- * - project:close → resolve-project:  look up projectId in internal state + config
+ * - project:close → resolve:  look up projectPath in config to get remoteUrl
  * - project:close → close:    remove from internal state and config (all projects)
- * - workspace:open → resolve-project: resolve projectId to path
- * - workspace:open → resolve-caller-project: resolve projectPath → projectId (caller flow)
  * - app:start     → activate: load ALL saved project configs
  */
 
@@ -47,13 +45,6 @@ import {
   type ResolveHookInput as ResolveProjectHookInput,
   type ResolveHookResult as ResolveProjectHookResult,
 } from "../operations/resolve-project";
-import {
-  OPEN_WORKSPACE_OPERATION_ID,
-  type OpenWorkspaceIntent,
-  type ResolveProjectHookResult as OpenWorkspaceResolveProjectHookResult,
-  type ResolveCallerProjectHookInput,
-  type ResolveCallerProjectHookResult,
-} from "../operations/open-workspace";
 
 // =============================================================================
 // Types
@@ -381,29 +372,18 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [CLOSE_PROJECT_OPERATION_ID]: {
-        // resolve-project: look up projectId in internal state + load config for remoteUrl
-        "resolve-project": {
+        // resolve: look up projectPath in config to get remoteUrl
+        resolve: {
           handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
-            const { projectId } = intent.payload;
+            const { projectPath } = intent.payload;
 
-            // Find project by ID in our state
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                const projectPath = project.path.toString();
+            // Look up config to get remoteUrl
+            const config = await getProjectConfig(fs, projectsDir, projectPath);
 
-                // Look up config to get remoteUrl
-                const config = await getProjectConfig(fs, projectsDir, projectPath);
-
-                return {
-                  projectPath,
-                  ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
-                };
-              }
-            }
-
-            // Not found — return empty
-            return {};
+            return {
+              ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
+            };
           },
         },
 
@@ -444,40 +424,6 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
           handler: async (): Promise<ActivateHookResult> => {
             const configs = await loadAllProjectConfigs(fs, projectsDir);
             return { projectPaths: configs.map((c) => c.path) };
-          },
-        },
-      },
-
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        // resolve-project: resolve projectId to path from project state (sole handler)
-        "resolve-project": {
-          handler: async (ctx: HookContext): Promise<OpenWorkspaceResolveProjectHookResult> => {
-            const intent = ctx.intent as OpenWorkspaceIntent;
-            const { projectId, projectPath: payloadPath } = intent.payload;
-
-            // Short-circuit: authoritative path already provided
-            if (payloadPath) {
-              return { projectPath: payloadPath };
-            }
-
-            // Look up projectId in project state
-            if (!projectId) return {};
-            for (const project of projects.values()) {
-              if (project.id === projectId) {
-                return { projectPath: project.path.toString() };
-              }
-            }
-
-            return {};
-          },
-        },
-        // resolve-caller-project: resolve projectPath → projectId (for callerWorkspacePath flow)
-        "resolve-caller-project": {
-          handler: async (ctx: HookContext): Promise<ResolveCallerProjectHookResult> => {
-            const { projectPath } = ctx as ResolveCallerProjectHookInput;
-            const normalizedKey = new Path(projectPath).toString();
-            const project = projects.get(normalizedKey);
-            return project ? { projectId: project.id } : {};
           },
         },
       },

@@ -12,7 +12,7 @@ import type {
   MethodResult,
   EmptyPayload,
   ProjectOpenPayload,
-  ProjectIdPayload,
+  ProjectPathPayload,
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspacePathPayload,
@@ -31,7 +31,6 @@ import type {
 } from "./registry-types";
 import { ALL_METHOD_PATHS } from "./registry-types";
 import type {
-  ProjectId,
   Project,
   Workspace,
   WorkspaceRef,
@@ -103,23 +102,23 @@ describe("registry-types.payload", () => {
     expectTypeOf<MethodPayload<"projects.open">>().toHaveProperty("path");
   });
 
-  it("extracts ProjectIdPayload for project ID methods", () => {
-    expectTypeOf<MethodPayload<"projects.fetchBases">>().toEqualTypeOf<ProjectIdPayload>();
+  it("extracts ProjectPathPayload for project path methods", () => {
+    expectTypeOf<MethodPayload<"projects.fetchBases">>().toEqualTypeOf<ProjectPathPayload>();
     // Verify shape
-    expectTypeOf<MethodPayload<"projects.fetchBases">>().toHaveProperty("projectId");
-    expectTypeOf<MethodPayload<"projects.fetchBases">["projectId"]>().toEqualTypeOf<ProjectId>();
+    expectTypeOf<MethodPayload<"projects.fetchBases">>().toHaveProperty("projectPath");
+    expectTypeOf<MethodPayload<"projects.fetchBases">["projectPath"]>().toEqualTypeOf<string>();
   });
 
   it("extracts ProjectClosePayload for projects.close", () => {
     // projects.close has optional removeLocalRepo parameter
-    expectTypeOf<MethodPayload<"projects.close">>().toHaveProperty("projectId");
-    expectTypeOf<MethodPayload<"projects.close">["projectId"]>().toEqualTypeOf<ProjectId>();
+    expectTypeOf<MethodPayload<"projects.close">>().toHaveProperty("projectPath");
+    expectTypeOf<MethodPayload<"projects.close">["projectPath"]>().toEqualTypeOf<string>();
   });
 
   it("extracts WorkspaceCreatePayload for workspaces.create", () => {
     expectTypeOf<MethodPayload<"workspaces.create">>().toEqualTypeOf<WorkspaceCreatePayload>();
     // Verify shape
-    expectTypeOf<MethodPayload<"workspaces.create">>().toHaveProperty("projectId");
+    expectTypeOf<MethodPayload<"workspaces.create">>().toHaveProperty("projectPath");
     expectTypeOf<MethodPayload<"workspaces.create">>().toHaveProperty("name");
     expectTypeOf<MethodPayload<"workspaces.create">>().toHaveProperty("base");
   });

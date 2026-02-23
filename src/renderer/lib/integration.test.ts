@@ -325,9 +325,9 @@ describe("Integration tests", () => {
       const confirmButton = within(dialog).getByRole("button", { name: /close project/i });
       await fireEvent.click(confirmButton);
 
-      // Verify closeProject was called (v2 API uses projectId)
+      // Verify closeProject was called with project path
       await waitFor(() => {
-        expect(mockApi.projects.close).toHaveBeenCalledWith(actualProjectId, undefined);
+        expect(mockApi.projects.close).toHaveBeenCalledWith(project.path, undefined);
       });
 
       // Simulate project:closed event (v2 format uses projectId not path)

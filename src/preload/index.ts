@@ -40,15 +40,15 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.PROJECT_OPEN, {
         ...(path !== undefined && { path }),
       }),
-    close: (projectId: string, options?: { removeLocalRepo?: boolean }) =>
-      ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectId, ...options }),
+    close: (projectPath: string, options?: { removeLocalRepo?: boolean }) =>
+      ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectPath, ...options }),
     clone: (url: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLONE, { url }),
-    fetchBases: (projectId: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.PROJECT_FETCH_BASES, { projectId }),
+    fetchBases: (projectPath: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.PROJECT_FETCH_BASES, { projectPath }),
   },
   workspaces: {
-    create: (projectId: string, name: string, base: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_CREATE, { projectId, name, base }),
+    create: (projectPath: string, name: string, base: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_CREATE, { projectPath, name, base }),
     remove: (
       workspacePath: string,
       options?: {

@@ -81,7 +81,10 @@
 
       // Always close the project (even if some removals failed)
       // Pass removeLocalRepo option if checked (and project is remote)
-      await projectsApi.close(projectId, deleteLocalRepo ? { removeLocalRepo: true } : undefined);
+      await projectsApi.close(
+        project!.path,
+        deleteLocalRepo ? { removeLocalRepo: true } : undefined
+      );
       closeDialog();
     } catch (error) {
       const message = getErrorMessage(error);

@@ -362,7 +362,7 @@ class MinimalOpenOperation implements Operation<OpenWorkspaceIntent, unknown> {
     const event: WorkspaceCreatedEvent = {
       type: EVENT_WORKSPACE_CREATED,
       payload: {
-        projectId: payload.projectId as unknown as ProjectId,
+        projectId: "test-12345678" as unknown as ProjectId,
         workspaceName: payload.workspaceName as unknown as WorkspaceName,
         workspacePath: `/workspaces/${payload.workspaceName}`,
         projectPath: `/projects/test`,
@@ -593,9 +593,9 @@ describe("ViewModule Integration", () => {
       await dispatcher.dispatch({
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectId: "test-project" as unknown as ProjectId,
-          workspaceName: "ws1" as unknown as WorkspaceName,
+          workspaceName: "ws1",
           base: "main",
+          projectPath: "/projects/test",
         },
       } as OpenWorkspaceIntent);
 

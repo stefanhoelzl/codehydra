@@ -9,8 +9,8 @@
  *
  * Steps:
  * 0. If callerWorkspacePath:
- *    Dispatch workspace:resolve + project:resolve to get projectPath + projectId
- * 1. "resolve-project" hook → ResolveProjectHookResult — resolves projectId to path (fatal)
+ *    Dispatch workspace:resolve to get projectPath
+ * 1. Dispatch project:resolve to get projectId from projectPath
  * 2. If incomplete (missing workspaceName or base):
  *    "fetch-bases" → FetchBasesHookResult — returns bases for dialog (fatal, early return)
  * 3. If complete:
@@ -54,11 +54,10 @@ export interface ExistingWorkspaceData {
 }
 
 export interface OpenWorkspacePayload {
-  readonly projectId?: ProjectId;
   /**
    * Workspace path of the calling workspace.
-   * Used by Plugin API / MCP server as an alternative to projectId.
-   * When present, resolved via dispatch to determine projectId and projectPath.
+   * Used by Plugin API / MCP server as an alternative to projectPath.
+   * When present, resolved via dispatch to determine projectPath.
    */
   readonly callerWorkspacePath?: string;
   readonly workspaceName?: string;
@@ -67,7 +66,7 @@ export interface OpenWorkspacePayload {
   readonly keepInBackground?: boolean;
   /** When set, skip worktree creation and populate context from existing workspace data. */
   readonly existingWorkspace?: ExistingWorkspaceData;
-  /** Authoritative project path when existingWorkspace is set (avoids re-resolution from projectId). */
+  /** Authoritative project path. */
   readonly projectPath?: string;
 }
 
@@ -77,6 +76,7 @@ export type OpenWorkspaceResult =
       bases: readonly { name: string; isRemote: boolean }[];
       defaultBaseBranch?: string;
       projectPath: string;
+      projectId: ProjectId;
     };
 
 export interface OpenWorkspaceIntent extends Intent<OpenWorkspaceResult> {
@@ -120,11 +120,6 @@ export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
 // Per-hook-point types
 // =============================================================================
 
-/** Result from the "resolve-project" hook point (projectId → projectPath). */
-export interface ResolveProjectHookResult {
-  readonly projectPath?: string;
-}
-
 /** Input context for the "resolve-caller" hook point (callerWorkspacePath resolution). */
 export interface ResolveCallerHookInput extends HookContext {
   readonly callerWorkspacePath: string;
@@ -134,16 +129,6 @@ export interface ResolveCallerHookInput extends HookContext {
 export interface ResolveCallerHookResult {
   readonly projectPath?: string;
   readonly workspaceName?: WorkspaceName;
-}
-
-/** Input context for the "resolve-caller-project" hook point. */
-export interface ResolveCallerProjectHookInput extends HookContext {
-  readonly projectPath: string;
-}
-
-/** Result from the "resolve-caller-project" hook point. */
-export interface ResolveCallerProjectHookResult {
-  readonly projectId?: ProjectId;
 }
 
 /** Input context for the "fetch-bases" hook point (enriched with resolved project path). */
@@ -207,45 +192,32 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
-    let projectPath: string | undefined;
-    let resolvedProjectId: ProjectId | undefined = ctx.intent.payload.projectId;
+    let projectPath: string | undefined = ctx.intent.payload.projectPath;
 
     // If callerWorkspacePath provided (Plugin API / MCP), resolve via dispatch
-    if (ctx.intent.payload.callerWorkspacePath && !resolvedProjectId) {
-      // Dispatch workspace:resolve to get projectPath from callerWorkspacePath
+    if (ctx.intent.payload.callerWorkspacePath && !projectPath) {
       const wsResolved = await ctx.dispatch({
         type: INTENT_RESOLVE_WORKSPACE,
         payload: { workspacePath: ctx.intent.payload.callerWorkspacePath },
       } as ResolveWorkspaceIntent);
       projectPath = wsResolved.projectPath;
-
-      // Dispatch project:resolve to get projectId from projectPath
-      const projResolved = await ctx.dispatch({
-        type: INTENT_RESOLVE_PROJECT,
-        payload: { projectPath },
-      } as ResolveProjectIntent);
-      resolvedProjectId = projResolved.projectId;
     }
 
-    // Hook 1: "resolve-project" — resolve projectId to projectPath (skip if already resolved)
     if (!projectPath) {
-      const resolveCtx: HookContext = { intent: ctx.intent };
-      const { results: resolveResults, errors: resolveErrors } =
-        await ctx.hooks.collect<ResolveProjectHookResult>("resolve-project", resolveCtx);
-
-      if (resolveErrors.length > 0) throw resolveErrors[0]!;
-
-      const resolve = mergeHookResults(resolveResults, "resolve-project");
-      projectPath = resolve.projectPath;
-      if (projectPath === undefined) {
-        throw new Error("resolve-project hook did not provide projectPath");
-      }
+      throw new Error("projectPath is required");
     }
+
+    // Dispatch project:resolve to get projectId from projectPath
+    const projResolved = await ctx.dispatch({
+      type: INTENT_RESOLVE_PROJECT,
+      payload: { projectPath },
+    } as ResolveProjectIntent);
+    const resolvedProjectId = projResolved.projectId;
 
     // Check if payload is incomplete (missing workspaceName or base)
     const { workspaceName, base } = ctx.intent.payload;
     if (workspaceName === undefined || base === undefined) {
-      // Hook 2: "fetch-bases" — return bases for dialog (fatal, early return)
+      // Hook: "fetch-bases" — return bases for dialog (fatal, early return)
       const fetchBasesCtx: FetchBasesHookInput = {
         intent: ctx.intent,
         projectPath,
@@ -264,6 +236,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
           defaultBaseBranch: fetchBases.defaultBaseBranch,
         }),
         projectPath,
+        projectId: resolvedProjectId,
       };
     }
 
@@ -328,9 +301,6 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
 
     // Build Workspace return value
     const resolvedWorkspaceName = extractWorkspaceName(workspacePath);
-    if (!resolvedProjectId) {
-      throw new Error("projectId is required for complete workspace creation");
-    }
     const projectId = resolvedProjectId;
 
     const workspace: Workspace = {

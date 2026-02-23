@@ -162,10 +162,15 @@ describe("API → IPC → Renderer event flow", () => {
 
   it("should forward project:bases-updated event to renderer", () => {
     const bases = [{ name: "main", isRemote: false }];
-    emitEvent("project:bases-updated", { projectId: TEST_PROJECT_ID, bases });
+    emitEvent("project:bases-updated", {
+      projectId: TEST_PROJECT_ID,
+      projectPath: "/test/project",
+      bases,
+    });
 
     expect(sendToUI).toHaveBeenCalledWith("api:project:bases-updated", {
       projectId: TEST_PROJECT_ID,
+      projectPath: "/test/project",
       bases,
     });
   });

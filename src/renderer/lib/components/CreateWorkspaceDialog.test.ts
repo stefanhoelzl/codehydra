@@ -26,7 +26,7 @@ const {
   mockGetProjectById: vi.fn(),
   mockSwitchWorkspace: vi.fn(),
   // Store handlers to trigger bases-updated events in tests
-  basesUpdatedHandlers: new Set<(event: { projectId: string; bases: BaseInfo[] }) => void>(),
+  basesUpdatedHandlers: new Set<(event: { projectPath: string; bases: BaseInfo[] }) => void>(),
 }));
 
 // Mock $lib/api - using v2 API
@@ -57,7 +57,7 @@ vi.mock("$lib/api", () => ({
     switchWorkspace: mockSwitchWorkspace,
   },
   // Event subscription mock for BranchDropdown
-  on: (event: string, handler: (event: { projectId: string; bases: BaseInfo[] }) => void) => {
+  on: (event: string, handler: (event: { projectPath: string; bases: BaseInfo[] }) => void) => {
     if (event === "project:bases-updated") {
       basesUpdatedHandlers.add(handler);
       return () => basesUpdatedHandlers.delete(handler);
@@ -155,21 +155,21 @@ describe("CreateWorkspaceDialog component", () => {
 
   // Helper to emit bases-updated event
   function emitBasesUpdated(
-    projectId: string,
+    projectPath: string,
     bases: BaseInfo[] = [
       { name: "main", isRemote: false },
       { name: "develop", isRemote: false },
     ]
   ): void {
-    basesUpdatedHandlers.forEach((handler) => handler({ projectId, bases }));
+    basesUpdatedHandlers.forEach((handler) => handler({ projectPath, bases }));
   }
 
   // Helper to complete loading for all known projects
   async function completeAllLoading(): Promise<void> {
     await vi.runAllTimersAsync();
-    // Emit bases-updated for both test projects
-    emitBasesUpdated(testProjectId);
-    emitBasesUpdated(otherProjectId);
+    // Emit bases-updated for both test projects (using their paths)
+    emitBasesUpdated("/test/project");
+    emitBasesUpdated("/test/other-project");
     await tick();
   }
 
@@ -191,11 +191,11 @@ describe("CreateWorkspaceDialog component", () => {
       ],
     });
     // Return a workspace object with the name that was passed in
-    mockCreateWorkspace.mockImplementation(async (_projectId, name) => ({
+    mockCreateWorkspace.mockImplementation(async (_projectPath, name) => ({
       name,
       path: `/test/project/.worktrees/${name}`,
       branch: name,
-      projectId: _projectId,
+      projectId: testProjectId,
     }));
     mockSwitchWorkspace.mockResolvedValue(undefined);
   });
@@ -496,7 +496,7 @@ describe("CreateWorkspaceDialog component", () => {
       await completeAllLoading();
 
       expect(mockCreateWorkspace).toHaveBeenCalledWith(
-        defaultProps.projectId,
+        "/test/project",
         "valid-name",
         expect.any(String)
       );
@@ -538,7 +538,7 @@ describe("CreateWorkspaceDialog component", () => {
       await completeAllLoading();
 
       // Form should submit because name is valid and branch is pre-selected
-      expect(mockCreateWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
+      expect(mockCreateWorkspace).toHaveBeenCalledWith("/test/project", "my-feature", "main");
     });
 
     it("form does not submit while already submitting", async () => {
@@ -686,7 +686,7 @@ describe("CreateWorkspaceDialog component", () => {
 
       await completeAllLoading();
 
-      expect(workspaces.create).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
+      expect(workspaces.create).toHaveBeenCalledWith("/test/project", "my-feature", "main");
     });
 
     it("success switches to new workspace and closes dialog", async () => {
@@ -800,8 +800,8 @@ describe("CreateWorkspaceDialog component", () => {
 
     it("changing project clears branch selection", async () => {
       // Setup mock to return different branches per project ID
-      mockFetchBases.mockImplementation((projectId: ProjectId) => {
-        if (projectId === testProjectId) {
+      mockFetchBases.mockImplementation((projectPath: string) => {
+        if (projectPath === "/test/project") {
           return Promise.resolve({
             bases: [
               { name: "main", isRemote: false },
@@ -844,7 +844,7 @@ describe("CreateWorkspaceDialog component", () => {
     });
 
     it("branch dropdown shows new project's branches after project change", async () => {
-      // Setup mock to return different branches per project ID
+      // Setup mock to return different branches per project path
       const testBranches: BaseInfo[] = [
         { name: "main", isRemote: false },
         { name: "develop", isRemote: false },
@@ -853,8 +853,8 @@ describe("CreateWorkspaceDialog component", () => {
         { name: "feature-branch", isRemote: false },
         { name: "release", isRemote: false },
       ];
-      mockFetchBases.mockImplementation((projectId: ProjectId) => {
-        if (projectId === testProjectId) {
+      mockFetchBases.mockImplementation((projectPath: string) => {
+        if (projectPath === "/test/project") {
           return Promise.resolve({ bases: testBranches });
         } else {
           return Promise.resolve({ bases: otherBranches });
@@ -864,8 +864,8 @@ describe("CreateWorkspaceDialog component", () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       // Complete loading with correct branches for each project
       await vi.runAllTimersAsync();
-      emitBasesUpdated(testProjectId, testBranches);
-      emitBasesUpdated(otherProjectId, otherBranches);
+      emitBasesUpdated("/test/project", testBranches);
+      emitBasesUpdated("/test/other-project", otherBranches);
       await tick();
 
       // Initial branches should be from test-project
@@ -887,7 +887,7 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.focus(branchDropdown);
       // Emit bases-updated for other-project
       await vi.runAllTimersAsync();
-      emitBasesUpdated(otherProjectId, otherBranches);
+      emitBasesUpdated("/test/other-project", otherBranches);
       await tick();
 
       expect(screen.getByText("feature-branch")).toBeInTheDocument();
@@ -1114,7 +1114,7 @@ describe("CreateWorkspaceDialog component", () => {
       await completeAllLoading();
 
       // Form should be submitted because name is valid and branch is pre-selected
-      expect(mockCreateWorkspace).toHaveBeenCalledWith(testProjectId, "my-feature", "main");
+      expect(mockCreateWorkspace).toHaveBeenCalledWith("/test/project", "my-feature", "main");
     });
   });
 

@@ -6,7 +6,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 import type { BaseInfo } from "@shared/api/types";
-import type { ProjectId } from "@shared/api/types";
 
 // Mock branches data
 const mockLocalBranches: BaseInfo[] = [
@@ -25,7 +24,7 @@ const allBranches = [...mockLocalBranches, ...mockRemoteBranches];
 const { mockFetchBases, basesUpdatedHandlers } = vi.hoisted(() => ({
   mockFetchBases: vi.fn(),
   // Store handlers to trigger bases-updated events in tests
-  basesUpdatedHandlers: new Set<(event: { projectId: string; bases: BaseInfo[] }) => void>(),
+  basesUpdatedHandlers: new Set<(event: { projectPath: string; bases: BaseInfo[] }) => void>(),
 }));
 
 // Mock $lib/api module
@@ -49,7 +48,7 @@ vi.mock("$lib/api", () => ({
     fetchBases: mockFetchBases,
   },
   // Event subscription mock - directly return the implementation
-  on: (event: string, handler: (event: { projectId: string; bases: BaseInfo[] }) => void) => {
+  on: (event: string, handler: (event: { projectPath: string; bases: BaseInfo[] }) => void) => {
     if (event === "project:bases-updated") {
       basesUpdatedHandlers.add(handler);
       return () => basesUpdatedHandlers.delete(handler);
@@ -59,17 +58,17 @@ vi.mock("$lib/api", () => ({
 }));
 
 // Helper to emit bases-updated event in tests
-function emitBasesUpdated(projectId: string, bases: BaseInfo[]): void {
-  basesUpdatedHandlers.forEach((handler) => handler({ projectId, bases }));
+function emitBasesUpdated(projectPath: string, bases: BaseInfo[]): void {
+  basesUpdatedHandlers.forEach((handler) => handler({ projectPath, bases }));
 }
 
 // Helper to complete loading: run timers then emit bases-updated event
 async function completeLoading(
-  projectId: string = testProjectId,
+  projectPath: string = testProjectPath,
   bases: BaseInfo[] = allBranches
 ): Promise<void> {
   await vi.runAllTimersAsync();
-  emitBasesUpdated(projectId, bases);
+  emitBasesUpdated(projectPath, bases);
   await tick();
 }
 
@@ -77,12 +76,12 @@ async function completeLoading(
 import BranchDropdown from "./BranchDropdown.svelte";
 import { projects } from "$lib/api";
 
-// Test project ID
-const testProjectId = "test-project-12345678" as ProjectId;
+// Test project path
+const testProjectPath = "/test/project";
 
 describe("BranchDropdown component", () => {
   const defaultProps = {
-    projectId: testProjectId,
+    projectPath: testProjectPath,
     value: "",
     onSelect: vi.fn(),
   };
@@ -160,12 +159,12 @@ describe("BranchDropdown component", () => {
   });
 
   describe("loading", () => {
-    it("loads branches using projects.fetchBases(projectId) on mount", async () => {
+    it("loads branches using projects.fetchBases(projectPath) on mount", async () => {
       render(BranchDropdown, { props: defaultProps });
 
       await completeLoading();
 
-      expect(projects.fetchBases).toHaveBeenCalledWith(testProjectId);
+      expect(projects.fetchBases).toHaveBeenCalledWith(testProjectPath);
     });
 
     it("shows spinner while loading", async () => {
@@ -183,7 +182,7 @@ describe("BranchDropdown component", () => {
       expect(screen.getByRole("status", { name: /loading branches/i })).toBeInTheDocument();
 
       // Emit bases-updated event (simulating background refresh completing)
-      emitBasesUpdated(testProjectId, allBranches);
+      emitBasesUpdated(testProjectPath, allBranches);
       await tick();
 
       // Spinner should be gone after bases-updated event
@@ -718,7 +717,7 @@ describe("BranchDropdown component", () => {
 
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading(testProjectId, mockLocalBranches);
+      await completeLoading(testProjectPath, mockLocalBranches);
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -732,7 +731,7 @@ describe("BranchDropdown component", () => {
 
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading(testProjectId, mockRemoteBranches);
+      await completeLoading(testProjectPath, mockRemoteBranches);
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -782,7 +781,7 @@ describe("BranchDropdown component", () => {
       expect(basesUpdatedHandlers.size).toBeGreaterThan(0);
     });
 
-    it("updates branches when project:bases-updated event is received for matching projectId", async () => {
+    it("updates branches when project:bases-updated event is received for matching projectPath", async () => {
       render(BranchDropdown, { props: defaultProps });
       await completeLoading();
 
@@ -797,7 +796,7 @@ describe("BranchDropdown component", () => {
         { name: "main", isRemote: false },
         { name: "origin/main", isRemote: true },
       ];
-      emitBasesUpdated(testProjectId, updatedBases);
+      emitBasesUpdated(testProjectPath, updatedBases);
       await tick();
 
       // origin/feature should be gone
@@ -805,7 +804,7 @@ describe("BranchDropdown component", () => {
       expect(screen.getByText("main")).toBeInTheDocument();
     });
 
-    it("ignores project:bases-updated event for different projectId", async () => {
+    it("ignores project:bases-updated event for different projectPath", async () => {
       render(BranchDropdown, { props: defaultProps });
       await completeLoading();
 
@@ -813,7 +812,7 @@ describe("BranchDropdown component", () => {
       await fireEvent.focus(input);
 
       // Simulate event for different project
-      emitBasesUpdated("different-project" as ProjectId, []);
+      emitBasesUpdated("/different/project", []);
       await tick();
 
       // Should still have original branches

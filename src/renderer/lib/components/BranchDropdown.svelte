@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { projects, on, type ProjectId, type BaseInfo } from "$lib/api";
+  import { projects, on, type BaseInfo } from "$lib/api";
   import FilterableDropdown, { type DropdownOption } from "./FilterableDropdown.svelte";
   import Icon from "./Icon.svelte";
 
   interface BranchDropdownProps {
-    projectId: ProjectId;
+    projectPath: string;
     value: string;
     onSelect: (branch: string) => void;
     disabled?: boolean;
   }
 
-  let { projectId, value, onSelect, disabled = false }: BranchDropdownProps = $props();
+  let { projectPath, value, onSelect, disabled = false }: BranchDropdownProps = $props();
 
   // State
   let branches = $state<readonly BaseInfo[]>([]);
@@ -20,13 +20,13 @@
 
   // Load cached branches immediately, then wait for bases-updated event
   $effect(() => {
-    const currentProjectId = projectId;
+    const currentProjectPath = projectPath;
     loading = true;
     error = null;
 
     // Fetch cached branches immediately for display
     projects
-      .fetchBases(currentProjectId)
+      .fetchBases(currentProjectPath)
       .then((result: { bases: readonly BaseInfo[] }) => {
         branches = result.bases;
         // Keep loading=true until bases-updated event arrives
@@ -37,10 +37,10 @@
       });
 
     // Subscribe to bases-updated event for when fresh data arrives
-    const unsubscribe = on<{ projectId: ProjectId; bases: readonly BaseInfo[] }>(
+    const unsubscribe = on<{ projectPath: string; bases: readonly BaseInfo[] }>(
       "project:bases-updated",
       (event) => {
-        if (event.projectId === currentProjectId) {
+        if (event.projectPath === currentProjectPath) {
           branches = event.bases;
           loading = false;
         }
@@ -133,7 +133,7 @@
       {disabled}
       placeholder="Select branch..."
       filterOption={filterBranch}
-      id={`branch-dropdown-${projectId}`}
+      id={`branch-dropdown-${projectPath}`}
     >
       {#snippet optionSnippet(option)}
         {#if option.type === "header"}

@@ -12,7 +12,7 @@
  * #10: Close with removeLocalRepo deletes cloned dir
  * #11: Close with removeLocalRepo skips for local projects
  * #12: project:closed event emitted after close
- * #13: Close with unknown projectId throws
+ * #13: Close with unknown projectPath throws
  * #14: skipSwitch prevents intermediate switches during close
  */
 
@@ -319,26 +319,26 @@ function createTestHarness(options?: {
     },
   };
 
-  // ProjectResolveModule: "resolve-project" hook -- resolves projectId to path/config/workspaces
+  // ProjectResolveModule: "resolve" hook -- resolves projectPath to config/workspaces
   const projectResolveModule: IntentModule = {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
-        "resolve-project": {
+        resolve: {
           handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
             const intent = ctx.intent as CloseProjectIntent;
+            const { projectPath: payloadPath } = intent.payload;
 
             // Resolve using appState (mirrors bootstrap pattern)
             const allProjects: Project[] = await appState.getAllProjects();
-            const found = allProjects.find((p) => p.id === intent.payload.projectId);
+            const found = allProjects.find((p) => p.path === payloadPath);
             if (!found) {
-              throw new Error(`Project not found: ${intent.payload.projectId}`);
+              throw new Error(`Project not found for path: ${payloadPath}`);
             }
 
             const store = appState.getProjectStore();
             const config = await store.getProjectConfig(found.path);
 
             return {
-              projectPath: found.path,
               workspaces: found.workspaces ?? [],
               ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
             };
@@ -468,7 +468,7 @@ function buildCloseIntent(overrides?: Partial<CloseProjectIntent["payload"]>): C
   return {
     type: INTENT_CLOSE_PROJECT,
     payload: {
-      projectId: PROJECT_ID,
+      projectPath: PROJECT_PATH,
       ...overrides,
     },
   };
@@ -539,10 +539,10 @@ describe("CloseProjectOperation", () => {
     expect(event.payload.projectId).toBe(PROJECT_ID);
   });
 
-  it("test 13: close with unknown projectId throws", async () => {
+  it("test 13: close with unknown projectPath throws", async () => {
     const harness = createTestHarness({ projectNotFound: true });
     const intent = buildCloseIntent({
-      projectId: "nonexistent-12345678" as ProjectId,
+      projectPath: "/nonexistent/project",
     });
 
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Project not found");

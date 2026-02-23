@@ -101,28 +101,28 @@ describe("preload API", () => {
       expect(result).toEqual(mockProject);
     });
 
-    it("projects.close calls api:project:close with projectId", async () => {
+    it("projects.close calls api:project:close with projectPath", async () => {
       mockIpcRenderer.invoke.mockResolvedValue(undefined);
 
-      const projects = exposedApi.projects as { close: (projectId: string) => Promise<void> };
-      await projects.close("my-app-12345678");
+      const projects = exposedApi.projects as { close: (projectPath: string) => Promise<void> };
+      await projects.close("/test/my-app");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:close", {
-        projectId: "my-app-12345678",
+        projectPath: "/test/my-app",
       });
     });
 
-    it("projects.fetchBases calls api:project:fetch-bases with projectId", async () => {
+    it("projects.fetchBases calls api:project:fetch-bases with projectPath", async () => {
       const mockBases = { bases: [{ name: "main", isRemote: false }] };
       mockIpcRenderer.invoke.mockResolvedValue(mockBases);
 
       const projects = exposedApi.projects as {
-        fetchBases: (projectId: string) => Promise<unknown>;
+        fetchBases: (projectPath: string) => Promise<unknown>;
       };
-      const result = await projects.fetchBases("my-app-12345678");
+      const result = await projects.fetchBases("/test/my-app");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:fetch-bases", {
-        projectId: "my-app-12345678",
+        projectPath: "/test/my-app",
       });
       expect(result).toEqual(mockBases);
     });
@@ -144,7 +144,7 @@ describe("preload API", () => {
       const result = await workspaces.create("my-app-12345678", "feature", "main");
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:create", {
-        projectId: "my-app-12345678",
+        projectPath: "my-app-12345678",
         name: "feature",
         base: "main",
       });
