@@ -4,11 +4,17 @@
 
 <section class="screenshot">
   <div class="container">
-    <img
-      src="{base}screenshot.png"
-      alt="CodeHydra showing multiple workspaces with AI agents running in parallel"
-      class="screenshot-img"
-    />
+    <video autoplay loop muted playsinline class="screenshot-img" poster="{base}screenshot.png">
+      <source
+        src="https://github.com/user-attachments/assets/82b56a86-3dee-42a6-90d3-e2a002949f7a"
+        type="video/mp4"
+      />
+      <img
+        src="{base}screenshot.png"
+        alt="CodeHydra showing multiple workspaces with AI agents running in parallel"
+        class="screenshot-img"
+      />
+    </video>
   </div>
 </section>
 

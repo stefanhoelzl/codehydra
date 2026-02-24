@@ -12,8 +12,8 @@
 <main id="main-content">
   <Hero />
   <QuickStart />
+  <Screenshot />
   <Abstract />
   <Features />
-  <Screenshot />
 </main>
 <Footer />
