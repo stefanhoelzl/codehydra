@@ -137,6 +137,21 @@ describe("AgentStatusIndicator component", () => {
       expect(indicator).not.toHaveClass("indicator--pulsing");
     });
 
+    it("sets negative pulse-delay for animation synchronization when pulsing", () => {
+      vi.spyOn(performance, "now").mockReturnValue(750);
+      render(AgentStatusIndicator, { props: { idleCount: 0, busyCount: 1 } });
+
+      const indicator = screen.getByRole("status");
+      expect(indicator.style.getPropertyValue("--pulse-delay")).toBe("-750ms");
+    });
+
+    it("sets pulse-delay to 0ms when not pulsing", () => {
+      render(AgentStatusIndicator, { props: { idleCount: 2, busyCount: 0 } });
+
+      const indicator = screen.getByRole("status");
+      expect(indicator.style.getPropertyValue("--pulse-delay")).toBe("0ms");
+    });
+
     it("respects prefers-reduced-motion media query", () => {
       // The component uses CSS @media (prefers-reduced-motion: reduce)
       // We verify the class is applied (CSS handles the actual animation disable)

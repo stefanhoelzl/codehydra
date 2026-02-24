@@ -8,17 +8,6 @@
 
   let { idleCount, busyCount }: AgentStatusIndicatorProps = $props();
 
-  // Pulse animation timing - single source of truth
-  const PULSE_DURATION_MS = 1500;
-  // Recalculate sync offset when pulsing starts to synchronize all pulsing indicators
-  let pulseDelay = $state(0);
-
-  $effect(() => {
-    if (isPulsing) {
-      pulseDelay = -(performance.now() % PULSE_DURATION_MS);
-    }
-  });
-
   // Derive status type from counts
   const status = $derived.by(() => {
     if (idleCount === 0 && busyCount === 0) return "none";
@@ -29,6 +18,11 @@
 
   // Derive if pulsing animation should be applied
   const isPulsing = $derived(status === "busy" || status === "mixed");
+
+  // Pulse animation timing - single source of truth
+  const PULSE_DURATION_MS = 1500;
+  // Negative delay synchronizes all pulsing indicators to the same phase
+  const pulseDelay = $derived(isPulsing ? -(performance.now() % PULSE_DURATION_MS) : 0);
 
   // Generate status text for aria-label and tooltip using shared utility
   const statusText = $derived(getStatusText(idleCount, busyCount));
