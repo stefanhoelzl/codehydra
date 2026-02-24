@@ -16,6 +16,8 @@
 Run multiple AI coding assistants simultaneously in isolated git worktrees
 with real-time status monitoring.
 
+https://github.com/user-attachments/assets/82b56a86-3dee-42a6-90d3-e2a002949f7a
+
 ## Installation
 
 ```bash
@@ -37,10 +39,6 @@ Or download directly from [GitHub Releases](https://github.com/stefanhoelzl/code
 - **VS Code Powered** - Full code-server integration with all your extensions
 - **Voice Dictation** - Built-in speech-to-text for hands-free coding
 - **Cross-platform** - Linux, macOS, and Windows
-
-## Screenshot
-
-> Screenshots coming soon
 
 ## How It Works
 
