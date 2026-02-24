@@ -142,7 +142,7 @@ jobs:
         id: wine-cache
         uses: actions/cache@v4
         with:
-          path: /var/cache/apt/archives
+          path: /var/cache/apt/archives/*.deb
           key: apt-wine-ubuntu-24.04
 
       - name: Install Wine
