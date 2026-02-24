@@ -137,6 +137,14 @@ jobs:
           name: build-output
           path: out
 
+      - name: Cache Wine packages
+        if: matrix.wine
+        id: wine-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-wine-ubuntu-24.04
+
       - name: Install Wine
         if: matrix.wine
         timeout-minutes: 5
