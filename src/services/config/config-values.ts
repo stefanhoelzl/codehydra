@@ -37,13 +37,13 @@ export interface ConfigValues {
   readonly "telemetry.enabled": boolean;
   /** Anonymous user ID for PostHog. undefined = not yet generated. */
   readonly "telemetry.distinctId": string | undefined;
-  /** Log level (from CODEHYDRA_LOGLEVEL) */
+  /** Log level (from CH_LOGLEVEL) */
   readonly "log.level": LogLevel;
-  /** Whether to print logs to console (from CODEHYDRA_PRINT_LOGS) */
+  /** Whether to print logs to console (from CH_PRINT_LOGS) */
   readonly "log.console": boolean;
-  /** Comma-separated logger name filter (from CODEHYDRA_LOGGER) */
+  /** Comma-separated logger name filter (from CH_LOGGER) */
   readonly "log.filter": string | undefined;
-  /** Electron command-line flags (from CODEHYDRA_ELECTRON_FLAGS) */
+  /** Electron command-line flags (from CH_ELECTRON_FLAGS) */
   readonly "electron.flags": string | undefined;
 }
 

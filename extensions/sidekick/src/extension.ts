@@ -591,7 +591,7 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
     })
   );
 
-  const pluginPortStr = process.env.CODEHYDRA_PLUGIN_PORT;
+  const pluginPortStr = process.env._CH_PLUGIN_PORT;
   if (!pluginPortStr) {
     return { codehydra: codehydraApi };
   }

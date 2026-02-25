@@ -42,8 +42,8 @@ describe("Main process wiring", () => {
   beforeEach(() => {
     mockIsPackaged = false;
     vi.stubGlobal("__IS_DEV_BUILD__", true);
-    // Clear CODEHYDRA_BUNDLE_DIR to ensure tests use expected paths
-    vi.stubEnv("CODEHYDRA_BUNDLE_DIR", "");
+    // Clear _CH_BUNDLE_DIR to ensure tests use expected paths
+    vi.stubEnv("_CH_BUNDLE_DIR", "");
   });
 
   afterEach(() => {

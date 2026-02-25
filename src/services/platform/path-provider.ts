@@ -276,7 +276,7 @@ export class DefaultPathProvider implements PathProvider {
    */
   private computeBundlesRootDir(platformInfo: PlatformInfo): string {
     // Allow override via environment variable (for CI/testing)
-    const override = process.env.CODEHYDRA_BUNDLE_DIR;
+    const override = process.env._CH_BUNDLE_DIR;
     if (override) {
       return override;
     }

@@ -341,11 +341,11 @@ Agent servers are configured to connect to CodeHydra's MCP server for workspace 
 
 When spawning agent servers, the following environment variables are set:
 
-| Variable                   | Purpose                                                      |
-| -------------------------- | ------------------------------------------------------------ |
-| `CODEHYDRA_WORKSPACE_PATH` | Absolute path to the workspace (for X-Workspace-Path header) |
-| `CODEHYDRA_MCP_PORT`       | Port of CodeHydra's MCP server                               |
-| `CODEHYDRA_PLUGIN_PORT`    | Port of CodeHydra's Plugin server (for extensions)           |
+| Variable             | Purpose                                                      |
+| -------------------- | ------------------------------------------------------------ |
+| `_CH_WORKSPACE_PATH` | Absolute path to the workspace (for X-Workspace-Path header) |
+| `_CH_MCP_PORT`       | Port of CodeHydra's MCP server                               |
+| `_CH_PLUGIN_PORT`    | Port of CodeHydra's Plugin server (for extensions)           |
 
 ### OpenCode MCP Configuration
 
@@ -357,9 +357,9 @@ OpenCode servers receive a config file path via `OPENCODE_CONFIG` env var:
   "mcp": {
     "codehydra": {
       "type": "remote",
-      "url": "http://127.0.0.1:{env:CODEHYDRA_MCP_PORT}",
+      "url": "http://127.0.0.1:{env:_CH_MCP_PORT}",
       "headers": {
-        "X-Workspace-Path": "{env:CODEHYDRA_WORKSPACE_PATH}"
+        "X-Workspace-Path": "{env:_CH_WORKSPACE_PATH}"
       },
       "enabled": true
     }
@@ -384,10 +384,10 @@ The MCP server exposes workspace management tools:
 
 The sidekick extension calls `api.workspace.getAgentSession()` on connect and sets environment variables for all new terminals:
 
-| Variable                        | Purpose                            |
-| ------------------------------- | ---------------------------------- |
-| `CODEHYDRA_OPENCODE_PORT`       | OpenCode server port               |
-| `CODEHYDRA_OPENCODE_SESSION_ID` | OpenCode session ID for attachment |
+| Variable                  | Purpose                            |
+| ------------------------- | ---------------------------------- |
+| `_CH_OPENCODE_PORT`       | OpenCode server port               |
+| `_CH_OPENCODE_SESSION_ID` | OpenCode session ID for attachment |
 
 The wrapper script (`<app-data>/bin/opencode`) reads these env vars to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID`.
 

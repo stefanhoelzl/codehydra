@@ -25,10 +25,10 @@ export interface CodeServerConfig {
   readonly userDataDir: string;
   /** Directory for CLI wrapper scripts (added to PATH) */
   readonly binDir: string;
-  /** Optional port for the PluginServer (CODEHYDRA_PLUGIN_PORT env var) */
+  /** Optional port for the PluginServer (_CH_PLUGIN_PORT env var) */
   readonly pluginPort?: number;
-  /** Directory containing code-server installation (for CODEHYDRA_CODE_SERVER_DIR env var) */
+  /** Directory containing code-server installation (for _CH_CODE_SERVER_DIR env var) */
   readonly codeServerDir: string;
-  /** Directory containing opencode binary (for CODEHYDRA_OPENCODE_DIR env var) */
+  /** Directory containing opencode binary (for _CH_OPENCODE_DIR env var) */
   readonly opencodeDir: string;
 }

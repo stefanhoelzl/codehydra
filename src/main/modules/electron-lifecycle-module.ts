@@ -38,7 +38,7 @@ export function parseElectronFlags(flags: string | undefined): { name: string; v
 
   if (flags.includes('"') || flags.includes("'")) {
     throw new Error(
-      "Quoted values are not supported in CODEHYDRA_ELECTRON_FLAGS. " +
+      "Quoted values are not supported in CH_ELECTRON_FLAGS. " +
         'Use --flag=value instead of --flag="value".'
     );
   }

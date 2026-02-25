@@ -26,8 +26,8 @@ const EXIT_SPAWN_FAILED = 2;
  * @param hookName - Name of the hook
  */
 async function notifyHook(hookName: "WrapperStart"): Promise<void> {
-  const bridgePort = process.env.CODEHYDRA_BRIDGE_PORT;
-  const workspacePath = process.env.CODEHYDRA_WORKSPACE_PATH;
+  const bridgePort = process.env._CH_BRIDGE_PORT;
+  const workspacePath = process.env._CH_WORKSPACE_PATH;
 
   if (!bridgePort || !workspacePath) {
     return;
@@ -71,24 +71,24 @@ async function notifyHook(hookName: "WrapperStart"): Promise<void> {
  * Main entry point for the wrapper script.
  */
 async function main(): Promise<never> {
-  // 1. Read and validate CODEHYDRA_OPENCODE_PORT
-  const portStr = process.env.CODEHYDRA_OPENCODE_PORT;
+  // 1. Read and validate _CH_OPENCODE_PORT
+  const portStr = process.env._CH_OPENCODE_PORT;
   if (!portStr) {
-    console.error("Error: CODEHYDRA_OPENCODE_PORT not set.");
+    console.error("Error: _CH_OPENCODE_PORT not set.");
     console.error("Make sure you're in a CodeHydra workspace terminal.");
     process.exit(EXIT_ENV_ERROR);
   }
 
   const port = parseInt(portStr, 10);
   if (isNaN(port) || port <= 0 || port > 65535) {
-    console.error(`Error: Invalid CODEHYDRA_OPENCODE_PORT: ${portStr}`);
+    console.error(`Error: Invalid _CH_OPENCODE_PORT: ${portStr}`);
     process.exit(EXIT_ENV_ERROR);
   }
 
-  // 2. Read and validate CODEHYDRA_OPENCODE_DIR
-  const opencodeDir = process.env.CODEHYDRA_OPENCODE_DIR;
+  // 2. Read and validate _CH_OPENCODE_DIR
+  const opencodeDir = process.env._CH_OPENCODE_DIR;
   if (!opencodeDir) {
-    console.error("Error: CODEHYDRA_OPENCODE_DIR not set.");
+    console.error("Error: _CH_OPENCODE_DIR not set.");
     console.error("Make sure you're in a CodeHydra workspace terminal.");
     process.exit(EXIT_ENV_ERROR);
   }
@@ -110,7 +110,7 @@ async function main(): Promise<never> {
   const baseUrl = `http://127.0.0.1:${port}`;
 
   // 5. Read session ID from environment (set by sidekick extension)
-  const sessionId = process.env.CODEHYDRA_OPENCODE_SESSION_ID;
+  const sessionId = process.env._CH_OPENCODE_SESSION_ID;
 
   // 6. Build spawn arguments
   const args = ["attach", baseUrl];

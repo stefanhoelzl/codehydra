@@ -386,14 +386,14 @@ External systems can connect directly to CodeHydra's plugin server via Socket.IO
 
 ### Connection
 
-1. Read port from `CODEHYDRA_PLUGIN_PORT` environment variable
+1. Read port from `_CH_PLUGIN_PORT` environment variable
 2. Connect via Socket.IO to `http://localhost:${port}`
 3. Authenticate with workspace path
 
 ```typescript
 import { io, Socket } from "socket.io-client";
 
-const port = process.env.CODEHYDRA_PLUGIN_PORT;
+const port = process.env._CH_PLUGIN_PORT;
 if (!port) {
   throw new Error("Not running inside CodeHydra workspace");
 }
@@ -572,7 +572,7 @@ class CodehydraClient {
 }
 
 // Usage
-const port = process.env.CODEHYDRA_PLUGIN_PORT;
+const port = process.env._CH_PLUGIN_PORT;
 if (!port) {
   throw new Error("Not running inside CodeHydra workspace");
 }
@@ -1095,22 +1095,22 @@ CodeHydra sets environment variables in workspace terminals for integration with
 
 ### General Variables
 
-| Variable                | Description                                            |
-| ----------------------- | ------------------------------------------------------ |
-| `CODEHYDRA_PLUGIN_PORT` | Socket.IO plugin server port for WebSocket connections |
+| Variable          | Description                                            |
+| ----------------- | ------------------------------------------------------ |
+| `_CH_PLUGIN_PORT` | Socket.IO plugin server port for WebSocket connections |
 
 ### Claude Provider Variables
 
 These variables are set when using the Claude agent provider.
 
-| Variable                        | Description                                                                                                                                     |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CODEHYDRA_CLAUDE_SETTINGS`     | Path to hooks configuration file                                                                                                                |
-| `CODEHYDRA_CLAUDE_MCP_CONFIG`   | Path to MCP configuration file                                                                                                                  |
-| `CODEHYDRA_BRIDGE_PORT`         | HTTP bridge server port for hook notifications                                                                                                  |
-| `CODEHYDRA_MCP_PORT`            | Main MCP server port                                                                                                                            |
-| `CODEHYDRA_WORKSPACE_PATH`      | Absolute path to the workspace directory                                                                                                        |
-| `CODEHYDRA_INITIAL_PROMPT_FILE` | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper. |
+| Variable                  | Description                                                                                                                                     |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_CH_CLAUDE_SETTINGS`     | Path to hooks configuration file                                                                                                                |
+| `_CH_CLAUDE_MCP_CONFIG`   | Path to MCP configuration file                                                                                                                  |
+| `_CH_BRIDGE_PORT`         | HTTP bridge server port for hook notifications                                                                                                  |
+| `_CH_MCP_PORT`            | Main MCP server port                                                                                                                            |
+| `_CH_WORKSPACE_PATH`      | Absolute path to the workspace directory                                                                                                        |
+| `_CH_INITIAL_PROMPT_FILE` | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper. |
 
 ---
 

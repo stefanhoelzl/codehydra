@@ -3,7 +3,7 @@
  *
  * Instead of letting users spawn multiple opencode processes, CodeHydra manages
  * one server per workspace. The opencode CLI wrapper reads the port from the
- * CODEHYDRA_OPENCODE_PORT environment variable (set by the sidekick extension)
+ * _CH_OPENCODE_PORT environment variable (set by the sidekick extension)
  * and redirects to `opencode attach`.
  */
 

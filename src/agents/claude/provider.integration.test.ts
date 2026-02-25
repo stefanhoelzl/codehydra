@@ -250,18 +250,18 @@ describe("ClaudeCodeProvider integration", () => {
 
       const env = provider.getEnvironmentVariables();
 
-      expect(env).toHaveProperty("CODEHYDRA_CLAUDE_SETTINGS");
-      expect(env).toHaveProperty("CODEHYDRA_CLAUDE_MCP_CONFIG");
-      expect(env).toHaveProperty("CODEHYDRA_BRIDGE_PORT");
-      expect(env).toHaveProperty("CODEHYDRA_MCP_PORT");
-      expect(env).toHaveProperty("CODEHYDRA_WORKSPACE_PATH");
+      expect(env).toHaveProperty("_CH_CLAUDE_SETTINGS");
+      expect(env).toHaveProperty("_CH_CLAUDE_MCP_CONFIG");
+      expect(env).toHaveProperty("_CH_BRIDGE_PORT");
+      expect(env).toHaveProperty("_CH_MCP_PORT");
+      expect(env).toHaveProperty("_CH_WORKSPACE_PATH");
 
       // Check values
-      expect(env.CODEHYDRA_BRIDGE_PORT).toBe(String(port));
-      expect(env.CODEHYDRA_MCP_PORT).toBe("9999");
-      expect(env.CODEHYDRA_WORKSPACE_PATH).toBe(workspacePath);
-      expect(env.CODEHYDRA_CLAUDE_SETTINGS).toContain("codehydra-hooks.json");
-      expect(env.CODEHYDRA_CLAUDE_MCP_CONFIG).toContain("codehydra-mcp.json");
+      expect(env._CH_BRIDGE_PORT).toBe(String(port));
+      expect(env._CH_MCP_PORT).toBe("9999");
+      expect(env._CH_WORKSPACE_PATH).toBe(workspacePath);
+      expect(env._CH_CLAUDE_SETTINGS).toContain("codehydra-hooks.json");
+      expect(env._CH_CLAUDE_MCP_CONFIG).toContain("codehydra-mcp.json");
     });
 
     it("returns empty MCP port if not configured", async () => {
@@ -284,7 +284,7 @@ describe("ClaudeCodeProvider integration", () => {
       await providerNoMcp.connect(port);
 
       const env = providerNoMcp.getEnvironmentVariables();
-      expect(env.CODEHYDRA_MCP_PORT).toBe("");
+      expect(env._CH_MCP_PORT).toBe("");
 
       providerNoMcp.dispose();
       await serverManagerNoMcp.dispose();
@@ -299,8 +299,8 @@ describe("ClaudeCodeProvider integration", () => {
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
-      expect(env).toHaveProperty("CODEHYDRA_INITIAL_PROMPT_FILE");
-      expect(env.CODEHYDRA_INITIAL_PROMPT_FILE).toContain("initial-prompt.json");
+      expect(env).toHaveProperty("_CH_INITIAL_PROMPT_FILE");
+      expect(env._CH_INITIAL_PROMPT_FILE).toContain("initial-prompt.json");
     });
 
     it("omits initial prompt file path when no prompt is set", async () => {
@@ -308,7 +308,7 @@ describe("ClaudeCodeProvider integration", () => {
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
-      expect(env).not.toHaveProperty("CODEHYDRA_INITIAL_PROMPT_FILE");
+      expect(env).not.toHaveProperty("_CH_INITIAL_PROMPT_FILE");
     });
   });
 

@@ -13,7 +13,7 @@ declare const __APP_VERSION__: string;
 /**
  * Whether this is a development (non-release) build.
  * true for local dev and CI dev builds, false for release builds.
- * Injected from CODEHYDRA_RELEASE environment variable during build.
+ * Injected from _CH_RELEASE environment variable during build.
  */
 declare const __IS_DEV_BUILD__: boolean;
 

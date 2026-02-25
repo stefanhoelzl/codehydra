@@ -163,16 +163,16 @@ export class ClaudeCodeProvider implements AgentProvider {
     const initialPromptPath = this.serverManager.getInitialPromptPath(this.workspacePath);
 
     const envVars: Record<string, string> = {
-      CODEHYDRA_CLAUDE_SETTINGS: hooksConfigPath.toNative(),
-      CODEHYDRA_CLAUDE_MCP_CONFIG: mcpConfigPath.toNative(),
-      CODEHYDRA_BRIDGE_PORT: String(this.port),
-      CODEHYDRA_MCP_PORT: mcpConfig ? String(mcpConfig.port) : "",
-      CODEHYDRA_WORKSPACE_PATH: this.workspacePath,
+      _CH_CLAUDE_SETTINGS: hooksConfigPath.toNative(),
+      _CH_CLAUDE_MCP_CONFIG: mcpConfigPath.toNative(),
+      _CH_BRIDGE_PORT: String(this.port),
+      _CH_MCP_PORT: mcpConfig ? String(mcpConfig.port) : "",
+      _CH_WORKSPACE_PATH: this.workspacePath,
     };
 
     // Only include initial prompt file path if it was set
     if (initialPromptPath !== undefined) {
-      envVars.CODEHYDRA_INITIAL_PROMPT_FILE = initialPromptPath.toNative();
+      envVars._CH_INITIAL_PROMPT_FILE = initialPromptPath.toNative();
     }
 
     return envVars;
