@@ -3,7 +3,8 @@
  *
  * Features:
  * - Session-based log files: `<datetime>-<uuid>.log`
- * - Environment variable configuration for level and console output
+ * - Deferred configuration: construct without config, call configure() later
+ * - Buffered logging: entries before configure() are queued and flushed
  * - Named logger scopes for component identification
  * - Context serialization as key=value pairs
  */
@@ -11,9 +12,15 @@
 import log from "electron-log/main";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { BuildInfo } from "../platform/build-info";
 import type { PathProvider } from "../platform/path-provider";
-import type { Logger, LoggerName, LoggingService, LogContext, LogLevel } from "./types";
+import type {
+  Logger,
+  LoggerName,
+  LoggingConfigureOptions,
+  LoggingService,
+  LogContext,
+  LogLevel,
+} from "./types";
 import { LogLevel as LogLevelValues } from "./types";
 
 /**
@@ -40,12 +47,12 @@ function formatContext(context: LogContext | undefined): string {
 }
 
 /**
- * Parse and validate CODEHYDRA_LOGLEVEL environment variable.
+ * Parse and validate a log level string.
  *
- * @param envValue - Raw environment variable value
+ * @param envValue - Raw string value (e.g., from an environment variable)
  * @returns Valid log level or undefined if invalid
  */
-function parseLogLevel(envValue: string | undefined): LogLevel | undefined {
+export function parseLogLevel(envValue: string | undefined): LogLevel | undefined {
   if (!envValue) return undefined;
   const normalized = envValue.toLowerCase().trim();
   if (normalized in LogLevelValues) {
@@ -117,12 +124,12 @@ class ElectronLogLogger implements Logger {
 }
 
 /**
- * Parse CODEHYDRA_LOGGER env var to get set of allowed logger names.
+ * Parse a comma-separated string to get a set of allowed logger names.
  *
- * @param envValue - Raw environment variable value (comma-separated logger names)
+ * @param envValue - Raw string value (e.g., from an environment variable)
  * @returns Set of allowed logger names, or undefined if not set (allow all)
  */
-function parseLoggerFilter(envValue: string | undefined): Set<LoggerName> | undefined {
+export function parseLoggerFilter(envValue: string | undefined): Set<LoggerName> | undefined {
   if (!envValue) return undefined;
   const names = envValue
     .split(",")
@@ -168,17 +175,93 @@ class FilteredLogger implements Logger {
 }
 
 /**
+ * Entry buffered by QueuedLogger before configure() is called.
+ */
+interface QueueEntry {
+  readonly level: LogLevel;
+  readonly message: string;
+  readonly context: LogContext | undefined;
+  readonly error: Error | undefined;
+}
+
+/**
+ * Logger that buffers entries until activated with a real inner logger.
+ * After activation, all methods delegate directly to the inner logger.
+ * Consumers hold a reference to this object, so replacing the inner
+ * via `activate()` transparently upgrades all call sites.
+ */
+class QueuedLogger implements Logger {
+  private queue: QueueEntry[] | undefined = [];
+  private inner: Logger | undefined;
+
+  activate(inner: Logger): void {
+    const pending = this.queue;
+    this.inner = inner;
+    this.queue = undefined;
+    if (pending) {
+      for (const entry of pending) {
+        if (entry.level === "error") {
+          inner.error(entry.message, entry.context, entry.error);
+        } else {
+          inner[entry.level](entry.message, entry.context);
+        }
+      }
+    }
+  }
+
+  silly(message: string, context?: LogContext): void {
+    if (this.inner) {
+      this.inner.silly(message, context);
+    } else {
+      this.queue!.push({ level: "silly", message, context, error: undefined });
+    }
+  }
+
+  debug(message: string, context?: LogContext): void {
+    if (this.inner) {
+      this.inner.debug(message, context);
+    } else {
+      this.queue!.push({ level: "debug", message, context, error: undefined });
+    }
+  }
+
+  info(message: string, context?: LogContext): void {
+    if (this.inner) {
+      this.inner.info(message, context);
+    } else {
+      this.queue!.push({ level: "info", message, context, error: undefined });
+    }
+  }
+
+  warn(message: string, context?: LogContext): void {
+    if (this.inner) {
+      this.inner.warn(message, context);
+    } else {
+      this.queue!.push({ level: "warn", message, context, error: undefined });
+    }
+  }
+
+  error(message: string, context?: LogContext, error?: Error): void {
+    if (this.inner) {
+      this.inner.error(message, context, error);
+    } else {
+      this.queue!.push({ level: "error", message, context, error });
+    }
+  }
+}
+
+/**
  * Main process logging service using electron-log.
  *
- * Configuration:
- * - Default level: DEBUG (dev) / WARN (prod)
- * - Override via CODEHYDRA_LOGLEVEL environment variable
- * - Console output via CODEHYDRA_PRINT_LOGS (any truthy value)
- * - Logger filtering via CODEHYDRA_LOGGER (comma-separated logger names)
+ * Construction configures file path and format (known at startup).
+ * Transport levels start silent until `configure()` is called.
+ * Loggers created before `configure()` buffer entries and flush them
+ * when configuration arrives.
  *
  * @example
  * ```typescript
- * const loggingService = new ElectronLogService(buildInfo, pathProvider);
+ * const loggingService = new ElectronLogService(pathProvider);
+ * loggingService.configure({ logLevel: 'debug', enableConsole: false, allowedLoggers: undefined });
  * loggingService.initialize();
  *
  * const logger = loggingService.createLogger('git');
@@ -188,40 +271,48 @@ class FilteredLogger implements Logger {
  */
 
 export class ElectronLogService implements LoggingService {
-  private readonly loggers = new Map<LoggerName, Logger>();
-  private readonly logLevel: LogLevel;
-  private readonly enableConsole: boolean;
-  private readonly allowedLoggers: Set<LoggerName> | undefined;
+  private readonly loggers = new Map<LoggerName, QueuedLogger>();
+  private configured = false;
+  private logLevel: LogLevel = "warn";
+  private allowedLoggers: Set<LoggerName> | undefined;
 
-  constructor(buildInfo: BuildInfo, pathProvider: PathProvider) {
-    // Determine log level: env var > default based on build mode
-    const envLevel = parseLogLevel(process.env.CODEHYDRA_LOGLEVEL);
-    const defaultLevel: LogLevel = buildInfo.isDevelopment ? "debug" : "warn";
-    this.logLevel = envLevel ?? defaultLevel;
+  constructor(pathProvider: PathProvider) {
+    // Transports start silent — configure() enables them
+    log.transports.file.level = false;
+    log.transports.console.level = false;
 
-    // Console output: enabled if env var is set to any truthy value
-    this.enableConsole = !!process.env.CODEHYDRA_PRINT_LOGS;
-
-    // Logger filter: only log from specified loggers (if set)
-    this.allowedLoggers = parseLoggerFilter(process.env.CODEHYDRA_LOGGER);
-
-    // Configure file transport
+    // Configure file path (known at construction)
     const logsDir = join(pathProvider.dataRootDir.toNative(), "logs");
     const filename = generateSessionFilename();
     log.transports.file.resolvePathFn = (): string => join(logsDir, filename);
-    log.transports.file.level = this.logLevel;
-
-    // Configure console transport
-    log.transports.console.level = this.enableConsole ? this.logLevel : false;
 
     // Format: [timestamp] [level] [scope] message
     log.transports.file.format = "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}";
     log.transports.console.format = "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}";
   }
 
+  configure(options: LoggingConfigureOptions): void {
+    this.logLevel = options.logLevel;
+    this.allowedLoggers = options.allowedLoggers;
+
+    // Enable transports with the configured level
+    log.transports.file.level = this.logLevel;
+    log.transports.console.level = options.enableConsole ? this.logLevel : false;
+
+    // Activate all existing queued loggers
+    for (const [name, queued] of this.loggers) {
+      const scope = log.scope(`[${name}]`);
+      const inner = new ElectronLogLogger(scope);
+      const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
+      queued.activate(filtered);
+    }
+
+    this.configured = true;
+  }
+
   /**
    * Create a logger with the specified name (scope).
-   * If CODEHYDRA_LOGGER is set, only loggers in the list will actually log.
+   * If not yet configured, the logger buffers entries until configure() is called.
    */
   createLogger(name: LoggerName): Logger {
     // Return cached logger if already created
@@ -230,14 +321,18 @@ export class ElectronLogService implements LoggingService {
       return existing;
     }
 
-    // Create a new scope with the logger name in brackets
-    const scope = log.scope(`[${name}]`);
-    const innerLogger = new ElectronLogLogger(scope);
+    const queued = new QueuedLogger();
 
-    // Wrap with filter if CODEHYDRA_LOGGER is set
-    const logger = new FilteredLogger(innerLogger, this.allowedLoggers, name);
-    this.loggers.set(name, logger);
-    return logger;
+    // If already configured, activate immediately
+    if (this.configured) {
+      const scope = log.scope(`[${name}]`);
+      const inner = new ElectronLogLogger(scope);
+      const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
+      queued.activate(filtered);
+    }
+
+    this.loggers.set(name, queued);
+    return queued;
   }
 
   /**

@@ -9,12 +9,18 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMockBuildInfo } from "../platform/build-info.test-utils";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import type { PathProvider } from "../platform/path-provider";
+import type { LoggingConfigureOptions } from "./types";
 
 // Test timeout for file operations
 const WRITE_DELAY_MS = 100;
+
+const DEFAULT_OPTIONS: LoggingConfigureOptions = {
+  logLevel: "debug",
+  enableConsole: false,
+  allowedLoggers: undefined,
+};
 
 /**
  * Create a minimal PathProvider for boundary tests.
@@ -36,22 +42,14 @@ async function waitForWrite(): Promise<void> {
 describe("ElectronLogService boundary tests", () => {
   let tempDir: string;
   let logsDir: string;
-  const originalEnv = { ...process.env };
 
   beforeEach(async () => {
     // Create temp directory for each test
     tempDir = await mkdtemp(join(tmpdir(), "codehydra-log-test-"));
     logsDir = join(tempDir, "logs");
-
-    // Clean env vars
-    delete process.env.CODEHYDRA_LOGLEVEL;
-    delete process.env.CODEHYDRA_PRINT_LOGS;
   });
 
   afterEach(async () => {
-    // Restore env
-    process.env = { ...originalEnv };
-
     // Clean up temp directory
     await rm(tempDir, { recursive: true, force: true });
 
@@ -65,10 +63,10 @@ describe("ElectronLogService boundary tests", () => {
 
   it("creates log directory if not exists", async () => {
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({ isDevelopment: true });
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
     logger.info("Test message");
@@ -80,10 +78,10 @@ describe("ElectronLogService boundary tests", () => {
 
   it("writes to log file with session-based filename", async () => {
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({ isDevelopment: true });
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
     logger.info("Test message");
@@ -99,10 +97,10 @@ describe("ElectronLogService boundary tests", () => {
 
   it("log format matches specification", async () => {
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({ isDevelopment: true });
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("git");
 
     logger.info("Clone complete", { repo: "test-repo", branch: "main" });
@@ -121,13 +119,11 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("filters by level - DEBUG not written when level is WARN", async () => {
-    process.env.CODEHYDRA_LOGLEVEL = "warn";
-
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({ isDevelopment: false });
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    service.configure({ ...DEFAULT_OPTIONS, logLevel: "warn" });
     const logger = service.createLogger("app");
 
     logger.debug("Debug message - should not appear");
@@ -145,13 +141,11 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("writes all levels when level is DEBUG", async () => {
-    process.env.CODEHYDRA_LOGLEVEL = "debug";
-
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({ isDevelopment: true });
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
     logger.debug("Debug message");
@@ -172,10 +166,10 @@ describe("ElectronLogService boundary tests", () => {
 
   it("includes Error stack in error logs", async () => {
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({ isDevelopment: true });
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
     const testError = new Error("Test error message");
@@ -190,12 +184,12 @@ describe("ElectronLogService boundary tests", () => {
     expect(logContent).toContain("Test error message");
   });
 
-  it("uses dev path in development mode", async () => {
+  it("uses configured path for log files", async () => {
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({ isDevelopment: true });
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
     logger.info("Test");
@@ -205,5 +199,26 @@ describe("ElectronLogService boundary tests", () => {
     const files = await readdir(logsDir);
     expect(files.length).toBe(1);
     expect(logsDir).toBe(join(tempDir, "logs"));
+  });
+
+  it("flushes buffered entries to file after configure()", async () => {
+    const { ElectronLogService } = await import("./electron-log-service");
+    const pathProvider = createTestPathProvider(tempDir);
+
+    const service = new ElectronLogService(pathProvider);
+    const logger = service.createLogger("app");
+
+    // Log before configure — entries are buffered
+    logger.info("Buffered message");
+
+    // Configure — flushes buffered entries
+    service.configure(DEFAULT_OPTIONS);
+    await waitForWrite();
+
+    const files = await readdir(logsDir);
+    expect(files[0]).toBeDefined();
+    const logContent = await readFile(join(logsDir, files[0] as string), "utf-8");
+
+    expect(logContent).toContain("Buffered message");
   });
 });

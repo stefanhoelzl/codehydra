@@ -67,6 +67,16 @@ export type LoggerName =
 export type LogContext = Record<string, string | number | boolean | null>;
 
 /**
+ * Configuration options for the logging service.
+ * Passed to `configure()` to set transport levels and filters.
+ */
+export interface LoggingConfigureOptions {
+  readonly logLevel: LogLevel;
+  readonly enableConsole: boolean;
+  readonly allowedLoggers: Set<LoggerName> | undefined;
+}
+
+/**
  * Logger interface for dependency injection.
  * Services receive this interface via constructor injection.
  *
@@ -130,7 +140,8 @@ export interface Logger {
  * @example
  * ```typescript
  * // In main process startup
- * const loggingService = new ElectronLogService(buildInfo, pathProvider);
+ * const loggingService = new ElectronLogService(pathProvider);
+ * loggingService.configure({ logLevel: 'debug', enableConsole: false, allowedLoggers: undefined });
  * loggingService.initialize(); // Enable renderer logging
  *
  * // Create loggers for services
@@ -147,6 +158,15 @@ export interface LoggingService {
    * @returns Logger instance for the named scope
    */
   createLogger(name: LoggerName): Logger;
+
+  /**
+   * Configure transport levels and logger filtering.
+   * Entries logged before `configure()` are buffered and flushed on first call.
+   * Can be called multiple times to reconfigure.
+   *
+   * @param options - Log level, console toggle, and optional logger name filter
+   */
+  configure(options: LoggingConfigureOptions): void;
 
   /**
    * Initialize the logging service.

@@ -36,6 +36,8 @@ import {
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
   ElectronLogService,
+  parseLogLevel,
+  parseLoggerFilter,
   createWorkspaceLockHandler,
   WorkspaceFileService,
   createWorkspaceFileConfig,
@@ -154,7 +156,13 @@ const buildInfo: BuildInfo = new ElectronBuildInfo();
 
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-const loggingService: LoggingService = new ElectronLogService(buildInfo, pathProvider);
+const loggingService: LoggingService = new ElectronLogService(pathProvider);
+loggingService.configure({
+  logLevel:
+    parseLogLevel(process.env.CODEHYDRA_LOGLEVEL) ?? (buildInfo.isDevelopment ? "debug" : "warn"),
+  enableConsole: !!process.env.CODEHYDRA_PRINT_LOGS,
+  allowedLoggers: parseLoggerFilter(process.env.CODEHYDRA_LOGGER),
+});
 const appLogger = loggingService.createLogger("app");
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));

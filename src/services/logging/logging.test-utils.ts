@@ -6,7 +6,13 @@
  */
 
 import { vi, type Mock } from "vitest";
-import type { Logger, LoggerName, LoggingService, LogContext } from "./types";
+import type {
+  Logger,
+  LoggerName,
+  LoggingConfigureOptions,
+  LoggingService,
+  LogContext,
+} from "./types";
 
 /**
  * Mock logger with vitest spy methods.
@@ -26,6 +32,7 @@ export interface MockLogger extends Logger {
  */
 export interface MockLoggingService extends LoggingService {
   createLogger: Mock<(name: LoggerName) => Logger>;
+  configure: Mock<(options: LoggingConfigureOptions) => void>;
   initialize: Mock<() => void>;
   dispose: Mock<() => void>;
 
@@ -95,6 +102,7 @@ export function createMockLoggingService(): MockLoggingService {
       return logger;
     }),
 
+    configure: vi.fn(),
     initialize: vi.fn(),
     dispose: vi.fn(),
 

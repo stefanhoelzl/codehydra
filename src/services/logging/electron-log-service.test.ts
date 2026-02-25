@@ -6,9 +6,9 @@
  */
 
 import { join, sep } from "node:path";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createMockBuildInfo } from "../platform/build-info.test-utils";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
+import type { LoggingConfigureOptions } from "./types";
 
 // Mock electron-log/main
 const mockScope = vi.fn();
@@ -34,14 +34,8 @@ vi.mock("electron-log/main", () => ({
 }));
 
 describe("ElectronLogService", () => {
-  const originalEnv = process.env;
-
   beforeEach(() => {
     vi.resetAllMocks();
-    process.env = { ...originalEnv };
-    delete process.env.CODEHYDRA_LOGLEVEL;
-    delete process.env.CODEHYDRA_PRINT_LOGS;
-    delete process.env.CODEHYDRA_LOGGER;
 
     // Reset transport config
     mockTransports.file.resolvePathFn = undefined;
@@ -60,99 +54,75 @@ describe("ElectronLogService", () => {
     });
   });
 
-  afterEach(() => {
-    process.env = originalEnv;
-  });
+  const DEFAULT_OPTIONS: LoggingConfigureOptions = {
+    logLevel: "debug",
+    enableConsole: false,
+    allowedLoggers: undefined,
+  };
 
-  async function createService(options?: { isDevelopment?: boolean; dataRootDir?: string }) {
+  async function createService(options?: {
+    configureOptions?: LoggingConfigureOptions;
+    dataRootDir?: string;
+    skipConfigure?: boolean;
+  }) {
     const { ElectronLogService } = await import("./electron-log-service");
-    const buildInfo = createMockBuildInfo({
-      isDevelopment: options?.isDevelopment ?? true,
-    });
     const pathProvider = createMockPathProvider({
       dataRootDir: options?.dataRootDir ?? "/test/app-data",
     });
-    return new ElectronLogService(buildInfo, pathProvider);
+    const service = new ElectronLogService(pathProvider);
+    if (!options?.skipConfigure) {
+      service.configure(options?.configureOptions ?? DEFAULT_OPTIONS);
+    }
+    return service;
   }
 
   describe("log level configuration", () => {
-    it("uses DEBUG level in dev mode", async () => {
-      await createService({ isDevelopment: true });
+    it("uses configured log level for file transport", async () => {
+      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "debug" } });
       expect(mockTransports.file.level).toBe("debug");
     });
 
-    it("uses WARN level in packaged mode", async () => {
-      await createService({ isDevelopment: false });
+    it("uses warn level when configured", async () => {
+      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "warn" } });
       expect(mockTransports.file.level).toBe("warn");
     });
 
-    it("respects CODEHYDRA_LOGLEVEL env var", async () => {
-      process.env.CODEHYDRA_LOGLEVEL = "info";
-      await createService({ isDevelopment: true });
+    it("uses info level when configured", async () => {
+      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "info" } });
       expect(mockTransports.file.level).toBe("info");
     });
 
-    it("handles uppercase CODEHYDRA_LOGLEVEL", async () => {
-      process.env.CODEHYDRA_LOGLEVEL = "ERROR";
-      await createService({ isDevelopment: true });
+    it("uses error level when configured", async () => {
+      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "error" } });
       expect(mockTransports.file.level).toBe("error");
     });
 
-    it("handles invalid CODEHYDRA_LOGLEVEL by falling back to default", async () => {
-      process.env.CODEHYDRA_LOGLEVEL = "invalid";
-      await createService({ isDevelopment: true });
-      // Falls back to debug (dev mode default)
-      expect(mockTransports.file.level).toBe("debug");
-    });
-
-    it("handles empty CODEHYDRA_LOGLEVEL by falling back to default", async () => {
-      process.env.CODEHYDRA_LOGLEVEL = "";
-      await createService({ isDevelopment: false });
-      // Falls back to warn (prod mode default)
-      expect(mockTransports.file.level).toBe("warn");
-    });
-
-    it("respects CODEHYDRA_LOGLEVEL=silly", async () => {
-      process.env.CODEHYDRA_LOGLEVEL = "silly";
-      await createService({ isDevelopment: true });
+    it("uses silly level when configured", async () => {
+      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "silly" } });
       expect(mockTransports.file.level).toBe("silly");
     });
   });
 
   describe("console transport configuration", () => {
-    it("disables console by default", async () => {
-      await createService();
+    it("disables console when enableConsole is false", async () => {
+      await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, enableConsole: false },
+      });
       expect(mockTransports.console.level).toBe(false);
     });
 
-    it("enables console when PRINT_LOGS=true", async () => {
-      process.env.CODEHYDRA_PRINT_LOGS = "true";
-      await createService({ isDevelopment: true });
+    it("enables console at log level when enableConsole is true", async () => {
+      await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "debug", enableConsole: true },
+      });
       expect(mockTransports.console.level).toBe("debug");
     });
 
-    it("enables console with uppercase TRUE", async () => {
-      process.env.CODEHYDRA_PRINT_LOGS = "TRUE";
-      await createService({ isDevelopment: true });
-      expect(mockTransports.console.level).toBe("debug");
-    });
-
-    it("enables console for PRINT_LOGS=1", async () => {
-      process.env.CODEHYDRA_PRINT_LOGS = "1";
-      await createService({ isDevelopment: true });
-      expect(mockTransports.console.level).toBe("debug");
-    });
-
-    it("enables console for PRINT_LOGS=yes", async () => {
-      process.env.CODEHYDRA_PRINT_LOGS = "yes";
-      await createService({ isDevelopment: true });
-      expect(mockTransports.console.level).toBe("debug");
-    });
-
-    it("enables console for any non-empty string", async () => {
-      process.env.CODEHYDRA_PRINT_LOGS = "anything";
-      await createService({ isDevelopment: true });
-      expect(mockTransports.console.level).toBe("debug");
+    it("console level matches file level when enabled", async () => {
+      await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "warn", enableConsole: true },
+      });
+      expect(mockTransports.console.level).toBe("warn");
     });
   });
 
@@ -176,7 +146,6 @@ describe("ElectronLogService", () => {
       const logPath = pathFn({});
 
       // Should match: YYYY-MM-DDTHH-MM-SS-<uuid>.log
-      // e.g., 2025-12-16T10-30-00-abc12345.log
       // Use path.sep to split cross-platform
       const filename = logPath.split(sep).pop();
       expect(filename).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[a-f0-9]{8}\.log$/);
@@ -398,8 +367,8 @@ describe("ElectronLogService", () => {
     });
   });
 
-  describe("CODEHYDRA_LOGGER filtering", () => {
-    it("logs from all loggers when CODEHYDRA_LOGGER is not set", async () => {
+  describe("logger filtering", () => {
+    it("logs from all loggers when allowedLoggers is undefined", async () => {
       const scopeLogger = {
         silly: vi.fn(),
         debug: vi.fn(),
@@ -409,7 +378,9 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const service = await createService();
+      const service = await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, allowedLoggers: undefined },
+      });
       const logger = service.createLogger("git");
 
       logger.info("Test message");
@@ -417,8 +388,7 @@ describe("ElectronLogService", () => {
       expect(scopeLogger.info).toHaveBeenCalledWith("Test message");
     });
 
-    it("filters loggers based on CODEHYDRA_LOGGER env var", async () => {
-      process.env.CODEHYDRA_LOGGER = "process,network";
+    it("filters loggers based on allowedLoggers set", async () => {
       const scopeLogger = {
         silly: vi.fn(),
         debug: vi.fn(),
@@ -428,7 +398,12 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const service = await createService();
+      const service = await createService({
+        configureOptions: {
+          ...DEFAULT_OPTIONS,
+          allowedLoggers: new Set(["process", "network"] as const),
+        },
+      });
       const gitLogger = service.createLogger("git");
       const processLogger = service.createLogger("process");
 
@@ -441,7 +416,6 @@ describe("ElectronLogService", () => {
     });
 
     it("allows specified loggers in filter", async () => {
-      process.env.CODEHYDRA_LOGGER = "git,fs";
       const scopeLogger = {
         silly: vi.fn(),
         debug: vi.fn(),
@@ -451,7 +425,12 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const service = await createService();
+      const service = await createService({
+        configureOptions: {
+          ...DEFAULT_OPTIONS,
+          allowedLoggers: new Set(["git", "fs"] as const),
+        },
+      });
       const gitLogger = service.createLogger("git");
 
       gitLogger.debug("Debug message");
@@ -465,46 +444,7 @@ describe("ElectronLogService", () => {
       expect(scopeLogger.error).toHaveBeenCalledWith("Error message");
     });
 
-    it("handles whitespace in CODEHYDRA_LOGGER", async () => {
-      process.env.CODEHYDRA_LOGGER = "  git , process  ";
-      const scopeLogger = {
-        silly: vi.fn(),
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-      };
-      mockScope.mockReturnValue(scopeLogger);
-
-      const service = await createService();
-      const gitLogger = service.createLogger("git");
-
-      gitLogger.info("Test");
-
-      expect(scopeLogger.info).toHaveBeenCalled();
-    });
-
-    it("handles empty CODEHYDRA_LOGGER by allowing all loggers", async () => {
-      process.env.CODEHYDRA_LOGGER = "";
-      const scopeLogger = {
-        silly: vi.fn(),
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-      };
-      mockScope.mockReturnValue(scopeLogger);
-
-      const service = await createService();
-      const logger = service.createLogger("git");
-
-      logger.info("Test message");
-
-      expect(scopeLogger.info).toHaveBeenCalledWith("Test message");
-    });
-
     it("suppresses all log levels for filtered-out loggers", async () => {
-      process.env.CODEHYDRA_LOGGER = "network";
       const scopeLogger = {
         silly: vi.fn(),
         debug: vi.fn(),
@@ -514,7 +454,12 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const service = await createService();
+      const service = await createService({
+        configureOptions: {
+          ...DEFAULT_OPTIONS,
+          allowedLoggers: new Set(["network"] as const),
+        },
+      });
       const gitLogger = service.createLogger("git");
       const testError = new Error("Test");
 
@@ -529,6 +474,200 @@ describe("ElectronLogService", () => {
       expect(scopeLogger.info).not.toHaveBeenCalled();
       expect(scopeLogger.warn).not.toHaveBeenCalled();
       expect(scopeLogger.error).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("QueuedLogger buffering", () => {
+    it("transports start silent before configure()", async () => {
+      await createService({ skipConfigure: true });
+      expect(mockTransports.file.level).toBe(false);
+      expect(mockTransports.console.level).toBe(false);
+    });
+
+    it("buffers entries before configure() and flushes after", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const { ElectronLogService } = await import("./electron-log-service");
+      const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
+      const service = new ElectronLogService(pathProvider);
+
+      const logger = service.createLogger("git");
+      logger.info("Before configure");
+      logger.debug("Also before");
+
+      // Not flushed yet
+      expect(scopeLogger.info).not.toHaveBeenCalled();
+      expect(scopeLogger.debug).not.toHaveBeenCalled();
+
+      service.configure(DEFAULT_OPTIONS);
+
+      // Now flushed
+      expect(scopeLogger.info).toHaveBeenCalledWith("Before configure");
+      expect(scopeLogger.debug).toHaveBeenCalledWith("Also before");
+    });
+
+    it("flushes entries in order", async () => {
+      const calls: string[] = [];
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn((msg: string) => calls.push(`debug:${msg}`)),
+        info: vi.fn((msg: string) => calls.push(`info:${msg}`)),
+        warn: vi.fn((msg: string) => calls.push(`warn:${msg}`)),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const { ElectronLogService } = await import("./electron-log-service");
+      const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
+      const service = new ElectronLogService(pathProvider);
+
+      const logger = service.createLogger("app");
+      logger.info("First");
+      logger.debug("Second");
+      logger.warn("Third");
+
+      service.configure(DEFAULT_OPTIONS);
+
+      expect(calls).toEqual(["info:First", "debug:Second", "warn:Third"]);
+    });
+
+    it("logger created after configure() delegates immediately", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const service = await createService();
+      const logger = service.createLogger("git");
+
+      logger.info("Immediate");
+
+      expect(scopeLogger.info).toHaveBeenCalledWith("Immediate");
+    });
+
+    it("consumer reference stays valid across configure()", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const { ElectronLogService } = await import("./electron-log-service");
+      const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
+      const service = new ElectronLogService(pathProvider);
+
+      // Get reference before configure
+      const logger = service.createLogger("git");
+
+      service.configure(DEFAULT_OPTIONS);
+
+      // Same reference works after configure
+      logger.info("After configure");
+      expect(scopeLogger.info).toHaveBeenCalledWith("After configure");
+    });
+
+    it("configure() can be called multiple times (reconfigures)", async () => {
+      const { ElectronLogService } = await import("./electron-log-service");
+      const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
+      const service = new ElectronLogService(pathProvider);
+
+      service.configure({ logLevel: "debug", enableConsole: false, allowedLoggers: undefined });
+      expect(mockTransports.file.level).toBe("debug");
+
+      service.configure({ logLevel: "warn", enableConsole: true, allowedLoggers: undefined });
+      expect(mockTransports.file.level).toBe("warn");
+      expect(mockTransports.console.level).toBe("warn");
+    });
+
+    it("error entries flush with error object intact", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const { ElectronLogService } = await import("./electron-log-service");
+      const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
+      const service = new ElectronLogService(pathProvider);
+
+      const logger = service.createLogger("app");
+      const testError = new Error("Test error");
+      logger.error("Failed", { op: "test" }, testError);
+
+      service.configure(DEFAULT_OPTIONS);
+
+      expect(scopeLogger.error).toHaveBeenCalledWith("Failed op=test", testError);
+    });
+  });
+
+  describe("parseLogLevel", () => {
+    it("parses valid log levels", async () => {
+      const { parseLogLevel } = await import("./electron-log-service");
+      expect(parseLogLevel("debug")).toBe("debug");
+      expect(parseLogLevel("info")).toBe("info");
+      expect(parseLogLevel("warn")).toBe("warn");
+      expect(parseLogLevel("error")).toBe("error");
+      expect(parseLogLevel("silly")).toBe("silly");
+    });
+
+    it("handles uppercase input", async () => {
+      const { parseLogLevel } = await import("./electron-log-service");
+      expect(parseLogLevel("ERROR")).toBe("error");
+      expect(parseLogLevel("DEBUG")).toBe("debug");
+    });
+
+    it("handles whitespace", async () => {
+      const { parseLogLevel } = await import("./electron-log-service");
+      expect(parseLogLevel("  info  ")).toBe("info");
+    });
+
+    it("returns undefined for invalid input", async () => {
+      const { parseLogLevel } = await import("./electron-log-service");
+      expect(parseLogLevel("invalid")).toBeUndefined();
+      expect(parseLogLevel("")).toBeUndefined();
+      expect(parseLogLevel(undefined)).toBeUndefined();
+    });
+  });
+
+  describe("parseLoggerFilter", () => {
+    it("parses comma-separated logger names", async () => {
+      const { parseLoggerFilter } = await import("./electron-log-service");
+      const result = parseLoggerFilter("git,process,fs");
+      expect(result).toEqual(new Set(["git", "process", "fs"]));
+    });
+
+    it("handles whitespace in names", async () => {
+      const { parseLoggerFilter } = await import("./electron-log-service");
+      const result = parseLoggerFilter("  git , process  ");
+      expect(result).toEqual(new Set(["git", "process"]));
+    });
+
+    it("returns undefined for empty or undefined input", async () => {
+      const { parseLoggerFilter } = await import("./electron-log-service");
+      expect(parseLoggerFilter(undefined)).toBeUndefined();
+      expect(parseLoggerFilter("")).toBeUndefined();
+    });
+
+    it("returns undefined for whitespace-only input", async () => {
+      const { parseLoggerFilter } = await import("./electron-log-service");
+      expect(parseLoggerFilter("  ,  ,  ")).toBeUndefined();
     });
   });
 });
