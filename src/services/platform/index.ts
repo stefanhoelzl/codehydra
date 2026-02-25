@@ -5,6 +5,9 @@
  * Platform layers abstract OS/runtime-specific operations (IPC, Dialog, Image, App, Menu).
  */
 
+// Async Watcher
+export { AsyncWatcher } from "./async-watcher";
+
 // Error types
 export { PlatformError, isPlatformError, isPlatformErrorWithCode } from "./errors";
 export type { PlatformErrorCode } from "./errors";
