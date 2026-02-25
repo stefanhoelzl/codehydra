@@ -4,8 +4,8 @@ import { viteStaticCopy } from "vite-plugin-static-copy";
 import { resolve } from "path";
 import { codehydraDefaults } from "./vite.defaults";
 
-const appVersion = process.env.CODEHYDRA_VERSION ?? "0.0.0-dev";
-const isDevBuild = process.env.CODEHYDRA_RELEASE !== "true";
+const appVersion = process.env._CH_VERSION ?? "0.0.0-dev";
+const isDevBuild = process.env._CH_RELEASE !== "true";
 
 // PostHog configuration - injected at build time from environment variables
 // API key is stored in GitHub secrets and passed via CI, or in .env.local for local dev

@@ -96,12 +96,12 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       return {};
     }
     const envVars: Record<string, string> = {
-      CODEHYDRA_OPENCODE_PORT: String(session.port),
-      CODEHYDRA_OPENCODE_SESSION_ID: session.sessionId,
-      CODEHYDRA_WORKSPACE_PATH: this.workspacePath,
+      _CH_OPENCODE_PORT: String(session.port),
+      _CH_OPENCODE_SESSION_ID: session.sessionId,
+      _CH_WORKSPACE_PATH: this.workspacePath,
     };
     if (this._bridgePort !== null) {
-      envVars.CODEHYDRA_BRIDGE_PORT = String(this._bridgePort);
+      envVars._CH_BRIDGE_PORT = String(this._bridgePort);
     }
     return envVars;
   }

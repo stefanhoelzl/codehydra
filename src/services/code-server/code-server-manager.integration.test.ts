@@ -25,9 +25,9 @@ describe("CodeServerManager Integration", () => {
   beforeEach(() => {
     // Save original environment
     originalEnv = { ...process.env };
-    // Remove CODEHYDRA_PLUGIN_PORT to ensure test isolation
+    // Remove _CH_PLUGIN_PORT to ensure test isolation
     // (may be set by other tests running in parallel)
-    delete process.env.CODEHYDRA_PLUGIN_PORT;
+    delete process.env._CH_PLUGIN_PORT;
   });
 
   afterEach(() => {
@@ -227,7 +227,7 @@ describe("CodeServerManager Integration", () => {
       expect(spawned.$.env?.MY_CUSTOM_VAR).toBe("custom-value");
     });
 
-    it("includes CODEHYDRA_PLUGIN_PORT when pluginPort configured", async () => {
+    it("includes _CH_PLUGIN_PORT when pluginPort configured", async () => {
       const processRunner = createMockProcessRunner({
         onSpawn: () => ({ pid: 12345, running: true }),
       });
@@ -255,12 +255,12 @@ describe("CodeServerManager Integration", () => {
       );
       await manager.ensureRunning();
 
-      // Verify CODEHYDRA_PLUGIN_PORT is set
+      // Verify _CH_PLUGIN_PORT is set
       const spawned = processRunner.$.spawned(0);
-      expect(spawned.$.env?.CODEHYDRA_PLUGIN_PORT).toBe("9876");
+      expect(spawned.$.env?._CH_PLUGIN_PORT).toBe("9876");
     });
 
-    it("omits CODEHYDRA_PLUGIN_PORT when pluginPort undefined", async () => {
+    it("omits _CH_PLUGIN_PORT when pluginPort undefined", async () => {
       const processRunner = createMockProcessRunner({
         onSpawn: () => ({ pid: 12345, running: true }),
       });
@@ -288,12 +288,12 @@ describe("CodeServerManager Integration", () => {
       );
       await manager.ensureRunning();
 
-      // Verify CODEHYDRA_PLUGIN_PORT is NOT set
+      // Verify _CH_PLUGIN_PORT is NOT set
       const spawned = processRunner.$.spawned(0);
-      expect(spawned.$.env?.CODEHYDRA_PLUGIN_PORT).toBeUndefined();
+      expect(spawned.$.env?._CH_PLUGIN_PORT).toBeUndefined();
     });
 
-    it("includes CODEHYDRA_CODE_SERVER_DIR and CODEHYDRA_OPENCODE_DIR", async () => {
+    it("includes _CH_CODE_SERVER_DIR and _CH_OPENCODE_DIR", async () => {
       const processRunner = createMockProcessRunner({
         onSpawn: () => ({ pid: 12345, running: true }),
       });
@@ -320,10 +320,10 @@ describe("CodeServerManager Integration", () => {
       );
       await manager.ensureRunning();
 
-      // Verify CODEHYDRA_CODE_SERVER_DIR and CODEHYDRA_OPENCODE_DIR are set
+      // Verify _CH_CODE_SERVER_DIR and _CH_OPENCODE_DIR are set
       const spawned = processRunner.$.spawned(0);
-      expect(spawned.$.env?.CODEHYDRA_CODE_SERVER_DIR).toBe("/app/code-server/4.106.3");
-      expect(spawned.$.env?.CODEHYDRA_OPENCODE_DIR).toBe("/app/opencode/1.0.163");
+      expect(spawned.$.env?._CH_CODE_SERVER_DIR).toBe("/app/code-server/4.106.3");
+      expect(spawned.$.env?._CH_OPENCODE_DIR).toBe("/app/opencode/1.0.163");
     });
   });
 

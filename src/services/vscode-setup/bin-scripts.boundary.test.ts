@@ -101,7 +101,7 @@ async function executeScript(
 ): Promise<{ stdout: string; stderr: string; status: number | null }> {
   // Build clean env without CodeHydra vars and test framework vars, then add specified ones
   const baseEnv: Record<string, string> = {};
-  const excludedPrefixes = ["CODEHYDRA_", "VITEST", "TEST"];
+  const excludedPrefixes = ["CH_", "_CH_", "VITEST", "TEST"];
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !excludedPrefixes.some((prefix) => key.startsWith(prefix))) {
       baseEnv[key] = value;
@@ -163,96 +163,96 @@ describe("ch-opencode.cjs boundary tests", () => {
   });
 
   describe("environment variable validation", () => {
-    it("errors when CODEHYDRA_OPENCODE_PORT is not set", async () => {
+    it("errors when _CH_OPENCODE_PORT is not set", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-          // CODEHYDRA_OPENCODE_PORT not set
+          _CH_OPENCODE_DIR: opencodeDir,
+          // _CH_OPENCODE_PORT not set
         },
         tempDir.path
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: CODEHYDRA_OPENCODE_PORT not set");
+      expect(result.stderr).toContain("Error: _CH_OPENCODE_PORT not set");
       expect(result.stderr).toContain("Make sure you're in a CodeHydra workspace terminal");
     });
 
     it("errors when port is not a number", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "not-a-number",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_PORT: "not-a-number",
+          _CH_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: Invalid CODEHYDRA_OPENCODE_PORT");
+      expect(result.stderr).toContain("Error: Invalid _CH_OPENCODE_PORT");
     });
 
     it("errors when port is zero", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "0",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_PORT: "0",
+          _CH_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: Invalid CODEHYDRA_OPENCODE_PORT");
+      expect(result.stderr).toContain("Error: Invalid _CH_OPENCODE_PORT");
     });
 
     it("errors when port is negative", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "-100",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_PORT: "-100",
+          _CH_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: Invalid CODEHYDRA_OPENCODE_PORT");
+      expect(result.stderr).toContain("Error: Invalid _CH_OPENCODE_PORT");
     });
 
     it("errors when port is above 65535", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "70000",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_PORT: "70000",
+          _CH_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: Invalid CODEHYDRA_OPENCODE_PORT");
+      expect(result.stderr).toContain("Error: Invalid _CH_OPENCODE_PORT");
     });
 
-    it("errors when CODEHYDRA_OPENCODE_DIR is not set", async () => {
+    it("errors when _CH_OPENCODE_DIR is not set", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "14001",
-          // CODEHYDRA_OPENCODE_DIR not set
+          _CH_OPENCODE_PORT: "14001",
+          // _CH_OPENCODE_DIR not set
         },
         tempDir.path
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: CODEHYDRA_OPENCODE_DIR not set");
+      expect(result.stderr).toContain("Error: _CH_OPENCODE_DIR not set");
       expect(result.stderr).toContain("Make sure you're in a CodeHydra workspace terminal");
     });
   });
 
   describe("binary spawning", () => {
     // Note: Wrapper no longer queries the SDK for sessions.
-    // It just reads CODEHYDRA_OPENCODE_SESSION_ID from the environment.
+    // It just reads _CH_OPENCODE_SESSION_ID from the environment.
 
     it("spawns opencode attach with correct URL", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "14001",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
       );
@@ -268,8 +268,8 @@ describe("ch-opencode.cjs boundary tests", () => {
       // This test verifies the URL format uses 127.0.0.1
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "14001",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_DIR: opencodeDir,
         },
         tempDir.path
       );
@@ -284,8 +284,8 @@ describe("ch-opencode.cjs boundary tests", () => {
     it("propagates exit code from opencode binary", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "14001",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_DIR: opencodeDir,
           OPENCODE_EXIT_CODE: "42",
         },
         tempDir.path
@@ -296,15 +296,15 @@ describe("ch-opencode.cjs boundary tests", () => {
   });
 
   describe("session restoration", () => {
-    // Session restoration now uses CODEHYDRA_OPENCODE_SESSION_ID env var
+    // Session restoration now uses _CH_OPENCODE_SESSION_ID env var
     // The wrapper no longer queries the SDK for sessions
 
-    it("includes --session flag when CODEHYDRA_OPENCODE_SESSION_ID is set", async () => {
+    it("includes --session flag when _CH_OPENCODE_SESSION_ID is set", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "14001",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-          CODEHYDRA_OPENCODE_SESSION_ID: "ses-abc123",
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_SESSION_ID: "ses-abc123",
         },
         tempDir.path
       );
@@ -316,12 +316,12 @@ describe("ch-opencode.cjs boundary tests", () => {
       expect(output!.args).toContain("ses-abc123");
     });
 
-    it("does not include --session when CODEHYDRA_OPENCODE_SESSION_ID is not set", async () => {
+    it("does not include --session when _CH_OPENCODE_SESSION_ID is not set", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "14001",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-          // CODEHYDRA_OPENCODE_SESSION_ID not set
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_DIR: opencodeDir,
+          // _CH_OPENCODE_SESSION_ID not set
         },
         tempDir.path
       );
@@ -332,12 +332,12 @@ describe("ch-opencode.cjs boundary tests", () => {
       expect(output!.args).not.toContain("--session");
     });
 
-    it("does not include --session when CODEHYDRA_OPENCODE_SESSION_ID is empty", async () => {
+    it("does not include --session when _CH_OPENCODE_SESSION_ID is empty", async () => {
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "14001",
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-          CODEHYDRA_OPENCODE_SESSION_ID: "",
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_SESSION_ID: "",
         },
         tempDir.path
       );
@@ -357,9 +357,9 @@ describe("ch-opencode.cjs boundary tests", () => {
       // The session ID comes from the environment, not from querying the server
       const result = await executeScript(
         {
-          CODEHYDRA_OPENCODE_PORT: "59999", // Unlikely to be in use
-          CODEHYDRA_OPENCODE_DIR: opencodeDir,
-          CODEHYDRA_OPENCODE_SESSION_ID: "ses-123",
+          _CH_OPENCODE_PORT: "59999", // Unlikely to be in use
+          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_SESSION_ID: "ses-123",
         },
         tempDir.path
       );

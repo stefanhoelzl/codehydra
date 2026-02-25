@@ -35,16 +35,16 @@ describe("getInitialPromptConfig integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Clear the env var before each test
-    delete process.env.CODEHYDRA_INITIAL_PROMPT_FILE;
+    delete process.env._CH_INITIAL_PROMPT_FILE;
   });
 
   afterEach(() => {
-    delete process.env.CODEHYDRA_INITIAL_PROMPT_FILE;
+    delete process.env._CH_INITIAL_PROMPT_FILE;
   });
 
   it("reads file and returns parsed config", () => {
     // Set up env var
-    process.env.CODEHYDRA_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
 
     // Mock file content
     const fileContent = JSON.stringify({
@@ -88,7 +88,7 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("returns undefined silently when file does not exist (restart scenario)", () => {
-    process.env.CODEHYDRA_INITIAL_PROMPT_FILE = "/tmp/nonexistent/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/nonexistent/initial-prompt.json";
 
     // Mock file not found error (expected on restart - file consumed on first launch)
     mockReadFileSync.mockImplementation(() => {
@@ -109,7 +109,7 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("handles invalid JSON gracefully", () => {
-    process.env.CODEHYDRA_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
 
     // Mock invalid JSON content
     mockReadFileSync.mockReturnValue("not valid json {{{");
@@ -134,7 +134,7 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("returns config with prompt only when model and agent are not set", () => {
-    process.env.CODEHYDRA_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
 
     // Mock file content with only prompt
     const fileContent = JSON.stringify({ prompt: "Simple prompt" });
@@ -148,7 +148,7 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("continues cleanup even if unlink fails", () => {
-    process.env.CODEHYDRA_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
 
     const fileContent = JSON.stringify({ prompt: "Test" });
     mockReadFileSync.mockReturnValue(fileContent);
@@ -166,7 +166,7 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("continues even if rmdir fails", () => {
-    process.env.CODEHYDRA_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
 
     const fileContent = JSON.stringify({ prompt: "Test" });
     mockReadFileSync.mockReturnValue(fileContent);

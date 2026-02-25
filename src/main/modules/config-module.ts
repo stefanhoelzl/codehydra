@@ -232,23 +232,23 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
             // Use Record to build mutable partial — ConfigValues is readonly
             const envValues: Record<string, unknown> = {};
 
-            const parsedLevel = parseLogLevel(process.env.CODEHYDRA_LOGLEVEL);
+            const parsedLevel = parseLogLevel(process.env.CH_LOGLEVEL);
             if (parsedLevel !== undefined) {
               envValues["log.level"] = parsedLevel;
             } else if (deps.isDevelopment) {
               envValues["log.level"] = "debug";
             }
 
-            if (process.env.CODEHYDRA_PRINT_LOGS) {
+            if (process.env.CH_PRINT_LOGS) {
               envValues["log.console"] = true;
             }
 
-            const filterValue = process.env.CODEHYDRA_LOGGER;
+            const filterValue = process.env.CH_LOGGER;
             if (filterValue) {
               envValues["log.filter"] = filterValue;
             }
 
-            const flagsValue = process.env.CODEHYDRA_ELECTRON_FLAGS;
+            const flagsValue = process.env.CH_ELECTRON_FLAGS;
             if (flagsValue) {
               envValues["electron.flags"] = flagsValue;
             }

@@ -140,16 +140,16 @@ describe("ConfigModule Integration", () => {
 
   beforeEach(() => {
     savedEnv = {
-      CODEHYDRA_LOGLEVEL: process.env.CODEHYDRA_LOGLEVEL,
-      CODEHYDRA_PRINT_LOGS: process.env.CODEHYDRA_PRINT_LOGS,
-      CODEHYDRA_LOGGER: process.env.CODEHYDRA_LOGGER,
-      CODEHYDRA_ELECTRON_FLAGS: process.env.CODEHYDRA_ELECTRON_FLAGS,
+      CH_LOGLEVEL: process.env.CH_LOGLEVEL,
+      CH_PRINT_LOGS: process.env.CH_PRINT_LOGS,
+      CH_LOGGER: process.env.CH_LOGGER,
+      CH_ELECTRON_FLAGS: process.env.CH_ELECTRON_FLAGS,
     };
     // Clear all env vars to avoid pollution
-    delete process.env.CODEHYDRA_LOGLEVEL;
-    delete process.env.CODEHYDRA_PRINT_LOGS;
-    delete process.env.CODEHYDRA_LOGGER;
-    delete process.env.CODEHYDRA_ELECTRON_FLAGS;
+    delete process.env.CH_LOGLEVEL;
+    delete process.env.CH_PRINT_LOGS;
+    delete process.env.CH_LOGGER;
+    delete process.env.CH_ELECTRON_FLAGS;
   });
 
   afterEach(() => {
@@ -167,7 +167,7 @@ describe("ConfigModule Integration", () => {
   // app-start / "before-ready"
   // ---------------------------------------------------------------------------
   describe('app-start / "before-ready"', () => {
-    it("sets log.level to debug when isDevelopment is true and no CODEHYDRA_LOGLEVEL set", async () => {
+    it("sets log.level to debug when isDevelopment is true and no CH_LOGLEVEL set", async () => {
       const { dispatcher } = createTestSetup({ isDevelopment: true });
 
       const events: ConfigUpdatedEvent[] = [];
@@ -185,8 +185,8 @@ describe("ConfigModule Integration", () => {
       expect(events[0]!.payload.values["log.level"]).toBe("debug");
     });
 
-    it("parses CODEHYDRA_LOGLEVEL env var", async () => {
-      process.env.CODEHYDRA_LOGLEVEL = "silly";
+    it("parses CH_LOGLEVEL env var", async () => {
+      process.env.CH_LOGLEVEL = "silly";
 
       const { dispatcher } = createTestSetup({ isDevelopment: false });
 
@@ -204,8 +204,8 @@ describe("ConfigModule Integration", () => {
       expect(events[0]!.payload.values["log.level"]).toBe("silly");
     });
 
-    it("CODEHYDRA_LOGLEVEL overrides isDevelopment default", async () => {
-      process.env.CODEHYDRA_LOGLEVEL = "error";
+    it("CH_LOGLEVEL overrides isDevelopment default", async () => {
+      process.env.CH_LOGLEVEL = "error";
 
       const { dispatcher } = createTestSetup({ isDevelopment: true });
 
@@ -223,8 +223,8 @@ describe("ConfigModule Integration", () => {
       expect(events[0]!.payload.values["log.level"]).toBe("error");
     });
 
-    it("sets log.console when CODEHYDRA_PRINT_LOGS is set", async () => {
-      process.env.CODEHYDRA_PRINT_LOGS = "1";
+    it("sets log.console when CH_PRINT_LOGS is set", async () => {
+      process.env.CH_PRINT_LOGS = "1";
 
       const { dispatcher } = createTestSetup();
 
@@ -242,8 +242,8 @@ describe("ConfigModule Integration", () => {
       expect(events[0]!.payload.values["log.console"]).toBe(true);
     });
 
-    it("sets log.filter when CODEHYDRA_LOGGER is set", async () => {
-      process.env.CODEHYDRA_LOGGER = "git,process";
+    it("sets log.filter when CH_LOGGER is set", async () => {
+      process.env.CH_LOGGER = "git,process";
 
       const { dispatcher } = createTestSetup();
 
@@ -261,8 +261,8 @@ describe("ConfigModule Integration", () => {
       expect(events[0]!.payload.values["log.filter"]).toBe("git,process");
     });
 
-    it("sets electron.flags when CODEHYDRA_ELECTRON_FLAGS is set", async () => {
-      process.env.CODEHYDRA_ELECTRON_FLAGS = "--disable-gpu";
+    it("sets electron.flags when CH_ELECTRON_FLAGS is set", async () => {
+      process.env.CH_ELECTRON_FLAGS = "--disable-gpu";
 
       const { dispatcher } = createTestSetup();
 

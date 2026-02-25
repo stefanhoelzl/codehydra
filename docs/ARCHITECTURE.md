@@ -1019,11 +1019,11 @@ The logging system provides comprehensive logging across both main and renderer 
 
 ### Configuration
 
-| Variable               | Values                   | Description                                           |
-| ---------------------- | ------------------------ | ----------------------------------------------------- |
-| `CODEHYDRA_LOGLEVEL`   | debug\|info\|warn\|error | Override default log level                            |
-| `CODEHYDRA_PRINT_LOGS` | any non-empty value      | Print logs to stdout/stderr                           |
-| `CODEHYDRA_LOGGER`     | comma-separated names    | Only log from specified loggers (e.g., `git,process`) |
+| Variable        | Values                   | Description                                           |
+| --------------- | ------------------------ | ----------------------------------------------------- |
+| `CH_LOGLEVEL`   | debug\|info\|warn\|error | Override default log level                            |
+| `CH_PRINT_LOGS` | any non-empty value      | Print logs to stdout/stderr                           |
+| `CH_LOGGER`     | comma-separated names    | Only log from specified loggers (e.g., `git,process`) |
 
 **Default Levels**:
 
@@ -1273,7 +1273,7 @@ type PluginResult<T> = { success: true; data: T } | { success: false; error: str
 ### Connection Lifecycle
 
 1. **PluginServer starts** on dynamic port in main process
-2. **code-server spawns** with `CODEHYDRA_PLUGIN_PORT` env var
+2. **code-server spawns** with `_CH_PLUGIN_PORT` env var
 3. **Extension activates** and reads env var
 4. **Extension connects** with `auth: { workspacePath }` (normalized path)
 5. **Server validates** auth and stores connection by normalized path

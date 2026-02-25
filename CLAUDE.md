@@ -288,12 +288,12 @@ See docs/API.md for full Plugin API and MCP Server documentation.
 
 ### Environment Variables
 
-| Variable                   | Description                                |
-| -------------------------- | ------------------------------------------ |
-| `CODEHYDRA_ELECTRON_FLAGS` | Electron switches (e.g., `--disable-gpu`)  |
-| `CODEHYDRA_LOGLEVEL`       | Log level: silly\|debug\|info\|warn\|error |
-| `CODEHYDRA_PRINT_LOGS`     | Print logs to stdout/stderr                |
-| `CODEHYDRA_LOGGER`         | Filter logs by name (e.g., `git,process`)  |
+| Variable            | Description                                |
+| ------------------- | ------------------------------------------ |
+| `CH_ELECTRON_FLAGS` | Electron switches (e.g., `--disable-gpu`)  |
+| `CH_LOGLEVEL`       | Log level: silly\|debug\|info\|warn\|error |
+| `CH_PRINT_LOGS`     | Print logs to stdout/stderr                |
+| `CH_LOGGER`         | Filter logs by name (e.g., `git,process`)  |
 
 ### Log Files
 
@@ -304,5 +304,5 @@ See docs/API.md for full Plugin API and MCP Server documentation.
 
 ```bash
 # Debug mode
-CODEHYDRA_LOGLEVEL=debug CODEHYDRA_PRINT_LOGS=1 pnpm dev
+CH_LOGLEVEL=debug CH_PRINT_LOGS=1 pnpm dev
 ```

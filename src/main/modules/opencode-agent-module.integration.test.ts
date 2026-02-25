@@ -64,7 +64,7 @@ function createMockProvider() {
     fetchStatus: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue({ ok: true, value: { id: "sess-1" } }),
     sendPrompt: vi.fn().mockResolvedValue({ ok: true }),
-    getEnvironmentVariables: vi.fn().mockReturnValue({ CODEHYDRA_OPENCODE_PORT: "8080" }),
+    getEnvironmentVariables: vi.fn().mockReturnValue({ _CH_OPENCODE_PORT: "8080" }),
     setBridgePort: vi.fn(),
     onStatusChange: vi.fn().mockReturnValue(vi.fn()),
     getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "sess-1" }),
@@ -141,7 +141,7 @@ function createMockAgentStatusManager() {
     getStatus: vi.fn().mockReturnValue({ status: "idle", counts: { idle: 1, busy: 0 } }),
     getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "sess-1" }),
     getProvider: vi.fn().mockReturnValue({
-      getEnvironmentVariables: () => ({ CODEHYDRA_OPENCODE_PORT: "8080" }),
+      getEnvironmentVariables: () => ({ _CH_OPENCODE_PORT: "8080" }),
     }),
     hasProvider: vi.fn().mockReturnValue(false),
     markActive: vi.fn(),
@@ -762,7 +762,7 @@ describe("OpenCodeAgentModule Integration", () => {
 
       expect(setup.serverManager.startServer).toHaveBeenCalledWith(wsPath);
       expect(result).toBeDefined();
-      expect(result!.envVars).toEqual({ CODEHYDRA_OPENCODE_PORT: "8080" });
+      expect(result!.envVars).toEqual({ _CH_OPENCODE_PORT: "8080" });
       expect(result!.agentType).toBe("opencode");
     });
 

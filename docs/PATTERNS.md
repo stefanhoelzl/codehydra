@@ -838,7 +838,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  └───────────────────────────────────────────────────────────────┘  │
 │                              │                                       │
 │            CodeServerManager spawns with:                           │
-│            CODEHYDRA_PLUGIN_PORT=<port>                             │
+│            _CH_PLUGIN_PORT=<port>                             │
 └──────────────────────────────┼───────────────────────────────────────┘
                                │ localhost:port (WebSocket)
                                ▼
@@ -854,7 +854,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 ### Connection Lifecycle
 
 1. **PluginServer starts** on dynamic port in main process
-2. **code-server spawns** with `CODEHYDRA_PLUGIN_PORT` env var
+2. **code-server spawns** with `_CH_PLUGIN_PORT` env var
 3. **Extension activates** and reads env var
 4. **Extension connects** with `auth: { workspacePath }` (path.normalize'd)
 5. **Server validates** auth and stores connection by normalized path
@@ -876,9 +876,9 @@ Commands are sent sequentially after a brief delay (100ms) for UI stabilization.
 
 ### Environment Variable
 
-| Variable                | Purpose                                  |
-| ----------------------- | ---------------------------------------- |
-| `CODEHYDRA_PLUGIN_PORT` | Port for VS Code extension to connect to |
+| Variable          | Purpose                                  |
+| ----------------- | ---------------------------------------- |
+| `_CH_PLUGIN_PORT` | Port for VS Code extension to connect to |
 
 Set automatically by CodeServerManager when spawning code-server. If not set, extension skips connection (graceful degradation).
 

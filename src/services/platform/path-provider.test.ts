@@ -202,9 +202,9 @@ describe("createMockPathProvider", () => {
 });
 
 describe("DefaultPathProvider", () => {
-  // Clear CODEHYDRA_BUNDLE_DIR to ensure tests use expected paths
+  // Clear _CH_BUNDLE_DIR to ensure tests use expected paths
   beforeEach(() => {
-    vi.stubEnv("CODEHYDRA_BUNDLE_DIR", "");
+    vi.stubEnv("_CH_BUNDLE_DIR", "");
   });
 
   afterEach(() => {

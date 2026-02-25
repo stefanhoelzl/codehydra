@@ -17,7 +17,7 @@ runs:
         restore-keys: |
           ${{ runner.os }}-pnpm-store-
 
-    - run: echo "CODEHYDRA_BUNDLE_DIR=${{ runner.temp }}/codehydra-bundles" >> $GITHUB_ENV
+    - run: echo "_CH_BUNDLE_DIR=${{ runner.temp }}/codehydra-bundles" >> $GITHUB_ENV
       shell: bash
 
     - run: pnpm install --frozen-lockfile

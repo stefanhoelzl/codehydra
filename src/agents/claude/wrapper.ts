@@ -11,12 +11,12 @@
  * 4. Spawns claude with CodeHydra config flags injected
  *
  * Environment variables (set by sidekick extension):
- * - CODEHYDRA_CLAUDE_SETTINGS: Path to codehydra-hooks.json
- * - CODEHYDRA_CLAUDE_MCP_CONFIG: Path to codehydra-mcp.json
- * - CODEHYDRA_BRIDGE_PORT: Bridge server port (for hook notifications)
- * - CODEHYDRA_MCP_PORT: Main MCP server port
- * - CODEHYDRA_WORKSPACE_PATH: Workspace path for MCP header
- * - CODEHYDRA_INITIAL_PROMPT_FILE: Path to initial prompt JSON file (optional)
+ * - _CH_CLAUDE_SETTINGS: Path to codehydra-hooks.json
+ * - _CH_CLAUDE_MCP_CONFIG: Path to codehydra-mcp.json
+ * - _CH_BRIDGE_PORT: Bridge server port (for hook notifications)
+ * - _CH_MCP_PORT: Main MCP server port
+ * - _CH_WORKSPACE_PATH: Workspace path for MCP header
+ * - _CH_INITIAL_PROMPT_FILE: Path to initial prompt JSON file (optional)
  */
 
 import { spawnSync, execSync } from "node:child_process";
@@ -42,7 +42,7 @@ export interface InitialPromptConfig {
  * Deletes the file and temp directory before returning to ensure one-time use.
  */
 function getInitialPromptConfig(): InitialPromptConfig | undefined {
-  const filePath = process.env.CODEHYDRA_INITIAL_PROMPT_FILE;
+  const filePath = process.env._CH_INITIAL_PROMPT_FILE;
 
   // No initial prompt file configured
   if (!filePath) {
@@ -294,8 +294,8 @@ function findSystemClaude(): string | null {
  * @param hookName - Name of the hook (WrapperStart or WrapperEnd)
  */
 async function notifyHook(hookName: "WrapperStart" | "WrapperEnd"): Promise<void> {
-  const bridgePort = process.env.CODEHYDRA_BRIDGE_PORT;
-  const workspacePath = process.env.CODEHYDRA_WORKSPACE_PATH;
+  const bridgePort = process.env._CH_BRIDGE_PORT;
+  const workspacePath = process.env._CH_WORKSPACE_PATH;
 
   // Not in CodeHydra context
   if (!bridgePort || !workspacePath) {
@@ -341,8 +341,8 @@ async function notifyHook(hookName: "WrapperStart" | "WrapperEnd"): Promise<void
  */
 async function main(): Promise<never> {
   // 1. Validate required environment variables
-  const settingsPath = process.env.CODEHYDRA_CLAUDE_SETTINGS;
-  const mcpConfigPath = process.env.CODEHYDRA_CLAUDE_MCP_CONFIG;
+  const settingsPath = process.env._CH_CLAUDE_SETTINGS;
+  const mcpConfigPath = process.env._CH_CLAUDE_MCP_CONFIG;
 
   if (!settingsPath || !mcpConfigPath) {
     console.error("Error: CodeHydra Claude configuration not set.");

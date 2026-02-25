@@ -14,16 +14,16 @@
  * - Handles errors gracefully (don't crash Claude)
  *
  * Environment variables:
- * - CODEHYDRA_BRIDGE_PORT: Port of the bridge server
- * - CODEHYDRA_WORKSPACE_PATH: Workspace path to include in payload
+ * - _CH_BRIDGE_PORT: Port of the bridge server
+ * - _CH_WORKSPACE_PATH: Workspace path to include in payload
  *
  * Usage (by Claude Code hooks):
  *   node /path/to/hook-handler.js SessionStart < payload.json
  */
 
 const hookName = process.argv[2];
-const bridgePort = process.env.CODEHYDRA_BRIDGE_PORT;
-const workspacePath = process.env.CODEHYDRA_WORKSPACE_PATH;
+const bridgePort = process.env._CH_BRIDGE_PORT;
+const workspacePath = process.env._CH_WORKSPACE_PATH;
 
 // Validate required arguments and environment variables
 if (!hookName) {

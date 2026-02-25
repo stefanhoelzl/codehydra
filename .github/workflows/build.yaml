@@ -81,8 +81,8 @@ jobs:
 
       - name: Build
         env:
-          CODEHYDRA_VERSION: ${{ steps.version.outputs.version }}
-          CODEHYDRA_RELEASE: ${{ inputs.release }}
+          _CH_VERSION: ${{ steps.version.outputs.version }}
+          _CH_RELEASE: ${{ inputs.release }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
           POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: pnpm build
@@ -155,10 +155,10 @@ jobs:
 
       - name: Package
         env:
-          CODEHYDRA_VERSION: ${{ needs.prepare.outputs.version }}
+          _CH_VERSION: ${{ needs.prepare.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          pnpm pkg set "version=$CODEHYDRA_VERSION"
+          pnpm pkg set "version=$_CH_VERSION"
           pnpm dist:${{ matrix.target }} -- --publish=never
 
       - name: Rename artifact
