@@ -40,11 +40,11 @@ import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalConfigureOperation implements Operation<Intent, readonly ConfigureResult[]> {
+class MinimalBeforeReadyOperation implements Operation<Intent, readonly ConfigureResult[]> {
   readonly id = APP_START_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<readonly ConfigureResult[]> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -257,14 +257,14 @@ function createTestSetup(mockDeps?: CodeServerModuleDeps) {
 
 describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
-  // configure
+  // before-ready
   // ---------------------------------------------------------------------------
 
-  describe("configure", () => {
+  describe("before-ready", () => {
     it("declares code-server wrapper scripts", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalConfigureOperation());
+      dispatcher.registerOperation("app:start", new MinimalBeforeReadyOperation());
 
       const results = (await dispatcher.dispatch({
         type: "app:start",

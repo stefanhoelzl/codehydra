@@ -16,15 +16,15 @@
  * #9: check hooks -- setup needed (agent null)
  * #10: check hooks -- setup needed (binaries)
  * #11: check hooks -- setup needed (extensions)
- * #12: check-config error aborts
+ * #12: init error aborts startup (configuredAgent path)
  * #13: check-deps error aborts
- * #14: configuredAgent flows to check-deps
- * #15: configure hook collects scripts from multiple modules
- * #16: configure hook error aborts startup
+ * #14: configuredAgent flows from init results to check-deps
+ * #15: before-ready hook collects scripts from multiple modules
+ * #16: before-ready hook error aborts startup
  * #17: await-ready hook error aborts startup
- * #18: init hook receives requiredScripts from configure results
+ * #18: init hook receives requiredScripts from before-ready results
  * #19: init hook error aborts startup
- * #20: full sequence: configure -> await-ready -> init -> show-ui -> ...
+ * #20: full sequence: before-ready -> await-ready -> init -> show-ui -> ...
  */
 
 import { describe, it, expect } from "vitest";
@@ -42,11 +42,11 @@ import type {
   StartHookResult,
   ActivateHookContext,
   ActivateHookResult,
-  CheckConfigResult,
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
   InitHookContext,
+  InitResult,
 } from "./app-start";
 import { INTENT_SETUP } from "./setup";
 import type { SetupIntent } from "./setup";
@@ -254,14 +254,15 @@ function createProjectOpenStub(
 /**
  * Default check modules that make checks pass (agent configured, no missing deps).
  * Existing tests that don't care about check hooks get these by default.
+ * The config module's "init" handler returns configuredAgent via InitResult.
  */
 function defaultCheckModules(): IntentModule[] {
   return [
     {
       hooks: {
         [APP_START_OPERATION_ID]: {
-          "check-config": {
-            handler: async (): Promise<CheckConfigResult> => ({
+          init: {
+            handler: async (): Promise<InitResult> => ({
               configuredAgent: "claude",
             }),
           },
@@ -525,8 +526,8 @@ describe("AppStart Operation", () => {
       return {
         hooks: {
           [APP_START_OPERATION_ID]: {
-            "check-config": {
-              handler: async (): Promise<CheckConfigResult> => {
+            init: {
+              handler: async (): Promise<InitResult> => {
                 return { configuredAgent: agent };
               },
             },
@@ -686,13 +687,13 @@ describe("AppStart Operation", () => {
       expect(state.executionOrder).toContain("setup");
     });
 
-    it("check-config error aborts startup (#12)", async () => {
+    it("init error from config module aborts startup (#12)", async () => {
       const state = createTestState();
-      const failingConfigModule: IntentModule = {
+      const failingInitConfigModule: IntentModule = {
         hooks: {
           [APP_START_OPERATION_ID]: {
-            "check-config": {
-              handler: async (): Promise<CheckConfigResult> => {
+            init: {
+              handler: async (): Promise<InitResult> => {
                 throw new Error("Config load failed");
               },
             },
@@ -701,14 +702,12 @@ describe("AppStart Operation", () => {
       };
 
       const { dispatcher } = createCheckTestSetup([
-        failingConfigModule,
+        failingInitConfigModule,
         createBinaryCheckModule([]),
         createCodeServerModule(state),
       ]);
 
-      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
-        "check-config hooks failed"
-      );
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Config load failed");
       expect(state.codeServerStarted).toBe(false);
     });
 
@@ -738,7 +737,7 @@ describe("AppStart Operation", () => {
       expect(state.codeServerStarted).toBe(false);
     });
 
-    it("configuredAgent flows from check-config to check-deps context (#14)", async () => {
+    it("configuredAgent flows from init results to check-deps context (#14)", async () => {
       const state = createTestState();
       let receivedAgent: ConfigAgentType | null | undefined;
 
@@ -943,15 +942,15 @@ describe("AppStart Operation", () => {
   });
 
   // ===========================================================================
-  // Pre-ready Hooks: configure, await-ready, init
+  // Pre-ready Hooks: before-ready, await-ready, init
   // ===========================================================================
 
-  describe("pre-ready hooks (configure, await-ready, init)", () => {
+  describe("pre-ready hooks (before-ready, await-ready, init)", () => {
     function createConfigureModule(scripts: string[]): IntentModule {
       return {
         hooks: {
           [APP_START_OPERATION_ID]: {
-            configure: {
+            "before-ready": {
               handler: async (): Promise<ConfigureResult> => {
                 return { scripts };
               },
@@ -965,7 +964,7 @@ describe("AppStart Operation", () => {
       return {
         hooks: {
           [APP_START_OPERATION_ID]: {
-            configure: {
+            "before-ready": {
               handler: async (): Promise<ConfigureResult> => {
                 throw new Error(message);
               },
@@ -999,7 +998,7 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
-              handler: async (ctx: HookContext): Promise<void> => {
+              handler: async (ctx: HookContext): Promise<InitResult> => {
                 if (options?.fail) {
                   throw new Error("Init failed");
                 }
@@ -1007,6 +1006,7 @@ describe("AppStart Operation", () => {
                 if (options?.captureScripts) {
                   options.captureScripts((ctx as InitHookContext).requiredScripts);
                 }
+                return {};
               },
             },
           },
@@ -1014,7 +1014,7 @@ describe("AppStart Operation", () => {
       };
     }
 
-    it("configure hook collects scripts from multiple modules (#15)", async () => {
+    it("before-ready hook collects scripts from multiple modules (#15)", async () => {
       const state = createTestState();
       let capturedScripts: readonly string[] = [];
 
@@ -1037,7 +1037,7 @@ describe("AppStart Operation", () => {
       expect(capturedScripts).toEqual(["script-a", "script-b", "script-c"]);
     });
 
-    it("configure hook error aborts startup (#16)", async () => {
+    it("before-ready hook error aborts startup (#16)", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createFailingConfigureModule("Config failed"),
@@ -1068,7 +1068,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("init hook receives requiredScripts from configure results (#18)", async () => {
+    it("init hook receives requiredScripts from before-ready results (#18)", async () => {
       const state = createTestState();
       let capturedScripts: readonly string[] = [];
 
@@ -1105,15 +1105,15 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("full sequence: configure -> await-ready -> init -> show-ui -> start -> activate (#20)", async () => {
+    it("full sequence: before-ready -> await-ready -> init -> show-ui -> start -> activate (#20)", async () => {
       const state = createTestState();
 
       const configureTracker: IntentModule = {
         hooks: {
           [APP_START_OPERATION_ID]: {
-            configure: {
+            "before-ready": {
               handler: async (): Promise<ConfigureResult> => {
-                state.executionOrder.push("configure");
+                state.executionOrder.push("before-ready");
                 return { scripts: ["test-script"] };
               },
             },
@@ -1146,7 +1146,7 @@ describe("AppStart Operation", () => {
       await dispatcher.dispatch(appStartIntent());
 
       expect(state.executionOrder).toEqual([
-        "configure",
+        "before-ready",
         "await-ready",
         "init",
         "codeserver-start",
@@ -1156,7 +1156,7 @@ describe("AppStart Operation", () => {
       ]);
     });
 
-    it("empty configure results produce empty requiredScripts", async () => {
+    it("empty before-ready results produce empty requiredScripts", async () => {
       const state = createTestState();
       let capturedScripts: readonly string[] | undefined;
 

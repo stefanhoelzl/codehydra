@@ -7,7 +7,6 @@
 
 import type { BuildInfo } from "../platform/build-info";
 import type { PlatformInfo } from "../platform/platform-info";
-import type { ConfigService } from "../config/config-service";
 import type { Logger } from "../logging";
 
 /**
@@ -41,13 +40,21 @@ export type PostHogClientFactory = (
 ) => PostHogClient | Promise<PostHogClient>;
 
 /**
+ * Configuration passed to TelemetryService.configure().
+ */
+export interface TelemetryConfigureOptions {
+  readonly enabled: boolean;
+  readonly distinctId?: string | undefined;
+  readonly agent?: string | undefined;
+}
+
+/**
  * Dependencies for TelemetryService.
  * Follows the project's dependency injection pattern.
  */
 export interface TelemetryServiceDeps {
   readonly buildInfo: BuildInfo;
   readonly platformInfo: PlatformInfo;
-  readonly configService: ConfigService;
   readonly logger: Logger;
   /** PostHog API key. If undefined/empty, telemetry is disabled. */
   readonly apiKey?: string | undefined;
@@ -66,6 +73,18 @@ export interface TelemetryServiceDeps {
  * - Telemetry is disabled in config
  */
 export interface TelemetryService {
+  /**
+   * Configure telemetry with values from the config system.
+   * Must be called before capture() will send events.
+   */
+  configure(options: TelemetryConfigureOptions): void;
+
+  /**
+   * Generate a new distinct ID for anonymous tracking.
+   * Returns the generated ID, or undefined if telemetry is disabled.
+   */
+  generateDistinctId(): string | undefined;
+
   /**
    * Capture an analytics event.
    * Events are logged at INFO level.

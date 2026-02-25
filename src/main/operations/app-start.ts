@@ -2,15 +2,14 @@
  * AppStartOperation - Orchestrates application startup.
  *
  * Runs hook points in sequence:
- * 1. "configure" - Collect script declarations and Electron config (pre-ready)
+ * 1. "before-ready" - Collect script declarations, read env config (no I/O)
  * 2. "await-ready" - Wait for Electron ready event
- * 3. "init" - Post-ready initialization (logging, shell, scripts)
+ * 3. "init" - Post-ready initialization (config file, logging, shell, scripts)
  * 4. "show-ui" - Show starting screen
- * 5. "check-config" - Load configuration (collect, isolated contexts)
- * 6. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 7. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
+ * 5. "check-deps" - Check binaries and extensions (collect, isolated contexts)
+ * 6. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
  *              Telemetry, AutoUpdater, IpcBridge)
- * 8. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
+ * 7. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
  *
  * After "activate", dispatches project:open for each saved project path
  * (best-effort, skips invalid projects). The mount handler in activate
@@ -20,9 +19,12 @@
  * After all project:open dispatches complete, emits an `app:started` domain
  * event so subscribers (e.g., lifecycle.ready) know startup is done.
  *
- * The "check-config" and "check-deps" hook points use collect() for isolated
- * handler contexts. Each handler returns a typed result; the operation merges
- * results and derives boolean flags (needsSetup, needsBinaryDownload, etc.).
+ * The "check-deps" hook point uses collect() for isolated handler contexts.
+ * Each handler returns a typed result; the operation merges results and
+ * derives boolean flags (needsSetup, needsBinaryDownload, etc.).
+ *
+ * `configuredAgent` is obtained from config module's "init" result,
+ * eliminating the separate "check-config" hook point.
  *
  * If checks determine setup is needed, dispatches app:setup as a blocking
  * sub-operation. Setup manages its own UI (shows/hides setup screen).
@@ -76,12 +78,7 @@ export const EVENT_APP_STARTED = "app:started" as const;
 
 export const APP_START_OPERATION_ID = "app-start";
 
-/** Per-handler result for "check-config" hook point. Returns just configuredAgent. */
-export interface CheckConfigResult {
-  readonly configuredAgent: ConfigAgentType | null;
-}
-
-/** Input context for "check-deps" -- carries configuredAgent from check-config. */
+/** Input context for "check-deps". Agent modules use their own isActive flag. */
 export interface CheckDepsHookContext extends HookContext {
   readonly configuredAgent: ConfigAgentType | null;
 }
@@ -94,16 +91,24 @@ export interface CheckDepsResult {
 }
 
 /**
- * Per-handler result for "configure" hook point.
+ * Per-handler result for "before-ready" hook point.
  * Returns optional script declarations to be copied to bin directory.
  */
 export interface ConfigureResult {
   readonly scripts?: readonly string[];
 }
 
-/** Input context for "init" -- carries requiredScripts collected from configure results. */
+/** Input context for "init" -- carries requiredScripts collected from before-ready results. */
 export interface InitHookContext extends HookContext {
   readonly requiredScripts: readonly string[];
+}
+
+/**
+ * Per-handler result for "init" hook point.
+ * Config module returns configuredAgent; other init handlers return `{}`.
+ */
+export interface InitResult {
+  readonly configuredAgent?: ConfigAgentType | null;
 }
 
 /**
@@ -162,10 +167,10 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       intent: ctx.intent,
     };
 
-    // --- Hook 1: "configure" (pre-ready) ---
-    // Electron config + script declarations. All independent.
+    // --- Hook 1: "before-ready" (pre-ready, no I/O) ---
+    // Env config + script declarations. All independent.
     const { results: configResults, errors: configErrors } =
-      await ctx.hooks.collect<ConfigureResult>("configure", hookCtx);
+      await ctx.hooks.collect<ConfigureResult>("before-ready", hookCtx);
     if (configErrors.length > 0) throw configErrors[0]!;
     const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
 
@@ -175,10 +180,20 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     if (readyErrors.length > 0) throw readyErrors[0]!;
 
     // --- Hook 3: "init" (post-ready) ---
-    // All independent. Receives requiredScripts from configure results.
+    // All independent. Receives requiredScripts from before-ready results.
+    // Config module returns configuredAgent in its init result.
     const initCtx: InitHookContext = { ...hookCtx, requiredScripts };
-    const { errors: initErrors } = await ctx.hooks.collect<void>("init", initCtx);
+    const { results: initResults, errors: initErrors } = await ctx.hooks.collect<InitResult>(
+      "init",
+      initCtx
+    );
     if (initErrors.length > 0) throw initErrors[0]!;
+
+    // Extract configuredAgent from init results (config module provides it)
+    let configuredAgent: ConfigAgentType | null = null;
+    for (const result of initResults) {
+      if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
+    }
 
     // Hook 4: "show-ui" -- Show starting screen, capture waitForRetry
     const { results: showUiResults, errors: showUiErrors } =
@@ -191,8 +206,8 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       if (result.waitForRetry !== undefined) waitForRetry = result.waitForRetry;
     }
 
-    // Hooks 5-6: "check-config" + "check-deps" (collect, isolated contexts)
-    let checkResult = await this.runChecks(ctx);
+    // Hook 5: "check-deps" (collect, isolated contexts)
+    let checkResult = await this.runChecks(ctx, configuredAgent);
 
     // Dispatch app:setup if needed (blocking sub-operation)
     // Setup manages its own UI (shows/hides setup screen)
@@ -223,7 +238,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
           if (waitForRetry) {
             await waitForRetry();
             // Re-run check hooks to get fresh preflight state for retry
-            checkResult = await this.runChecks(ctx);
+            checkResult = await this.runChecks(ctx, configuredAgent);
             if (!checkResult.needsSetup) {
               setupComplete = true;
             }
@@ -236,7 +251,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 7: "start" -- Start servers and wire services
+    // Hook 6: "start" -- Start servers and wire services
     const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
       "start",
       hookCtx
@@ -250,7 +265,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     const codeServerPort =
       startResults.find((r) => r.codeServerPort !== undefined)?.codeServerPort ?? null;
 
-    // Hook 8: "activate" -- Wire callbacks, gather project paths, mount renderer
+    // Hook 7: "activate" -- Wire callbacks, gather project paths, mount renderer
     const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort, codeServerPort };
     const { results: activateResults, errors: activateErrors } =
       await ctx.hooks.collect<ActivateHookResult>("activate", activateCtx);
@@ -285,23 +300,15 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
   }
 
   /**
-   * Run check-config and check-deps hook points using collect() (isolated contexts).
+   * Run check-deps hook point using collect() (isolated contexts).
    * Merges results and derives boolean flags.
+   * configuredAgent is provided by the caller (from config module's init result).
    */
-  private async runChecks(ctx: OperationContext<AppStartIntent>): Promise<CheckResult> {
-    // 1. check-config: get agent configuration
-    const { results: configResults, errors: configErrors } =
-      await ctx.hooks.collect<CheckConfigResult>("check-config", { intent: ctx.intent });
-    if (configErrors.length > 0) {
-      throw new AggregateError(configErrors, "check-config hooks failed");
-    }
-
-    let configuredAgent: ConfigAgentType | null = null;
-    for (const result of configResults) {
-      if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
-    }
-
-    // 2. check-deps: binary + extension checks (collect, isolated contexts)
+  private async runChecks(
+    ctx: OperationContext<AppStartIntent>,
+    configuredAgent: ConfigAgentType | null
+  ): Promise<CheckResult> {
+    // check-deps: binary + extension checks (collect, isolated contexts)
     const depsCtx: CheckDepsHookContext = { intent: ctx.intent, configuredAgent };
     const { results: depsResults, errors: depsErrors } = await ctx.hooks.collect<CheckDepsResult>(
       "check-deps",

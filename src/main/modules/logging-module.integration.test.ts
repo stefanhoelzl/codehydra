@@ -40,6 +40,7 @@ describe("LoggingModule Integration", () => {
   it("initializes logging service and registers log handlers during init hook", async () => {
     const loggingService = {
       initialize: vi.fn(),
+      configure: vi.fn(),
     };
     const registerLogHandlers = vi.fn();
 

@@ -17,6 +17,8 @@ import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-star
 import type { AppStartIntent, ConfigureResult } from "../operations/app-start";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
+import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import {
   createElectronLifecycleModule,
   type ElectronLifecycleModuleDeps,
@@ -37,11 +39,11 @@ class MinimalAwaitReadyOperation implements Operation<Intent, void> {
   }
 }
 
-/** Runs "configure" hook point only. */
-class MinimalConfigureOperation implements Operation<Intent, ConfigureResult> {
+/** Runs "before-ready" hook point only. */
+class MinimalBeforeReadyOperation implements Operation<Intent, ConfigureResult> {
   readonly id = APP_START_OPERATION_ID;
   async execute(ctx: OperationContext<Intent>): Promise<ConfigureResult> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -135,15 +137,15 @@ describe("ElectronLifecycleModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // app-start/configure
+  // app-start/before-ready
   // ---------------------------------------------------------------------------
-  describe("app-start/configure", () => {
+  describe("app-start/before-ready", () => {
     it("sets process.noAsar when not packaged", async () => {
       const mockApp = createMockApp();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule({
         app: mockApp,
@@ -166,45 +168,12 @@ describe("ElectronLifecycleModule Integration", () => {
       }
     });
 
-    it("applies electron flags from environment", async () => {
-      const mockApp = createMockApp();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
-
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-      });
-
-      dispatcher.registerModule(module);
-
-      const originalFlags = process.env.CODEHYDRA_ELECTRON_FLAGS;
-      try {
-        process.env.CODEHYDRA_ELECTRON_FLAGS = "--disable-gpu --use-gl=swiftshader";
-        await dispatcher.dispatch({
-          type: INTENT_APP_START,
-          payload: {},
-        } as AppStartIntent);
-
-        expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
-        expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
-      } finally {
-        if (originalFlags === undefined) {
-          delete process.env.CODEHYDRA_ELECTRON_FLAGS;
-        } else {
-          process.env.CODEHYDRA_ELECTRON_FLAGS = originalFlags;
-        }
-      }
-    });
-
     it("redirects electron data paths when pathProvider is available", async () => {
       const mockApp = createMockApp();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule({
         app: mockApp,
@@ -243,7 +212,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule({
         app: mockApp,
@@ -272,7 +241,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalConfigureOperation());
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule({
         app: mockApp,
@@ -288,6 +257,66 @@ describe("ElectronLifecycleModule Integration", () => {
           payload: {},
         } as AppStartIntent)
       ).resolves.not.toThrow();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // config:updated event
+  // ---------------------------------------------------------------------------
+  describe("config:updated event", () => {
+    it("applies electron flags from config:updated event", () => {
+      const mockApp = createMockApp();
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+      });
+
+      const event: ConfigUpdatedEvent = {
+        type: EVENT_CONFIG_UPDATED,
+        payload: { values: { "electron.flags": "--disable-gpu --use-gl=swiftshader" } },
+      };
+
+      module.events![EVENT_CONFIG_UPDATED]!(event);
+
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
+    });
+
+    it("does not apply flags when electron.flags is not in payload", () => {
+      const mockApp = createMockApp();
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+      });
+
+      const event: ConfigUpdatedEvent = {
+        type: EVENT_CONFIG_UPDATED,
+        payload: { values: { "log.level": "debug" } },
+      };
+
+      module.events![EVENT_CONFIG_UPDATED]!(event);
+
+      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
+    });
+
+    it("handles empty electron.flags value", () => {
+      const mockApp = createMockApp();
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+      });
+
+      const event: ConfigUpdatedEvent = {
+        type: EVENT_CONFIG_UPDATED,
+        payload: { values: { "electron.flags": "" } },
+      };
+
+      module.events![EVENT_CONFIG_UPDATED]!(event);
+
+      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
     });
   });
 });

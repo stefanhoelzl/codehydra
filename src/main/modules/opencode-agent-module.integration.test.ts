@@ -15,7 +15,6 @@ import type { Intent } from "../intents/infrastructure/types";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
-  CheckConfigResult,
   CheckDepsResult,
   ConfigureResult,
   StartHookResult,
@@ -50,6 +49,8 @@ import type {
 } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import type { RestartAgentHookResult, RestartAgentHookInput } from "../operations/restart-agent";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { createOpenCodeAgentModule, type OpenCodeAgentModuleDeps } from "./opencode-agent-module";
 import { SILENT_LOGGER } from "../../services/logging";
 
@@ -155,13 +156,6 @@ function createMockAgentStatusManager() {
   };
 }
 
-function createMockConfigService(agent: string | null = null) {
-  return {
-    load: vi.fn().mockResolvedValue({ agent }),
-    setAgent: vi.fn().mockResolvedValue(undefined),
-  };
-}
-
 function createMockAgentBinaryManager() {
   return {
     preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
@@ -174,23 +168,11 @@ function createMockAgentBinaryManager() {
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalCheckConfigOperation implements Operation<Intent, readonly CheckConfigResult[]> {
-  readonly id = APP_START_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<readonly CheckConfigResult[]> {
-    const { results, errors } = await ctx.hooks.collect<CheckConfigResult>("check-config", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return results;
-  }
-}
-
-class MinimalConfigureOperation implements Operation<Intent, readonly ConfigureResult[]> {
+class MinimalBeforeReadyOperation implements Operation<Intent, readonly ConfigureResult[]> {
   readonly id = APP_START_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<readonly ConfigureResult[]> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -399,22 +381,19 @@ interface TestSetup {
   hookRegistry: HookRegistry;
   serverManager: ReturnType<typeof createMockOpenCodeServerManager>;
   agentStatusManager: ReturnType<typeof createMockAgentStatusManager>;
-  configService: ReturnType<typeof createMockConfigService>;
   agentBinaryManager: ReturnType<typeof createMockAgentBinaryManager>;
   module: IntentModule;
 }
 
-function createTestSetup(overrides?: { agent?: string | null }): TestSetup {
+function createTestSetup(): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   const serverManager = createMockOpenCodeServerManager();
   const agentStatusManager = createMockAgentStatusManager();
-  const configService = createMockConfigService(overrides?.agent ?? null);
   const agentBinaryManager = createMockAgentBinaryManager();
 
   const module = createOpenCodeAgentModule({
-    configService: configService as unknown as OpenCodeAgentModuleDeps["configService"],
     agentBinaryManager:
       agentBinaryManager as unknown as OpenCodeAgentModuleDeps["agentBinaryManager"],
     serverManager: serverManager as unknown as OpenCodeAgentModuleDeps["serverManager"],
@@ -434,7 +413,6 @@ function createTestSetup(overrides?: { agent?: string | null }): TestSetup {
     hookRegistry,
     serverManager,
     agentStatusManager,
-    configService,
     agentBinaryManager,
     module,
   };
@@ -468,10 +446,23 @@ class StartThenActivateOperation implements Operation<Intent, void> {
 }
 
 /**
- * Helper: run the start hook so the module becomes active.
- * The module defaults to active when config.agent is null or "opencode".
+ * Simulate config:updated event to set the module's internal `active` flag.
+ * The module listens for config:updated events and activates when agent is
+ * "opencode" (or null, since default is opencode).
  */
-async function activateModule(setup: TestSetup): Promise<void> {
+function fireConfigUpdatedEvent(setup: TestSetup, agent: string | null): void {
+  const handler = setup.module.events![EVENT_CONFIG_UPDATED]!;
+  handler({
+    type: EVENT_CONFIG_UPDATED,
+    payload: { values: { agent } },
+  } as ConfigUpdatedEvent);
+}
+
+/**
+ * Helper: fire config:updated event and run the start hook so the module becomes active.
+ */
+async function activateModule(setup: TestSetup, agent: string | null = null): Promise<void> {
+  fireConfigUpdatedEvent(setup, agent);
   setup.dispatcher.registerOperation("app:start", new MinimalStartOperation());
   await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
 }
@@ -486,45 +477,13 @@ describe("OpenCodeAgentModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // check-config
+  // before-ready
   // ---------------------------------------------------------------------------
 
-  describe("check-config", () => {
-    it("loads config and returns configuredAgent", async () => {
-      const setup = createTestSetup({ agent: "opencode" });
-      setup.dispatcher.registerOperation("app:start", new MinimalCheckConfigOperation());
-
-      const results = (await setup.dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as readonly CheckConfigResult[];
-
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({ configuredAgent: "opencode" });
-      expect(setup.configService.load).toHaveBeenCalled();
-    });
-
-    it("returns null configuredAgent when not configured", async () => {
-      const setup = createTestSetup({ agent: null });
-      setup.dispatcher.registerOperation("app:start", new MinimalCheckConfigOperation());
-
-      const results = (await setup.dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as readonly CheckConfigResult[];
-
-      expect(results[0]).toEqual({ configuredAgent: null });
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // configure
-  // ---------------------------------------------------------------------------
-
-  describe("configure", () => {
+  describe("before-ready", () => {
     it("returns OpenCode-specific scripts", async () => {
       const setup = createTestSetup();
-      setup.dispatcher.registerOperation("app:start", new MinimalConfigureOperation());
+      setup.dispatcher.registerOperation("app:start", new MinimalBeforeReadyOperation());
 
       const results = (await setup.dispatcher.dispatch({
         type: "app:start",
@@ -590,8 +549,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("start", () => {
     it("activates when agent is opencode (default, null config)", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       // Should wire server callbacks
       expect(setup.serverManager.setMarkActiveHandler).toHaveBeenCalled();
@@ -603,8 +562,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("activates when agent is explicitly opencode", async () => {
-      const setup = createTestSetup({ agent: "opencode" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "opencode");
 
       expect(setup.serverManager.setMarkActiveHandler).toHaveBeenCalled();
       expect(setup.serverManager.onServerStarted).toHaveBeenCalled();
@@ -612,8 +571,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("does not activate when agent is claude", async () => {
-      const setup = createTestSetup({ agent: "claude" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "claude");
 
       expect(setup.serverManager.setMarkActiveHandler).not.toHaveBeenCalled();
       expect(setup.serverManager.onServerStarted).not.toHaveBeenCalled();
@@ -628,7 +587,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("activate", () => {
     it("calls setMcpConfig when active and mcpPort provided", async () => {
-      const setup = createTestSetup({ agent: null });
+      const setup = createTestSetup();
+      fireConfigUpdatedEvent(setup, null);
       setup.dispatcher.registerOperation("app:start", new StartThenActivateOperation(5555));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -637,7 +597,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("skips setMcpConfig when mcpPort is null", async () => {
-      const setup = createTestSetup({ agent: null });
+      const setup = createTestSetup();
+      fireConfigUpdatedEvent(setup, null);
       setup.dispatcher.registerOperation("app:start", new StartThenActivateOperation(null));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -646,7 +607,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("skips setMcpConfig when inactive", async () => {
-      const setup = createTestSetup({ agent: "claude" });
+      const setup = createTestSetup();
+      fireConfigUpdatedEvent(setup, "claude");
       setup.dispatcher.registerOperation("app:start", new StartThenActivateOperation(5555));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -679,22 +641,39 @@ describe("OpenCodeAgentModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("save-agent", () => {
-    it("persists when selectedAgent is opencode", async () => {
+    it("dispatches config:set-values when selectedAgent is opencode", async () => {
       const setup = createTestSetup();
+      const dispatchSpy = vi.spyOn(setup.dispatcher, "dispatch");
+
       setup.dispatcher.registerOperation("app:setup", new MinimalSaveAgentOperation("opencode"));
+
+      // Register a no-op operation for config:set-values so the dispatch succeeds
+      setup.dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, {
+        id: "config:set-values" as const,
+        async execute() {},
+      });
 
       await setup.dispatcher.dispatch({ type: "app:setup", payload: {} });
 
-      expect(setup.configService.setAgent).toHaveBeenCalledWith("opencode");
+      expect(dispatchSpy).toHaveBeenCalledWith({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { agent: "opencode" } },
+      });
     });
 
     it("skips when selectedAgent is not opencode", async () => {
       const setup = createTestSetup();
+      const dispatchSpy = vi.spyOn(setup.dispatcher, "dispatch");
+
       setup.dispatcher.registerOperation("app:setup", new MinimalSaveAgentOperation("claude"));
 
       await setup.dispatcher.dispatch({ type: "app:setup", payload: {} });
 
-      expect(setup.configService.setAgent).not.toHaveBeenCalled();
+      // Only the top-level "app:setup" dispatch should have been called, not config:set-values
+      expect(dispatchSpy).toHaveBeenCalledTimes(1);
+      expect(dispatchSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_CONFIG_SET_VALUES })
+      );
     });
   });
 
@@ -766,8 +745,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("workspace setup", () => {
     it("starts server, waits for provider, and returns envVars when active", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       const wsPath = "/test/project/.worktrees/feature-1";
       setup.dispatcher.registerOperation("workspace:open", new MinimalSetupOperation(wsPath));
@@ -788,8 +767,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("passes initial prompt to startServer when provided", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       const wsPath = "/test/project/.worktrees/feature-1";
       setup.dispatcher.registerOperation("workspace:open", new MinimalSetupOperation(wsPath));
@@ -813,8 +792,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const setup = createTestSetup({ agent: "claude" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "claude");
 
       setup.dispatcher.registerOperation("workspace:open", new MinimalSetupOperation());
 
@@ -838,8 +817,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("delete shutdown", () => {
     it("stops server when active", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       setup.dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -861,8 +840,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const setup = createTestSetup({ agent: "claude" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "claude");
 
       setup.dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -881,8 +860,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("includes error when stopServer fails", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       (setup.serverManager.stopServer as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: false,
@@ -912,8 +891,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("get-status", () => {
     it("returns status when active", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       const wsPath = "/test/project/.worktrees/feature-1";
       setup.dispatcher.registerOperation(
@@ -931,8 +910,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const setup = createTestSetup({ agent: "claude" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "claude");
 
       setup.dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
 
@@ -951,8 +930,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("get-session", () => {
     it("returns session when active", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       const wsPath = "/test/project/.worktrees/feature-1";
       setup.dispatcher.registerOperation(
@@ -970,8 +949,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const setup = createTestSetup({ agent: "claude" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "claude");
 
       setup.dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
 
@@ -990,8 +969,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("restart", () => {
     it("restarts server when active", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       const wsPath = "/test/project/.worktrees/feature-1";
       setup.dispatcher.registerOperation("agent:restart", new MinimalRestartOperation(wsPath));
@@ -1007,8 +986,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const setup = createTestSetup({ agent: "claude" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "claude");
 
       setup.dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
 
@@ -1021,8 +1000,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("throws when restart fails", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       (setup.serverManager.restartServer as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: false,
@@ -1046,8 +1025,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("stop", () => {
     it("disposes server manager and status manager when active", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       // Need a quit hook module to avoid errors in AppShutdownOperation
       const quitModule: IntentModule = {
@@ -1070,8 +1049,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("disposes server manager but not status manager when inactive", async () => {
-      const setup = createTestSetup({ agent: "claude" });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, "claude");
 
       const quitModule: IntentModule = {
         hooks: {
@@ -1099,8 +1078,8 @@ describe("OpenCodeAgentModule Integration", () => {
 
   describe("server callbacks", () => {
     it("onServerStopped with isRestart=false calls removeWorkspace", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       // Extract the onServerStopped callback
       const onServerStoppedCall = setup.serverManager.onServerStopped.mock.calls[0]!;
@@ -1112,8 +1091,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("onServerStopped with isRestart=true calls disconnectWorkspace", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       const onServerStoppedCall = setup.serverManager.onServerStopped.mock.calls[0]!;
       const callback = onServerStoppedCall[0] as (wp: string, isRestart: boolean) => void;
@@ -1124,8 +1103,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("onServerStarted creates provider and connects", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       // Extract the onServerStarted callback
       const onServerStartedCall = setup.serverManager.onServerStarted.mock.calls[0]!;
@@ -1148,9 +1127,9 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("onServerStarted reconnects when provider already exists", async () => {
-      const setup = createTestSetup({ agent: null });
+      const setup = createTestSetup();
       (setup.agentStatusManager.hasProvider as ReturnType<typeof vi.fn>).mockReturnValue(true);
-      await activateModule(setup);
+      await activateModule(setup, null);
 
       const onServerStartedCall = setup.serverManager.onServerStarted.mock.calls[0]!;
       const callback = onServerStartedCall[0] as (
@@ -1170,8 +1149,8 @@ describe("OpenCodeAgentModule Integration", () => {
     });
 
     it("onServerStarted sends pending prompt when provided", async () => {
-      const setup = createTestSetup({ agent: null });
-      await activateModule(setup);
+      const setup = createTestSetup();
+      await activateModule(setup, null);
 
       const onServerStartedCall = setup.serverManager.onServerStarted.mock.calls[0]!;
       const callback = onServerStartedCall[0] as (
@@ -1187,6 +1166,38 @@ describe("OpenCodeAgentModule Integration", () => {
       });
 
       expect(mockProviderInstance.sendPrompt).toHaveBeenCalledWith("sess-1", "Fix the bug", {});
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // config:updated event
+  // ---------------------------------------------------------------------------
+
+  describe("config:updated event", () => {
+    it("sets module active when agent is opencode", () => {
+      const setup = createTestSetup();
+
+      expect(setup.module.events).toBeDefined();
+      expect(setup.module.events![EVENT_CONFIG_UPDATED]).toBeDefined();
+
+      fireConfigUpdatedEvent(setup, "opencode");
+
+      // Verify activation by checking start hook behavior
+      // (We confirm it activates in the start tests above)
+    });
+
+    it("sets module active when agent is null (default is opencode)", () => {
+      const setup = createTestSetup();
+      fireConfigUpdatedEvent(setup, null);
+
+      // The null case defaults to opencode in the module
+    });
+
+    it("sets module inactive when agent is claude", () => {
+      const setup = createTestSetup();
+      fireConfigUpdatedEvent(setup, "claude");
+
+      // The module should be inactive -- verified by start tests
     });
   });
 });

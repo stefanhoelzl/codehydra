@@ -11,18 +11,17 @@
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
+import type { DomainEvent } from "../intents/infrastructure/types";
 import type { Logger } from "../../services/logging/types";
-import type { ConfigService } from "../../services/config/config-service";
 import type { AgentBinaryManager } from "../../services/binary-download";
 import type { AgentBinaryType } from "../../services/binary-download";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
-import type { AgentType } from "../../agents/types";
+
 import type { LoggingService } from "../../services/logging";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { AgentStatusManager } from "../../agents";
 import type {
-  CheckConfigResult,
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
@@ -58,6 +57,9 @@ import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-s
 import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import { INTENT_UPDATE_AGENT_STATUS } from "../operations/update-agent-status";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import type { ConfigSetValuesIntent } from "../operations/config-set-values";
+import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { SetupError, getErrorMessage } from "../../services/errors";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import { OpenCodeProvider } from "../../agents/opencode/provider";
@@ -70,7 +72,6 @@ import { OpenCodeProvider } from "../../agents/opencode/provider";
  * Dependencies for OpenCodeAgentModule.
  */
 export interface OpenCodeAgentModuleDeps {
-  readonly configService: Pick<ConfigService, "load" | "setAgent">;
   readonly agentBinaryManager: AgentBinaryManager;
   readonly serverManager: OpenCodeServerManager;
   readonly agentStatusManager: AgentStatusManager;
@@ -87,13 +88,13 @@ export interface OpenCodeAgentModuleDeps {
  * Create an OpenCodeAgentModule that manages the OpenCode agent lifecycle.
  */
 export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): IntentModule {
-  const { configService, agentBinaryManager, serverManager, logger } = deps;
+  const { agentBinaryManager, serverManager, logger } = deps;
 
   // =========================================================================
   // Internal closure state
   // =========================================================================
 
-  /** Whether this module is the active agent (set during start hook). */
+  /** Whether this module is the active agent (set by config:updated event). */
   let active = false;
 
   /** Tracks pending handleServerStarted() promises for waitForProvider(). */
@@ -226,14 +227,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
   return {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "check-config": {
-          handler: async (): Promise<CheckConfigResult> => {
-            const config = await configService.load();
-            return { configuredAgent: config.agent };
-          },
-        },
-
-        configure: {
+        "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
             return {
               scripts: ["ch-opencode", "ch-opencode.cjs", "ch-opencode.cmd"],
@@ -258,22 +252,18 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
 
         start: {
           handler: async (): Promise<StartHookResult> => {
-            const config = await configService.load();
-            const agentType: AgentType = config.agent ?? "opencode";
+            if (!active) return {};
 
-            if (agentType === "opencode") {
-              active = true;
-              wireServerCallbacks();
+            wireServerCallbacks();
 
-              statusUnsubscribeFn = deps.agentStatusManager.onStatusChanged(
-                (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => {
-                  void deps.dispatcher.dispatch({
-                    type: INTENT_UPDATE_AGENT_STATUS,
-                    payload: { workspacePath, status },
-                  } as UpdateAgentStatusIntent);
-                }
-              );
-            }
+            statusUnsubscribeFn = deps.agentStatusManager.onStatusChanged(
+              (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => {
+                void deps.dispatcher.dispatch({
+                  type: INTENT_UPDATE_AGENT_STATUS,
+                  payload: { workspacePath, status },
+                } as UpdateAgentStatusIntent);
+              }
+            );
             return {};
           },
         },
@@ -337,7 +327,10 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
             if (selectedAgent !== "opencode") return;
 
             try {
-              await configService.setAgent(selectedAgent);
+              await deps.dispatcher.dispatch({
+                type: INTENT_CONFIG_SET_VALUES,
+                payload: { values: { agent: selectedAgent } },
+              } as ConfigSetValuesIntent);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               throw new SetupError(
@@ -490,6 +483,16 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
             }
           },
         },
+      },
+    },
+    events: {
+      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
+        const { values } = (event as ConfigUpdatedEvent).payload;
+        if (values.agent !== undefined) {
+          // Agent value received — check if this module should be active
+          const agentType = values.agent ?? "opencode";
+          active = agentType === "opencode";
+        }
       },
     },
   };
