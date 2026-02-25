@@ -45,6 +45,8 @@ export interface WorkspaceState {
   statusCallbacks: Set<(status: AgentStatus) => void>;
   /** Flag set after PermissionRequest, cleared on PreToolUse */
   awaitingPermissionResolution?: boolean;
+  /** Flag set when PreCompact arrives while busy, cleared on SessionStart */
+  ignoreNextSessionStart?: boolean;
   /** Path to the initial prompt file (for getInitialPromptPath) */
   initialPromptPath?: Path;
 }
@@ -631,6 +633,23 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     } else if (hookName === "PreToolUse" && state.awaitingPermissionResolution) {
       state.awaitingPermissionResolution = false;
       newStatus = "busy";
+    }
+
+    // Special handling for compaction flow:
+    // PreCompact while busy sets flag (automatic compaction mid-turn).
+    // SessionStart during compaction stays busy instead of going idle.
+    // Manual /compact starts from idle, so flag is NOT set and SessionStart goes idle normally.
+    // Terminal hooks (WrapperEnd, SessionEnd) clear the flag as defensive cleanup.
+    if (hookName === "PreCompact" && state.status === "busy") {
+      state.ignoreNextSessionStart = true;
+    } else if (hookName === "SessionStart" && state.ignoreNextSessionStart) {
+      state.ignoreNextSessionStart = false;
+      newStatus = "busy";
+    } else if (
+      (hookName === "WrapperEnd" || hookName === "SessionEnd") &&
+      state.ignoreNextSessionStart
+    ) {
+      state.ignoreNextSessionStart = false;
     }
 
     this.logger.debug("Hook received", {

@@ -332,6 +332,90 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
+    it("SessionStart during automatic compaction stays busy", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Agent is working (busy)
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      // Automatic compaction mid-turn: PreCompact while busy sets flag
+      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
+      // SessionStart after compaction should stay busy (flag consumed)
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+
+      // No false idle transition — status stays busy throughout
+      expect(statusChanges).toEqual(["idle", "busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("manual compact: SessionStart goes idle normally", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Agent is idle (waiting for user), user runs /compact
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      // PreCompact while idle does NOT set flag
+      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
+      // SessionStart after compaction should go idle normally
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("compacting flag cleared after use", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Automatic compaction mid-turn
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+
+      // Agent finishes, stops
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // Next SessionStart should go idle normally (flag was consumed)
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("WrapperEnd clears ignoreNextSessionStart flag", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Automatic compaction sets flag
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
+
+      // Claude exits before SessionStart (abnormal exit clears flag)
+      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
+
+      // New session should go idle (flag was defensively cleared)
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "none", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
     it("Stop -> idle", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
