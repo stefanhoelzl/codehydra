@@ -36,8 +36,6 @@ import {
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
   ElectronLogService,
-  parseLogLevel,
-  parseLoggerFilter,
   createWorkspaceLockHandler,
   WorkspaceFileService,
   createWorkspaceFileConfig,
@@ -50,7 +48,6 @@ import {
   type BuildInfo,
   type LoggingService,
 } from "../services";
-import { ConfigService } from "../services/config/config-service";
 import { PostHogTelemetryService } from "../services/telemetry";
 import { AutoUpdater } from "../services/auto-updater";
 import { ExecaProcessRunner } from "../services/platform/process";
@@ -100,6 +97,7 @@ import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createBadgeModule } from "./modules/badge-module";
 import { createMcpModule } from "./modules/mcp-module";
+import { createConfigModule } from "./modules/config-module";
 import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
@@ -108,6 +106,7 @@ import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
+import { ConfigSetValuesOperation, INTENT_CONFIG_SET_VALUES } from "./operations/config-set-values";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
@@ -162,12 +161,8 @@ const buildInfo: BuildInfo = new ElectronBuildInfo();
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 const loggingService: LoggingService = new ElectronLogService(pathProvider);
-loggingService.configure({
-  logLevel:
-    parseLogLevel(process.env.CODEHYDRA_LOGLEVEL) ?? (buildInfo.isDevelopment ? "debug" : "warn"),
-  enableConsole: !!process.env.CODEHYDRA_PRINT_LOGS,
-  allowedLoggers: parseLoggerFilter(process.env.CODEHYDRA_LOGGER),
-});
+// Logging is configured via config module's before-ready hook (env vars)
+// and config:updated events. No direct env var parsing here.
 const appLogger = loggingService.createLogger("app");
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));
@@ -189,16 +184,9 @@ const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
 
 // 5. Service construction
 
-const configService = new ConfigService({
-  fileSystem: fileSystemLayer,
-  pathProvider,
-  logger: loggingService.createLogger("config"),
-});
-
 const telemetryService = new PostHogTelemetryService({
   buildInfo,
   platformInfo,
-  configService,
   logger: loggingService.createLogger("telemetry"),
   apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
   host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
@@ -422,7 +410,6 @@ const codeServerModule = createCodeServerModule({
 });
 
 const claudeAgentModule = createClaudeAgentModule({
-  configService,
   agentBinaryManager: claudeBinaryManager,
   serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
   agentStatusManager,
@@ -432,7 +419,6 @@ const claudeAgentModule = createClaudeAgentModule({
 });
 
 const opencodeAgentModule = createOpenCodeAgentModule({
-  configService,
   agentBinaryManager: opencodeBinaryManager,
   serverManager: agentServerManagers.opencode as OpenCodeServerManager,
   agentStatusManager,
@@ -460,7 +446,7 @@ const telemetryLifecycleModule = createTelemetryModule({
   telemetryService,
   platformInfo,
   buildInfo,
-  configService,
+  dispatcher,
   logger: lifecycleLogger,
 });
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
@@ -498,6 +484,14 @@ const mcpModule = createMcpModule({
 
 // 8. New modules
 
+const configModule = createConfigModule({
+  fileSystem: fileSystemLayer,
+  configPath: pathProvider.configPath,
+  dispatcher,
+  logger: loggingService.createLogger("config"),
+  isDevelopment: buildInfo.isDevelopment,
+});
+
 const electronLifecycleModule = createElectronLifecycleModule({
   app,
   buildInfo,
@@ -534,6 +528,7 @@ const registry = new ApiRegistry({
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new ConfigSetValuesOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
@@ -577,6 +572,7 @@ const ipcEventBridge = createIpcEventBridge({
 // 10. Register all modules + get API interface
 
 dispatcher.registerModule(idempotencyModule);
+dispatcher.registerModule(configModule);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(codeServerModule);
 dispatcher.registerModule(claudeAgentModule);

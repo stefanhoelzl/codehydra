@@ -1,25 +1,16 @@
 /**
  * Integration tests for PostHogTelemetryService.
  *
- * Tests use behavioral mocks for PostHogClient and real ConfigService
- * with FileSystemLayer mock.
+ * Tests use behavioral mocks for PostHogClient. The service no longer
+ * depends on ConfigService -- configuration is driven externally via
+ * the configure() method.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { PostHogTelemetryService } from "./posthog-telemetry-service";
-import { ConfigService } from "../config/config-service";
 import type { TelemetryServiceDeps } from "./types";
-import type { AppConfig } from "../config/types";
-import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createMockBuildInfo } from "../platform/build-info.test-utils";
 import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
-import {
-  createFileSystemMock,
-  file,
-  directory,
-  type MockFileSystemLayer,
-} from "../platform/filesystem.state-mock";
 import { createBehavioralLogger, type BehavioralLogger } from "../logging/logging.test-utils";
-import type { PathProvider } from "../platform/path-provider";
 import type { BuildInfo } from "../platform/build-info";
 import type { PlatformInfo } from "../platform/platform-info";
 import {
@@ -28,35 +19,16 @@ import {
 } from "./posthog-client.state-mock";
 
 describe("PostHogTelemetryService", () => {
-  let fileSystem: MockFileSystemLayer;
-  let pathProvider: PathProvider;
   let buildInfo: BuildInfo;
   let platformInfo: PlatformInfo;
-  let configService: ConfigService;
   let logger: BehavioralLogger;
 
   // Mock PostHog client factory
   let postHogFactory: ReturnType<typeof createMockPostHogClientFactory>;
 
   beforeEach(() => {
-    // Reset mocks
-    pathProvider = createMockPathProvider();
     buildInfo = createMockBuildInfo({ version: "1.0.0", isDevelopment: false });
     platformInfo = createMockPlatformInfo();
-
-    // Create filesystem with parent directory for config file
-    fileSystem = createFileSystemMock({
-      entries: {
-        [pathProvider.dataRootDir.toString()]: directory(),
-      },
-    });
-
-    // Create real ConfigService with mock filesystem
-    configService = new ConfigService({
-      fileSystem,
-      pathProvider,
-      logger: createBehavioralLogger(),
-    });
 
     // Create behavioral logger for telemetry service
     logger = createBehavioralLogger();
@@ -69,7 +41,6 @@ describe("PostHogTelemetryService", () => {
     return {
       buildInfo,
       platformInfo,
-      configService,
       logger,
       apiKey: "test-api-key",
       host: "https://test.posthog.com",
@@ -87,8 +58,9 @@ describe("PostHogTelemetryService", () => {
   }
 
   describe("capture", () => {
-    it("captures app_launched when enabled", async () => {
+    it("captures app_launched when enabled", () => {
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: "test-id" });
 
       service.capture("app_launched", {
         platform: "linux",
@@ -96,66 +68,67 @@ describe("PostHogTelemetryService", () => {
         isDevelopment: false,
       });
 
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
       const mock = getMock();
       expect(mock).toHaveCaptured("app_launched");
       expect(mock).toHaveCaptured("app_launched", { platform: "linux" });
       expect(mock).toHaveCaptured("app_launched", { version: "1.0.0" });
     });
 
-    it("no-op when telemetry disabled in config", async () => {
-      // Pre-create config with telemetry disabled
-      const config: AppConfig = {
-        agent: null,
-        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
-        telemetry: { enabled: false },
-      };
-      fileSystem.$.setEntry(pathProvider.configPath.toString(), file(JSON.stringify(config)));
-
+    it("no-op when telemetry disabled via configure", () => {
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: false });
 
       service.capture("app_launched", { platform: "linux" });
-
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // No mock created because telemetry is disabled
       expect(postHogFactory.getMock()).toBeNull();
     });
 
-    it("no-op when API key is missing", async () => {
+    it("no-op when API key is missing", () => {
       const service = new PostHogTelemetryService(createDeps({ apiKey: undefined }));
+      service.configure({ enabled: true, distinctId: "test-id" });
 
       service.capture("app_launched", { platform: "linux" });
-
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // No mock created because no API key
       expect(postHogFactory.getMock()).toBeNull();
     });
 
-    it("no-op when API key is empty string", async () => {
+    it("no-op when API key is empty string", () => {
       const service = new PostHogTelemetryService(createDeps({ apiKey: "" }));
+      service.configure({ enabled: true, distinctId: "test-id" });
 
       service.capture("app_launched", { platform: "linux" });
-
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // No mock created because API key is empty
       expect(postHogFactory.getMock()).toBeNull();
     });
 
-    it("logs events at INFO level", async () => {
+    it("no-op when configure has not been called", () => {
       const service = new PostHogTelemetryService(createDeps());
 
       service.capture("app_launched", { platform: "linux" });
 
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // No mock created because configure() was never called
+      expect(postHogFactory.getMock()).toBeNull();
+    });
+
+    it("no-op when distinctId is not set", () => {
+      const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true });
+
+      service.capture("app_launched", { platform: "linux" });
+
+      // Client created (enabled with API key) but no event captured (no distinctId)
+      const mock = getMock();
+      expect(mock.$.capturedEvents).toHaveLength(0);
+    });
+
+    it("logs events at INFO level", () => {
+      const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: "test-id" });
+
+      service.capture("app_launched", { platform: "linux" });
 
       const infoMessages = logger.getMessagesByLevel("info");
       expect(infoMessages.length).toBeGreaterThan(0);
@@ -165,24 +138,23 @@ describe("PostHogTelemetryService", () => {
   });
 
   describe("captureError", () => {
-    it("captures error events", async () => {
+    it("captures error events", () => {
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: "test-id" });
 
       const error = new Error("Test error message");
       service.captureError(error);
-
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       const mock = getMock();
       expect(mock).toHaveCapturedError();
       expect(mock).toHaveCaptured("error", { message: "Test error message" });
     });
 
-    it("sanitizes user paths from error stacks", async () => {
+    it("sanitizes user paths from error stacks", () => {
       // Use platform-specific home directory
       const homeDir = platformInfo.homeDir;
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: "test-id" });
 
       // Create error with home directory in stack
       const error = new Error("Test error");
@@ -192,9 +164,6 @@ describe("PostHogTelemetryService", () => {
     at ${homeDir}/.config/myapp/plugin.js:5:10`;
 
       service.captureError(error);
-
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       const mock = getMock();
       const errorEvent = mock.$.capturedEvents.find((e) => e.event === "error");
@@ -209,10 +178,9 @@ describe("PostHogTelemetryService", () => {
   describe("shutdown", () => {
     it("flushes pending events on shutdown", async () => {
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: "test-id" });
 
-      // Trigger initialization by capturing an event
       service.capture("app_launched", {});
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       await service.shutdown();
 
@@ -221,71 +189,77 @@ describe("PostHogTelemetryService", () => {
     });
   });
 
-  describe("distinctId persistence", () => {
-    it("uses persisted distinctId across restarts", async () => {
+  describe("distinctId", () => {
+    it("uses provided distinctId from configure()", () => {
       const testDistinctId = "test-uuid-12345";
-
-      // Pre-create config with existing distinctId
-      const config: AppConfig = {
-        agent: null,
-        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
-        telemetry: { enabled: true, distinctId: testDistinctId },
-      };
-      fileSystem.$.setEntry(pathProvider.configPath.toString(), file(JSON.stringify(config)));
-
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: testDistinctId });
 
       service.capture("app_launched", {});
-
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
 
       const mock = getMock();
       const event = mock.$.capturedEvents[0];
       expect(event?.distinctId).toBe(testDistinctId);
     });
 
-    it("generates and persists new distinctId if missing", async () => {
-      // Start with default config (no distinctId)
+    it("generateDistinctId returns a UUID when enabled", () => {
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true });
 
+      const id = service.generateDistinctId();
+
+      expect(id).toBeDefined();
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
+
+    it("generateDistinctId sets the distinctId for subsequent captures", () => {
+      const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true });
+
+      const id = service.generateDistinctId();
       service.capture("app_launched", {});
 
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      const mock = getMock();
+      const event = mock.$.capturedEvents[0];
+      expect(event?.distinctId).toBe(id);
+    });
 
-      // Check that distinctId was generated and persisted
-      const configContent = fileSystem.$.entries.get(pathProvider.configPath.toString());
-      expect(configContent?.type).toBe("file");
-      if (configContent?.type === "file") {
-        const savedConfig = JSON.parse(configContent.content as string) as AppConfig;
-        expect(savedConfig.telemetry?.distinctId).toBeDefined();
-        expect(savedConfig.telemetry?.distinctId).toMatch(
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-        );
-      }
+    it("generateDistinctId returns undefined when disabled", () => {
+      const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: false });
+
+      const id = service.generateDistinctId();
+
+      expect(id).toBeUndefined();
     });
   });
 
-  describe("backwards compatibility", () => {
-    it("enables telemetry by default when telemetry config is missing", async () => {
-      // Pre-create config without telemetry field (old config format)
-      const config = {
-        agent: null,
-        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
-      };
-      fileSystem.$.setEntry(pathProvider.configPath.toString(), file(JSON.stringify(config)));
-
+  describe("configure", () => {
+    it("enables telemetry when called with enabled: true and distinctId", () => {
       const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: "test-id" });
 
       service.capture("app_launched", {});
 
-      // Wait for async initialization
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Should have captured the event (telemetry enabled by default)
       const mock = getMock();
       expect(mock).toHaveCaptured("app_launched");
+    });
+
+    it("can be reconfigured to disable telemetry", () => {
+      const service = new PostHogTelemetryService(createDeps());
+      service.configure({ enabled: true, distinctId: "test-id" });
+
+      // First capture should work
+      service.capture("app_launched", {});
+      const mock = getMock();
+      expect(mock.$.capturedEvents).toHaveLength(1);
+
+      // Disable telemetry
+      service.configure({ enabled: false });
+
+      // Second capture should be a no-op
+      service.capture("app_launched", {});
+      expect(mock.$.capturedEvents).toHaveLength(1);
     });
   });
 });

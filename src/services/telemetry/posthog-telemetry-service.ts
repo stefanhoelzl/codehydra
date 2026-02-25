@@ -5,7 +5,7 @@
  * PRIVACY NOTE: Do NOT log user paths or PII.
  *
  * Features:
- * - Lazy initialization: PostHog client created on first capture
+ * - Configured via configure() method (driven by config:updated events)
  * - No-op mode when API key missing or telemetry disabled
  * - All events logged at INFO level for visibility
  * - Error stack sanitization (strips home directory, limits length)
@@ -16,6 +16,7 @@ import { PostHog } from "posthog-node";
 import type {
   TelemetryService,
   TelemetryServiceDeps,
+  TelemetryConfigureOptions,
   PostHogClient,
   PostHogClientFactory,
 } from "./types";
@@ -44,14 +45,17 @@ export class PostHogTelemetryService implements TelemetryService {
   private readonly host: string;
   private readonly postHogClientFactory: PostHogClientFactory;
 
-  /** PostHog client - lazily initialized on first capture */
+  /** PostHog client - created on first configure() with valid API key */
   private client: PostHogClient | null = null;
 
-  /** Cached distinctId - loaded from config or generated */
+  /** Cached distinctId - set via configure() */
   private distinctId: string | null = null;
 
-  /** Whether telemetry is enabled (checked on first capture) */
-  private enabled: boolean | null = null;
+  /** Whether telemetry is enabled (set via configure()) */
+  private enabled = false;
+
+  /** Whether configure() has been called */
+  private configured = false;
 
   constructor(deps: TelemetryServiceDeps) {
     this.deps = deps;
@@ -60,73 +64,62 @@ export class PostHogTelemetryService implements TelemetryService {
   }
 
   /**
-   * Initialize the PostHog client lazily.
-   * Returns false if telemetry should be disabled.
+   * Configure telemetry with values from the config system.
+   * Creates the PostHog client on first call with telemetry enabled.
    */
-  private async ensureInitialized(): Promise<boolean> {
-    // Already initialized
-    if (this.enabled !== null) {
-      return this.enabled;
-    }
+  configure(options: TelemetryConfigureOptions): void {
+    this.configured = true;
 
     // Check if API key is available
     if (!this.deps.apiKey || this.deps.apiKey.trim() === "") {
       this.deps.logger.debug("Telemetry disabled: no API key");
       this.enabled = false;
-      return false;
+      return;
     }
 
-    // Load config to check if telemetry is enabled
-    const config = await this.deps.configService.load();
+    this.enabled = options.enabled;
+    if (options.distinctId) {
+      this.distinctId = options.distinctId;
+    }
 
-    // Default to enabled if telemetry config is missing (backwards compatibility)
-    const telemetryEnabled = config.telemetry?.enabled ?? true;
-
-    if (!telemetryEnabled) {
+    if (!this.enabled) {
       this.deps.logger.debug("Telemetry disabled: config");
-      this.enabled = false;
-      return false;
+      return;
     }
 
-    // Get or generate distinctId
-    if (config.telemetry?.distinctId) {
-      this.distinctId = config.telemetry.distinctId;
-    } else {
-      // Generate new distinctId and persist it
-      this.distinctId = randomUUID();
-      const updatedConfig = {
-        ...config,
-        telemetry: {
-          ...config.telemetry,
-          enabled: true,
-          distinctId: this.distinctId,
-        },
-      };
-      await this.deps.configService.save(updatedConfig);
-      this.deps.logger.debug("Generated new distinctId");
+    // Create PostHog client if not yet created
+    if (!this.client) {
+      // Factory may be async, but we handle it synchronously for posthog-node
+      const result = this.postHogClientFactory(this.deps.apiKey, { host: this.host });
+      if (result instanceof Promise) {
+        void result.then((client) => {
+          this.client = client;
+          this.deps.logger.debug("Telemetry initialized (async)", { host: this.host });
+        });
+      } else {
+        this.client = result;
+        this.deps.logger.debug("Telemetry initialized", { host: this.host });
+      }
     }
+  }
 
-    // Create PostHog client (factory can be sync or async)
-    this.client = await Promise.resolve(
-      this.postHogClientFactory(this.deps.apiKey, { host: this.host })
-    );
-    this.enabled = true;
-
-    this.deps.logger.debug("Telemetry initialized", { host: this.host });
-    return true;
+  /**
+   * Generate a new distinct ID for anonymous tracking.
+   * Returns the generated ID, or undefined if telemetry is disabled.
+   */
+  generateDistinctId(): string | undefined {
+    if (!this.enabled) return undefined;
+    const id = randomUUID();
+    this.distinctId = id;
+    this.deps.logger.debug("Generated new distinctId");
+    return id;
   }
 
   /**
    * Capture an analytics event.
    */
   capture(event: string, properties?: Record<string, unknown>): void {
-    // Fire and forget - don't block on async initialization
-    void this.captureAsync(event, properties);
-  }
-
-  private async captureAsync(event: string, properties?: Record<string, unknown>): Promise<void> {
-    const initialized = await this.ensureInitialized();
-    if (!initialized || !this.client || !this.distinctId) {
+    if (!this.configured || !this.enabled || !this.client || !this.distinctId) {
       return;
     }
 
@@ -151,12 +144,7 @@ export class PostHogTelemetryService implements TelemetryService {
    * Capture an error event with sanitized stack trace.
    */
   captureError(error: Error): void {
-    void this.captureErrorAsync(error);
-  }
-
-  private async captureErrorAsync(error: Error): Promise<void> {
-    const initialized = await this.ensureInitialized();
-    if (!initialized || !this.client || !this.distinctId) {
+    if (!this.configured || !this.enabled || !this.client || !this.distinctId) {
       return;
     }
 

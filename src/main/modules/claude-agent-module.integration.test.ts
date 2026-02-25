@@ -11,10 +11,10 @@ import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
-import type { Intent } from "../intents/infrastructure/types";
+import type { Intent, DomainEvent } from "../intents/infrastructure/types";
+import type { IntentModule } from "../intents/infrastructure/module";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
-  CheckConfigResult,
   ConfigureResult,
   CheckDepsResult,
   StartHookResult,
@@ -46,6 +46,9 @@ import type {
 } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import type { RestartAgentHookInput, RestartAgentHookResult } from "../operations/restart-agent";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import { EVENT_CONFIG_UPDATED, INTENT_CONFIG_SET_VALUES } from "../operations/config-set-values";
+import type { ConfigValues } from "../../services/config/config-values";
 import { createClaudeAgentModule, type ClaudeAgentModuleDeps } from "./claude-agent-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { SetupError } from "../../services/errors";
@@ -54,23 +57,11 @@ import { SetupError } from "../../services/errors";
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalCheckConfigOperation implements Operation<Intent, readonly CheckConfigResult[]> {
-  readonly id = APP_START_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<readonly CheckConfigResult[]> {
-    const { results, errors } = await ctx.hooks.collect<CheckConfigResult>("check-config", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return results;
-  }
-}
-
-class MinimalConfigureOperation implements Operation<Intent, readonly ConfigureResult[]> {
+class MinimalBeforeReadyOperation implements Operation<Intent, readonly ConfigureResult[]> {
   readonly id = APP_START_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<readonly ConfigureResult[]> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("configure", {
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -360,7 +351,6 @@ function createMockAgentStatusManager() {
 
 function createMockDeps(
   overrides?: Partial<{
-    configAgent: string | null;
     serverManager: ReturnType<typeof createMockClaudeServerManager>;
     agentStatusManager: ReturnType<typeof createMockAgentStatusManager>;
   }>
@@ -371,13 +361,8 @@ function createMockDeps(
 } {
   const mockSM = overrides?.serverManager ?? createMockClaudeServerManager();
   const mockASM = overrides?.agentStatusManager ?? createMockAgentStatusManager();
-  const configAgent = overrides && "configAgent" in overrides ? overrides.configAgent : "claude";
 
   const deps: ClaudeAgentModuleDeps = {
-    configService: {
-      load: vi.fn().mockResolvedValue({ agent: configAgent }),
-      setAgent: vi.fn().mockResolvedValue(undefined),
-    },
     agentBinaryManager: {
       preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
       downloadBinary: vi.fn().mockResolvedValue(undefined),
@@ -407,14 +392,28 @@ function createTestSetup(mockDepsResult?: ReturnType<typeof createMockDeps>) {
 
   dispatcher.registerModule(module);
 
-  return { deps, dispatcher, hookRegistry, mockSM, mockASM };
+  return { deps, dispatcher, hookRegistry, mockSM, mockASM, module };
 }
 
 /**
- * Helper: run a start operation to activate the module before testing hooks
- * that require lifecycle state.
+ * Simulate a config:updated event that sets the active agent.
+ * This calls the module's event handler directly, mirroring what the Dispatcher
+ * does when a config:set-values operation emits the config:updated event.
  */
-async function activateModule(dispatcher: Dispatcher): Promise<void> {
+function simulateConfigUpdated(module: IntentModule, agent: string | null): void {
+  const event: ConfigUpdatedEvent = {
+    type: EVENT_CONFIG_UPDATED,
+    payload: { values: { agent } as Partial<Readonly<ConfigValues>> },
+  };
+  module.events![EVENT_CONFIG_UPDATED]!(event as DomainEvent);
+}
+
+/**
+ * Helper: simulate config:updated event with agent=claude, then run a start
+ * operation to activate the module before testing hooks that require lifecycle state.
+ */
+async function activateModule(dispatcher: Dispatcher, module: IntentModule): Promise<void> {
+  simulateConfigUpdated(module, "claude");
   dispatcher.registerOperation("app:start", new MinimalStartOperation());
   await dispatcher.dispatch({ type: "app:start", payload: {} });
 }
@@ -425,44 +424,13 @@ async function activateModule(dispatcher: Dispatcher): Promise<void> {
 
 describe("ClaudeAgentModule", () => {
   // ---------------------------------------------------------------------------
-  // check-config
+  // before-ready
   // ---------------------------------------------------------------------------
 
-  describe("check-config", () => {
-    it("loads config and returns configuredAgent", async () => {
-      const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalCheckConfigOperation());
-
-      const results = (await dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as readonly CheckConfigResult[];
-
-      expect(results).toHaveLength(1);
-      expect(results[0]!.configuredAgent).toBe("claude");
-    });
-
-    it("returns null when no agent configured", async () => {
-      const { dispatcher } = createTestSetup(createMockDeps({ configAgent: null }));
-      dispatcher.registerOperation("app:start", new MinimalCheckConfigOperation());
-
-      const results = (await dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as readonly CheckConfigResult[];
-
-      expect(results[0]!.configuredAgent).toBeNull();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // configure
-  // ---------------------------------------------------------------------------
-
-  describe("configure", () => {
+  describe("before-ready", () => {
     it("returns Claude-specific scripts", async () => {
       const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalConfigureOperation());
+      dispatcher.registerOperation("app:start", new MinimalBeforeReadyOperation());
 
       const results = (await dispatcher.dispatch({
         type: "app:start",
@@ -530,9 +498,9 @@ describe("ClaudeAgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("start", () => {
-    it("activates when agent is claude", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+    it("activates when config:updated event sets agent to claude", async () => {
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       // Verify wiring: setMarkActiveHandler and onServerStarted/onServerStopped called
       expect(mockSM.setMarkActiveHandler).toHaveBeenCalled();
@@ -541,11 +509,23 @@ describe("ClaudeAgentModule", () => {
       expect(mockASM.onStatusChanged).toHaveBeenCalled();
     });
 
-    it("does not activate when agent is opencode", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup(
-        createMockDeps({ configAgent: "opencode" })
-      );
-      await activateModule(dispatcher);
+    it("does not activate when no config:updated event received", async () => {
+      const { dispatcher, mockSM, mockASM } = createTestSetup();
+      // Do NOT call simulateConfigUpdated -- module stays inactive
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(mockSM.setMarkActiveHandler).not.toHaveBeenCalled();
+      expect(mockSM.onServerStarted).not.toHaveBeenCalled();
+      expect(mockSM.onServerStopped).not.toHaveBeenCalled();
+      expect(mockASM.onStatusChanged).not.toHaveBeenCalled();
+    });
+
+    it("does not activate when config:updated event sets agent to opencode", async () => {
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      simulateConfigUpdated(module, "opencode");
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       expect(mockSM.setMarkActiveHandler).not.toHaveBeenCalled();
       expect(mockSM.onServerStarted).not.toHaveBeenCalled();
@@ -554,8 +534,8 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("wires server callbacks that handle server started", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       // Capture the onServerStarted callback
       const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
@@ -573,8 +553,8 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("wires server callbacks that handle server stopped (non-restart)", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       // Capture the onServerStopped callback
       const stoppedCallback = mockSM.onServerStopped.mock.calls[0]![0] as (
@@ -588,8 +568,8 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("wires server callbacks that handle server stopped (restart)", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       const stoppedCallback = mockSM.onServerStopped.mock.calls[0]![0] as (
         workspacePath: string,
@@ -604,8 +584,8 @@ describe("ClaudeAgentModule", () => {
     it("reconnects provider on server restart when provider already exists", async () => {
       const mockDepsResult = createMockDeps();
       mockDepsResult.mockASM.hasProvider.mockReturnValue(true);
-      const { dispatcher, mockSM, mockASM } = createTestSetup(mockDepsResult);
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup(mockDepsResult);
+      await activateModule(dispatcher, module);
 
       // Capture the onServerStarted callback
       const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
@@ -630,7 +610,8 @@ describe("ClaudeAgentModule", () => {
 
   describe("activate", () => {
     it("calls setMcpConfig when active and mcpPort provided", async () => {
-      const { dispatcher, mockSM } = createTestSetup();
+      const { dispatcher, mockSM, module } = createTestSetup();
+      simulateConfigUpdated(module, "claude");
       dispatcher.registerOperation("app:start", new MinimalStartAndActivateOperation(9999));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -639,7 +620,8 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("skips setMcpConfig when mcpPort is null", async () => {
-      const { dispatcher, mockSM } = createTestSetup();
+      const { dispatcher, mockSM, module } = createTestSetup();
+      simulateConfigUpdated(module, "claude");
       dispatcher.registerOperation("app:start", new MinimalStartAndActivateOperation(null));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -648,7 +630,8 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("returns empty result when inactive", async () => {
-      const { dispatcher, mockSM } = createTestSetup(createMockDeps({ configAgent: "opencode" }));
+      const { dispatcher, mockSM } = createTestSetup();
+      // No config:updated event -- module stays inactive
       dispatcher.registerOperation("app:start", new MinimalStartAndActivateOperation(9999));
 
       const results = (await dispatcher.dispatch({
@@ -689,30 +672,32 @@ describe("ClaudeAgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("save-agent", () => {
-    it("persists when selectedAgent is claude", async () => {
+    it("dispatches config:set-values when selectedAgent is claude", async () => {
       const { dispatcher, deps } = createTestSetup();
+      const dispatchSpy = vi.spyOn(deps.dispatcher, "dispatch").mockResolvedValue(undefined);
       dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("claude"));
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.configService.setAgent).toHaveBeenCalledWith("claude");
+      expect(dispatchSpy).toHaveBeenCalledWith({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { agent: "claude" } },
+      });
     });
 
     it("skips when selectedAgent is not claude", async () => {
       const { dispatcher, deps } = createTestSetup();
+      const dispatchSpy = vi.spyOn(deps.dispatcher, "dispatch");
       dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("opencode"));
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.configService.setAgent).not.toHaveBeenCalled();
+      expect(dispatchSpy).not.toHaveBeenCalled();
     });
 
     it("throws SetupError on config save failure", async () => {
-      const mockDepsResult = createMockDeps();
-      (mockDepsResult.deps.configService.setAgent as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("disk full")
-      );
-      const { dispatcher } = createTestSetup(mockDepsResult);
+      const { dispatcher, deps } = createTestSetup();
+      vi.spyOn(deps.dispatcher, "dispatch").mockRejectedValue(new Error("disk full"));
       dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("claude"));
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
@@ -828,8 +813,8 @@ describe("ClaudeAgentModule", () => {
 
   describe("workspace setup", () => {
     it("starts server and returns envVars when active", async () => {
-      const { dispatcher, mockSM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation(
         "workspace:open",
@@ -855,8 +840,8 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("sets initial prompt when provided in intent", async () => {
-      const { dispatcher, mockSM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation(
         "workspace:open",
@@ -880,8 +865,11 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const { dispatcher, mockSM } = createTestSetup(createMockDeps({ configAgent: "opencode" }));
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, module } = createTestSetup();
+      // Simulate config:updated with opencode so module stays inactive
+      simulateConfigUpdated(module, "opencode");
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
         "workspace:open",
@@ -911,8 +899,8 @@ describe("ClaudeAgentModule", () => {
 
   describe("delete shutdown", () => {
     it("stops server when active", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -938,8 +926,8 @@ describe("ClaudeAgentModule", () => {
         success: false,
         error: "server busy",
       });
-      const { dispatcher } = createTestSetup(mockDepsResult);
-      await activateModule(dispatcher);
+      const { dispatcher, module } = createTestSetup(mockDepsResult);
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -964,8 +952,8 @@ describe("ClaudeAgentModule", () => {
         success: false,
         error: "server busy",
       });
-      const { dispatcher } = createTestSetup(mockDepsResult);
-      await activateModule(dispatcher);
+      const { dispatcher, module } = createTestSetup(mockDepsResult);
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -983,8 +971,11 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const { dispatcher, mockSM } = createTestSetup(createMockDeps({ configAgent: "opencode" }));
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, module } = createTestSetup();
+      // Simulate config:updated with opencode so module stays inactive
+      simulateConfigUpdated(module, "opencode");
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -1009,8 +1000,8 @@ describe("ClaudeAgentModule", () => {
 
   describe("get-status", () => {
     it("returns status when active", async () => {
-      const { dispatcher, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
 
@@ -1025,8 +1016,11 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const { dispatcher } = createTestSetup(createMockDeps({ configAgent: "opencode" }));
-      await activateModule(dispatcher);
+      const { dispatcher, module } = createTestSetup();
+      // Simulate config:updated with opencode so module stays inactive
+      simulateConfigUpdated(module, "opencode");
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
 
@@ -1045,8 +1039,8 @@ describe("ClaudeAgentModule", () => {
 
   describe("get-session", () => {
     it("returns session when active", async () => {
-      const { dispatcher, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
 
@@ -1063,8 +1057,8 @@ describe("ClaudeAgentModule", () => {
     it("returns null session when no session exists", async () => {
       const mockDepsResult = createMockDeps();
       mockDepsResult.mockASM.getSession.mockReturnValue(null);
-      const { dispatcher } = createTestSetup(mockDepsResult);
-      await activateModule(dispatcher);
+      const { dispatcher, module } = createTestSetup(mockDepsResult);
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
 
@@ -1078,8 +1072,11 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const { dispatcher } = createTestSetup(createMockDeps({ configAgent: "opencode" }));
-      await activateModule(dispatcher);
+      const { dispatcher, module } = createTestSetup();
+      // Simulate config:updated with opencode so module stays inactive
+      simulateConfigUpdated(module, "opencode");
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
 
@@ -1098,8 +1095,8 @@ describe("ClaudeAgentModule", () => {
 
   describe("restart", () => {
     it("restarts server when active and returns port", async () => {
-      const { dispatcher, mockSM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
 
@@ -1119,8 +1116,8 @@ describe("ClaudeAgentModule", () => {
         success: false,
         error: "restart failed",
       });
-      const { dispatcher } = createTestSetup(mockDepsResult);
-      await activateModule(dispatcher);
+      const { dispatcher, module } = createTestSetup(mockDepsResult);
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
 
@@ -1133,8 +1130,11 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("returns undefined when inactive", async () => {
-      const { dispatcher, mockSM } = createTestSetup(createMockDeps({ configAgent: "opencode" }));
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, module } = createTestSetup();
+      // Simulate config:updated with opencode so module stays inactive
+      simulateConfigUpdated(module, "opencode");
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
 
@@ -1154,8 +1154,8 @@ describe("ClaudeAgentModule", () => {
 
   describe("stop", () => {
     it("disposes server manager and agent status manager when active", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup();
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
 
@@ -1166,10 +1166,11 @@ describe("ClaudeAgentModule", () => {
     });
 
     it("disposes server manager but not agent status manager when inactive", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup(
-        createMockDeps({ configAgent: "opencode" })
-      );
-      await activateModule(dispatcher);
+      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      // Simulate config:updated with opencode so module stays inactive
+      simulateConfigUpdated(module, "opencode");
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
 
@@ -1182,8 +1183,8 @@ describe("ClaudeAgentModule", () => {
     it("handles non-fatal stop errors", async () => {
       const mockDepsResult = createMockDeps();
       mockDepsResult.mockSM.dispose.mockRejectedValue(new Error("dispose failed"));
-      const { dispatcher } = createTestSetup(mockDepsResult);
-      await activateModule(dispatcher);
+      const { dispatcher, module } = createTestSetup(mockDepsResult);
+      await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
 
@@ -1191,6 +1192,44 @@ describe("ClaudeAgentModule", () => {
       await expect(
         dispatcher.dispatch({ type: "app:shutdown", payload: {} })
       ).resolves.not.toThrow();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // config:updated event
+  // ---------------------------------------------------------------------------
+
+  describe("config:updated event", () => {
+    it("sets active=true when agent is claude", async () => {
+      const { dispatcher, mockSM, module } = createTestSetup();
+      simulateConfigUpdated(module, "claude");
+
+      // Verify the module is now active by running start and checking wiring
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(mockSM.setMarkActiveHandler).toHaveBeenCalled();
+    });
+
+    it("sets active=false when agent is opencode", async () => {
+      const { dispatcher, mockSM, module } = createTestSetup();
+      simulateConfigUpdated(module, "opencode");
+
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(mockSM.setMarkActiveHandler).not.toHaveBeenCalled();
+    });
+
+    it("defaults to opencode when agent is null", async () => {
+      const { dispatcher, mockSM, module } = createTestSetup();
+      simulateConfigUpdated(module, null);
+
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // null agent defaults to "opencode", so claude module should be inactive
+      expect(mockSM.setMarkActiveHandler).not.toHaveBeenCalled();
     });
   });
 });

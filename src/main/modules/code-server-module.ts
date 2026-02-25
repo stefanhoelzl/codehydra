@@ -82,9 +82,9 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     hooks: {
       [APP_START_OPERATION_ID]: {
         // -------------------------------------------------------------------
-        // app-start → configure: declare required scripts
+        // app-start → before-ready: declare required scripts
         // -------------------------------------------------------------------
-        configure: {
+        "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
             return { scripts: ["code", "code.cmd"] };
           },

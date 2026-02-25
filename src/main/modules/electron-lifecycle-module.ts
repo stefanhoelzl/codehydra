@@ -2,18 +2,24 @@
  * ElectronLifecycleModule - Electron app lifecycle hooks.
  *
  * Provides:
- * - "configure" hook on app:start (noAsar, electron flags, data paths)
+ * - "before-ready" hook on app:start (noAsar, data paths)
  * - "await-ready" hook on app:start (waits for Electron app ready)
  * - "quit" hook on app:shutdown (calls app.quit())
+ *
+ * Electron flags are applied via config:updated event subscription
+ * when the config module dispatches env-layer values.
  */
 
 import { Path } from "../../services/platform/path";
 import type { AsyncWatcher } from "../../services/platform/async-watcher";
 import type { Logger } from "../../services/logging";
 import type { IntentModule } from "../intents/infrastructure/module";
+import type { DomainEvent } from "../intents/infrastructure/types";
 import type { ConfigureResult } from "../operations/app-start";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
+import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 
 // =============================================================================
 // Helpers
@@ -81,23 +87,11 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
   return {
     hooks: {
       [APP_START_OPERATION_ID]: {
-        configure: {
+        "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
             // Disable ASAR when not packaged
             if (deps.buildInfo && !deps.buildInfo.isPackaged) {
               process.noAsar = true;
-            }
-            // Apply Electron flags from environment
-            const flags = parseElectronFlags(process.env.CODEHYDRA_ELECTRON_FLAGS);
-            for (const flag of flags) {
-              deps.app.commandLine.appendSwitch(
-                flag.name,
-                ...(flag.value !== undefined ? [flag.value] : [])
-              );
-              deps.logger.info("Applied Electron flag", {
-                flag: flag.name,
-                ...(flag.value !== undefined && { value: flag.value }),
-              });
             }
             // Redirect data paths to isolate from system defaults
             if (deps.pathProvider) {
@@ -106,6 +100,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
                 deps.app.setPath(name, new Path(electronDir, name).toNative());
               }
             }
+            // Electron flags are applied via config:updated event handler
             return {};
           },
         },
@@ -122,6 +117,24 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             deps.app.quit();
           },
         },
+      },
+    },
+    events: {
+      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
+        const { values } = (event as ConfigUpdatedEvent).payload;
+        if (values["electron.flags"] !== undefined) {
+          const flags = parseElectronFlags(values["electron.flags"]);
+          for (const flag of flags) {
+            deps.app.commandLine.appendSwitch(
+              flag.name,
+              ...(flag.value !== undefined ? [flag.value] : [])
+            );
+            deps.logger.info("Applied Electron flag", {
+              flag: flag.name,
+              ...(flag.value !== undefined && { value: flag.value }),
+            });
+          }
+        }
       },
     },
   };
