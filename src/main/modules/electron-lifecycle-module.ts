@@ -8,6 +8,7 @@
  */
 
 import { Path } from "../../services/platform/path";
+import type { AsyncWatcher } from "../../services/platform/async-watcher";
 import type { Logger } from "../../services/logging";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { ConfigureResult } from "../operations/app-start";
@@ -68,6 +69,7 @@ export interface ElectronLifecycleModuleDeps {
   };
   readonly buildInfo?: { isPackaged: boolean } | null;
   readonly pathProvider?: { electronDataDir: { toNative(): string } } | null;
+  readonly asyncWatcher?: AsyncWatcher | null;
   readonly logger: Logger;
 }
 
@@ -109,6 +111,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
         },
         "await-ready": {
           handler: async (): Promise<void> => {
+            deps.asyncWatcher?.check();
             await deps.app.whenReady();
           },
         },

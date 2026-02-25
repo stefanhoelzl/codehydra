@@ -148,7 +148,12 @@ import type { ICodeHydraApi } from "../shared/api/interfaces";
 import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
+import { AsyncWatcher } from "../services/platform/async-watcher";
 import { getErrorMessage } from "../shared/error-utils";
+
+// Async watcher — detect unexpected I/O before app.whenReady()
+const asyncWatcher = new AsyncWatcher(["PROMISE", "TickObject", "RANDOMBYTESREQUEST"]);
+asyncWatcher.enable();
 
 // 3. Core initializations (buildInfo, platformInfo, pathProvider, logging)
 
@@ -497,6 +502,7 @@ const electronLifecycleModule = createElectronLifecycleModule({
   app,
   buildInfo,
   pathProvider,
+  asyncWatcher,
   logger: lifecycleLogger,
 });
 
