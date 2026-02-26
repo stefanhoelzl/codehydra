@@ -111,10 +111,9 @@ describe("ElectronLogService boundary tests", () => {
     const logContent = await readFile(join(logsDir, files[0] as string), "utf-8");
 
     // Verify format: [timestamp] [level] (scope) message context
-    // electron-log uses parentheses around scope by default
-    // e.g., [2025-12-16 10:30:00.123] [info]   ([git]) Clone complete repo=test-repo branch=main
+    // e.g., [2025-12-16 10:30:00.123] [info]   (git) Clone complete repo=test-repo branch=main
     expect(logContent).toMatch(
-      /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[info\].*\[git\].*Clone complete repo=test-repo branch=main/
+      /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[info\].*\(git\).*Clone complete repo=test-repo branch=main/
     );
   });
 

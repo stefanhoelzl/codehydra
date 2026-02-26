@@ -173,7 +173,7 @@ describe("ElectronLogService", () => {
       const service = await createService();
       service.createLogger("git");
 
-      expect(mockScope).toHaveBeenCalledWith("[git]");
+      expect(mockScope).toHaveBeenCalledWith("git");
     });
 
     it("caches loggers for same name", async () => {
@@ -191,8 +191,8 @@ describe("ElectronLogService", () => {
       service.createLogger("process");
 
       expect(mockScope).toHaveBeenCalledTimes(2);
-      expect(mockScope).toHaveBeenCalledWith("[git]");
-      expect(mockScope).toHaveBeenCalledWith("[process]");
+      expect(mockScope).toHaveBeenCalledWith("git");
+      expect(mockScope).toHaveBeenCalledWith("process");
     });
   });
 
@@ -216,7 +216,7 @@ describe("ElectronLogService", () => {
       // Creating logger again should call scope again
       mockScope.mockClear();
       service.createLogger("git");
-      expect(mockScope).toHaveBeenCalledWith("[git]");
+      expect(mockScope).toHaveBeenCalledWith("git");
     });
   });
 

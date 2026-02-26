@@ -301,7 +301,7 @@ export class ElectronLogService implements LoggingService {
 
     // Activate all existing queued loggers
     for (const [name, queued] of this.loggers) {
-      const scope = log.scope(`[${name}]`);
+      const scope = log.scope(name);
       const inner = new ElectronLogLogger(scope);
       const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
       queued.activate(filtered);
@@ -325,7 +325,7 @@ export class ElectronLogService implements LoggingService {
 
     // If already configured, activate immediately
     if (this.configured) {
-      const scope = log.scope(`[${name}]`);
+      const scope = log.scope(name);
       const inner = new ElectronLogLogger(scope);
       const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
       queued.activate(filtered);
