@@ -26,6 +26,10 @@ function key<T>(def: ConfigKeyDef<T>): ConfigKeyDef<T> {
   return def;
 }
 
+function parseBool(s: string): boolean | undefined {
+  return s === "true" || s === "1" ? true : s === "false" || s === "0" ? false : undefined;
+}
+
 // =============================================================================
 // Config Schema
 // =============================================================================
@@ -65,8 +69,7 @@ export const CONFIG = {
   }),
   "telemetry.enabled": key<boolean>({
     default: true,
-    parse: (s) =>
-      s === "true" || s === "1" ? true : s === "false" || s === "0" ? false : undefined,
+    parse: parseBool,
     validate: (v) => (typeof v === "boolean" ? v : undefined),
   }),
   "telemetry.distinct-id": key<string | undefined>({
@@ -88,6 +91,11 @@ export const CONFIG = {
     default: undefined,
     parse: (s) => (s === "" ? undefined : s),
     validate: (v) => (typeof v === "string" ? v : undefined),
+  }),
+  help: key<boolean>({
+    default: false,
+    parse: parseBool,
+    validate: (v) => (typeof v === "boolean" ? v : undefined),
   }),
 } as const satisfies Record<string, ConfigKeyDef<unknown>>;
 
@@ -116,14 +124,6 @@ export const DEFAULT_CONFIG_VALUES: Readonly<ConfigValues> = Object.fromEntries(
 // =============================================================================
 // Name Derivation
 // =============================================================================
-
-/**
- * Convert a config key to its env var name.
- * Rules: CH_ prefix, . → __, - → _, UPPERCASE.
- */
-export function configKeyToEnvVar(key: ConfigKey): string {
-  return "CH_" + key.replace(/\./g, "__").replace(/-/g, "_").toUpperCase();
-}
 
 /**
  * Convert an env var name to a config key (or undefined if not a CH_ var).
@@ -155,4 +155,39 @@ export function validateConfigValue(
   const def = CONFIG[key];
   if (!def) return undefined;
   return def.validate(value) as ConfigValues[ConfigKey] | undefined;
+}
+
+// =============================================================================
+// Help Text
+// =============================================================================
+
+/**
+ * Generate a human-readable config usage guide.
+ *
+ * `defaults` should be the effective config values (accounting for
+ * isDevelopment, isPackaged, etc.) so users see the actual defaults
+ * that apply to their environment.
+ */
+export function generateHelpText(configFilePath: string, defaults: Readonly<ConfigValues>): string {
+  const lines: string[] = [
+    "CodeHydra Configuration",
+    "=======================",
+    "",
+    "Every key can be set three ways (highest precedence first):",
+    "  CLI flag:   --<key>=<value>        e.g. --log.level=debug",
+    "  Env var:    CH_ prefix, . → __, - → _, UPPER  e.g. CH_LOG__LEVEL=debug",
+    "  Config file: " + configFilePath,
+    "",
+    "Keys:",
+    "",
+  ];
+
+  for (const key of Object.keys(CONFIG) as ConfigKey[]) {
+    const value = defaults[key];
+    const valueStr = value === undefined ? "—" : String(value);
+    lines.push(`  ${key.padEnd(24)} default: ${valueStr}`);
+  }
+
+  lines.push("");
+  return lines.join("\n");
 }

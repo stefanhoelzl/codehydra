@@ -9,10 +9,10 @@ export {
   type ConfigAgentType,
   CONFIG_KEYS,
   DEFAULT_CONFIG_VALUES,
-  configKeyToEnvVar,
   envVarToConfigKey,
   parseConfigValue,
   validateConfigValue,
+  generateHelpText,
 } from "./config-values";
 
 // Legacy exports — kept for backwards compatibility with tests

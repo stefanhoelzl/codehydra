@@ -14,7 +14,7 @@
  * - Config file migration (old keys → new keys)
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Path } from "../../services/platform/path";
 import { SILENT_LOGGER } from "../../services/logging";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
@@ -30,12 +30,18 @@ import {
   EVENT_CONFIG_UPDATED,
 } from "../operations/config-set-values";
 import type { ConfigSetValuesIntent, ConfigUpdatedEvent } from "../operations/config-set-values";
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
 import {
   createFileSystemMock,
   file,
   directory,
 } from "../../services/platform/filesystem.state-mock";
 import { createConfigModule, parseEnvVars, parseCliArgs } from "./config-module";
+import {
+  CONFIG_KEYS,
+  DEFAULT_CONFIG_VALUES,
+  generateHelpText,
+} from "../../services/config/config-values";
 
 // =============================================================================
 // Minimal Test Operations
@@ -115,6 +121,8 @@ function createTestSetup(options?: {
     },
   });
 
+  const stdout = { write: vi.fn().mockReturnValue(true) };
+
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
@@ -130,11 +138,12 @@ function createTestSetup(options?: {
     isPackaged: options?.isPackaged ?? false,
     env: options?.env ?? {},
     argv: options?.argv ?? [],
+    stdout,
   });
 
   dispatcher.registerModule(module);
 
-  return { fileSystem, hookRegistry, dispatcher, module };
+  return { fileSystem, hookRegistry, dispatcher, module, stdout };
 }
 
 // =============================================================================
@@ -1002,6 +1011,113 @@ describe("ConfigModule Integration", () => {
       const logLevelEvent = events.find((e) => e.payload.values["log.level"] !== undefined);
       expect(logLevelEvent).toBeDefined();
       expect(logLevelEvent!.payload.values["log.level"]).toBe("error");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // --help flag
+  // ---------------------------------------------------------------------------
+  describe("--help flag", () => {
+    it("prints help text to stdout and dispatches app:shutdown", async () => {
+      const { dispatcher, stdout } = createTestSetup({ argv: ["--help"] });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(stdout.write).toHaveBeenCalledOnce();
+      const output = stdout.write.mock.calls[0]![0] as string;
+      expect(output).toContain("CodeHydra Configuration");
+      expect(output).toContain(CONFIG_PATH.toString());
+    });
+
+    it("shows computed defaults in help output (isDevelopment)", async () => {
+      const { dispatcher, stdout } = createTestSetup({
+        isDevelopment: true,
+        argv: ["--help"],
+      });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      const output = stdout.write.mock.calls[0]![0] as string;
+      // isDevelopment=true computes log.level=debug (not static default "warn")
+      expect(output).toContain("log.level");
+      expect(output).toMatch(/log\.level\s+default: debug/);
+    });
+
+    it("CH_HELP=1 env var prints help and dispatches shutdown", async () => {
+      const { dispatcher, stdout } = createTestSetup({ env: { CH_HELP: "1" } });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(stdout.write).toHaveBeenCalledOnce();
+      const output = stdout.write.mock.calls[0]![0] as string;
+      expect(output).toContain("CodeHydra Configuration");
+    });
+
+    it("does not print help or dispatch shutdown when --help is not set", async () => {
+      const { dispatcher, stdout } = createTestSetup();
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(stdout.write).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // generateHelpText
+  // ---------------------------------------------------------------------------
+  describe("generateHelpText", () => {
+    it("contains every config key", () => {
+      const text = generateHelpText("/some/config.json", DEFAULT_CONFIG_VALUES);
+      for (const key of CONFIG_KEYS) {
+        expect(text).toContain(key);
+      }
+    });
+
+    it("contains the config file path", () => {
+      const text = generateHelpText("/custom/path/config.json", DEFAULT_CONFIG_VALUES);
+      expect(text).toContain("/custom/path/config.json");
+    });
+
+    it("shows static defaults", () => {
+      const text = generateHelpText("/some/config.json", DEFAULT_CONFIG_VALUES);
+      expect(text).toContain("default: warn");
+      expect(text).toContain("default: false");
+      expect(text).toContain("default: true");
+    });
+
+    it("shows computed effective values when provided", () => {
+      const defaults = {
+        ...DEFAULT_CONFIG_VALUES,
+        "log.level": "debug" as const,
+        "telemetry.enabled": false,
+      };
+      const text = generateHelpText("/some/config.json", defaults);
+      expect(text).toMatch(/log\.level\s+default: debug/);
+      expect(text).toMatch(/telemetry\.enabled\s+default: false/);
     });
   });
 });

@@ -31,12 +31,15 @@ import {
   envVarToConfigKey,
   parseConfigValue,
   validateConfigValue,
+  generateHelpText,
 } from "../../services/config/config-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import {
   CONFIG_SET_VALUES_OPERATION_ID,
   INTENT_CONFIG_SET_VALUES,
 } from "../operations/config-set-values";
+import { INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
+import type { AppShutdownIntent } from "../operations/app-shutdown";
 
 // =============================================================================
 // Dependency Interface
@@ -51,6 +54,7 @@ export interface ConfigModuleDeps {
   readonly isPackaged: boolean;
   readonly env: Record<string, string | undefined>;
   readonly argv: readonly string[];
+  readonly stdout: { write(text: string): boolean };
 }
 
 // =============================================================================
@@ -299,6 +303,14 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
               type: INTENT_CONFIG_SET_VALUES,
               payload: { values: merged, persist: false },
             } as ConfigSetValuesIntent);
+
+            if (effective.help === true) {
+              deps.stdout.write(generateHelpText(deps.configPath.toString(), effective));
+              await dispatcher.dispatch({
+                type: INTENT_APP_SHUTDOWN,
+                payload: {},
+              } as AppShutdownIntent);
+            }
 
             return {};
           },
