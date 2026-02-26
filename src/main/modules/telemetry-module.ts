@@ -94,8 +94,8 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
           telemetryEnabled = values["telemetry.enabled"];
         }
 
-        if (values["telemetry.distinctId"] !== undefined) {
-          distinctId = values["telemetry.distinctId"];
+        if (values["telemetry.distinct-id"] !== undefined) {
+          distinctId = values["telemetry.distinct-id"];
         }
 
         // Configure telemetry service when relevant values arrive
@@ -118,7 +118,7 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
               distinctId = newId;
               void deps.dispatcher.dispatch({
                 type: INTENT_CONFIG_SET_VALUES,
-                payload: { values: { "telemetry.distinctId": newId } },
+                payload: { values: { "telemetry.distinct-id": newId } },
               } as ConfigSetValuesIntent);
             }
           }

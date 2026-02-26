@@ -286,14 +286,35 @@ See docs/API.md for full Plugin API and MCP Server documentation.
 
 ## Troubleshooting
 
-### Environment Variables
+### Configuration
 
-| Variable            | Description                                |
-| ------------------- | ------------------------------------------ |
-| `CH_ELECTRON_FLAGS` | Electron switches (e.g., `--disable-gpu`)  |
-| `CH_LOGLEVEL`       | Log level: silly\|debug\|info\|warn\|error |
-| `CH_PRINT_LOGS`     | Print logs to stdout/stderr                |
-| `CH_LOGGER`         | Filter logs by name (e.g., `git,process`)  |
+All settings use dot-separated, kebab-case config keys. The same key works in three places:
+
+| Source      | Format                                          | Example              |
+| ----------- | ----------------------------------------------- | -------------------- |
+| config.json | key as-is (file keys only)                      | `"agent": "claude"`  |
+| Env var     | `CH_` prefix, `.` → `__`, `-` → `_`, UPPERCASE | `CH_LOG__LEVEL=debug` |
+| CLI flag    | `--` prefix                                     | `--log.level=debug`  |
+
+Precedence (highest wins): CLI flag > env var > config.json > computed defaults > static defaults.
+
+| Key                    | Default   | Description                                |
+| ---------------------- | --------- | ------------------------------------------ |
+| `agent`                | `null`    | Agent selection: claude\|opencode          |
+| `version.claude`       | `null`    | Claude agent version override              |
+| `version.opencode`     | `null`    | OpenCode agent version override            |
+| `version.code-server`  | `4.107.0` | Code-server version                        |
+| `telemetry.enabled`    | `true`    | Enable telemetry (false in dev/unpackaged) |
+| `telemetry.distinct-id`| —         | Telemetry user ID (auto-generated)         |
+| `log.level`            | `warn`    | Log level: silly\|debug\|info\|warn\|error |
+| `log.console`          | `false`   | Print logs to stdout/stderr                |
+| `log.filter`           | —         | Filter logs by scope (e.g., `git,process`) |
+| `electron.flags`       | —         | Electron switches (e.g., `--disable-gpu`)  |
+
+File keys (persisted to config.json): `agent`, `version.*`, `telemetry.*`.
+Runtime-only keys (env/CLI only): `log.*`, `electron.*`.
+
+Source of truth: `src/services/config/config-values.ts` (the `CONFIG` schema object).
 
 ### Log Files
 
@@ -303,6 +324,6 @@ See docs/API.md for full Plugin API and MCP Server documentation.
 - **Windows**: `%APPDATA%\Codehydra\logs\`
 
 ```bash
-# Debug mode
-CH_LOGLEVEL=debug CH_PRINT_LOGS=1 pnpm dev
+# Debug mode (env var form of log.level=debug, log.console=true)
+CH_LOG__LEVEL=debug CH_LOG__CONSOLE=1 pnpm dev
 ```
