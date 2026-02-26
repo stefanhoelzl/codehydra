@@ -742,6 +742,143 @@ describe("Dispatcher", () => {
       );
     });
 
+    describe("registration logging", () => {
+      it("registerOperation logs at debug level", () => {
+        const hookRegistry = new HookRegistry();
+        const logger = createMockLogger();
+        const dispatcher = new Dispatcher(hookRegistry, logger);
+
+        dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+
+        const registerLog = logger.calls.find(
+          (c) => c.level === "debug" && c.message === "register operation"
+        );
+        expect(registerLog).toBeDefined();
+        expect(registerLog!.context).toEqual({ intent: "test:action" });
+      });
+
+      it("registerModule logs at debug level", () => {
+        const hookRegistry = new HookRegistry();
+        const logger = createMockLogger();
+        const dispatcher = new Dispatcher(hookRegistry, logger);
+
+        const testModule: IntentModule = {
+          name: "my-module",
+          hooks: {
+            "action-op": {
+              run: { handler: async () => {} },
+            },
+          },
+        };
+
+        dispatcher.registerModule(testModule);
+
+        const moduleLog = logger.calls.find(
+          (c) => c.level === "debug" && c.message === "register module"
+        );
+        expect(moduleLog).toBeDefined();
+        expect(moduleLog!.context).toEqual({ module: "my-module" });
+      });
+
+      it("registerModule logs hooks at silly level", () => {
+        const hookRegistry = new HookRegistry();
+        const logger = createMockLogger();
+        const dispatcher = new Dispatcher(hookRegistry, logger);
+
+        const testModule: IntentModule = {
+          name: "hook-mod",
+          hooks: {
+            "action-op": {
+              start: { handler: async () => {} },
+              stop: { handler: async () => {} },
+            },
+          },
+        };
+
+        dispatcher.registerModule(testModule);
+
+        const hookLogs = logger.calls.filter(
+          (c) => c.level === "silly" && c.message === "  hook"
+        );
+        expect(hookLogs).toHaveLength(2);
+        expect(hookLogs[0]!.context).toEqual({
+          module: "hook-mod",
+          op: "action-op",
+          hook: "start",
+        });
+        expect(hookLogs[1]!.context).toEqual({
+          module: "hook-mod",
+          op: "action-op",
+          hook: "stop",
+        });
+      });
+
+      it("registerModule logs events at silly level", () => {
+        const hookRegistry = new HookRegistry();
+        const logger = createMockLogger();
+        const dispatcher = new Dispatcher(hookRegistry, logger);
+
+        const testModule: IntentModule = {
+          name: "event-mod",
+          events: {
+            "test:completed": () => {},
+            "test:failed": () => {},
+          },
+        };
+
+        dispatcher.registerModule(testModule);
+
+        const eventLogs = logger.calls.filter(
+          (c) => c.level === "silly" && c.message === "  event"
+        );
+        expect(eventLogs).toHaveLength(2);
+        expect(eventLogs[0]!.context).toEqual({ module: "event-mod", event: "test:completed" });
+        expect(eventLogs[1]!.context).toEqual({ module: "event-mod", event: "test:failed" });
+      });
+
+      it("registerModule logs interceptors at silly level", () => {
+        const hookRegistry = new HookRegistry();
+        const logger = createMockLogger();
+        const dispatcher = new Dispatcher(hookRegistry, logger);
+
+        const testModule: IntentModule = {
+          name: "interceptor-mod",
+          interceptors: [
+            { id: "guard-a", async before(i: Intent) { return i; } },
+            { id: "guard-b", async before(i: Intent) { return i; } },
+          ],
+        };
+
+        dispatcher.registerModule(testModule);
+
+        const interceptorLogs = logger.calls.filter(
+          (c) => c.level === "silly" && c.message === "  interceptor"
+        );
+        expect(interceptorLogs).toHaveLength(2);
+        expect(interceptorLogs[0]!.context).toEqual({
+          module: "interceptor-mod",
+          interceptor: "guard-a",
+        });
+        expect(interceptorLogs[1]!.context).toEqual({
+          module: "interceptor-mod",
+          interceptor: "guard-b",
+        });
+      });
+
+      it("registerModule with no contributions only logs module name", () => {
+        const hookRegistry = new HookRegistry();
+        const logger = createMockLogger();
+        const dispatcher = new Dispatcher(hookRegistry, logger);
+
+        dispatcher.registerModule({ name: "empty-mod" });
+
+        expect(logger.calls).toHaveLength(1);
+        expect(logger.calls[0]!.level).toBe("debug");
+        expect(logger.calls[0]!.message).toBe("register module");
+        expect(logger.calls[0]!.context).toEqual({ module: "empty-mod" });
+      });
+    });
+
     it("works without logger (backward compatible)", async () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
