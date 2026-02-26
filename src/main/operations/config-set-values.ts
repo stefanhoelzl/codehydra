@@ -21,6 +21,8 @@ import type { ConfigValues } from "../../services/config/config-values";
 export interface ConfigSetValuesPayload {
   /** Values to set. null value = delete key (revert to default). */
   readonly values: Partial<ConfigValues>;
+  /** When false, values are stored as runtime overrides (not written to disk). Default: true. */
+  readonly persist?: boolean;
 }
 
 export interface ConfigSetValuesIntent extends Intent<void> {
@@ -52,6 +54,7 @@ export const CONFIG_SET_VALUES_OPERATION_ID = "config-set-values";
  */
 export interface ConfigSetHookInput extends HookContext {
   readonly values: Partial<ConfigValues>;
+  readonly persist: boolean;
 }
 
 /**
@@ -75,6 +78,7 @@ export class ConfigSetValuesOperation implements Operation<ConfigSetValuesIntent
     const setCtx: ConfigSetHookInput = {
       intent: ctx.intent,
       values: payload.values,
+      persist: payload.persist !== false,
     };
     const { results, errors } = await ctx.hooks.collect<ConfigSetHookResult>("set", setCtx);
     if (errors.length > 0) throw errors[0]!;

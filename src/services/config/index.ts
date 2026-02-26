@@ -3,11 +3,16 @@
  */
 
 export {
+  CONFIG,
   type ConfigValues,
+  type ConfigKey,
   type ConfigAgentType,
+  CONFIG_KEYS,
+  FILE_KEYS,
   DEFAULT_CONFIG_VALUES,
-  FILE_LAYER_KEYS,
-  ENV_LAYER_KEYS,
+  configKeyToEnvVar,
+  envVarToConfigKey,
+  parseConfigValue,
 } from "./config-values";
 
 // Legacy exports — kept for backwards compatibility with tests

@@ -207,7 +207,7 @@ describe("TelemetryModule Integration", () => {
       await dispatcher.dispatch(
         configSetValuesIntent({
           "telemetry.enabled": true,
-          "telemetry.distinctId": "user-abc",
+          "telemetry.distinct-id": "user-abc",
           agent: "opencode",
         })
       );
@@ -232,7 +232,7 @@ describe("TelemetryModule Integration", () => {
 
       // Second event: telemetry values arrive
       await dispatcher.dispatch(
-        configSetValuesIntent({ "telemetry.enabled": true, "telemetry.distinctId": "id-1" })
+        configSetValuesIntent({ "telemetry.enabled": true, "telemetry.distinct-id": "id-1" })
       );
 
       expect(configureCalls).toEqual([{ enabled: true, distinctId: "id-1", agent: "claude" }]);
@@ -374,7 +374,7 @@ describe("TelemetryModule Integration", () => {
       await dispatcher.dispatch(
         configSetValuesIntent({
           "telemetry.enabled": true,
-          "telemetry.distinctId": "existing-id",
+          "telemetry.distinct-id": "existing-id",
         })
       );
 
@@ -406,7 +406,7 @@ describe("TelemetryModule Integration", () => {
         configSetValuesIntent({
           agent: "opencode",
           "telemetry.enabled": true,
-          "telemetry.distinctId": "user-123",
+          "telemetry.distinct-id": "user-123",
         })
       );
 

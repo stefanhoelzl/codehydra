@@ -487,6 +487,9 @@ const configModule = createConfigModule({
   dispatcher,
   logger: loggingService.createLogger("config"),
   isDevelopment: buildInfo.isDevelopment,
+  isPackaged: buildInfo.isPackaged,
+  env: process.env as Record<string, string | undefined>,
+  argv: process.argv,
 });
 
 const electronLifecycleModule = createElectronLifecycleModule({

@@ -1,16 +1,15 @@
 /**
  * ConfigModule - Manages application configuration via the intent dispatcher.
  *
- * Unifies file config (config.json) and env vars into a single event-driven system.
- * Consumers subscribe to `config:updated` events instead of depending on ConfigService.
- *
- * Internal state: file layer (persistent) + env layer (runtime).
- * Effective config = merge where env overrides file.
+ * Single merged config. Precedence is handled by dispatch order:
+ * - before-ready: defaults + computed defaults + env vars + CLI args
+ * - init: file values merged in (only changed values dispatched)
+ * - set: external callers merge values; persist=true does read-modify-write on config.json
  *
  * Hooks:
- * - app:start / "before-ready" — reads env vars (sync process.env), dispatches config:set-values
- * - app:start / "init" — reads config.json from disk, dispatches config:set-values
- * - config-set-values / "set" — merges values, persists if dirty, returns changed values
+ * - app:start / "before-ready" — parses env vars + CLI flags, dispatches full merged config
+ * - app:start / "init" — reads config.json, dispatches only delta from file values
+ * - config-set-values / "set" — merges values into effective, optionally persists to disk
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -19,15 +18,20 @@ import type { Logger } from "../../services/logging/types";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Path } from "../../services/platform/path";
-import type { ConfigValues, ConfigAgentType } from "../../services/config/config-values";
+import type { ConfigValues, ConfigAgentType, ConfigKey } from "../../services/config/config-values";
 import type {
   ConfigSetHookInput,
   ConfigSetHookResult,
   ConfigSetValuesIntent,
 } from "../operations/config-set-values";
 import type { ConfigureResult, InitHookContext } from "../operations/app-start";
-import { DEFAULT_CONFIG_VALUES, FILE_LAYER_KEYS } from "../../services/config/config-values";
-import { parseLogLevel } from "../../services/logging/electron-log-service";
+import {
+  CONFIG_KEYS,
+  FILE_KEYS,
+  DEFAULT_CONFIG_VALUES,
+  envVarToConfigKey,
+  parseConfigValue,
+} from "../../services/config/config-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import {
   CONFIG_SET_VALUES_OPERATION_ID,
@@ -44,11 +48,104 @@ export interface ConfigModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
   readonly isDevelopment: boolean;
+  readonly isPackaged: boolean;
+  readonly env: Record<string, string | undefined>;
+  readonly argv: readonly string[];
 }
 
 // =============================================================================
-// Nested → Flat migration
+// Env Var + CLI Parsing
 // =============================================================================
+
+/**
+ * Scan an env object for CH_* keys (not _CH_*), convert to config keys,
+ * validate against schema, parse values.
+ */
+export function parseEnvVars(env: Record<string, string | undefined>): Partial<ConfigValues> {
+  const result: Record<string, unknown> = {};
+
+  for (const [envKey, rawValue] of Object.entries(env)) {
+    if (!envKey.startsWith("CH_") || envKey.startsWith("_CH_")) continue;
+    if (rawValue === undefined) continue;
+
+    const configKey = envVarToConfigKey(envKey);
+    if (configKey === undefined) continue;
+
+    if (!CONFIG_KEYS.has(configKey as ConfigKey)) {
+      throw new Error(`Unknown config env var: ${envKey} (maps to "${configKey}")`);
+    }
+
+    const parsed = parseConfigValue(configKey as ConfigKey, rawValue);
+    if (parsed === undefined && rawValue !== "") {
+      // Invalid value — skip (don't throw, env vars may come from external sources)
+      continue;
+    }
+    if (parsed !== undefined) {
+      result[configKey] = parsed;
+    }
+  }
+
+  return result as Partial<ConfigValues>;
+}
+
+/**
+ * Parse CLI args in the form --key=value or --key value.
+ * Key is the config key directly (e.g. --log.level=debug).
+ */
+export function parseCliArgs(argv: readonly string[]): Partial<ConfigValues> {
+  const result: Record<string, unknown> = {};
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (!arg.startsWith("--")) continue;
+
+    let key: string;
+    let value: string | undefined;
+
+    const eqIndex = arg.indexOf("=");
+    if (eqIndex !== -1) {
+      key = arg.slice(2, eqIndex);
+      value = arg.slice(eqIndex + 1);
+    } else {
+      key = arg.slice(2);
+      // Peek at next arg for value (if it doesn't start with --)
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("--")) {
+        value = next;
+        i++;
+      } else {
+        // Boolean flag with no value — treat as "true"
+        value = "true";
+      }
+    }
+
+    if (!CONFIG_KEYS.has(key as ConfigKey)) {
+      // Unknown flag — skip silently (may be an Electron/Node flag)
+      continue;
+    }
+
+    const parsed = parseConfigValue(key as ConfigKey, value);
+    if (parsed !== undefined) {
+      result[key] = parsed;
+    }
+  }
+
+  return result as Partial<ConfigValues>;
+}
+
+// =============================================================================
+// Config File Migration
+// =============================================================================
+
+/**
+ * Key rename map: old flat key → new flat key.
+ */
+const KEY_RENAMES: ReadonlyMap<string, ConfigKey> = new Map([
+  ["versions.codeServer", "version.code-server"],
+  ["versions.claude", "version.claude"],
+  ["versions.opencode", "version.opencode"],
+  ["telemetry.distinctId", "telemetry.distinct-id"],
+]);
 
 /**
  * Legacy nested config format (pre-migration).
@@ -67,47 +164,62 @@ interface LegacyConfig {
 }
 
 /**
- * Parse a config.json object (either nested legacy or flat format) into
- * file-layer ConfigValues. Unknown keys are ignored.
+ * Parse a config.json object (legacy nested, old flat, or new flat format)
+ * into file-layer ConfigValues. Unknown keys are ignored.
+ *
+ * Returns { values, migrated } where migrated is true if old key names
+ * were found and renamed.
  */
-function parseConfigFile(data: unknown): Partial<ConfigValues> {
-  if (typeof data !== "object" || data === null) return {};
+function parseConfigFile(data: unknown): {
+  values: Partial<ConfigValues>;
+  migrated: boolean;
+} {
+  if (typeof data !== "object" || data === null) return { values: {}, migrated: false };
 
   const obj = data as Record<string, unknown>;
   const result: Record<string, unknown> = {};
+  let migrated = false;
 
-  // Detect flat format: has dot-separated keys
-  if ("versions.codeServer" in obj || "telemetry.enabled" in obj) {
-    // Flat format — copy known file-layer keys
-    for (const key of FILE_LAYER_KEYS) {
-      if (key in obj) {
-        result[key] = obj[key];
-      }
-    }
-    return validateFileValues(result as Partial<ConfigValues>);
-  }
-
-  // Legacy nested format
+  // Check for legacy nested format (has a "versions" or "telemetry" sub-object)
   const legacy = obj as LegacyConfig;
+  const hasNestedVersions = typeof legacy.versions === "object" && legacy.versions !== null;
+  const hasNestedTelemetry = typeof legacy.telemetry === "object" && legacy.telemetry !== null;
 
-  if (legacy.agent !== undefined) {
-    result.agent = legacy.agent;
-  }
-  if (legacy.versions) {
-    if (legacy.versions.claude !== undefined) result["versions.claude"] = legacy.versions.claude;
-    if (legacy.versions.opencode !== undefined)
-      result["versions.opencode"] = legacy.versions.opencode;
-    if (legacy.versions.codeServer !== undefined)
-      result["versions.codeServer"] = legacy.versions.codeServer;
-  }
-  if (legacy.telemetry) {
-    if (legacy.telemetry.enabled !== undefined)
-      result["telemetry.enabled"] = legacy.telemetry.enabled;
-    if (legacy.telemetry.distinctId !== undefined)
-      result["telemetry.distinctId"] = legacy.telemetry.distinctId;
+  if (hasNestedVersions || hasNestedTelemetry) {
+    migrated = true;
+
+    if (legacy.agent !== undefined) {
+      result.agent = legacy.agent;
+    }
+    if (legacy.versions) {
+      if (legacy.versions.claude !== undefined) result["version.claude"] = legacy.versions.claude;
+      if (legacy.versions.opencode !== undefined)
+        result["version.opencode"] = legacy.versions.opencode;
+      if (legacy.versions.codeServer !== undefined)
+        result["version.code-server"] = legacy.versions.codeServer;
+    }
+    if (legacy.telemetry) {
+      if (legacy.telemetry.enabled !== undefined)
+        result["telemetry.enabled"] = legacy.telemetry.enabled;
+      if (legacy.telemetry.distinctId !== undefined)
+        result["telemetry.distinct-id"] = legacy.telemetry.distinctId;
+    }
+
+    return { values: validateFileValues(result as Partial<ConfigValues>), migrated };
   }
 
-  return validateFileValues(result as Partial<ConfigValues>);
+  // Flat format — apply key renames if needed, then copy known file-layer keys
+  for (const [key, value] of Object.entries(obj)) {
+    const renamedKey = KEY_RENAMES.get(key);
+    if (renamedKey !== undefined) {
+      result[renamedKey] = value;
+      migrated = true;
+    } else if (FILE_KEYS.has(key as ConfigKey)) {
+      result[key] = value;
+    }
+  }
+
+  return { values: validateFileValues(result as Partial<ConfigValues>), migrated };
 }
 
 /**
@@ -122,21 +234,21 @@ function validateFileValues(values: Partial<ConfigValues>): Partial<ConfigValues
     }
   }
 
-  if (values["versions.claude"] !== undefined) {
-    if (values["versions.claude"] === null || typeof values["versions.claude"] === "string") {
-      result["versions.claude"] = values["versions.claude"];
+  if (values["version.claude"] !== undefined) {
+    if (values["version.claude"] === null || typeof values["version.claude"] === "string") {
+      result["version.claude"] = values["version.claude"];
     }
   }
 
-  if (values["versions.opencode"] !== undefined) {
-    if (values["versions.opencode"] === null || typeof values["versions.opencode"] === "string") {
-      result["versions.opencode"] = values["versions.opencode"];
+  if (values["version.opencode"] !== undefined) {
+    if (values["version.opencode"] === null || typeof values["version.opencode"] === "string") {
+      result["version.opencode"] = values["version.opencode"];
     }
   }
 
-  if (values["versions.codeServer"] !== undefined) {
-    if (typeof values["versions.codeServer"] === "string") {
-      result["versions.codeServer"] = values["versions.codeServer"];
+  if (values["version.code-server"] !== undefined) {
+    if (typeof values["version.code-server"] === "string") {
+      result["version.code-server"] = values["version.code-server"];
     }
   }
 
@@ -146,27 +258,13 @@ function validateFileValues(values: Partial<ConfigValues>): Partial<ConfigValues
     }
   }
 
-  if (values["telemetry.distinctId"] !== undefined) {
-    if (typeof values["telemetry.distinctId"] === "string") {
-      result["telemetry.distinctId"] = values["telemetry.distinctId"];
+  if (values["telemetry.distinct-id"] !== undefined) {
+    if (typeof values["telemetry.distinct-id"] === "string") {
+      result["telemetry.distinct-id"] = values["telemetry.distinct-id"];
     }
   }
 
   return result as Partial<ConfigValues>;
-}
-
-/**
- * Serialize file-layer values to flat JSON format for persistence.
- */
-function serializeFileLayer(fileLayer: Partial<ConfigValues>): string {
-  const obj: Record<string, unknown> = {};
-  for (const key of FILE_LAYER_KEYS) {
-    const value = fileLayer[key];
-    if (value !== undefined) {
-      obj[key] = value;
-    }
-  }
-  return JSON.stringify(obj, null, 2);
 }
 
 // =============================================================================
@@ -176,20 +274,20 @@ function serializeFileLayer(fileLayer: Partial<ConfigValues>): string {
 export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
   const { fileSystem, configPath, dispatcher, logger } = deps;
 
-  // Internal state: two layers merged to produce effective config
-  const fileLayer: Partial<ConfigValues> = {};
-  const envLayer: Partial<ConfigValues> = {};
-  let effective: ConfigValues = { ...DEFAULT_CONFIG_VALUES };
-
-  /** Snapshot of file layer at last persist (for dirty check). */
-  let lastPersistedJson = "";
-
-  /**
-   * Merge env layer on top of file layer on top of defaults to produce effective config.
-   */
-  function recomputeEffective(): void {
-    effective = { ...DEFAULT_CONFIG_VALUES, ...fileLayer, ...envLayer } as ConfigValues;
+  // Computed defaults: build-dependent values
+  const _computedDefaults: Record<string, unknown> = {};
+  if (deps.isDevelopment) {
+    _computedDefaults["log.level"] = "debug";
   }
+  if (deps.isDevelopment || !deps.isPackaged) {
+    _computedDefaults["telemetry.enabled"] = false;
+  }
+  const computedDefaults = _computedDefaults as Partial<ConfigValues>;
+
+  // Internal state: single merged config
+  let envValues: Partial<ConfigValues> = {};
+  let cliValues: Partial<ConfigValues> = {};
+  const effective: ConfigValues = { ...DEFAULT_CONFIG_VALUES };
 
   /**
    * Compute which keys changed between old and new values.
@@ -209,58 +307,28 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
     return hasChanges ? (changes as Partial<ConfigValues>) : null;
   }
 
-  /**
-   * Persist file layer to disk if it has changed since last write.
-   */
-  async function persistIfDirty(): Promise<void> {
-    const json = serializeFileLayer(fileLayer);
-    if (json === lastPersistedJson) return;
-
-    await fileSystem.mkdir(configPath.dirname);
-    await fileSystem.writeFile(configPath, json);
-    lastPersistedJson = json;
-    logger.debug("Config persisted", { path: configPath.toString() });
-  }
-
   return {
     name: "config",
     hooks: {
       [APP_START_OPERATION_ID]: {
         "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
-            // Read env vars (synchronous — no I/O)
-            // Use Record to build mutable partial — ConfigValues is readonly
-            const envValues: Record<string, unknown> = {};
+            // Parse env vars and CLI args (no I/O — pure computation)
+            envValues = parseEnvVars(deps.env);
+            cliValues = parseCliArgs(deps.argv);
 
-            const parsedLevel = parseLogLevel(process.env.CH_LOGLEVEL);
-            if (parsedLevel !== undefined) {
-              envValues["log.level"] = parsedLevel;
-            } else if (deps.isDevelopment) {
-              envValues["log.level"] = "debug";
-            }
+            // Full merged config: defaults + computed + env + CLI
+            const merged = {
+              ...DEFAULT_CONFIG_VALUES,
+              ...computedDefaults,
+              ...envValues,
+              ...cliValues,
+            } as Partial<ConfigValues>;
 
-            if (process.env.CH_PRINT_LOGS) {
-              envValues["log.console"] = true;
-            }
-
-            const filterValue = process.env.CH_LOGGER;
-            if (filterValue) {
-              envValues["log.filter"] = filterValue;
-            }
-
-            const flagsValue = process.env.CH_ELECTRON_FLAGS;
-            if (flagsValue) {
-              envValues["electron.flags"] = flagsValue;
-            }
-
-            // Dispatch config:set-values with env values — this triggers the
-            // "set" hook which stores them and emits config:updated
-            if (Object.keys(envValues).length > 0) {
-              await dispatcher.dispatch({
-                type: INTENT_CONFIG_SET_VALUES,
-                payload: { values: envValues as Partial<ConfigValues> },
-              } as ConfigSetValuesIntent);
-            }
+            await dispatcher.dispatch({
+              type: INTENT_CONFIG_SET_VALUES,
+              payload: { values: merged, persist: false },
+            } as ConfigSetValuesIntent);
 
             return {};
           },
@@ -273,10 +341,11 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
 
             // Read config.json from disk
             let fileValues: Partial<ConfigValues> = {};
+            let migrated = false;
             try {
               const content = await fileSystem.readFile(configPath);
               const parsed = JSON.parse(content) as unknown;
-              fileValues = parseConfigFile(parsed);
+              ({ values: fileValues, migrated } = parseConfigFile(parsed));
               logger.debug("Config loaded from disk", { path: configPath.toString() });
             } catch (error) {
               if (error instanceof Error && "fsCode" in error && error.fsCode === "ENOENT") {
@@ -291,27 +360,43 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
               }
             }
 
-            // Initialize file layer and lastPersistedJson for dirty check
-            // We set lastPersistedJson to represent what was on disk so we don't
-            // re-write on the very first dispatch unless values actually change
-            const initialFileLayer: Partial<ConfigValues> = {
+            // Migration: write directly to disk, no dispatch
+            if (migrated) {
+              const json = JSON.stringify(
+                Object.fromEntries(
+                  Object.entries(fileValues).filter(([k]) => FILE_KEYS.has(k as ConfigKey))
+                ),
+                null,
+                2
+              );
+              await fileSystem.mkdir(configPath.dirname);
+              await fileSystem.writeFile(configPath, json);
+              logger.debug("Config migrated", { path: configPath.toString() });
+            }
+
+            // Rebuild full effective with file values included
+            const merged = {
               ...DEFAULT_CONFIG_VALUES,
-            };
-            // Remove env-layer keys from the default snapshot — file layer only has file keys
-            for (const key of Object.keys(initialFileLayer) as (keyof ConfigValues)[]) {
-              if (!FILE_LAYER_KEYS.has(key)) {
-                delete (initialFileLayer as Record<string, unknown>)[key];
+              ...computedDefaults,
+              ...fileValues,
+              ...envValues,
+              ...cliValues,
+            } as ConfigValues;
+
+            // Only dispatch values that actually changed since before-ready
+            const delta: Record<string, unknown> = {};
+            for (const key of Object.keys(merged) as (keyof ConfigValues)[]) {
+              if (merged[key] !== effective[key]) {
+                delta[key] = merged[key];
               }
             }
-            // Merge loaded values on top of file defaults
-            const mergedFileDefaults = { ...initialFileLayer, ...fileValues };
-            lastPersistedJson = serializeFileLayer(mergedFileDefaults);
 
-            // Dispatch config:set-values with file values (includes defaults for missing keys)
-            await dispatcher.dispatch({
-              type: INTENT_CONFIG_SET_VALUES,
-              payload: { values: mergedFileDefaults },
-            } as ConfigSetValuesIntent);
+            if (Object.keys(delta).length > 0) {
+              await dispatcher.dispatch({
+                type: INTENT_CONFIG_SET_VALUES,
+                payload: { values: delta as Partial<ConfigValues>, persist: false },
+              } as ConfigSetValuesIntent);
+            }
 
             return { configuredAgent: effective.agent };
           },
@@ -321,40 +406,38 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
       [CONFIG_SET_VALUES_OPERATION_ID]: {
         set: {
           handler: async (ctx: HookContext): Promise<ConfigSetHookResult> => {
-            const { values } = ctx as ConfigSetHookInput;
+            const { values, persist } = ctx as ConfigSetHookInput;
 
             // Snapshot before merge
             const oldEffective = { ...effective };
 
-            // Merge into appropriate layers, track if file layer was touched
-            let fileLayerTouched = false;
+            // Merge into effective
             for (const [key, value] of Object.entries(values)) {
-              const configKey = key as keyof ConfigValues;
-              if (FILE_LAYER_KEYS.has(configKey)) {
-                fileLayerTouched = true;
-                if (value === null || value === undefined) {
-                  delete (fileLayer as Record<string, unknown>)[configKey];
-                } else {
-                  (fileLayer as Record<string, unknown>)[configKey] = value;
-                }
-              } else {
-                // Env layer key
-                if (value === null || value === undefined) {
-                  delete (envLayer as Record<string, unknown>)[configKey];
-                } else {
-                  (envLayer as Record<string, unknown>)[configKey] = value;
-                }
+              if (value !== undefined) {
+                (effective as Record<string, unknown>)[key] = value;
               }
             }
 
-            recomputeEffective();
+            if (persist) {
+              // Read-modify-write config file
+              let fileContent: Record<string, unknown> = {};
+              try {
+                const raw = await fileSystem.readFile(configPath);
+                fileContent = JSON.parse(raw) as Record<string, unknown>;
+              } catch {
+                /* file doesn't exist yet — start fresh */
+              }
 
-            // Persist file layer only if file-layer keys were modified
-            if (fileLayerTouched) {
-              await persistIfDirty();
+              for (const [key, value] of Object.entries(values)) {
+                if (FILE_KEYS.has(key as ConfigKey)) {
+                  fileContent[key] = value;
+                }
+              }
+              await fileSystem.mkdir(configPath.dirname);
+              await fileSystem.writeFile(configPath, JSON.stringify(fileContent, null, 2));
+              logger.debug("Config persisted", { path: configPath.toString() });
             }
 
-            // Compute changed values
             const changedValues = computeChanges(oldEffective, effective);
             return { changedValues: changedValues ?? {} };
           },
