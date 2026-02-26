@@ -25,7 +25,32 @@ const CODE_SERVER_ARCH = {
 } as const;
 
 /**
- * Get the download URL for code-server.
+ * Get the download URL for a specific code-server version.
+ *
+ * @param version - Code-server version string
+ * @param platform - Operating system platform
+ * @param arch - CPU architecture
+ * @returns Download URL for the code-server release
+ * @throws Error if platform/arch combination is not supported
+ */
+export function getCodeServerUrlForVersion(
+  version: string,
+  platform: SupportedPlatform,
+  arch: SupportedArch
+): string {
+  if (platform === "win32") {
+    if (arch !== "x64") {
+      throw new Error(`Windows code-server builds only support x64, got: ${arch}`);
+    }
+    return `https://github.com/${CODEHYDRA_REPO}/releases/download/code-server-windows-v${version}/code-server-${version}-win32-x64.tar.gz`;
+  }
+  const os = platform === "darwin" ? "macos" : "linux";
+  const archName = CODE_SERVER_ARCH[arch];
+  return `https://github.com/coder/code-server/releases/download/v${version}/code-server-${version}-${os}-${archName}.tar.gz`;
+}
+
+/**
+ * Get the download URL for code-server using the built-in version.
  *
  * @param platform - Operating system platform
  * @param arch - CPU architecture
@@ -33,15 +58,7 @@ const CODE_SERVER_ARCH = {
  * @throws Error if platform/arch combination is not supported
  */
 export function getCodeServerUrl(platform: SupportedPlatform, arch: SupportedArch): string {
-  if (platform === "win32") {
-    if (arch !== "x64") {
-      throw new Error(`Windows code-server builds only support x64, got: ${arch}`);
-    }
-    return `https://github.com/${CODEHYDRA_REPO}/releases/download/code-server-windows-v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-win32-x64.tar.gz`;
-  }
-  const os = platform === "darwin" ? "macos" : "linux";
-  const archName = CODE_SERVER_ARCH[arch];
-  return `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-${os}-${archName}.tar.gz`;
+  return getCodeServerUrlForVersion(CODE_SERVER_VERSION, platform, arch);
 }
 
 /**

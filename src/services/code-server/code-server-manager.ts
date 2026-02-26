@@ -148,7 +148,7 @@ export class CodeServerManager {
   private readonly httpClient: HttpClient;
   private readonly portManager: PortManager;
   private readonly logger: Logger;
-  private readonly binaryDownload: {
+  private binaryDownload: {
     service: BinaryDownloadService;
     request: DownloadRequest;
   } | null;
@@ -302,6 +302,26 @@ export class CodeServerManager {
    */
   setPluginPort(port: number): void {
     (this.config as { pluginPort?: number }).pluginPort = port;
+  }
+
+  /**
+   * Override the code-server version paths.
+   * Must be called before ensureRunning() to take effect.
+   *
+   * @param binaryPath - Absolute path to the code-server binary
+   * @param codeServerDir - Absolute path to the code-server directory
+   * @param downloadRequest - Updated download request for the new version
+   */
+  setCodeServerVersion(
+    binaryPath: string,
+    codeServerDir: string,
+    downloadRequest: DownloadRequest
+  ): void {
+    (this.config as { binaryPath: string }).binaryPath = binaryPath;
+    (this.config as { codeServerDir: string }).codeServerDir = codeServerDir;
+    if (this.binaryDownload) {
+      this.binaryDownload = { ...this.binaryDownload, request: downloadRequest };
+    }
   }
 
   /**

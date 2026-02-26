@@ -152,6 +152,12 @@ const KEY_RENAMES: ReadonlyMap<string, ConfigKey> = new Map([
 ]);
 
 /**
+ * Old stale default for version.code-server. During migration, this value
+ * is converted to null (= use built-in CODE_SERVER_VERSION).
+ */
+const OLD_CODE_SERVER_DEFAULT = "4.107.0";
+
+/**
  * Legacy nested config format (pre-migration).
  */
 interface LegacyConfig {
@@ -200,7 +206,10 @@ function parseConfigFile(data: unknown): {
       if (legacy.versions.opencode !== undefined)
         result["version.opencode"] = legacy.versions.opencode;
       if (legacy.versions.codeServer !== undefined)
-        result["version.code-server"] = legacy.versions.codeServer;
+        result["version.code-server"] =
+          legacy.versions.codeServer === OLD_CODE_SERVER_DEFAULT
+            ? null
+            : legacy.versions.codeServer;
     }
     if (legacy.telemetry) {
       if (legacy.telemetry.enabled !== undefined)
@@ -216,7 +225,8 @@ function parseConfigFile(data: unknown): {
   for (const [key, value] of Object.entries(obj)) {
     const renamedKey = KEY_RENAMES.get(key);
     if (renamedKey !== undefined) {
-      result[renamedKey] = value;
+      result[renamedKey] =
+        renamedKey === "version.code-server" && value === OLD_CODE_SERVER_DEFAULT ? null : value;
       migrated = true;
     } else if (CONFIG_KEYS.has(key as ConfigKey)) {
       result[key] = value;

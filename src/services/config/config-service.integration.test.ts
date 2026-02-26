@@ -69,7 +69,7 @@ describe("ConfigService", () => {
         versions: {
           claude: "1.0.58",
           opencode: null,
-          codeServer: "4.107.0",
+          codeServer: null,
         },
       };
       fileSystem.$.setEntry(
@@ -130,7 +130,7 @@ describe("ConfigService", () => {
         versions: {
           claude: null,
           opencode: "1.0.223",
-          codeServer: "4.107.0",
+          codeServer: null,
         },
       };
 
@@ -203,7 +203,7 @@ describe("ConfigService", () => {
         versions: {
           claude: null,
           opencode: null,
-          codeServer: "4.107.0",
+          codeServer: null,
         },
       };
       fileSystem.$.setEntry(

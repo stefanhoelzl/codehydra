@@ -18,9 +18,14 @@ import type { HookContext } from "../intents/infrastructure/operation";
 import type { CodeServerManager } from "../../services/code-server/code-server-manager";
 import type { ExtensionManager } from "../../services/vscode-setup/extension-manager";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
+import type { PathProvider } from "../../services/platform/path-provider";
 import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
 import type { PluginServer } from "../../services/plugin-server/plugin-server";
 import type { Logger } from "../../services/logging/types";
+import type { DomainEvent } from "../intents/infrastructure/types";
+import type { SupportedPlatform, SupportedArch } from "../../agents/types";
+import type { DownloadRequest } from "../../services/binary-download";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
 import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
@@ -28,10 +33,16 @@ import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
+import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { urlForWorkspace, urlForFolder } from "../../services/code-server/code-server-manager";
+import {
+  CODE_SERVER_VERSION,
+  getCodeServerUrlForVersion,
+  getCodeServerExecutablePath,
+} from "../../services/code-server/setup-info";
 import { Path } from "../../services/platform/path";
 import { SetupError, getErrorMessage } from "../../services/errors";
 
@@ -51,15 +62,22 @@ export interface CodeServerModuleDeps {
     | "port"
     | "getConfig"
     | "setPluginPort"
+    | "setCodeServerVersion"
     | "stop"
   >;
-  readonly extensionManager: Pick<ExtensionManager, "preflight" | "install" | "cleanOutdated">;
+  readonly extensionManager: Pick<
+    ExtensionManager,
+    "preflight" | "install" | "cleanOutdated" | "setCodeServerBinaryPath"
+  >;
   readonly pluginServer: Pick<
     PluginServer,
     "start" | "close" | "setWorkspaceConfig" | "removeWorkspaceConfig"
   > | null;
   readonly fileSystemLayer: Pick<FileSystemLayer, "mkdir">;
   readonly workspaceFileService: IWorkspaceFileService;
+  readonly pathProvider: Pick<PathProvider, "getBinaryDir">;
+  readonly platform: SupportedPlatform;
+  readonly arch: SupportedArch;
   readonly wrapperPath: string;
   readonly logger: Logger;
 }
@@ -343,6 +361,29 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             }
           },
         },
+      },
+    },
+    events: {
+      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
+        const { values } = (event as ConfigUpdatedEvent).payload;
+        if (values["version.code-server"] !== undefined) {
+          const version = (values["version.code-server"] as string | null) ?? CODE_SERVER_VERSION;
+          const codeServerDir = deps.pathProvider.getBinaryDir("code-server", version);
+          const execPath = getCodeServerExecutablePath(deps.platform);
+          const binaryPath = new Path(codeServerDir, execPath).toNative();
+          const downloadRequest: DownloadRequest = {
+            name: "code-server",
+            url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
+            destDir: codeServerDir.toNative(),
+            executablePath: execPath,
+          };
+          codeServerManager.setCodeServerVersion(
+            binaryPath,
+            codeServerDir.toNative(),
+            downloadRequest
+          );
+          extensionManager.setCodeServerBinaryPath(binaryPath);
+        }
       },
     },
   };

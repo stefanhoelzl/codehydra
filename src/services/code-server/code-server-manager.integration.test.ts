@@ -529,4 +529,57 @@ describe("CodeServerManager Integration", () => {
       await expect(manager.downloadBinary()).rejects.toThrow("Failed to download code-server");
     });
   });
+
+  describe("setCodeServerVersion", () => {
+    it("updates binaryPath, codeServerDir, and download request", async () => {
+      const processRunner = createMockProcessRunner({
+        onSpawn: () => ({ pid: 12345, running: true }),
+      });
+      const httpClient = createMockHttpClient({ defaultResponse: { status: 200 } });
+      const portManager = createPortManagerMock([8080]);
+      const binaryService: BinaryDownloadService = {
+        isInstalled: vi.fn().mockResolvedValue(true),
+        download: vi.fn(),
+      };
+      const originalRequest: DownloadRequest = {
+        name: "code-server",
+        url: "https://example.com/old.tar.gz",
+        destDir: "/old/dir",
+        executablePath: "bin/code-server",
+      };
+      const config = {
+        port: CODE_SERVER_PORT,
+        binaryPath: "/old/binary",
+        runtimeDir: "/tmp/runtime",
+        extensionsDir: "/tmp/extensions",
+        userDataDir: "/tmp/user-data",
+        binDir: "/app/bin",
+        codeServerDir: "/old/dir",
+        opencodeDir: "/app/opencode-dir",
+      };
+      const manager = new CodeServerManager(
+        config,
+        processRunner,
+        httpClient,
+        portManager,
+        testLogger,
+        { service: binaryService, request: originalRequest }
+      );
+
+      const newRequest: DownloadRequest = {
+        name: "code-server",
+        url: "https://example.com/new.tar.gz",
+        destDir: "/new/dir",
+        executablePath: "bin/code-server",
+      };
+      manager.setCodeServerVersion("/new/binary", "/new/dir", newRequest);
+
+      expect(manager.getConfig().binaryPath).toBe("/new/binary");
+      expect(manager.getConfig().codeServerDir).toBe("/new/dir");
+
+      // Verify download uses new request by triggering preflight
+      await manager.preflight();
+      expect(binaryService.isInstalled).toHaveBeenCalledWith("/new/dir");
+    });
+  });
 });

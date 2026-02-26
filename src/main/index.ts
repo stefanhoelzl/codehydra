@@ -445,6 +445,9 @@ const codeServerModule = createCodeServerModule({
   pluginServer,
   fileSystemLayer,
   workspaceFileService,
+  pathProvider,
+  platform,
+  arch,
   wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
   logger: apiLogger,
 });
