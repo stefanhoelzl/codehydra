@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
 import { SILENT_LOGGER } from "../logging";
+import { createBehavioralLogger } from "../logging/logging.test-utils";
 import {
   isWindows,
   spawnIgnoringSignals,
@@ -713,6 +714,141 @@ describe("ExecaProcessRunner", () => {
         expect(result.exitCode).toBe(0);
         // 100KB of zeros produces ~137KB of base64 (4/3 ratio)
         expect(result.stdout.length).toBeGreaterThan(130000);
+      },
+      TEST_TIMEOUT
+    );
+  });
+
+  describe("real-time streaming", () => {
+    it(
+      "streams stdout lines to logger",
+      async () => {
+        const logger = createBehavioralLogger();
+        const streamRunner = new ExecaProcessRunner(logger);
+
+        const proc = streamRunner.run(process.execPath, [
+          "-e",
+          'console.log("line1"); console.log("line2"); console.log("line3")',
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        const debugMessages = logger.getMessagesByLevel("debug");
+        const stdoutMessages = debugMessages.filter((m) => m.message.includes("stdout:"));
+        expect(stdoutMessages.some((m) => m.message.includes("line1"))).toBe(true);
+        expect(stdoutMessages.some((m) => m.message.includes("line2"))).toBe(true);
+        expect(stdoutMessages.some((m) => m.message.includes("line3"))).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "streams stderr lines to logger",
+      async () => {
+        const logger = createBehavioralLogger();
+        const streamRunner = new ExecaProcessRunner(logger);
+
+        const proc = streamRunner.run(process.execPath, [
+          "-e",
+          'console.error("err1"); console.error("err2"); console.error("err3")',
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        const debugMessages = logger.getMessagesByLevel("debug");
+        const stderrMessages = debugMessages.filter((m) => m.message.includes("stderr:"));
+        expect(stderrMessages.some((m) => m.message.includes("err1"))).toBe(true);
+        expect(stderrMessages.some((m) => m.message.includes("err2"))).toBe(true);
+        expect(stderrMessages.some((m) => m.message.includes("err3"))).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "does not double-log output when streaming is active",
+      async () => {
+        const logger = createBehavioralLogger();
+        const streamRunner = new ExecaProcessRunner(logger);
+
+        const proc = streamRunner.run(process.execPath, ["-e", 'console.log("unique-output")']);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        const debugMessages = logger.getMessagesByLevel("debug");
+        const matches = debugMessages.filter((m) => m.message.includes("unique-output"));
+        expect(matches).toHaveLength(1);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "flushes partial line without trailing newline",
+      async () => {
+        const logger = createBehavioralLogger();
+        const streamRunner = new ExecaProcessRunner(logger);
+
+        const proc = streamRunner.run(process.execPath, [
+          "-e",
+          'process.stdout.write("no-newline")',
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        const debugMessages = logger.getMessagesByLevel("debug");
+        expect(debugMessages.some((m) => m.message.includes("no-newline"))).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "preserves ProcessResult stdout and stderr",
+      async () => {
+        const logger = createBehavioralLogger();
+        const streamRunner = new ExecaProcessRunner(logger);
+
+        const proc = streamRunner.run(process.execPath, [
+          "-e",
+          'console.log("out-data"); console.error("err-data")',
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        const result = await proc.wait();
+
+        expect(result.stdout).toContain("out-data");
+        expect(result.stderr).toContain("err-data");
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "streams output before wait() is called",
+      async () => {
+        const logger = createBehavioralLogger();
+        const streamRunner = new ExecaProcessRunner(logger);
+
+        const proc = streamRunner.run(process.execPath, [
+          "-e",
+          'console.log("early-output"); setTimeout(() => {}, 30000)',
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        // Wait for output to be streamed (without calling wait())
+        await delay(500);
+
+        const debugMessages = logger.getMessagesByLevel("debug");
+        expect(debugMessages.some((m) => m.message.includes("early-output"))).toBe(true);
+
+        await proc.kill(100, 100);
       },
       TEST_TIMEOUT
     );
