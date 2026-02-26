@@ -12,6 +12,7 @@ export {
   configKeyToEnvVar,
   envVarToConfigKey,
   parseConfigValue,
+  validateConfigValue,
 } from "./config-values";
 
 // Legacy exports — kept for backwards compatibility with tests
