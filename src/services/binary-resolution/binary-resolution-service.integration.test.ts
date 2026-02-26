@@ -274,8 +274,8 @@ describe("BinaryResolutionService", () => {
       // Set up downloaded code-server
       const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
       const baseDir = `${bundlesRoot.toString()}/code-server`;
-      fileSystem.$.setEntry(`${baseDir}/4.107.0`, directory());
-      fileSystem.$.setEntry(`${baseDir}/4.107.0/bin/code-server`, file("binary"));
+      fileSystem.$.setEntry(`${baseDir}/4.109.2`, directory());
+      fileSystem.$.setEntry(`${baseDir}/4.109.2/bin/code-server`, file("binary"));
 
       const service = createService();
       const result = await service.resolve("code-server");

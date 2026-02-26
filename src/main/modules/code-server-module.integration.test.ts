@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
@@ -31,6 +31,17 @@ import type {
   DeleteHookResult,
 } from "../operations/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
+import {
+  CONFIG_SET_VALUES_OPERATION_ID,
+  ConfigSetValuesOperation,
+  INTENT_CONFIG_SET_VALUES,
+} from "../operations/config-set-values";
+import type {
+  ConfigSetValuesIntent,
+  ConfigSetHookInput,
+  ConfigSetHookResult,
+} from "../operations/config-set-values";
+import type { IntentModule } from "../intents/infrastructure/module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import { SetupError } from "../../services/errors";
@@ -184,6 +195,26 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
   }
 }
 
+/**
+ * Minimal config module stub: handles the "set" hook and returns all input values
+ * as changed, so ConfigSetValuesOperation emits config:updated events.
+ */
+function createMockConfigModule(): IntentModule {
+  return {
+    name: "mock-config",
+    hooks: {
+      [CONFIG_SET_VALUES_OPERATION_ID]: {
+        set: {
+          handler: async (ctx: HookContext): Promise<ConfigSetHookResult> => {
+            const { values } = ctx as ConfigSetHookInput;
+            return { changedValues: values };
+          },
+        },
+      },
+    },
+  };
+}
+
 // =============================================================================
 // Mock Factories
 // =============================================================================
@@ -201,6 +232,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
         userDataDir: new Path("/user-data"),
       }),
       setPluginPort: vi.fn(),
+      setCodeServerVersion: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
     },
     extensionManager: {
@@ -212,6 +244,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       }),
       install: vi.fn().mockResolvedValue(undefined),
       cleanOutdated: vi.fn().mockResolvedValue(undefined),
+      setCodeServerBinaryPath: vi.fn(),
     },
     pluginServer: {
       start: vi.fn().mockResolvedValue(3456),
@@ -230,6 +263,13 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       createWorkspaceFile: vi.fn(),
       getWorkspaceFilePath: vi.fn(),
     } as unknown as CodeServerModuleDeps["workspaceFileService"],
+    pathProvider: {
+      getBinaryDir: vi.fn().mockImplementation((_type: string, version: string) => {
+        return new Path(`/bundles/code-server/${version}`);
+      }),
+    },
+    platform: "linux",
+    arch: "x64",
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     ...overrides,
@@ -847,6 +887,77 @@ describe("CodeServerModule", () => {
       expect(deps.pluginServer!.removeWorkspaceConfig).toHaveBeenCalledWith(
         "/test/project/.worktrees/feature-1"
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // config:updated event
+  // ---------------------------------------------------------------------------
+
+  describe("config:updated event", () => {
+    it("propagates version override to managers", async () => {
+      const deps = createMockDeps();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerModule(createMockConfigModule());
+      dispatcher.registerModule(createCodeServerModule(deps));
+      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { "version.code-server": "4.200.0" }, persist: false },
+      } as ConfigSetValuesIntent);
+
+      expect(deps.codeServerManager.setCodeServerVersion).toHaveBeenCalledWith(
+        expect.stringContaining("4.200.0"),
+        expect.stringContaining("4.200.0"),
+        expect.objectContaining({
+          name: "code-server",
+          url: expect.stringContaining("4.200.0"),
+          destDir: expect.stringContaining("4.200.0"),
+        })
+      );
+      expect(deps.extensionManager.setCodeServerBinaryPath).toHaveBeenCalledWith(
+        expect.stringContaining("4.200.0")
+      );
+    });
+
+    it("falls back to built-in version when config value is null", async () => {
+      const deps = createMockDeps();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerModule(createMockConfigModule());
+      dispatcher.registerModule(createCodeServerModule(deps));
+      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { "version.code-server": null }, persist: false },
+      } as ConfigSetValuesIntent);
+
+      // Should use built-in CODE_SERVER_VERSION, not "null"
+      const call = (deps.codeServerManager.setCodeServerVersion as ReturnType<typeof vi.fn>).mock
+        .calls[0];
+      expect(call).toBeDefined();
+      expect(call![0]).not.toContain("null");
+      expect(call![1]).not.toContain("null");
+    });
+
+    it("does not propagate when version.code-server is not in changed values", async () => {
+      const deps = createMockDeps();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerModule(createMockConfigModule());
+      dispatcher.registerModule(createCodeServerModule(deps));
+      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { agent: "claude" }, persist: false },
+      } as ConfigSetValuesIntent);
+
+      expect(deps.codeServerManager.setCodeServerVersion).not.toHaveBeenCalled();
+      expect(deps.extensionManager.setCodeServerBinaryPath).not.toHaveBeenCalled();
     });
   });
 });

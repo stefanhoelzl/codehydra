@@ -74,10 +74,10 @@ export const CONFIG = {
     parse: (s) => (s === "" ? null : s),
     validate: (v) => (v === null || typeof v === "string" ? v : undefined),
   }),
-  "version.code-server": key<string>({
-    default: "4.107.0",
-    parse: (s) => (s.length > 0 ? s : undefined),
-    validate: (v) => (typeof v === "string" ? v : undefined),
+  "version.code-server": key<string | null>({
+    default: null,
+    parse: (s) => (s === "" ? null : s),
+    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
   }),
   "telemetry.enabled": key<boolean>({
     default: true,

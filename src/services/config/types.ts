@@ -21,8 +21,8 @@ export interface VersionConfig {
   readonly claude: string | null;
   /** OpenCode agent version (null = prefer system, download latest if needed) */
   readonly opencode: string | null;
-  /** code-server version (pinned, always download exact version) */
-  readonly codeServer: string;
+  /** code-server version override (null = use built-in version) */
+  readonly codeServer: string | null;
 }
 
 /**
@@ -56,7 +56,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   versions: {
     claude: null,
     opencode: null,
-    codeServer: "4.107.0",
+    codeServer: null,
   },
   telemetry: {
     enabled: true,

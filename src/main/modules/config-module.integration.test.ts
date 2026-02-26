@@ -601,6 +601,105 @@ describe("ConfigModule Integration", () => {
       expect(parsed["versions.codeServer"]).toBeUndefined();
       expect(parsed["telemetry.distinctId"]).toBeUndefined();
     });
+
+    it("converts legacy nested codeServer old default to null", async () => {
+      const legacyConfig = JSON.stringify({
+        agent: "claude",
+        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
+      });
+
+      const { dispatcher } = createTestSetup({ configFileContent: legacyConfig });
+
+      const events: ConfigUpdatedEvent[] = [];
+      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      // "4.107.0" becomes null (= default), so version.code-server should NOT be in changed values
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload.values["version.code-server"]).toBeUndefined();
+    });
+
+    it("preserves legacy nested codeServer explicit override", async () => {
+      const legacyConfig = JSON.stringify({
+        agent: "claude",
+        versions: { claude: null, opencode: null, codeServer: "4.150.0" },
+      });
+
+      const { dispatcher } = createTestSetup({ configFileContent: legacyConfig });
+
+      const events: ConfigUpdatedEvent[] = [];
+      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload.values["version.code-server"]).toBe("4.150.0");
+    });
+
+    it("converts old flat versions.codeServer old default to null", async () => {
+      const oldFlatConfig = JSON.stringify({
+        agent: "claude",
+        "versions.codeServer": "4.107.0",
+      });
+
+      const { dispatcher, fileSystem } = createTestSetup({ configFileContent: oldFlatConfig });
+
+      const events: ConfigUpdatedEvent[] = [];
+      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      // "4.107.0" becomes null (= default), so not in changed values
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload.values["version.code-server"]).toBeUndefined();
+
+      // Migrated file should have null
+      const content = await fileSystem.readFile(CONFIG_PATH);
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      expect(parsed["version.code-server"]).toBeNull();
+    });
+
+    it("preserves old flat versions.codeServer explicit override", async () => {
+      const oldFlatConfig = JSON.stringify({
+        agent: "claude",
+        "versions.codeServer": "4.200.0",
+      });
+
+      const { dispatcher, fileSystem } = createTestSetup({ configFileContent: oldFlatConfig });
+
+      const events: ConfigUpdatedEvent[] = [];
+      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload.values["version.code-server"]).toBe("4.200.0");
+
+      const content = await fileSystem.readFile(CONFIG_PATH);
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      expect(parsed["version.code-server"]).toBe("4.200.0");
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -56,10 +56,18 @@ export class ExtensionManager {
     private readonly pathProvider: PathProvider,
     private readonly fileSystem: FileSystemLayer,
     private readonly processRunner: ProcessRunner,
-    private readonly codeServerBinaryPath: string,
+    private codeServerBinaryPath: string,
     private readonly logger?: Logger
   ) {
     this.assetsDir = pathProvider.vscodeAssetsDir;
+  }
+
+  /**
+   * Override the code-server binary path.
+   * Must be called before install() to take effect.
+   */
+  setCodeServerBinaryPath(path: string): void {
+    this.codeServerBinaryPath = path;
   }
 
   /**

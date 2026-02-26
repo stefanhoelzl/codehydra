@@ -312,4 +312,30 @@ describe("ExtensionManager", () => {
       );
     });
   });
+
+  describe("setCodeServerBinaryPath", () => {
+    it("uses updated binary path for subsequent installs", async () => {
+      const pathProvider = createMockPathProvider();
+      const fs = createMockFileSystem({ installedExtensions: new Map() });
+      const processRunner = createMockProcessRunner();
+
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
+
+      // Override the binary path
+      manager.setCodeServerBinaryPath("/new/code-server/bin/code-server");
+
+      await manager.install(["codehydra.sidekick"]);
+
+      // Verify the new binary path was used for installation
+      expect(processRunner.run).toHaveBeenCalledWith(
+        "/new/code-server/bin/code-server",
+        expect.arrayContaining(["--install-extension"])
+      );
+    });
+  });
 });

@@ -138,8 +138,8 @@ export class ConfigService {
       return null;
     }
 
-    // codeServer must be string
-    if (typeof versions.codeServer !== "string") {
+    // codeServer must be string or null
+    if (versions.codeServer !== null && typeof versions.codeServer !== "string") {
       return null;
     }
 
@@ -167,7 +167,7 @@ export class ConfigService {
       versions: {
         claude: versions.claude as string | null,
         opencode: versions.opencode as string | null,
-        codeServer: versions.codeServer as string,
+        codeServer: versions.codeServer as string | null,
       },
       ...(telemetry !== undefined && { telemetry }),
     };
