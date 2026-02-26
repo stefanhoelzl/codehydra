@@ -56,7 +56,8 @@ describe("ElectronLogService", () => {
 
   const DEFAULT_OPTIONS: LoggingConfigureOptions = {
     logLevel: "debug",
-    enableConsole: false,
+    logFile: true,
+    logConsole: false,
     allowedLoggers: undefined,
   };
 
@@ -104,25 +105,33 @@ describe("ElectronLogService", () => {
   });
 
   describe("console transport configuration", () => {
-    it("disables console when enableConsole is false", async () => {
+    it("disables console when logConsole is false", async () => {
       await createService({
-        configureOptions: { ...DEFAULT_OPTIONS, enableConsole: false },
+        configureOptions: { ...DEFAULT_OPTIONS, logConsole: false },
       });
       expect(mockTransports.console.level).toBe(false);
     });
 
-    it("enables console at log level when enableConsole is true", async () => {
+    it("enables console at log level when logConsole is true", async () => {
       await createService({
-        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "debug", enableConsole: true },
+        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "debug", logConsole: true },
       });
       expect(mockTransports.console.level).toBe("debug");
     });
 
     it("console level matches file level when enabled", async () => {
       await createService({
-        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "warn", enableConsole: true },
+        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "warn", logConsole: true },
       });
       expect(mockTransports.console.level).toBe("warn");
+    });
+
+    it("disables file transport when logFile is false", async () => {
+      await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logFile: false, logConsole: true },
+      });
+      expect(mockTransports.file.level).toBe(false);
+      expect(mockTransports.console.level).toBe("debug");
     });
   });
 
@@ -585,10 +594,20 @@ describe("ElectronLogService", () => {
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
       const service = new ElectronLogService(pathProvider);
 
-      service.configure({ logLevel: "debug", enableConsole: false, allowedLoggers: undefined });
+      service.configure({
+        logLevel: "debug",
+        logFile: true,
+        logConsole: false,
+        allowedLoggers: undefined,
+      });
       expect(mockTransports.file.level).toBe("debug");
 
-      service.configure({ logLevel: "warn", enableConsole: true, allowedLoggers: undefined });
+      service.configure({
+        logLevel: "warn",
+        logFile: true,
+        logConsole: true,
+        allowedLoggers: undefined,
+      });
       expect(mockTransports.file.level).toBe("warn");
       expect(mockTransports.console.level).toBe("warn");
     });
@@ -668,6 +687,112 @@ describe("ElectronLogService", () => {
     it("returns undefined for whitespace-only input", async () => {
       const { parseLoggerFilter } = await import("./electron-log-service");
       expect(parseLoggerFilter("  ,  ,  ")).toBeUndefined();
+    });
+  });
+
+  describe("parseLogLevelSpec", () => {
+    it("validates plain log levels", async () => {
+      const { parseLogLevelSpec } = await import("./electron-log-service");
+      expect(parseLogLevelSpec("debug")).toBe("debug");
+      expect(parseLogLevelSpec("warn")).toBe("warn");
+      expect(parseLogLevelSpec("error")).toBe("error");
+      expect(parseLogLevelSpec("silly")).toBe("silly");
+      expect(parseLogLevelSpec("info")).toBe("info");
+    });
+
+    it("validates combined level:filter format", async () => {
+      const { parseLogLevelSpec } = await import("./electron-log-service");
+      expect(parseLogLevelSpec("debug:git,process")).toBe("debug:git,process");
+      expect(parseLogLevelSpec("warn:network")).toBe("warn:network");
+    });
+
+    it("validates wildcard filter", async () => {
+      const { parseLogLevelSpec } = await import("./electron-log-service");
+      expect(parseLogLevelSpec("debug:*")).toBe("debug:*");
+    });
+
+    it("trims whitespace", async () => {
+      const { parseLogLevelSpec } = await import("./electron-log-service");
+      expect(parseLogLevelSpec("  debug  ")).toBe("debug");
+    });
+
+    it("returns undefined for invalid level", async () => {
+      const { parseLogLevelSpec } = await import("./electron-log-service");
+      expect(parseLogLevelSpec("invalid")).toBeUndefined();
+      expect(parseLogLevelSpec("invalid:git")).toBeUndefined();
+    });
+
+    it("returns undefined for empty or undefined input", async () => {
+      const { parseLogLevelSpec } = await import("./electron-log-service");
+      expect(parseLogLevelSpec(undefined)).toBeUndefined();
+      expect(parseLogLevelSpec("")).toBeUndefined();
+      expect(parseLogLevelSpec("  ")).toBeUndefined();
+    });
+
+    it("returns undefined for level with empty filter", async () => {
+      const { parseLogLevelSpec } = await import("./electron-log-service");
+      expect(parseLogLevelSpec("debug:")).toBeUndefined();
+    });
+  });
+
+  describe("splitLogLevelSpec", () => {
+    it("extracts level from plain spec", async () => {
+      const { splitLogLevelSpec } = await import("./electron-log-service");
+      expect(splitLogLevelSpec("debug")).toEqual({ level: "debug", filter: undefined });
+      expect(splitLogLevelSpec("warn")).toEqual({ level: "warn", filter: undefined });
+    });
+
+    it("extracts level and filter from combined spec", async () => {
+      const { splitLogLevelSpec } = await import("./electron-log-service");
+      const result = splitLogLevelSpec("debug:git,process");
+      expect(result.level).toBe("debug");
+      expect(result.filter).toEqual(new Set(["git", "process"]));
+    });
+
+    it("treats * filter as undefined (all loggers)", async () => {
+      const { splitLogLevelSpec } = await import("./electron-log-service");
+      expect(splitLogLevelSpec("debug:*")).toEqual({ level: "debug", filter: undefined });
+    });
+  });
+
+  describe("parseLogOutput", () => {
+    it("validates file output", async () => {
+      const { parseLogOutput } = await import("./electron-log-service");
+      expect(parseLogOutput("file")).toBe("file");
+    });
+
+    it("validates console output", async () => {
+      const { parseLogOutput } = await import("./electron-log-service");
+      expect(parseLogOutput("console")).toBe("console");
+    });
+
+    it("validates combined output and sorts canonically", async () => {
+      const { parseLogOutput } = await import("./electron-log-service");
+      expect(parseLogOutput("file,console")).toBe("console,file");
+      expect(parseLogOutput("console,file")).toBe("console,file");
+    });
+
+    it("deduplicates tokens", async () => {
+      const { parseLogOutput } = await import("./electron-log-service");
+      expect(parseLogOutput("file,file")).toBe("file");
+    });
+
+    it("handles whitespace and case", async () => {
+      const { parseLogOutput } = await import("./electron-log-service");
+      expect(parseLogOutput("  FILE  ")).toBe("file");
+      expect(parseLogOutput(" Console , File ")).toBe("console,file");
+    });
+
+    it("returns undefined for invalid tokens", async () => {
+      const { parseLogOutput } = await import("./electron-log-service");
+      expect(parseLogOutput("stdout")).toBeUndefined();
+      expect(parseLogOutput("file,stdout")).toBeUndefined();
+    });
+
+    it("returns undefined for empty or undefined input", async () => {
+      const { parseLogOutput } = await import("./electron-log-service");
+      expect(parseLogOutput(undefined)).toBeUndefined();
+      expect(parseLogOutput("")).toBeUndefined();
     });
   });
 });

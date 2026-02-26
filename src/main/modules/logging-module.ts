@@ -7,7 +7,7 @@
  *
  * Events:
  * - config:updated: logs all changed values, reconfigures logging when
- *   log.level, log.console, or log.filter values change
+ *   log.level or log.output values change
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -17,7 +17,7 @@ import type { Logger } from "../../services/logging/types";
 import type { BuildInfo } from "../../services/platform/build-info";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
-import { parseLoggerFilter } from "../../services/logging/electron-log-service";
+import { splitLogLevelSpec } from "../../services/logging/electron-log-service";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 
@@ -78,18 +78,15 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
         deps.logger.info("Config updated", context);
 
         // Reconfigure logging when any log-related value changes
-        if (
-          values["log.level"] !== undefined ||
-          values["log.console"] !== undefined ||
-          values["log.filter"] !== undefined
-        ) {
+        if (values["log.level"] !== undefined || values["log.output"] !== undefined) {
+          const levelSpec = (values["log.level"] as string | undefined) ?? "warn";
+          const { level, filter } = splitLogLevelSpec(levelSpec);
+          const output = (values["log.output"] as string | undefined) ?? "file";
           deps.loggingService.configure({
-            logLevel: values["log.level"] ?? "warn",
-            enableConsole: values["log.console"] ?? false,
-            allowedLoggers:
-              values["log.filter"] !== undefined
-                ? parseLoggerFilter(values["log.filter"])
-                : undefined,
+            logLevel: level,
+            logFile: output.includes("file"),
+            logConsole: output.includes("console"),
+            allowedLoggers: filter,
           });
         }
       },

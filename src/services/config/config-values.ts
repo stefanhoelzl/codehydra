@@ -10,8 +10,7 @@
  *   Env var:                CH_ prefix, . → __, - → _, UPPER  (e.g. CH_VERSION__CODE_SERVER)
  */
 
-import type { LogLevel } from "../logging/types";
-import { parseLogLevel } from "../logging/electron-log-service";
+import { parseLogLevelSpec, parseLogOutput } from "../logging/electron-log-service";
 
 // =============================================================================
 // Schema Helpers
@@ -71,18 +70,13 @@ export const CONFIG = {
     default: undefined,
     parse: (s) => (s === "" ? undefined : s),
   }),
-  "log.level": key<LogLevel>({
+  "log.level": key<string>({
     default: "warn",
-    parse: parseLogLevel,
+    parse: parseLogLevelSpec,
   }),
-  "log.console": key<boolean>({
-    default: false,
-    parse: (s) =>
-      s === "true" || s === "1" ? true : s === "false" || s === "0" ? false : undefined,
-  }),
-  "log.filter": key<string | undefined>({
-    default: undefined,
-    parse: (s) => (s === "" ? undefined : s),
+  "log.output": key<string>({
+    default: "file",
+    parse: parseLogOutput,
   }),
   "electron.flags": key<string | undefined>({
     default: undefined,

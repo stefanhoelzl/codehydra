@@ -20,6 +20,7 @@ import type {
   LoggingService,
   LogContext,
   LogLevel,
+  LogOutput,
 } from "./types";
 import { LogLevel as LogLevelValues } from "./types";
 
@@ -59,6 +60,79 @@ export function parseLogLevel(envValue: string | undefined): LogLevel | undefine
     return normalized as LogLevel;
   }
   return undefined;
+}
+
+/**
+ * Validate a combined log level spec string: `<level>` or `<level>:<filter>`.
+ *
+ * The level part must be a valid log level. The filter part (after `:`) is
+ * freeform comma-separated logger names or `*` for all loggers.
+ *
+ * @param raw - Raw string value (e.g., "debug", "debug:git,process", "debug:*")
+ * @returns The validated spec string (trimmed), or undefined if invalid
+ */
+export function parseLogLevelSpec(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+
+  const colonIndex = trimmed.indexOf(":");
+  const levelPart = colonIndex === -1 ? trimmed : trimmed.slice(0, colonIndex);
+
+  if (parseLogLevel(levelPart) === undefined) return undefined;
+
+  if (colonIndex !== -1) {
+    const filterPart = trimmed.slice(colonIndex + 1);
+    if (filterPart.length === 0) return undefined;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Split a validated log level spec into its level and filter components.
+ *
+ * @param spec - A validated spec string from `parseLogLevelSpec`
+ * @returns Parsed level and optional filter set (undefined means all loggers)
+ */
+export function splitLogLevelSpec(spec: string): {
+  level: LogLevel;
+  filter: Set<LoggerName> | undefined;
+} {
+  const colonIndex = spec.indexOf(":");
+  const levelPart = colonIndex === -1 ? spec : spec.slice(0, colonIndex);
+  const level = parseLogLevel(levelPart)!;
+
+  if (colonIndex === -1) return { level, filter: undefined };
+
+  const filterPart = spec.slice(colonIndex + 1);
+  if (filterPart === "*") return { level, filter: undefined };
+
+  return { level, filter: parseLoggerFilter(filterPart) };
+}
+
+/**
+ * Validate and normalize a log output destination string.
+ *
+ * @param raw - Raw string value (e.g., "file", "console", "file,console")
+ * @returns Normalized output string, or undefined if invalid
+ */
+export function parseLogOutput(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const tokens = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  if (tokens.length === 0) return undefined;
+
+  const valid: LogOutput[] = ["file", "console"];
+  for (const token of tokens) {
+    if (!valid.includes(token as LogOutput)) return undefined;
+  }
+
+  // Deduplicate and sort for canonical form
+  const unique = [...new Set(tokens)].sort() as LogOutput[];
+  return unique.join(",");
 }
 
 /**
@@ -261,7 +335,7 @@ class QueuedLogger implements Logger {
  * @example
  * ```typescript
  * const loggingService = new ElectronLogService(pathProvider);
- * loggingService.configure({ logLevel: 'debug', enableConsole: false, allowedLoggers: undefined });
+ * loggingService.configure({ logLevel: 'debug', logFile: true, logConsole: false, allowedLoggers: undefined });
  * loggingService.initialize();
  *
  * const logger = loggingService.createLogger('git');
@@ -296,8 +370,8 @@ export class ElectronLogService implements LoggingService {
     this.allowedLoggers = options.allowedLoggers;
 
     // Enable transports with the configured level
-    log.transports.file.level = this.logLevel;
-    log.transports.console.level = options.enableConsole ? this.logLevel : false;
+    log.transports.file.level = options.logFile ? this.logLevel : false;
+    log.transports.console.level = options.logConsole ? this.logLevel : false;
 
     // Activate all existing queued loggers
     for (const [name, queued] of this.loggers) {
