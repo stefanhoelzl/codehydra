@@ -3,13 +3,14 @@
  *
  * Runs two hook points in sequence:
  * 1. "stop" - All modules dispose their resources (independent, best-effort).
- *    Each module's stop handler wraps its own logic in try/catch,
+ *    collect() catches errors from each handler and continues to the next,
  *    ensuring all modules get a chance to dispose even if earlier ones fail.
+ *    The dispatcher logs hook errors centrally.
  * 2. "quit" - Terminates the process (runs after all cleanup).
  *
  * The operation ignores both results and errors because shutdown is
- * best-effort -- individual module errors are logged but do not
- * prevent other modules from disposing.
+ * best-effort -- individual module errors are logged by the dispatcher
+ * and do not prevent other modules from disposing.
  *
  * No provider dependencies - hook handlers do the actual work.
  */
@@ -52,14 +53,14 @@ export class AppShutdownOperation implements Operation<AppShutdownIntent, void> 
     };
 
     // Hook: "stop" -- All modules dispose (independent, best-effort)
-    // Each module wraps its logic in try/catch internally.
-    // With collect(), all handlers always run regardless of errors.
+    // collect() catches errors from each handler and continues to the next.
+    // The dispatcher logs hook errors centrally.
     await ctx.hooks.collect<void>("stop", hookCtx);
 
     // Hook: "quit" -- Terminate the process (runs after all cleanup)
     await ctx.hooks.collect<void>("quit", hookCtx);
 
     // Intentionally ignore both results and errors -- shutdown is best-effort.
-    // Individual module errors are logged by each module's handler.
+    // Individual module errors are logged by the dispatcher.
   }
 }

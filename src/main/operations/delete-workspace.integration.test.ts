@@ -376,6 +376,7 @@ function createTestHarness(options?: {
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();
   const idempotencyModule: IntentModule = {
+    name: "test",
     interceptors: [
       {
         id: "idempotency",
@@ -414,6 +415,7 @@ function createTestHarness(options?: {
   const workspaceLockHandler = options?.workspaceLockHandler ?? undefined;
 
   const resolveWorkspaceModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -431,6 +433,7 @@ function createTestHarness(options?: {
   };
 
   const resolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -448,6 +451,7 @@ function createTestHarness(options?: {
   };
 
   const deleteViewModule: IntentModule = {
+    name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
@@ -479,6 +483,7 @@ function createTestHarness(options?: {
   };
 
   const deleteAgentModule: IntentModule = {
+    name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
@@ -532,6 +537,7 @@ function createTestHarness(options?: {
   };
 
   const deleteWindowsLockModule: IntentModule = {
+    name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
@@ -587,6 +593,7 @@ function createTestHarness(options?: {
   };
 
   const deleteWorktreeModule: IntentModule = {
+    name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
@@ -618,6 +625,7 @@ function createTestHarness(options?: {
   };
 
   const deleteCodeServerModule: IntentModule = {
+    name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
@@ -647,6 +655,7 @@ function createTestHarness(options?: {
   };
 
   const deleteStateModule: IntentModule = {
+    name: "test",
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
@@ -656,6 +665,7 @@ function createTestHarness(options?: {
   };
 
   const deleteIpcBridge: IntentModule = {
+    name: "test",
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
@@ -670,6 +680,7 @@ function createTestHarness(options?: {
 
   // Switch modules: activate (resolve is handled by shared resolve operations)
   const switchViewModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
@@ -699,6 +710,7 @@ function createTestHarness(options?: {
 
   // find-candidates module: returns all workspaces from appState for auto-select
   const switchFindCandidatesModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "find-candidates": {
@@ -726,6 +738,7 @@ function createTestHarness(options?: {
   };
 
   const progressCaptureModule: IntentModule = {
+    name: "test",
     events: {
       [EVENT_WORKSPACE_DELETION_PROGRESS]: (event: DomainEvent) => {
         progressCaptures.push((event as WorkspaceDeletionProgressEvent).payload);
@@ -735,6 +748,7 @@ function createTestHarness(options?: {
 
   // select-next module: uses selectNextWorkspace with agent status scoring
   const switchSelectNextModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "select-next": {

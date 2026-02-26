@@ -36,9 +36,7 @@ import {
 } from "../operations/config-set-values";
 import { createTelemetryModule } from "./telemetry-module";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
-import { SILENT_LOGGER } from "../../services/logging";
 import type { TelemetryService, TelemetryConfigureOptions } from "../../services/telemetry/types";
-import type { Logger } from "../../services/logging/types";
 
 // =============================================================================
 // Minimal Start Operation
@@ -141,20 +139,6 @@ function createTrackingTelemetryService(): {
   };
 }
 
-function createTrackingLogger(): { logger: Logger; errors: unknown[] } {
-  const errors: unknown[] = [];
-  const logger: Logger = {
-    silly() {},
-    debug() {},
-    info() {},
-    warn() {},
-    error(message: string, _context?: unknown, error?: Error) {
-      errors.push({ message, error });
-    },
-  };
-  return { logger, errors };
-}
-
 interface TestSetup {
   dispatcher: Dispatcher;
   captures: CaptureCall[];
@@ -163,10 +147,7 @@ interface TestSetup {
   shutdownCalled: boolean;
 }
 
-function createTestSetup(overrides?: {
-  telemetryService?: TelemetryService | null;
-  logger?: Logger;
-}): TestSetup {
+function createTestSetup(overrides?: { telemetryService?: TelemetryService | null }): TestSetup {
   const tracking = createTrackingTelemetryService();
   const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
@@ -180,7 +161,6 @@ function createTestSetup(overrides?: {
     platformInfo,
     buildInfo,
     dispatcher,
-    logger: overrides?.logger ?? SILENT_LOGGER,
   });
 
   dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
@@ -476,8 +456,7 @@ describe("TelemetryModule Integration", () => {
       await expect(dispatcher.dispatch(shutdownIntent())).resolves.toBeUndefined();
     });
 
-    it("shutdown() throws -- error logged, no re-throw", async () => {
-      const shutdownError = new Error("PostHog flush failed");
+    it("shutdown() throws -- collect catches error, dispatch still resolves", async () => {
       const failingService: TelemetryService = {
         configure() {},
         generateDistinctId() {
@@ -486,22 +465,15 @@ describe("TelemetryModule Integration", () => {
         capture() {},
         captureError() {},
         async shutdown() {
-          throw shutdownError;
+          throw new Error("PostHog flush failed");
         },
       };
-      const { logger, errors } = createTrackingLogger();
       const { dispatcher } = createTestSetup({
         telemetryService: failingService,
-        logger,
       });
 
+      // Handler throws, but collect() catches it and shutdown is best-effort
       await expect(dispatcher.dispatch(shutdownIntent())).resolves.toBeUndefined();
-
-      expect(errors).toHaveLength(1);
-      expect(errors[0]).toEqual({
-        message: "Telemetry lifecycle shutdown failed (non-fatal)",
-        error: shutdownError,
-      });
     });
   });
 });

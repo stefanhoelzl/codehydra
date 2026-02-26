@@ -90,6 +90,7 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
   }
 
   return {
+    name: "idempotency",
     interceptors: [
       {
         id: "idempotency",

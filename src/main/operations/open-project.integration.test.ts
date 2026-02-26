@@ -351,6 +351,7 @@ function createTestHarness(options?: {
 
   // LocalResolveModule: validates path for local projects (no git URL)
   const localResolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -373,6 +374,7 @@ function createTestHarness(options?: {
 
   // RemoteResolveModule: handles git URL cloning
   const remoteResolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -413,6 +415,7 @@ function createTestHarness(options?: {
   const registeredPaths = new Set<string>();
 
   const localRegisterModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         register: {
@@ -443,6 +446,7 @@ function createTestHarness(options?: {
 
   // AppStateRegisterModule: registers project in state, caches defaultBaseBranch
   const appStateRegisterModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         register: {
@@ -479,6 +483,7 @@ function createTestHarness(options?: {
   // ---------------------------------------------------------------------------
 
   const discoverModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         discover: {
@@ -496,6 +501,7 @@ function createTestHarness(options?: {
 
   // WorktreeModule for workspace:open (handles existingWorkspace)
   const worktreeModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
@@ -526,6 +532,7 @@ function createTestHarness(options?: {
 
   // CodeServerModule for workspace:open
   const codeServerModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
@@ -540,6 +547,7 @@ function createTestHarness(options?: {
 
   // StateModule for workspace:created
   const stateModule: IntentModule = {
+    name: "test",
     events: {
       [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceCreatedEvent).payload;
@@ -555,6 +563,7 @@ function createTestHarness(options?: {
 
   // ViewModule for workspace:created
   const viewModule: IntentModule = {
+    name: "test",
     events: {
       [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceCreatedEvent).payload;
@@ -571,6 +580,7 @@ function createTestHarness(options?: {
   // ProjectViewModule for project:opened (preloads non-first workspaces)
   // Note: first workspace activation is now done by OpenProjectOperation dispatching workspace:switch
   const projectViewModule: IntentModule = {
+    name: "test",
     events: {
       [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
         const payload = (event as ProjectOpenedEvent).payload;
@@ -584,6 +594,7 @@ function createTestHarness(options?: {
 
   // Resolve modules: workspace:resolve and project:resolve (shared across all operations)
   const switchResolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -607,6 +618,7 @@ function createTestHarness(options?: {
     },
   };
   const switchResolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -622,6 +634,7 @@ function createTestHarness(options?: {
     },
   };
   const switchViewModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
@@ -786,6 +799,7 @@ describe("OpenProjectOperation", () => {
 
     // Resolve module that always returns alreadyOpen: true
     const alreadyOpenResolveModule: IntentModule = {
+      name: "test",
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           resolve: {
@@ -802,6 +816,7 @@ describe("OpenProjectOperation", () => {
 
     // Minimal register module
     const registerModule: IntentModule = {
+      name: "test",
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           register: {
@@ -817,6 +832,7 @@ describe("OpenProjectOperation", () => {
 
     // Discover module returning workspaces
     const discoverModule: IntentModule = {
+      name: "test",
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           discover: {
@@ -949,6 +965,7 @@ describe("OpenProjectOperation", () => {
 
     // Add a select-folder module that returns the project path
     const selectFolderModule: IntentModule = {
+      name: "test",
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           "select-folder": {
@@ -982,6 +999,7 @@ describe("OpenProjectOperation", () => {
 
     // Select-folder module that returns null (user canceled)
     const selectFolderModule: IntentModule = {
+      name: "test",
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           "select-folder": {
@@ -1009,6 +1027,7 @@ describe("OpenProjectOperation", () => {
 
     // Add a select-folder module with spy
     const selectFolderModule: IntentModule = {
+      name: "test",
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           "select-folder": {

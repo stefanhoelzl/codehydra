@@ -144,6 +144,7 @@ export function createGitWorktreeWorkspaceModule(
   // ---------------------------------------------------------------------------
 
   return {
+    name: "git-worktree",
     hooks: {
       // resolve-workspace -> resolve (single registration replaces 8 per-operation hooks)
       [RESOLVE_WORKSPACE_OPERATION_ID]: {

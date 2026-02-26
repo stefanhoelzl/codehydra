@@ -182,6 +182,7 @@ export function createMigrationModule(deps: MigrationModuleDeps): IntentModule {
   const { projectsDir, remotesDir, fs } = deps;
 
   return {
+    name: "migration",
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {

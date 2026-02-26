@@ -46,6 +46,7 @@ export function createWindowTitleModule(
   }
 
   return {
+    name: "window-title",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {

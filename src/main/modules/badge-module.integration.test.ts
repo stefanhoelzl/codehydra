@@ -96,8 +96,8 @@ class MinimalStopOperation implements Operation<AppShutdownIntent, void> {
   readonly id = APP_SHUTDOWN_OPERATION_ID;
 
   async execute(ctx: OperationContext<AppShutdownIntent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect("stop", { intent: ctx.intent });
-    if (errors.length > 0) throw errors[0]!;
+    // Matches real AppShutdownOperation: collect() catches errors, does not rethrow
+    await ctx.hooks.collect("stop", { intent: ctx.intent });
   }
 }
 
@@ -118,6 +118,7 @@ interface TestSetup {
  */
 function createMockResolveModule(): IntentModule {
   return {
+    name: "test-resolve",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -163,7 +164,7 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  const badgeModule = createBadgeModule(badgeManager, SILENT_LOGGER);
+  const badgeModule = createBadgeModule(badgeManager);
   const resolveModule = createMockResolveModule();
 
   dispatcher.registerModule(badgeModule);
@@ -343,17 +344,18 @@ describe("BadgeModule Integration", () => {
       expect(appLayer).toHaveDockBadge("");
     });
 
-    it("does not propagate errors from dispose (non-fatal)", async () => {
+    it("collect catches dispose error, dispatch still resolves", async () => {
       const { dispatcher, badgeManager } = createTestSetup();
 
-      // Make dispose() throw
+      // Make dispose() throw - handler throws directly (no internal try/catch),
+      // but AppShutdownOperation uses collect() which catches errors
       vi.spyOn(badgeManager, "dispose").mockImplementation(() => {
         throw new Error("dispose failed");
       });
 
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new MinimalStopOperation());
 
-      // Should not throw - shutdown errors are non-fatal
+      // Should not throw - collect() catches the error
       await expect(
         dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent)
       ).resolves.not.toThrow();

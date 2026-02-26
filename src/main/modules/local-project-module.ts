@@ -291,6 +291,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
   const projects = new Map<string, LocalProject>();
 
   return {
+    name: "local-project",
     hooks: {
       // resolve-project -> resolve (single registration replaces 5 per-operation hooks)
       [RESOLVE_PROJECT_OPERATION_ID]: {

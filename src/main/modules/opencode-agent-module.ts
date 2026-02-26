@@ -225,6 +225,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
   // =========================================================================
 
   return {
+    name: "opencode-agent",
     hooks: {
       [APP_START_OPERATION_ID]: {
         "before-ready": {
@@ -283,32 +284,24 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              if (serverStartedCleanupFn) {
-                serverStartedCleanupFn();
-                serverStartedCleanupFn = null;
-              }
-              if (serverStoppedCleanupFn) {
-                serverStoppedCleanupFn();
-                serverStoppedCleanupFn = null;
-              }
+            if (serverStartedCleanupFn) {
+              serverStartedCleanupFn();
+              serverStartedCleanupFn = null;
+            }
+            if (serverStoppedCleanupFn) {
+              serverStoppedCleanupFn();
+              serverStoppedCleanupFn = null;
+            }
 
-              await serverManager.dispose();
+            await serverManager.dispose();
 
-              if (statusUnsubscribeFn) {
-                statusUnsubscribeFn();
-                statusUnsubscribeFn = null;
-              }
+            if (statusUnsubscribeFn) {
+              statusUnsubscribeFn();
+              statusUnsubscribeFn = null;
+            }
 
-              if (active) {
-                deps.agentStatusManager.dispose();
-              }
-            } catch (error) {
-              logger.error(
-                "OpenCode agent lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
+            if (active) {
+              deps.agentStatusManager.dispose();
             }
           },
         },

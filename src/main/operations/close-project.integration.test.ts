@@ -237,6 +237,7 @@ function createTestHarness(options?: {
 
   // Resolve modules (shared workspace:resolve and project:resolve operations)
   const deleteResolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -259,6 +260,7 @@ function createTestHarness(options?: {
   };
 
   const deleteResolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -274,6 +276,7 @@ function createTestHarness(options?: {
 
   // Delete-workspace hook modules (simplified for close-project testing)
   const deleteViewModule: IntentModule = {
+    name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
@@ -294,6 +297,7 @@ function createTestHarness(options?: {
   };
 
   const deleteAgentModule: IntentModule = {
+    name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
@@ -311,6 +315,7 @@ function createTestHarness(options?: {
   };
 
   const deleteStateModule: IntentModule = {
+    name: "test",
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
@@ -321,6 +326,7 @@ function createTestHarness(options?: {
 
   // ProjectResolveModule: "resolve" hook -- resolves projectPath to config/workspaces
   const projectResolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -351,6 +357,7 @@ function createTestHarness(options?: {
   // ProjectCloseViewModule: "close" hook -- returns otherProjectsExist, clears active workspace if no other projects
   // Note: workspace:switched(null) is emitted by CloseProjectOperation, not here
   const projectCloseViewModule: IntentModule = {
+    name: "test",
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
@@ -370,6 +377,7 @@ function createTestHarness(options?: {
 
   // ProjectLocalCloseModule: "close" hook -- deregister + remove store for local projects
   const projectLocalCloseModule: IntentModule = {
+    name: "test",
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
@@ -399,6 +407,7 @@ function createTestHarness(options?: {
 
   // ProjectRemoteCloseModule: "close" hook -- deregister + remove store for remote projects, optionally delete dir
   const projectRemoteCloseModule: IntentModule = {
+    name: "test",
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
@@ -434,6 +443,7 @@ function createTestHarness(options?: {
 
   // ProjectWorktreeCloseModule: "close" hook -- unregister project from global git provider
   const projectWorktreeCloseModule: IntentModule = {
+    name: "test",
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {

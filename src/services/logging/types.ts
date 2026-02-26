@@ -55,7 +55,8 @@ export type LoggerName =
   | "telemetry" // TelemetryService - PostHog analytics
   | "updater" // AutoUpdater - auto-update service
   | "agent" // AgentServerManager / AgentStatusManager - agent lifecycle
-  | "shortcut"; // ShortcutController - keyboard shortcut detection
+  | "shortcut" // ShortcutController - keyboard shortcut detection
+  | "dispatcher"; // Dispatcher - intent dispatch pipeline
 
 /**
  * Context data for log entries.

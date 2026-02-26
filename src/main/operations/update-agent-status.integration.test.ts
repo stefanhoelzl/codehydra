@@ -49,6 +49,7 @@ const TEST_WORKSPACE_NAME = "test-workspace" as WorkspaceName;
  */
 function createMockResolveModules(): IntentModule[] {
   const resolveWorkspaceModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -64,6 +65,7 @@ function createMockResolveModules(): IntentModule[] {
   };
 
   const resolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -187,6 +189,7 @@ describe("UpdateAgentStatus Operation", () => {
       // Register resolve modules that return empty — resolve operations will throw,
       // and update-agent-status catches the error and silently returns.
       const emptyResolveModule: IntentModule = {
+        name: "test",
         hooks: {
           [RESOLVE_WORKSPACE_OPERATION_ID]: {
             resolve: {

@@ -223,6 +223,7 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
   }
 
   return {
+    name: "config",
     hooks: {
       [APP_START_OPERATION_ID]: {
         "before-ready": {

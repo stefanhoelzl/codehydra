@@ -102,6 +102,7 @@ function createTestSetup(opts: {
 
   // resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -119,6 +120,7 @@ function createTestSetup(opts: {
 
   // get module: returns isDirty from mock provider (reads workspacePath from enriched context)
   const getStatusModule: IntentModule = {
+    name: "test",
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
@@ -135,6 +137,7 @@ function createTestSetup(opts: {
 
   // agent status module: returns agentStatus from mock manager (reads workspacePath from enriched context)
   const agentStatusModule: IntentModule = {
+    name: "test",
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {

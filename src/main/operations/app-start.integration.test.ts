@@ -88,6 +88,7 @@ function createTestState(): TestState {
 
 function createCodeServerModule(state: TestState, options?: { fail?: boolean }): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
@@ -107,6 +108,7 @@ function createCodeServerModule(state: TestState, options?: { fail?: boolean }):
 
 function createMcpModule(state: TestState, options?: { fail?: boolean }): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
@@ -129,6 +131,7 @@ function createDataModule(
   options?: { fail?: boolean; projectPaths?: readonly string[] }
 ): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
@@ -152,6 +155,7 @@ function createDataModule(
 
 function createViewModule(state: TestState): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
@@ -173,6 +177,7 @@ function createViewModule(state: TestState): IntentModule {
  */
 function createMountModule(state: TestState): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
         activate: {
@@ -197,6 +202,7 @@ function createCodeServerModuleWithGracefulPluginDegradation(
   pluginFails: boolean
 ): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
@@ -259,6 +265,7 @@ function createProjectOpenStub(
 function defaultCheckModules(): IntentModule[] {
   return [
     {
+      name: "test",
       hooks: {
         [APP_START_OPERATION_ID]: {
           init: {
@@ -524,6 +531,7 @@ describe("AppStart Operation", () => {
 
     function createConfigCheckModule(agent: ConfigAgentType | null): IntentModule {
       return {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
@@ -538,6 +546,7 @@ describe("AppStart Operation", () => {
 
     function createBinaryCheckModule(missingBinaries: BinaryType[]): IntentModule {
       return {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
@@ -555,6 +564,7 @@ describe("AppStart Operation", () => {
       outdated?: string[];
     }): IntentModule {
       return {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
@@ -690,6 +700,7 @@ describe("AppStart Operation", () => {
     it("init error from config module aborts startup (#12)", async () => {
       const state = createTestState();
       const failingInitConfigModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
@@ -714,6 +725,7 @@ describe("AppStart Operation", () => {
     it("check-deps error aborts startup (#13)", async () => {
       const state = createTestState();
       const failingDepsModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
@@ -742,6 +754,7 @@ describe("AppStart Operation", () => {
       let receivedAgent: ConfigAgentType | null | undefined;
 
       const agentReadingDepsModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
@@ -783,6 +796,7 @@ describe("AppStart Operation", () => {
       let receivedMcpPort: number | null | undefined;
 
       const mcpPortReaderModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             activate: {
@@ -811,6 +825,7 @@ describe("AppStart Operation", () => {
       let receivedMcpPort: number | null | undefined;
 
       const mcpPortReaderModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             activate: {
@@ -835,6 +850,7 @@ describe("AppStart Operation", () => {
       let receivedCodeServerPort: number | null | undefined;
 
       const portReaderModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             activate: {
@@ -863,6 +879,7 @@ describe("AppStart Operation", () => {
       let receivedCodeServerPort: number | null | undefined;
 
       const portReaderModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             activate: {
@@ -948,6 +965,7 @@ describe("AppStart Operation", () => {
   describe("pre-ready hooks (before-ready, await-ready, init)", () => {
     function createConfigureModule(scripts: string[]): IntentModule {
       return {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "before-ready": {
@@ -962,6 +980,7 @@ describe("AppStart Operation", () => {
 
     function createFailingConfigureModule(message: string): IntentModule {
       return {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "before-ready": {
@@ -976,6 +995,7 @@ describe("AppStart Operation", () => {
 
     function createAwaitReadyModule(options?: { fail?: boolean }): IntentModule {
       return {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "await-ready": {
@@ -995,6 +1015,7 @@ describe("AppStart Operation", () => {
       options?: { fail?: boolean; captureScripts?: (scripts: readonly string[]) => void }
     ): IntentModule {
       return {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
@@ -1109,6 +1130,7 @@ describe("AppStart Operation", () => {
       const state = createTestState();
 
       const configureTracker: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "before-ready": {
@@ -1122,6 +1144,7 @@ describe("AppStart Operation", () => {
       };
 
       const awaitReadyTracker: IntentModule = {
+        name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             "await-ready": {

@@ -104,6 +104,7 @@ function createTestSetup(opts: {
 
   // Resolve module: workspace path → project path + workspace name
   const resolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -123,6 +124,7 @@ function createTestSetup(opts: {
 
   // Resolve project module
   const resolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -143,6 +145,7 @@ function createTestSetup(opts: {
 
   // Activate module
   const activateModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
@@ -158,6 +161,7 @@ function createTestSetup(opts: {
 
   // Find-candidates module (returns fixed candidates)
   const findCandidatesModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "find-candidates": {

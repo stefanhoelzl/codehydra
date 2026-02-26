@@ -85,6 +85,7 @@ export interface ElectronLifecycleModuleDeps {
 
 export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps): IntentModule {
   return {
+    name: "electron-lifecycle",
     hooks: {
       [APP_START_OPERATION_ID]: {
         "before-ready": {

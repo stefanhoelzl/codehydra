@@ -145,6 +145,7 @@ function createTestSetup(): TestSetup {
 
   // resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -162,6 +163,7 @@ function createTestSetup(): TestSetup {
 
   // resolve-project module: resolves projectPath → projectId
   const resolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -179,6 +181,7 @@ function createTestSetup(): TestSetup {
 
   // set/get module: performs actual provider operations (reads workspacePath from enriched context)
   const metadataModule: IntentModule = {
+    name: "test",
     hooks: {
       [SET_METADATA_OPERATION_ID]: {
         set: {

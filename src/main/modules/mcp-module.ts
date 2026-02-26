@@ -15,7 +15,6 @@ import type { StartHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import type { McpServerManager } from "../../services/mcp-server/mcp-server-manager";
-import type { Logger } from "../../services/logging";
 
 // =============================================================================
 // Dependencies
@@ -23,7 +22,6 @@ import type { Logger } from "../../services/logging";
 
 export interface McpModuleDeps {
   readonly mcpServerManager: McpServerManager;
-  readonly logger: Logger;
 }
 
 // =============================================================================
@@ -32,15 +30,12 @@ export interface McpModuleDeps {
 
 export function createMcpModule(deps: McpModuleDeps): IntentModule {
   return {
+    name: "mcp",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<StartHookResult> => {
             const mcpPort = await deps.mcpServerManager.start();
-            deps.logger.info("MCP server started", {
-              port: mcpPort,
-            });
-
             return { mcpPort };
           },
         },
@@ -48,15 +43,7 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              await deps.mcpServerManager.dispose();
-            } catch (error) {
-              deps.logger.error(
-                "MCP lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
+            await deps.mcpServerManager.dispose();
           },
         },
       },

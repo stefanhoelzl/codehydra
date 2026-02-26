@@ -226,6 +226,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   // Shared resolve modules for workspace:resolve and project:resolve
   const resolveWorkspaceModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -245,6 +246,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   // Only PROJECT_ROOT is known by default; tests can add more.
   const knownProjectPaths = new Set<string>([PROJECT_ROOT]);
   const resolveProjectResolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -260,6 +262,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     },
   };
   const switchViewModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
@@ -274,6 +277,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   // Default FetchBasesModule: "fetch-bases" hook — returns bases for dialog
   const defaultFetchBasesModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         "fetch-bases": {
@@ -298,6 +302,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   // WorktreeModule: "create" hook — returns CreateHookResult
   const worktreeModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
@@ -340,6 +345,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   // KeepFilesModule: "setup" hook (best-effort, try/catch internal)
   const keepFilesModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
@@ -362,6 +368,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   // AgentModule: "setup" hook (fatal — no try/catch)
   const agentModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
@@ -392,6 +399,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   // Only registered when setupThrows is true.
   const failingSetupModule: IntentModule | null = opts?.setupThrows
     ? {
+        name: "test",
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             setup: {
@@ -406,6 +414,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   // CodeServerModule: "finalize" hook — returns FinalizeHookResult
   const codeServerModule: IntentModule = {
+    name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
@@ -893,6 +902,7 @@ describe("OpenWorkspace Operation", () => {
     it("merges envVars from multiple setup hooks", async () => {
       // Add a second setup module that contributes additional env vars
       const extraEnvModule: IntentModule = {
+        name: "test",
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             setup: {
@@ -916,6 +926,7 @@ describe("OpenWorkspace Operation", () => {
 
       // Shared resolve modules
       const resolveWorkspaceModule: IntentModule = {
+        name: "test",
         hooks: {
           [RESOLVE_WORKSPACE_OPERATION_ID]: {
             resolve: {
@@ -932,6 +943,7 @@ describe("OpenWorkspace Operation", () => {
         },
       };
       const resolveProjectResolveModule: IntentModule = {
+        name: "test",
         hooks: {
           [RESOLVE_PROJECT_OPERATION_ID]: {
             resolve: {
@@ -943,6 +955,7 @@ describe("OpenWorkspace Operation", () => {
         },
       };
       const switchViewModule: IntentModule = {
+        name: "test",
         hooks: {
           [SWITCH_WORKSPACE_OPERATION_ID]: {
             activate: {
@@ -955,6 +968,7 @@ describe("OpenWorkspace Operation", () => {
         },
       };
       const fetchBasesModule: IntentModule = {
+        name: "test",
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             "fetch-bases": {
@@ -966,6 +980,7 @@ describe("OpenWorkspace Operation", () => {
         },
       };
       const worktreeModule: IntentModule = {
+        name: "test",
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             create: {
@@ -980,6 +995,7 @@ describe("OpenWorkspace Operation", () => {
       };
       // Agent module contributes AGENT_PORT
       const agentModule: IntentModule = {
+        name: "test",
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             setup: {
@@ -993,6 +1009,7 @@ describe("OpenWorkspace Operation", () => {
       // Finalize module captures envVars for verification
       let capturedEnvVars: Record<string, string> = {};
       const codeServerModule: IntentModule = {
+        name: "test",
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             finalize: {

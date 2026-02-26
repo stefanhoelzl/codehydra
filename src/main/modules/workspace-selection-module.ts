@@ -32,6 +32,7 @@ export function createWorkspaceSelectionModule(agentStatusManager: {
   };
 
   return {
+    name: "workspace-selection",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "select-next": {

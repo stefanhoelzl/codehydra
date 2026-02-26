@@ -184,6 +184,7 @@ const TEST_WORKSPACE_PATH = "/projects/test/workspaces/feature-branch";
 
 function createMockResolveModule(): IntentModule {
   return {
+    name: "test-resolve",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -311,6 +312,7 @@ function createLifecycleTestSetup(
 
   // Wire quit module to prevent app.quit() error on shutdown
   const quitModule: IntentModule = {
+    name: "test-quit",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         quit: { handler: async () => {} },
@@ -643,6 +645,7 @@ describe("IpcEventBridge - lifecycle", () => {
       });
 
       const quitModule: IntentModule = {
+        name: "test-quit",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },
@@ -671,12 +674,7 @@ describe("IpcEventBridge - lifecycle", () => {
       expect(mockApiRegistry.dispose).toHaveBeenCalled();
     });
 
-    it("logs error but does not throw when cleanup fails", async () => {
-      const mockLogger = {
-        ...SILENT_LOGGER,
-        error: vi.fn(),
-      };
-
+    it("collect catches error, dispatch still resolves", async () => {
       // Create an API where on() returns a cleanup function that throws
       const throwingCleanup = () => {
         throw new Error("cleanup boom");
@@ -701,7 +699,7 @@ describe("IpcEventBridge - lifecycle", () => {
         getApi: () => mockApi,
         sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
         pluginServer: null,
-        logger: mockLogger,
+        logger: SILENT_LOGGER,
         dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
         agentStatusManager: {
           getStatus: vi.fn(),
@@ -717,6 +715,7 @@ describe("IpcEventBridge - lifecycle", () => {
       });
 
       const quitModule: IntentModule = {
+        name: "test-quit",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },
@@ -733,17 +732,14 @@ describe("IpcEventBridge - lifecycle", () => {
         payload: {},
       } as AppStartIntent);
 
-      // Shutdown should not throw, but should log the error
-      await dispatcher.dispatch({
-        type: INTENT_APP_SHUTDOWN,
-        payload: {},
-      } as AppShutdownIntent);
-
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        "IpcBridge lifecycle shutdown failed (non-fatal)",
-        {},
-        expect.any(Error)
-      );
+      // Handler throws directly, but AppShutdownOperation uses collect()
+      // which catches errors -- dispatch still resolves
+      await expect(
+        dispatcher.dispatch({
+          type: INTENT_APP_SHUTDOWN,
+          payload: {},
+        } as AppShutdownIntent)
+      ).resolves.not.toThrow();
     });
   });
 });
@@ -794,6 +790,7 @@ describe("IpcEventBridge - setup:error", () => {
 
     // Hook module that throws to trigger the setup:error domain event
     const failingSetupHook: IntentModule = {
+      name: "test-failing-setup",
       hooks: {
         setup: {
           "show-ui": {
@@ -859,6 +856,7 @@ describe("IpcEventBridge - setup:error", () => {
 
     const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
     const failingHook: IntentModule = {
+      name: "test-failing-hook",
       hooks: {
         setup: {
           "show-ui": {

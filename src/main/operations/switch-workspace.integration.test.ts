@@ -224,6 +224,7 @@ function createTestSetup(opts?: {
 
   // ResolveModule: "resolve" hook -- resolves workspacePath → projectPath + workspaceName
   const resolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -245,6 +246,7 @@ function createTestSetup(opts?: {
 
   // ResolveProjectModule: "resolve" hook -- resolves projectPath → projectId + projectName
   const resolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -262,6 +264,7 @@ function createTestSetup(opts?: {
   // SwitchViewModule: "activate" hook -- calls setActiveWorkspace
   // Also subscribes to workspace:switched(null) to clear viewManager.
   const switchViewModule: IntentModule = {
+    name: "test",
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
@@ -295,6 +298,7 @@ function createTestSetup(opts?: {
 
   if (opts?.withAutoSelect) {
     const findCandidatesModule: IntentModule = {
+      name: "test",
       hooks: {
         [SWITCH_WORKSPACE_OPERATION_ID]: {
           "find-candidates": {
@@ -322,6 +326,7 @@ function createTestSetup(opts?: {
     modules.push(findCandidatesModule);
 
     const selectNextModule: IntentModule = {
+      name: "test",
       hooks: {
         [SWITCH_WORKSPACE_OPERATION_ID]: {
           "select-next": {

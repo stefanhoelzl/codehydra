@@ -89,6 +89,7 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
 
   // Resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -106,6 +107,7 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
 
   // Agent session hook handler module (reads from enriched context)
   const agentSessionModule: IntentModule = {
+    name: "test",
     hooks: {
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {

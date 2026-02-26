@@ -21,6 +21,7 @@ interface MetadataModuleDeps {
 
 export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
   return {
+    name: "metadata",
     hooks: {
       [SET_METADATA_OPERATION_ID]: {
         set: {
