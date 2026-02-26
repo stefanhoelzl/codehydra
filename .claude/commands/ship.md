@@ -192,7 +192,7 @@ The script handles:
 - Rebasing onto main when it's our turn
 - Waiting for CI via `gh pr checks --watch`
 - Waiting for auto-merge to complete
-- Updating local main branch
+- Fetching origin
 
 **Exit codes:**
 
@@ -218,7 +218,6 @@ PR merged successfully!
 
 **PR**: <url>
 **Commit**: <sha> merged to main
-**Local main updated**: <path>
 **Workspace**: deleted (or "kept" if --keep-workspace)
 ```
 

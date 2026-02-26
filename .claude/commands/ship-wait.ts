@@ -238,51 +238,12 @@ async function waitForMerge(
   }
 }
 
-async function findMainWorktree(): Promise<string | null> {
-  const output = await exec("git worktree list --porcelain");
-  const worktrees = output.split("\n\n").filter(Boolean);
-
-  for (const worktree of worktrees) {
-    const lines = worktree.split("\n");
-    const pathLine = lines.find((l) => l.startsWith("worktree "));
-    const branchLine = lines.find((l) => l.startsWith("branch "));
-
-    if (pathLine && branchLine) {
-      const path = pathLine.replace("worktree ", "");
-      const branch = branchLine.replace("branch refs/heads/", "");
-
-      if (branch === "main") {
-        return path;
-      }
-    }
+async function fetchOrigin(): Promise<void> {
+  log("Fetching origin...");
+  const result = await execNoThrow("git fetch origin");
+  if (!result.success) {
+    log(`Warning: Failed to fetch origin: ${result.stderr}`);
   }
-
-  return null;
-}
-
-async function updateLocalMain(): Promise<void> {
-  const mainWorktree = await findMainWorktree();
-
-  if (!mainWorktree) {
-    log("Warning: Could not find main worktree to update");
-    return;
-  }
-
-  log(`Updating local main branch at ${mainWorktree}...`);
-
-  const fetchResult = await execNoThrow(`git -C "${mainWorktree}" fetch origin main`);
-  if (!fetchResult.success) {
-    log(`Warning: Failed to fetch in main worktree: ${fetchResult.stderr}`);
-    return;
-  }
-
-  const pullResult = await execNoThrow(`git -C "${mainWorktree}" pull --ff-only origin main`);
-  if (!pullResult.success) {
-    log(`Warning: Failed to pull in main worktree (local changes?): ${pullResult.stderr}`);
-    return;
-  }
-
-  log(`Local main updated at ${mainWorktree}`);
 }
 
 async function main(): Promise<void> {
@@ -308,7 +269,7 @@ async function main(): Promise<void> {
 
   if (state.state === "MERGED") {
     log("PR is already merged!");
-    await updateLocalMain();
+    await fetchOrigin();
     process.exit(0);
   }
 
@@ -359,7 +320,7 @@ async function main(): Promise<void> {
   const mergeResult = await waitForMerge(prNumber, startTime);
 
   if (mergeResult === "merged") {
-    await updateLocalMain();
+    await fetchOrigin();
     process.exit(0);
   } else if (mergeResult === "failed") {
     process.exit(1);
