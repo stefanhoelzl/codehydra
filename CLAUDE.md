@@ -298,18 +298,17 @@ All settings use dot-separated, kebab-case config keys. The same key works in th
 
 Precedence (highest wins): CLI flag > env var > config.json > computed defaults > static defaults.
 
-| Key                     | Default   | Description                                |
-| ----------------------- | --------- | ------------------------------------------ |
-| `agent`                 | `null`    | Agent selection: claude\|opencode          |
-| `version.claude`        | `null`    | Claude agent version override              |
-| `version.opencode`      | `null`    | OpenCode agent version override            |
-| `version.code-server`   | `4.107.0` | Code-server version                        |
-| `telemetry.enabled`     | `true`    | Enable telemetry (false in dev/unpackaged) |
-| `telemetry.distinct-id` | —         | Telemetry user ID (auto-generated)         |
-| `log.level`             | `warn`    | Log level: silly\|debug\|info\|warn\|error |
-| `log.console`           | `false`   | Print logs to stdout/stderr                |
-| `log.filter`            | —         | Filter logs by scope (e.g., `git,process`) |
-| `electron.flags`        | —         | Electron switches (e.g., `--disable-gpu`)  |
+| Key                     | Default   | Description                                                             |
+| ----------------------- | --------- | ----------------------------------------------------------------------- |
+| `agent`                 | `null`    | Agent selection: claude\|opencode                                       |
+| `version.claude`        | `null`    | Claude agent version override                                           |
+| `version.opencode`      | `null`    | OpenCode agent version override                                         |
+| `version.code-server`   | `4.107.0` | Code-server version                                                     |
+| `telemetry.enabled`     | `true`    | Enable telemetry (false in dev/unpackaged)                              |
+| `telemetry.distinct-id` | —         | Telemetry user ID (auto-generated)                                      |
+| `log.level`             | `warn`    | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`) |
+| `log.output`            | `file`    | Output destinations: `file`, `console`, or `file,console`               |
+| `electron.flags`        | —         | Electron switches (e.g., `--disable-gpu`)                               |
 
 File keys (persisted to config.json): `agent`, `version.*`, `telemetry.*`.
 Runtime-only keys (env/CLI only): `log.*`, `electron.*`.
@@ -324,6 +323,6 @@ Source of truth: `src/services/config/config-values.ts` (the `CONFIG` schema obj
 - **Windows**: `%APPDATA%\Codehydra\logs\`
 
 ```bash
-# Debug mode (env var form of log.level=debug, log.console=true)
-CH_LOG__LEVEL=debug CH_LOG__CONSOLE=1 pnpm dev
+# Debug mode (env var form of log.level=debug, log.output=console)
+CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev
 ```

@@ -151,14 +151,14 @@ describe("ConfigModule Integration", () => {
       expect(result["log.level"]).toBe("debug");
     });
 
-    it("maps CH_LOG__CONSOLE to log.console", () => {
-      const result = parseEnvVars({ CH_LOG__CONSOLE: "1" });
-      expect(result["log.console"]).toBe(true);
+    it("maps CH_LOG__OUTPUT to log.output", () => {
+      const result = parseEnvVars({ CH_LOG__OUTPUT: "console" });
+      expect(result["log.output"]).toBe("console");
     });
 
-    it("maps CH_LOG__FILTER to log.filter", () => {
-      const result = parseEnvVars({ CH_LOG__FILTER: "git,process" });
-      expect(result["log.filter"]).toBe("git,process");
+    it("parses combined CH_LOG__LEVEL with filter", () => {
+      const result = parseEnvVars({ CH_LOG__LEVEL: "debug:git,process" });
+      expect(result["log.level"]).toBe("debug:git,process");
     });
 
     it("maps CH_ELECTRON__FLAGS to electron.flags", () => {
@@ -210,9 +210,9 @@ describe("ConfigModule Integration", () => {
       expect(result["log.level"]).toBe("debug");
     });
 
-    it("parses boolean flags without value as true", () => {
-      const result = parseCliArgs(["--log.console"]);
-      expect(result["log.console"]).toBe(true);
+    it("parses --log.output flag", () => {
+      const result = parseCliArgs(["--log.output=console"]);
+      expect(result["log.output"]).toBe("console");
     });
 
     it("ignores unknown flags silently", () => {
@@ -221,9 +221,9 @@ describe("ConfigModule Integration", () => {
     });
 
     it("parses multiple flags", () => {
-      const result = parseCliArgs(["--log.level=debug", "--log.console=true", "--agent=claude"]);
+      const result = parseCliArgs(["--log.level=debug", "--log.output=console", "--agent=claude"]);
       expect(result["log.level"]).toBe("debug");
-      expect(result["log.console"]).toBe(true);
+      expect(result["log.output"]).toBe("console");
       expect(result.agent).toBe("claude");
     });
   });
@@ -292,8 +292,8 @@ describe("ConfigModule Integration", () => {
       expect(events[0]!.payload.values["log.level"]).toBe("error");
     });
 
-    it("sets log.console from CH_LOG__CONSOLE env var", async () => {
-      const { dispatcher } = createTestSetup({ env: { CH_LOG__CONSOLE: "1" } });
+    it("sets log.output from CH_LOG__OUTPUT env var", async () => {
+      const { dispatcher } = createTestSetup({ env: { CH_LOG__OUTPUT: "console" } });
 
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
@@ -306,11 +306,11 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.console"]).toBe(true);
+      expect(events[0]!.payload.values["log.output"]).toBe("console");
     });
 
-    it("sets log.filter from CH_LOG__FILTER env var", async () => {
-      const { dispatcher } = createTestSetup({ env: { CH_LOG__FILTER: "git,process" } });
+    it("sets combined log.level with filter from CH_LOG__LEVEL env var", async () => {
+      const { dispatcher } = createTestSetup({ env: { CH_LOG__LEVEL: "debug:git,process" } });
 
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
@@ -323,7 +323,7 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.filter"]).toBe("git,process");
+      expect(events[0]!.payload.values["log.level"]).toBe("debug:git,process");
     });
 
     it("sets electron.flags from CH_ELECTRON__FLAGS env var", async () => {
@@ -608,7 +608,7 @@ describe("ConfigModule Integration", () => {
       await dispatcher.dispatch({
         type: INTENT_CONFIG_SET_VALUES,
         payload: {
-          values: { "log.level": "debug" as const, "log.console": true },
+          values: { "log.level": "debug", "log.output": "console" },
           persist: false,
         },
       } as ConfigSetValuesIntent);
@@ -704,7 +704,7 @@ describe("ConfigModule Integration", () => {
 
       // Should not contain non-FILE_KEYS
       expect(parsed["log.level"]).toBeUndefined();
-      expect(parsed["log.console"]).toBeUndefined();
+      expect(parsed["log.output"]).toBeUndefined();
       expect(parsed["electron.flags"]).toBeUndefined();
     });
 

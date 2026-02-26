@@ -68,12 +68,18 @@ export type LoggerName =
 export type LogContext = Record<string, string | number | boolean | null>;
 
 /**
+ * Log output destinations.
+ */
+export type LogOutput = "file" | "console";
+
+/**
  * Configuration options for the logging service.
  * Passed to `configure()` to set transport levels and filters.
  */
 export interface LoggingConfigureOptions {
   readonly logLevel: LogLevel;
-  readonly enableConsole: boolean;
+  readonly logFile: boolean;
+  readonly logConsole: boolean;
   readonly allowedLoggers: Set<LoggerName> | undefined;
 }
 
@@ -142,7 +148,7 @@ export interface Logger {
  * ```typescript
  * // In main process startup
  * const loggingService = new ElectronLogService(pathProvider);
- * loggingService.configure({ logLevel: 'debug', enableConsole: false, allowedLoggers: undefined });
+ * loggingService.configure({ logLevel: 'debug', logFile: true, logConsole: false, allowedLoggers: undefined });
  * loggingService.initialize(); // Enable renderer logging
  *
  * // Create loggers for services

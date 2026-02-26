@@ -148,7 +148,9 @@ export type {
 export {
   ElectronLogService,
   parseLogLevel,
-  parseLoggerFilter,
+  parseLogLevelSpec,
+  splitLogLevelSpec,
+  parseLogOutput,
   createMockLogger,
   createMockLoggingService,
   SILENT_LOGGER,
@@ -160,6 +162,7 @@ export type {
   LogContext,
   LoggerName,
   LogLevel,
+  LogOutput,
   MockLogger,
   MockLoggingService,
 } from "./logging";

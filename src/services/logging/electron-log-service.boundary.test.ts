@@ -18,7 +18,8 @@ const WRITE_DELAY_MS = 100;
 
 const DEFAULT_OPTIONS: LoggingConfigureOptions = {
   logLevel: "debug",
-  enableConsole: false,
+  logFile: true,
+  logConsole: false,
   allowedLoggers: undefined,
 };
 
