@@ -1,0 +1,55 @@
+/**
+ * Code-server setup information.
+ * Provides version, download URLs, and executable path for code-server.
+ */
+
+import type { SupportedArch, SupportedPlatform } from "../../agents/types";
+
+/**
+ * Current version of code-server to download.
+ */
+export const CODE_SERVER_VERSION = "4.109.2";
+
+/**
+ * GitHub repository for Windows code-server builds.
+ * Windows builds are not provided by the official code-server repo.
+ */
+const CODEHYDRA_REPO = "stefanhoelzl/codehydra";
+
+/**
+ * Architecture name mappings for code-server releases.
+ */
+const CODE_SERVER_ARCH = {
+  x64: "amd64",
+  arm64: "arm64",
+} as const;
+
+/**
+ * Get the download URL for code-server.
+ *
+ * @param platform - Operating system platform
+ * @param arch - CPU architecture
+ * @returns Download URL for the code-server release
+ * @throws Error if platform/arch combination is not supported
+ */
+export function getCodeServerUrl(platform: SupportedPlatform, arch: SupportedArch): string {
+  if (platform === "win32") {
+    if (arch !== "x64") {
+      throw new Error(`Windows code-server builds only support x64, got: ${arch}`);
+    }
+    return `https://github.com/${CODEHYDRA_REPO}/releases/download/code-server-windows-v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-win32-x64.tar.gz`;
+  }
+  const os = platform === "darwin" ? "macos" : "linux";
+  const archName = CODE_SERVER_ARCH[arch];
+  return `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-${os}-${archName}.tar.gz`;
+}
+
+/**
+ * Get the relative path to the code-server executable within the extracted directory.
+ *
+ * @param platform - Operating system platform
+ * @returns Relative path to the executable
+ */
+export function getCodeServerExecutablePath(platform: SupportedPlatform): string {
+  return platform === "win32" ? "bin/code-server.cmd" : "bin/code-server";
+}

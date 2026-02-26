@@ -1,17 +1,14 @@
 /**
- * Binary download service for fetching code-server and opencode binaries.
+ * Binary download service for fetching and extracting binaries.
  */
 
 import * as os from "node:os";
 import * as path from "node:path";
 import { BinaryDownloadError, getErrorMessage } from "./errors.js";
-import { BINARY_CONFIGS } from "./versions.js";
-import type { BinaryType, DownloadProgressCallback, SupportedPlatform } from "./types.js";
+import type { DownloadRequest, DownloadProgressCallback } from "./types.js";
 import type { ArchiveExtractor } from "./archive-extractor.js";
 import type { HttpClient } from "../platform/network.js";
 import type { FileSystemLayer } from "../platform/filesystem.js";
-import type { PathProvider } from "../platform/path-provider.js";
-import type { PlatformInfo } from "../platform/platform-info.js";
 import type { Logger } from "../logging/index.js";
 import { FileSystemError } from "../errors.js";
 import { Path } from "../platform/path.js";
@@ -21,29 +18,21 @@ import { Path } from "../platform/path.js";
  */
 export interface BinaryDownloadService {
   /**
-   * Check if a binary is installed at the correct version.
+   * Check if a binary is installed at the given destination directory.
    *
-   * @param binary - Type of binary to check
-   * @returns true if installed at correct version
+   * @param destDir - Directory to check
+   * @returns true if installed
    */
-  isInstalled(binary: BinaryType): Promise<boolean>;
+  isInstalled(destDir: string): Promise<boolean>;
 
   /**
    * Download and extract a binary.
    *
-   * @param binary - Type of binary to download
+   * @param request - Download request with URL, destination, etc.
    * @param onProgress - Optional callback for progress updates
    * @throws BinaryDownloadError on failure
    */
-  download(binary: BinaryType, onProgress?: DownloadProgressCallback): Promise<void>;
-
-  /**
-   * Get the absolute path to the binary executable.
-   *
-   * @param binary - Type of binary
-   * @returns Absolute path to the binary executable
-   */
-  getBinaryPath(binary: BinaryType): string;
+  download(request: DownloadRequest, onProgress?: DownloadProgressCallback): Promise<void>;
 }
 
 /**
@@ -54,22 +43,17 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     private readonly httpClient: HttpClient,
     private readonly fileSystemLayer: FileSystemLayer,
     private readonly archiveExtractor: ArchiveExtractor,
-    private readonly pathProvider: PathProvider,
-    private readonly platformInfo: PlatformInfo,
     private readonly logger?: Logger
   ) {}
 
-  async isInstalled(binary: BinaryType): Promise<boolean> {
-    // Check if binary directory exists by attempting to read it
-    // The executable permission check is redundant since we call makeExecutable() after extraction anyway
-    const binaryDir = this.getBinaryDir(binary);
+  async isInstalled(destDir: string): Promise<boolean> {
     try {
-      await this.fileSystemLayer.readdir(binaryDir.toString());
-      this.logger?.debug("Install check", { binary, installed: true });
+      await this.fileSystemLayer.readdir(destDir);
+      this.logger?.debug("Install check", { destDir, installed: true });
       return true;
     } catch (error) {
       if (error instanceof FileSystemError && error.fsCode === "ENOENT") {
-        this.logger?.debug("Install check", { binary, installed: false });
+        this.logger?.debug("Install check", { destDir, installed: false });
         return false;
       }
       // Re-throw unexpected errors
@@ -77,31 +61,10 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     }
   }
 
-  async download(binary: BinaryType, onProgress?: DownloadProgressCallback): Promise<void> {
-    const config = BINARY_CONFIGS[binary];
-    const platform = this.platformInfo.platform as SupportedPlatform;
-    const arch = this.platformInfo.arch;
+  async download(request: DownloadRequest, onProgress?: DownloadProgressCallback): Promise<void> {
+    const { name, url, destDir, executablePath } = request;
 
-    // Validate platform
-    if (!["darwin", "linux", "win32"].includes(platform)) {
-      throw new BinaryDownloadError(
-        `Unsupported platform: ${platform}. Supported: darwin, linux, win32`,
-        "UNSUPPORTED_PLATFORM"
-      );
-    }
-
-    // Get download URL (will throw for unsupported platform/arch combinations)
-    let url: string;
-    try {
-      url = config.getUrl(platform, arch);
-    } catch (error) {
-      throw new BinaryDownloadError(getErrorMessage(error), "UNSUPPORTED_PLATFORM");
-    }
-
-    this.logger?.info("Downloading", { binary, url, platform, arch });
-
-    // Determine destination directory
-    const destDir = this.getBinaryDir(binary);
+    this.logger?.info("Downloading", { name, url });
 
     // Preserve archive extension in temp file for extractor to detect format
     const urlPath = new URL(url).pathname;
@@ -112,8 +75,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
         : urlPath.endsWith(".zip")
           ? ".zip"
           : ".archive";
-    const versionStr = config.version ?? "latest";
-    const tempFile = path.join(os.tmpdir(), `${binary}-${versionStr}-${Date.now()}${urlExtension}`);
+    const tempFile = path.join(os.tmpdir(), `${name}-${Date.now()}${urlExtension}`);
 
     try {
       // Download to temp file
@@ -125,19 +87,19 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
       }
 
       // Extract archive
-      await this.archiveExtractor.extract(tempFile, destDir);
+      await this.archiveExtractor.extract(tempFile, new Path(destDir));
 
       // Handle nested directory structure (common in releases)
-      await this.flattenExtractedDir(destDir.toString());
+      await this.flattenExtractedDir(destDir);
 
       // Set executable permissions on Unix
-      if (platform !== "win32") {
-        await this.setExecutablePermissions(binary);
+      if (executablePath && process.platform !== "win32") {
+        await this.setExecutablePermissions(path.join(destDir, executablePath));
       }
 
-      this.logger?.info("Download complete", { binary });
+      this.logger?.info("Download complete", { name });
     } catch (error) {
-      this.logger?.warn("Download failed", { binary, error: getErrorMessage(error) });
+      this.logger?.warn("Download failed", { name, error: getErrorMessage(error) });
       throw error;
     } finally {
       // Clean up temp file
@@ -147,29 +109,6 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
         // Ignore cleanup errors (file might not exist)
       }
     }
-  }
-
-  getBinaryPath(binary: BinaryType): string {
-    const config = BINARY_CONFIGS[binary];
-    const platform = this.platformInfo.platform as SupportedPlatform;
-    const destDir = this.getBinaryDir(binary);
-    const relativePath = config.extractedBinaryPath(platform);
-    return new Path(destDir, relativePath).toNative();
-  }
-
-  /**
-   * Get the directory where a binary is installed.
-   * @throws Error if the binary has no pinned version (version is null)
-   */
-  private getBinaryDir(binary: BinaryType): Path {
-    const config = BINARY_CONFIGS[binary];
-    if (config.version === null) {
-      throw new BinaryDownloadError(
-        `Cannot get binary dir for ${binary}: no pinned version. Use BinaryResolutionService for dynamic resolution.`,
-        "INVALID_VERSION"
-      );
-    }
-    return this.pathProvider.getBinaryDir(binary, config.version);
   }
 
   /**
@@ -273,8 +212,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
   /**
    * Set executable permissions on the binary.
    */
-  private async setExecutablePermissions(binary: BinaryType): Promise<void> {
-    const binaryPath = this.getBinaryPath(binary);
+  private async setExecutablePermissions(binaryPath: string): Promise<void> {
     try {
       await this.fileSystemLayer.makeExecutable(binaryPath);
     } catch {

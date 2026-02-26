@@ -12,8 +12,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DefaultPathProvider } from "../services";
 import { createMockBuildInfo } from "../services/platform/build-info.test-utils";
 import { createMockPlatformInfo } from "../services/platform/platform-info.test-utils";
-import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../services/binary-download";
+import {
+  CODE_SERVER_VERSION,
+  getCodeServerExecutablePath,
+} from "../services/code-server/setup-info";
+import { OPENCODE_VERSION } from "../agents/opencode/setup-info";
+import { Path } from "../services/platform/path";
 import type { PathProvider } from "../services/platform/path-provider";
+import type { SupportedPlatform } from "../agents/types";
 import nodePath from "node:path";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
@@ -56,7 +62,7 @@ describe("Main process wiring", () => {
     /**
      * This tests the same pattern used in main/index.ts createCodeServerConfig()
      * PathProvider now returns Path objects, so we convert to native strings for external use.
-     * Uses dynamic getBinaryPath and getBinaryDir methods with version constants.
+     * Uses dynamic getBinaryDir methods with version constants and setup-info functions.
      */
     interface TestCodeServerConfig {
       readonly binaryPath: string;
@@ -68,9 +74,17 @@ describe("Main process wiring", () => {
       readonly opencodeDir: string;
     }
 
-    function createCodeServerConfig(pathProvider: PathProvider): TestCodeServerConfig {
+    function createCodeServerConfig(
+      pathProvider: PathProvider,
+      platform: SupportedPlatform
+    ): TestCodeServerConfig {
+      const codeServerBinaryPath = new Path(
+        pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION),
+        getCodeServerExecutablePath(platform)
+      ).toNative();
+
       return {
-        binaryPath: pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toNative(),
+        binaryPath: codeServerBinaryPath,
         runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
         extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
         userDataDir: pathProvider.vscodeUserDataDir.toNative(),
@@ -85,7 +99,7 @@ describe("Main process wiring", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      const config = createCodeServerConfig(pathProvider);
+      const config = createCodeServerConfig(pathProvider, "linux");
 
       expect(config.runtimeDir).toMatch(/app-data[/\\]runtime$/);
       expect(config.extensionsDir).toMatch(/app-data[/\\]vscode[/\\]extensions$/);
@@ -102,7 +116,7 @@ describe("Main process wiring", () => {
         });
         const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-        const config = createCodeServerConfig(pathProvider);
+        const config = createCodeServerConfig(pathProvider, "linux");
 
         expect(config.runtimeDir).toBe("/home/testuser/.local/share/codehydra/runtime");
         expect(config.extensionsDir).toBe(

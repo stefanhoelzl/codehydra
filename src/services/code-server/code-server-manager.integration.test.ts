@@ -15,7 +15,7 @@ import { createMockProcessRunner } from "../platform/process.state-mock";
 import { createPortManagerMock } from "../platform/network.test-utils";
 import { createMockHttpClient } from "../platform/http-client.state-mock";
 import { SILENT_LOGGER } from "../logging";
-import type { BinaryDownloadService } from "../binary-download";
+import type { BinaryDownloadService, DownloadRequest } from "../binary-download";
 
 const testLogger = SILENT_LOGGER;
 
@@ -339,6 +339,13 @@ describe("CodeServerManager Integration", () => {
       opencodeDir: "/app/opencode-dir",
     };
 
+    const testRequest: DownloadRequest = {
+      name: "code-server",
+      url: "https://example.com/code-server.tar.gz",
+      destDir: "/app-data/code-server/4.109.2",
+      executablePath: "bin/code-server",
+    };
+
     it("returns needsDownload: true when binary is not installed (#8)", async () => {
       const processRunner = createMockProcessRunner();
       const httpClient = createMockHttpClient();
@@ -346,7 +353,6 @@ describe("CodeServerManager Integration", () => {
       const binaryService: BinaryDownloadService = {
         isInstalled: vi.fn().mockResolvedValue(false),
         download: vi.fn(),
-        getBinaryPath: vi.fn(),
       };
 
       const manager = new CodeServerManager(
@@ -355,7 +361,7 @@ describe("CodeServerManager Integration", () => {
         httpClient,
         portManager,
         testLogger,
-        binaryService
+        { service: binaryService, request: testRequest }
       );
 
       const result = await manager.preflight();
@@ -364,7 +370,7 @@ describe("CodeServerManager Integration", () => {
       if (result.success) {
         expect(result.needsDownload).toBe(true);
       }
-      expect(binaryService.isInstalled).toHaveBeenCalledWith("code-server");
+      expect(binaryService.isInstalled).toHaveBeenCalledWith(testRequest.destDir);
     });
 
     it("returns needsDownload: false when binary is installed (#15)", async () => {
@@ -374,7 +380,6 @@ describe("CodeServerManager Integration", () => {
       const binaryService: BinaryDownloadService = {
         isInstalled: vi.fn().mockResolvedValue(true),
         download: vi.fn(),
-        getBinaryPath: vi.fn(),
       };
 
       const manager = new CodeServerManager(
@@ -383,7 +388,7 @@ describe("CodeServerManager Integration", () => {
         httpClient,
         portManager,
         testLogger,
-        binaryService
+        { service: binaryService, request: testRequest }
       );
 
       const result = await manager.preflight();
@@ -405,7 +410,7 @@ describe("CodeServerManager Integration", () => {
         httpClient,
         portManager,
         testLogger
-        // Note: no binaryService
+        // Note: no binaryDownload
       );
 
       const result = await manager.preflight();
@@ -423,7 +428,6 @@ describe("CodeServerManager Integration", () => {
       const binaryService: BinaryDownloadService = {
         isInstalled: vi.fn().mockRejectedValue(new Error("Permission denied")),
         download: vi.fn(),
-        getBinaryPath: vi.fn(),
       };
 
       const manager = new CodeServerManager(
@@ -432,7 +436,7 @@ describe("CodeServerManager Integration", () => {
         httpClient,
         portManager,
         testLogger,
-        binaryService
+        { service: binaryService, request: testRequest }
       );
 
       const result = await manager.preflight();
@@ -456,6 +460,13 @@ describe("CodeServerManager Integration", () => {
       opencodeDir: "/app/opencode-dir",
     };
 
+    const testRequest: DownloadRequest = {
+      name: "code-server",
+      url: "https://example.com/code-server.tar.gz",
+      destDir: "/app-data/code-server/4.109.2",
+      executablePath: "bin/code-server",
+    };
+
     it("downloads binary via BinaryDownloadService", async () => {
       const processRunner = createMockProcessRunner();
       const httpClient = createMockHttpClient();
@@ -464,7 +475,6 @@ describe("CodeServerManager Integration", () => {
       const binaryService: BinaryDownloadService = {
         isInstalled: vi.fn(),
         download: vi.fn().mockResolvedValue(undefined),
-        getBinaryPath: vi.fn(),
       };
 
       const manager = new CodeServerManager(
@@ -473,12 +483,12 @@ describe("CodeServerManager Integration", () => {
         httpClient,
         portManager,
         testLogger,
-        binaryService
+        { service: binaryService, request: testRequest }
       );
 
       await manager.downloadBinary(onProgress);
 
-      expect(binaryService.download).toHaveBeenCalledWith("code-server", onProgress);
+      expect(binaryService.download).toHaveBeenCalledWith(testRequest, onProgress);
     });
 
     it("throws CodeServerError when no BinaryDownloadService available", async () => {
@@ -492,7 +502,7 @@ describe("CodeServerManager Integration", () => {
         httpClient,
         portManager,
         testLogger
-        // Note: no binaryService
+        // Note: no binaryDownload
       );
 
       await expect(manager.downloadBinary()).rejects.toThrow("BinaryDownloadService not available");
@@ -505,7 +515,6 @@ describe("CodeServerManager Integration", () => {
       const binaryService: BinaryDownloadService = {
         isInstalled: vi.fn(),
         download: vi.fn().mockRejectedValue(new Error("Network timeout")),
-        getBinaryPath: vi.fn(),
       };
 
       const manager = new CodeServerManager(
@@ -514,7 +523,7 @@ describe("CodeServerManager Integration", () => {
         httpClient,
         portManager,
         testLogger,
-        binaryService
+        { service: binaryService, request: testRequest }
       );
 
       await expect(manager.downloadBinary()).rejects.toThrow("Failed to download code-server");

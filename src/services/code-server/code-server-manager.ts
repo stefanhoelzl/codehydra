@@ -17,7 +17,11 @@ import { CodeServerError, getErrorMessage } from "../errors";
 import type { Logger } from "../logging";
 import { waitForHealthy } from "../platform/health-check";
 import type { CodeServerConfig, InstanceState } from "./types";
-import type { BinaryDownloadService, DownloadProgressCallback } from "../binary-download";
+import type {
+  BinaryDownloadService,
+  DownloadProgressCallback,
+  DownloadRequest,
+} from "../binary-download";
 
 /** Fixed port for production to maintain consistent origin for IndexedDB storage */
 export const CODE_SERVER_PORT = 25448;
@@ -144,7 +148,10 @@ export class CodeServerManager {
   private readonly httpClient: HttpClient;
   private readonly portManager: PortManager;
   private readonly logger: Logger;
-  private readonly binaryDownloadService: BinaryDownloadService | null;
+  private readonly binaryDownload: {
+    service: BinaryDownloadService;
+    request: DownloadRequest;
+  } | null;
   private state: InstanceState = "stopped";
   private currentPort: number | null = null;
   private currentPid: number | null = null;
@@ -158,14 +165,14 @@ export class CodeServerManager {
     httpClient: HttpClient,
     portManager: PortManager,
     logger: Logger,
-    binaryDownloadService?: BinaryDownloadService
+    binaryDownload?: { service: BinaryDownloadService; request: DownloadRequest }
   ) {
     this.config = config;
     this.processRunner = processRunner;
     this.httpClient = httpClient;
     this.portManager = portManager;
     this.logger = logger;
-    this.binaryDownloadService = binaryDownloadService ?? null;
+    this.binaryDownload = binaryDownload ?? null;
   }
 
   /**
@@ -174,13 +181,15 @@ export class CodeServerManager {
    * @returns Preflight result indicating if download is needed
    */
   async preflight(): Promise<CodeServerPreflightResult | CodeServerPreflightError> {
-    if (!this.binaryDownloadService) {
-      // No binary download service - assume binary is available (e.g., dev mode)
+    if (!this.binaryDownload) {
+      // No binary download config - assume binary is available (e.g., dev mode)
       return { success: true, needsDownload: false };
     }
 
     try {
-      const isInstalled = await this.binaryDownloadService.isInstalled("code-server");
+      const isInstalled = await this.binaryDownload.service.isInstalled(
+        this.binaryDownload.request.destDir
+      );
 
       this.logger.debug("Code-server binary preflight", {
         isInstalled,
@@ -211,7 +220,7 @@ export class CodeServerManager {
    * @throws CodeServerError if download fails or no BinaryDownloadService available
    */
   async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-    if (!this.binaryDownloadService) {
+    if (!this.binaryDownload) {
       throw new CodeServerError(
         "Cannot download code-server binary: BinaryDownloadService not available"
       );
@@ -220,7 +229,7 @@ export class CodeServerManager {
     this.logger.info("Downloading code-server binary");
 
     try {
-      await this.binaryDownloadService.download("code-server", onProgress);
+      await this.binaryDownload.service.download(this.binaryDownload.request, onProgress);
       this.logger.info("Code-server binary download complete");
     } catch (error) {
       const message = getErrorMessage(error);

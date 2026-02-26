@@ -42,7 +42,6 @@ export interface MockPathProviderOptions {
   getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
   getBinaryBaseDir?: (type: "code-server" | "opencode" | "claude") => Path;
   getBinaryDir?: (type: "code-server" | "opencode" | "claude", version: string) => Path;
-  getBinaryPath?: (type: "code-server" | "opencode" | "claude", version: string) => Path;
   getBundledNodePath?: (codeServerVersion: string) => Path;
 
   // Platform for binary path construction (defaults to "linux")
@@ -91,29 +90,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     version: string
   ): Path => {
     return new Path(bundlesRootDir, type, version);
-  };
-
-  const defaultGetBinaryPath = (
-    type: "code-server" | "opencode" | "claude",
-    version: string
-  ): Path => {
-    const versionDir = defaultGetBinaryDir(type, version);
-    const isWindows = platform === "win32";
-    let binaryRelPath: string;
-
-    switch (type) {
-      case "code-server":
-        binaryRelPath = isWindows ? "bin/code-server.cmd" : "bin/code-server";
-        break;
-      case "opencode":
-        binaryRelPath = isWindows ? "opencode.exe" : "opencode";
-        break;
-      case "claude":
-        binaryRelPath = isWindows ? "claude.exe" : "claude";
-        break;
-    }
-
-    return new Path(versionDir, binaryRelPath);
   };
 
   const defaultGetBundledNodePath = (codeServerVersion: string): Path => {
@@ -167,7 +143,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
     getBinaryBaseDir: overrides?.getBinaryBaseDir ?? defaultGetBinaryBaseDir,
     getBinaryDir: overrides?.getBinaryDir ?? defaultGetBinaryDir,
-    getBinaryPath: overrides?.getBinaryPath ?? defaultGetBinaryPath,
     getBundledNodePath: overrides?.getBundledNodePath ?? defaultGetBundledNodePath,
   };
 }

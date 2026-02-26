@@ -21,6 +21,7 @@ import { CodeServerManager } from "./code-server-manager";
 import { ExecaProcessRunner } from "../platform/process";
 import { DefaultNetworkLayer } from "../platform/network";
 import { SILENT_LOGGER } from "../logging";
+import { Path } from "../platform/path";
 import { createTempDir } from "../test-utils";
 import { delay } from "@shared/test-fixtures";
 import {
@@ -29,13 +30,18 @@ import {
   CODE_SERVER_VERSION,
   OPENCODE_VERSION,
 } from "../test-utils/ensure-binaries";
+import { getCodeServerExecutablePath } from "./setup-info";
 import type { CodeServerConfig } from "./types";
+import type { SupportedPlatform } from "../../agents/types";
 
 /**
  * Get binary paths using the test path provider.
  */
 function getCodeServerBinaryPath(): string {
-  return getTestPathProvider().getBinaryPath("code-server", CODE_SERVER_VERSION).toNative();
+  const pathProvider = getTestPathProvider();
+  const platform = process.platform as SupportedPlatform;
+  const binaryDir = pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION);
+  return new Path(binaryDir, getCodeServerExecutablePath(platform)).toNative();
 }
 
 function getCodeServerDir(): string {

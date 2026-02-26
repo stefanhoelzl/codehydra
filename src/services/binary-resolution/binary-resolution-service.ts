@@ -23,6 +23,7 @@ export interface BinaryResolutionServiceDeps {
   readonly fileSystem: FileSystemLayer;
   readonly processRunner: ProcessRunner;
   readonly pathProvider: PathProvider;
+  readonly executablePaths: Record<ResolvableBinaryType, string>;
   readonly logger: Logger;
 }
 
@@ -33,12 +34,14 @@ export class BinaryResolutionService {
   private readonly fileSystem: FileSystemLayer;
   private readonly processRunner: ProcessRunner;
   private readonly pathProvider: PathProvider;
+  private readonly executablePaths: Record<ResolvableBinaryType, string>;
   private readonly logger: Logger;
 
   constructor(deps: BinaryResolutionServiceDeps) {
     this.fileSystem = deps.fileSystem;
     this.processRunner = deps.processRunner;
     this.pathProvider = deps.pathProvider;
+    this.executablePaths = deps.executablePaths;
     this.logger = deps.logger;
   }
 
@@ -199,7 +202,7 @@ export class BinaryResolutionService {
    * Get the binary path for a specific version.
    */
   private getBinaryPath(type: ResolvableBinaryType, version: string): Path {
-    return this.pathProvider.getBinaryPath(type, version);
+    return new Path(this.pathProvider.getBinaryDir(type, version), this.executablePaths[type]);
   }
 }
 

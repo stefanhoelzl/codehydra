@@ -27,14 +27,25 @@ import { DefaultNetworkLayer } from "../src/services/platform/network";
 import { DefaultFileSystemLayer } from "../src/services/platform/filesystem";
 import {
   CODE_SERVER_VERSION,
+  getCodeServerUrl,
+  getCodeServerExecutablePath,
+} from "../src/services/code-server/setup-info";
+import {
   OPENCODE_VERSION,
+  getOpencodeUrl,
+  getOpencodeExecutablePath,
+} from "../src/agents/opencode/setup-info";
+import {
   CLAUDE_VERSION,
-} from "../src/services/binary-download/versions";
-import { getClaudeLatestVersionUrl } from "../src/agents/claude/setup-info";
+  getClaudeUrl,
+  getClaudeExecutablePath,
+  getClaudeLatestVersionUrl,
+} from "../src/agents/claude/setup-info";
 import { DefaultPathProvider } from "../src/services/platform/path-provider";
 import type { PlatformInfo, SupportedArch } from "../src/services/platform/platform-info";
 import type { BuildInfo } from "../src/services/platform/build-info";
-import type { BinaryType, DownloadProgress } from "../src/services/binary-download/types";
+import type { DownloadRequest, DownloadProgress } from "../src/services/binary-download/types";
+import type { SupportedPlatform } from "../src/agents/types";
 import type { Logger } from "../src/services/logging";
 
 // Console logger for the script - suppresses warnings to avoid alarming output
@@ -130,21 +141,21 @@ async function fetchLatestClaudeVersion(): Promise<string> {
 
 async function downloadBinary(
   service: DefaultBinaryDownloadService,
-  binary: BinaryType,
+  request: DownloadRequest,
   version: string
 ): Promise<void> {
-  const isInstalled = await service.isInstalled(binary);
+  const isInstalled = await service.isInstalled(request.destDir);
 
   if (isInstalled) {
-    console.log(`  ${binary} v${version} is already installed`);
+    console.log(`  ${request.name} v${version} is already installed`);
     return;
   }
 
-  const progressCallback = createProgressCallback(binary);
+  const progressCallback = createProgressCallback(request.name);
 
   try {
-    await service.download(binary, progressCallback);
-    console.log(`\r  ${binary} v${version} downloaded successfully                    `);
+    await service.download(request, progressCallback);
+    console.log(`\r  ${request.name} v${version} downloaded successfully                    `);
   } catch (error) {
     console.log(""); // Clear progress line
     throw error;
@@ -157,6 +168,8 @@ async function main(): Promise<void> {
   const platformInfo = createPlatformInfo();
   const buildInfo = createDevBuildInfo();
   const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+  const platform = platformInfo.platform as SupportedPlatform;
+  const arch = platformInfo.arch as SupportedArch;
 
   console.log(`Platform: ${platformInfo.platform}-${platformInfo.arch}`);
   console.log(`Data directory: ${pathProvider.dataRootDir}`);
@@ -167,17 +180,27 @@ async function main(): Promise<void> {
     new DefaultNetworkLayer(logger),
     new DefaultFileSystemLayer(logger),
     new DefaultArchiveExtractor(),
-    pathProvider,
-    platformInfo,
     logger
   );
 
   // Download binaries to production paths
   console.log("Checking code-server...");
-  await downloadBinary(service, "code-server", CODE_SERVER_VERSION);
+  const codeServerRequest: DownloadRequest = {
+    name: "code-server",
+    url: getCodeServerUrl(platform, arch),
+    destDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
+    executablePath: getCodeServerExecutablePath(platform),
+  };
+  await downloadBinary(service, codeServerRequest, CODE_SERVER_VERSION);
 
   console.log("Checking opencode...");
-  await downloadBinary(service, "opencode", OPENCODE_VERSION);
+  const opencodeRequest: DownloadRequest = {
+    name: "opencode",
+    url: getOpencodeUrl(platform, arch),
+    destDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
+    executablePath: getOpencodeExecutablePath(platform),
+  };
+  await downloadBinary(service, opencodeRequest, OPENCODE_VERSION);
 
   // Claude: prefer system binary, skip download if available
   console.log("Checking claude...");
@@ -185,7 +208,13 @@ async function main(): Promise<void> {
     console.log("  claude is available on system PATH");
   } else if (CLAUDE_VERSION !== null) {
     // If CLAUDE_VERSION is pinned, use the standard download flow
-    await downloadBinary(service, "claude", CLAUDE_VERSION);
+    const claudeRequest: DownloadRequest = {
+      name: "claude",
+      url: getClaudeUrl(platform, arch),
+      destDir: pathProvider.getBinaryDir("claude", CLAUDE_VERSION).toNative(),
+      executablePath: getClaudeExecutablePath(platform),
+    };
+    await downloadBinary(service, claudeRequest, CLAUDE_VERSION);
   } else {
     // CLAUDE_VERSION is null: fetch latest version and download
     // Note: BinaryDownloadService doesn't support dynamic versions yet,

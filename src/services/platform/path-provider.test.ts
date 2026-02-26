@@ -8,7 +8,8 @@ import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "./path";
-import { CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versions";
+import { CODE_SERVER_VERSION } from "../code-server/setup-info";
+import { OPENCODE_VERSION } from "../../agents/opencode/setup-info";
 
 describe("createMockPathProvider", () => {
   it("returns sensible default paths as Path objects", () => {
@@ -46,17 +47,6 @@ describe("createMockPathProvider", () => {
     );
     expect(pathProvider.getBinaryDir("opencode", "1.0.223").toString()).toBe(
       "/test/bundles/opencode/1.0.223"
-    );
-
-    // Test getBinaryPath (Linux - default platform)
-    expect(pathProvider.getBinaryPath("code-server", "4.107.0").toString()).toBe(
-      "/test/bundles/code-server/4.107.0/bin/code-server"
-    );
-    expect(pathProvider.getBinaryPath("opencode", "1.0.223").toString()).toBe(
-      "/test/bundles/opencode/1.0.223/opencode"
-    );
-    expect(pathProvider.getBinaryPath("claude", "1.0.58").toString()).toBe(
-      "/test/bundles/claude/1.0.58/claude"
     );
 
     // Test getBundledNodePath
@@ -133,27 +123,6 @@ describe("createMockPathProvider", () => {
     );
   });
 
-  it("respects platform option for binary paths", () => {
-    const linuxProvider = createMockPathProvider({ platform: "linux" });
-    const win32Provider = createMockPathProvider({ platform: "win32" });
-
-    // Linux uses non-.exe extensions
-    expect(linuxProvider.getBinaryPath("opencode", "1.0.0").toString()).toBe(
-      "/test/bundles/opencode/1.0.0/opencode"
-    );
-    expect(linuxProvider.getBinaryPath("code-server", "4.0.0").toString()).toBe(
-      "/test/bundles/code-server/4.0.0/bin/code-server"
-    );
-
-    // Windows uses .exe/.cmd extensions
-    expect(win32Provider.getBinaryPath("opencode", "1.0.0").toString()).toBe(
-      "/test/bundles/opencode/1.0.0/opencode.exe"
-    );
-    expect(win32Provider.getBinaryPath("code-server", "4.0.0").toString()).toBe(
-      "/test/bundles/code-server/4.0.0/bin/code-server.cmd"
-    );
-  });
-
   it("getProjectWorkspacesDir returns Path with project hash", () => {
     const pathProvider = createMockPathProvider();
 
@@ -196,7 +165,6 @@ describe("createMockPathProvider", () => {
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
     expect(typeof pathProvider.getBinaryBaseDir).toBe("function");
     expect(typeof pathProvider.getBinaryDir).toBe("function");
-    expect(typeof pathProvider.getBinaryPath).toBe("function");
     expect(typeof pathProvider.getBundledNodePath).toBe("function");
   });
 });
@@ -245,22 +213,6 @@ describe("DefaultPathProvider", () => {
       );
       expect(pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toString()).toMatch(
         new RegExp(`\\.local/share/codehydra/opencode/${OPENCODE_VERSION}$`)
-      );
-    });
-
-    it("returns correct binary paths for Linux", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toMatch(
-        /bin\/code-server$/
-      );
-      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toMatch(
-        /opencode$/
-      );
-      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).not.toMatch(
-        /\.exe$/
       );
     });
 
@@ -402,26 +354,6 @@ describe("DefaultPathProvider", () => {
         `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}`
       );
     });
-
-    it("returns correct binary paths", () => {
-      const buildInfo = createMockBuildInfo({
-        isDevelopment: false,
-        isPackaged: true,
-        appPath: "/opt/codehydra/resources/app.asar",
-      });
-      const platformInfo = createMockPlatformInfo({
-        platform: "linux",
-        homeDir: "/home/testuser",
-      });
-      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toBe(
-        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}/bin/code-server`
-      );
-      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toBe(
-        `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}/opencode`
-      );
-    });
   });
 
   describe.skipIf(process.platform === "win32")("production mode - macOS", () => {
@@ -461,7 +393,7 @@ describe("DefaultPathProvider", () => {
       );
     });
 
-    it("returns versioned binary directories and correct paths", () => {
+    it("returns versioned binary directories", () => {
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
         isPackaged: true,
@@ -478,19 +410,6 @@ describe("DefaultPathProvider", () => {
       );
       expect(pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toString()).toBe(
         `/Users/testuser/Library/Application Support/Codehydra/opencode/${OPENCODE_VERSION}`
-      );
-      // macOS uses Unix-style paths (no .exe extension)
-      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toContain(
-        "/bin/code-server"
-      );
-      expect(
-        pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()
-      ).not.toContain(".cmd");
-      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toContain(
-        "opencode"
-      );
-      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).not.toContain(
-        ".exe"
       );
     });
   });
@@ -520,27 +439,6 @@ describe("DefaultPathProvider", () => {
       );
       expect(pathProvider.vscodeDir.toString()).toBe(
         "c:/users/testuser/appdata/roaming/codehydra/vscode"
-      );
-    });
-
-    it("returns Windows binary paths with correct extensions", () => {
-      const buildInfo = createMockBuildInfo({
-        isDevelopment: false,
-        isPackaged: true,
-        appPath: "C:/Program Files/Codehydra/resources/app.asar",
-      });
-      const platformInfo = createMockPlatformInfo({
-        platform: "win32",
-        homeDir: "C:/Users/TestUser",
-      });
-      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-      // Windows uses .cmd for code-server and .exe for opencode
-      expect(pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toString()).toMatch(
-        /bin\/code-server\.cmd$/
-      );
-      expect(pathProvider.getBinaryPath("opencode", OPENCODE_VERSION).toString()).toMatch(
-        /opencode\.exe$/
       );
     });
 
