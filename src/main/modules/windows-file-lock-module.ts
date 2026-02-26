@@ -32,6 +32,7 @@ interface WindowsFileLockModuleDeps {
 
 export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): IntentModule {
   return {
+    name: "windows-file-lock",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {

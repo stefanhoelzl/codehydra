@@ -20,7 +20,6 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { WorkspaceDeletedEvent } from "../operations/delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../operations/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
-import type { Logger } from "../../services/logging/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 
 /**
@@ -73,10 +72,9 @@ export function aggregateWorkspaceStates(
  * and disposes the BadgeManager on app shutdown.
  *
  * @param badgeManager - The BadgeManager to call updateBadge() on
- * @param logger - Logger for shutdown error reporting
  * @returns IntentModule with event subscriptions and shutdown hook
  */
-export function createBadgeModule(badgeManager: BadgeManager, logger: Logger): IntentModule {
+export function createBadgeModule(badgeManager: BadgeManager): IntentModule {
   const workspaceStatuses = new Map<WorkspacePath, AggregatedAgentStatus>();
 
   function updateBadge(): void {
@@ -85,6 +83,7 @@ export function createBadgeModule(badgeManager: BadgeManager, logger: Logger): I
   }
 
   return {
+    name: "badge",
     events: {
       [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
         const { workspacePath, status } = (event as AgentStatusUpdatedEvent).payload;
@@ -101,15 +100,7 @@ export function createBadgeModule(badgeManager: BadgeManager, logger: Logger): I
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              badgeManager.dispose();
-            } catch (error) {
-              logger.error(
-                "Badge lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
+            badgeManager.dispose();
           },
         },
       },

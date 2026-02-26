@@ -246,7 +246,7 @@ const setupExtensionManager = new ExtensionManager(
 );
 
 const hookRegistry = new HookRegistry();
-const dispatcher = new Dispatcher(hookRegistry);
+const dispatcher = new Dispatcher(hookRegistry, loggingService.createLogger("dispatcher"));
 
 // Runtime services (non-agent, used by lifecycle modules)
 const pluginServer = new PluginServer(networkLayer, loggingService.createLogger("plugin"), {
@@ -447,12 +447,10 @@ const telemetryLifecycleModule = createTelemetryModule({
   platformInfo,
   buildInfo,
   dispatcher,
-  logger: lifecycleLogger,
 });
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
   dispatcher,
-  logger: lifecycleLogger,
 });
 const migrationModule = createMigrationModule({
   projectsDir: pathProvider.projectsDir.toString(),
@@ -475,11 +473,10 @@ const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   pathProvider,
   apiLogger
 );
-const badgeModule = createBadgeModule(badgeManager, lifecycleLogger);
+const badgeModule = createBadgeModule(badgeManager);
 const workspaceSelectionModule = createWorkspaceSelectionModule(agentStatusManager);
 const mcpModule = createMcpModule({
   mcpServerManager,
-  logger: lifecycleLogger,
 });
 
 // 8. New modules
@@ -607,7 +604,6 @@ codeHydraApi = registry.getInterface();
 // 11. Dispatch app:start
 
 // Dispatch app:start — orchestrates the entire startup flow via hook points
-appLogger.info("Dispatching app:start");
 void dispatcher
   .dispatch({
     type: INTENT_APP_START,

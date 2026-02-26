@@ -99,6 +99,7 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 
   // Resolve module: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -116,6 +117,7 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 
   // Resolve-project module: resolves projectPath → projectId (for domain events)
   const resolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
@@ -133,6 +135,7 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 
   // Restart hook handler module (reads from enriched context)
   const restartModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {

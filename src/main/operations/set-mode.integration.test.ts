@@ -94,6 +94,7 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
 
   // Set mode hook handler module
   const setModeModule: IntentModule = {
+    name: "test",
     hooks: {
       [SET_MODE_OPERATION_ID]: {
         set: {

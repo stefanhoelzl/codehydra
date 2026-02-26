@@ -22,7 +22,6 @@ import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { createMcpModule, type McpModuleDeps } from "./mcp-module";
-import { SILENT_LOGGER } from "../../services/logging";
 
 // =============================================================================
 // Mock McpServerManager
@@ -81,7 +80,6 @@ function createTestSetup(): TestSetup {
 
   const mcpModule = createMcpModule({
     mcpServerManager: mcpServerManager as unknown as McpModuleDeps["mcpServerManager"],
-    logger: SILENT_LOGGER,
   });
 
   dispatcher.registerModule(mcpModule);
@@ -115,6 +113,7 @@ describe("McpModule Integration", () => {
     it("disposes MCP server", async () => {
       // Wire a quit module to prevent app.quit() error
       const quitModule: IntentModule = {
+        name: "test-quit",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },
@@ -129,7 +128,6 @@ describe("McpModule Integration", () => {
       const msm = createMockMcpServerManager();
       const mcpModule = createMcpModule({
         mcpServerManager: msm as unknown as McpModuleDeps["mcpServerManager"],
-        logger: SILENT_LOGGER,
       });
 
       shutdownDispatcher.registerModule(mcpModule);

@@ -58,6 +58,7 @@ export function createRemoteProjectModule(deps: {
   const { fs, gitClient, pathProvider, logger } = deps;
 
   return {
+    name: "remote-project",
     hooks: {
       // -----------------------------------------------------------------------
       // open-project

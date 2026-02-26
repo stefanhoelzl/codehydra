@@ -2,7 +2,7 @@
  * Integration tests for Dispatcher.
  *
  * Verifies dispatch → execute flow, interceptor modify/cancel/ordering,
- * event emission, causation chain tracking, and no-operation error.
+ * event emission, causation chain tracking, no-operation error, and logging.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -12,6 +12,7 @@ import { HookRegistry } from "./hook-registry";
 import type { IntentModule } from "./module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext, HookContext } from "./operation";
+import type { Logger } from "../../../services/logging/types";
 
 // =============================================================================
 // Test Helpers
@@ -35,6 +36,30 @@ function createTestOperation<R>(
     execute: async (ctx) => {
       sideEffect?.(ctx);
       return returnValue;
+    },
+  };
+}
+
+function createMockLogger(): Logger & {
+  calls: { level: string; message: string; context?: unknown }[];
+} {
+  const calls: { level: string; message: string; context?: unknown }[] = [];
+  return {
+    calls,
+    silly(message: string, context?: unknown) {
+      calls.push({ level: "silly", message, context });
+    },
+    debug(message: string, context?: unknown) {
+      calls.push({ level: "debug", message, context });
+    },
+    info(message: string, context?: unknown) {
+      calls.push({ level: "info", message, context });
+    },
+    warn(message: string, context?: unknown) {
+      calls.push({ level: "warn", message, context });
+    },
+    error(message: string, context?: unknown) {
+      calls.push({ level: "error", message, context });
     },
   };
 }
@@ -390,6 +415,7 @@ describe("Dispatcher", () => {
       const hookRan = vi.fn();
 
       const testModule: IntentModule = {
+        name: "test-hook",
         hooks: {
           "action-op": {
             execute: {
@@ -416,6 +442,7 @@ describe("Dispatcher", () => {
       const eventHandler = vi.fn();
 
       const testModule: IntentModule = {
+        name: "test-event",
         events: {
           "test:completed": eventHandler,
         },
@@ -455,6 +482,7 @@ describe("Dispatcher", () => {
       };
 
       const testModule: IntentModule = {
+        name: "test-interceptor",
         interceptors: [cancelInterceptor],
       };
 
@@ -478,7 +506,7 @@ describe("Dispatcher", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
-      const emptyModule: IntentModule = {};
+      const emptyModule: IntentModule = { name: "test-empty" };
 
       expect(() => dispatcher.registerModule(emptyModule)).not.toThrow();
     });
@@ -489,6 +517,7 @@ describe("Dispatcher", () => {
       const order: string[] = [];
 
       const moduleA: IntentModule = {
+        name: "test-a",
         hooks: {
           "action-op": {
             execute: {
@@ -501,6 +530,7 @@ describe("Dispatcher", () => {
       };
 
       const moduleB: IntentModule = {
+        name: "test-b",
         hooks: {
           "action-op": {
             execute: {
@@ -520,6 +550,206 @@ describe("Dispatcher", () => {
       await hooks.collect("execute", ctx);
 
       expect(order).toEqual(["module-a", "module-b"]);
+    });
+  });
+
+  describe("logging", () => {
+    it("logs dispatch start with intent type and causation", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+      await dispatcher.dispatch(createActionIntent());
+
+      const dispatchLog = logger.calls.find((c) => c.level === "info" && c.message === "dispatch");
+      expect(dispatchLog).toBeDefined();
+      expect(dispatchLog!.context).toEqual(
+        expect.objectContaining({ intent: "test:action", causation: "" })
+      );
+    });
+
+    it("logs completion with intent type and duration", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+      await dispatcher.dispatch(createActionIntent());
+
+      const completedLog = logger.calls.find(
+        (c) => c.level === "info" && c.message === "completed"
+      );
+      expect(completedLog).toBeDefined();
+      expect(completedLog!.context).toEqual(
+        expect.objectContaining({ intent: "test:action", ms: expect.any(Number) })
+      );
+    });
+
+    it("logs failure when operation throws", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      dispatcher.registerOperation("test:action", {
+        id: "op",
+        execute: async () => {
+          throw new Error("boom");
+        },
+      });
+
+      await expect(dispatcher.dispatch(createActionIntent())).rejects.toThrow("boom");
+
+      const failedLog = logger.calls.find((c) => c.level === "error" && c.message === "failed");
+      expect(failedLog).toBeDefined();
+      expect(failedLog!.context).toEqual(
+        expect.objectContaining({ intent: "test:action", error: "boom" })
+      );
+    });
+
+    it("logs interceptor block", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+      dispatcher.addInterceptor({
+        id: "block-it",
+        async before() {
+          return null;
+        },
+      });
+
+      await dispatcher.dispatch(createActionIntent());
+
+      const blockLog = logger.calls.find(
+        (c) => c.level === "warn" && c.message === "interceptor blocked"
+      );
+      expect(blockLog).toBeDefined();
+      expect(blockLog!.context).toEqual(
+        expect.objectContaining({ intent: "test:action", interceptor: "block-it" })
+      );
+    });
+
+    it("logs hook execution with module names", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      const testModule: IntentModule = {
+        name: "test-mod",
+        hooks: {
+          "action-op": {
+            run: { handler: async () => ({ value: 1 }) },
+          },
+        },
+      };
+
+      dispatcher.registerModule(testModule);
+      dispatcher.registerOperation("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          await ctx.hooks.collect("run", { intent: ctx.intent });
+        },
+      });
+
+      await dispatcher.dispatch(createActionIntent());
+
+      const hookLog = logger.calls.find((c) => c.level === "debug" && c.message === "hook");
+      expect(hookLog).toBeDefined();
+      expect(hookLog!.context).toEqual(
+        expect.objectContaining({
+          op: "action-op",
+          hook: "run",
+          modules: "test-mod",
+          results: 1,
+          errors: 0,
+          ms: expect.any(Number),
+        })
+      );
+    });
+
+    it("logs hook errors", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      const testModule: IntentModule = {
+        name: "failing-mod",
+        hooks: {
+          "action-op": {
+            run: {
+              handler: async () => {
+                throw new Error("hook failed");
+              },
+            },
+          },
+        },
+      };
+
+      dispatcher.registerModule(testModule);
+      dispatcher.registerOperation("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          await ctx.hooks.collect("run", { intent: ctx.intent });
+        },
+      });
+
+      await dispatcher.dispatch(createActionIntent());
+
+      const hookErrorLog = logger.calls.find(
+        (c) => c.level === "warn" && c.message === "hook error"
+      );
+      expect(hookErrorLog).toBeDefined();
+      expect(hookErrorLog!.context).toEqual(
+        expect.objectContaining({
+          op: "action-op",
+          hook: "run",
+          error: "hook failed",
+        })
+      );
+    });
+
+    it("logs event emission with subscriber names", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      const testModule: IntentModule = {
+        name: "subscriber-mod",
+        events: {
+          "test:completed": () => {},
+        },
+      };
+
+      dispatcher.registerModule(testModule);
+      dispatcher.registerOperation("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          ctx.emit({ type: "test:completed", payload: {} });
+        },
+      });
+
+      await dispatcher.dispatch(createActionIntent());
+
+      const emitLog = logger.calls.find((c) => c.level === "info" && c.message === "emit");
+      expect(emitLog).toBeDefined();
+      expect(emitLog!.context).toEqual(
+        expect.objectContaining({
+          event: "test:completed",
+          subscribers: "subscriber-mod",
+        })
+      );
+    });
+
+    it("works without logger (backward compatible)", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation("test:action", createTestOperation("op", { ok: true }));
+
+      const result = await dispatcher.dispatch(createActionIntent());
+      expect(result).toEqual({ ok: true });
     });
   });
 });

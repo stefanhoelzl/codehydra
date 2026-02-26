@@ -583,6 +583,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   );
 
   return {
+    name: "ipc-event-bridge",
     events,
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -600,19 +601,11 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              if (apiEventCleanupFn) {
-                apiEventCleanupFn();
-                apiEventCleanupFn = null;
-              }
-              await deps.apiRegistry.dispose();
-            } catch (error) {
-              deps.logger.error(
-                "IpcBridge lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
+            if (apiEventCleanupFn) {
+              apiEventCleanupFn();
+              apiEventCleanupFn = null;
             }
+            await deps.apiRegistry.dispose();
           },
         },
       },

@@ -31,9 +31,7 @@ import {
   type UpdateAvailableIntent,
 } from "../operations/update-available";
 import { createAutoUpdaterModule } from "./auto-updater-module";
-import { SILENT_LOGGER } from "../../services/logging";
 import type { AutoUpdater, UpdateAvailableCallback } from "../../services/auto-updater";
-import type { Logger } from "../../services/logging/types";
 
 // =============================================================================
 // Minimal Start Operation
@@ -120,27 +118,13 @@ function createMockAutoUpdater(overrides?: { disposeThrows?: Error }): MockAutoU
   };
 }
 
-function createTrackingLogger(): { logger: Logger; errors: unknown[] } {
-  const errors: unknown[] = [];
-  const logger: Logger = {
-    silly() {},
-    debug() {},
-    info() {},
-    warn() {},
-    error(message: string, _context?: unknown, error?: Error) {
-      errors.push({ message, error });
-    },
-  };
-  return { logger, errors };
-}
-
 interface TestSetup {
   dispatcher: Dispatcher;
   autoUpdater: MockAutoUpdater;
   updateOperation: TrackingUpdateOperation;
 }
 
-function createTestSetup(overrides?: { disposeThrows?: Error; logger?: Logger }): TestSetup {
+function createTestSetup(overrides?: { disposeThrows?: Error }): TestSetup {
   const autoUpdater = createMockAutoUpdater(
     overrides?.disposeThrows ? { disposeThrows: overrides.disposeThrows } : undefined
   );
@@ -152,7 +136,6 @@ function createTestSetup(overrides?: { disposeThrows?: Error; logger?: Logger })
   const autoUpdaterModule = createAutoUpdaterModule({
     autoUpdater: autoUpdater.mock,
     dispatcher,
-    logger: overrides?.logger ?? SILENT_LOGGER,
   });
 
   dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
@@ -208,20 +191,12 @@ describe("AutoUpdaterModule Integration", () => {
     expect(autoUpdater.disposeCalled).toBe(true);
   });
 
-  it("dispose() throws — error logged, no re-throw", async () => {
-    const disposeError = new Error("dispose failed");
-    const { logger, errors } = createTrackingLogger();
+  it("dispose() throws — collect catches error, dispatch still resolves", async () => {
     const { dispatcher } = createTestSetup({
-      disposeThrows: disposeError,
-      logger,
+      disposeThrows: new Error("dispose failed"),
     });
 
+    // Handler throws, but collect() catches it and shutdown is best-effort
     await expect(dispatcher.dispatch(shutdownIntent())).resolves.toBeUndefined();
-
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toEqual({
-      message: "AutoUpdater lifecycle shutdown failed (non-fatal)",
-      error: disposeError,
-    });
   });
 });

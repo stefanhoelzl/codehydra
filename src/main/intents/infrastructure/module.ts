@@ -35,6 +35,8 @@ export type EventDeclarations = Readonly<Record<string, (event: DomainEvent) => 
  * Modules are registered at bootstrap via `dispatcher.registerModule()`.
  */
 export interface IntentModule {
+  /** Human-readable module name for logging and diagnostics. */
+  readonly name: string;
   /** Hook contributions: operationId → hookPointId → HookHandler */
   readonly hooks?: HookDeclarations;
   /** Event subscriptions: eventType → handler */

@@ -55,6 +55,7 @@ function createTestSetup(cachedRef: WorkspaceRef | null): TestSetup {
 
   // Active workspace hook handler module (event-cache pattern)
   const activeWorkspaceModule: IntentModule = {
+    name: "test",
     hooks: {
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {

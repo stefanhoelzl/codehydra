@@ -15,16 +15,15 @@ import {
 } from "../operations/update-available";
 import type { AutoUpdater } from "../../services/auto-updater";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
-import type { Logger } from "../../services/logging/types";
 
 interface AutoUpdaterModuleDeps {
   readonly autoUpdater: AutoUpdater;
   readonly dispatcher: Dispatcher;
-  readonly logger: Logger;
 }
 
 export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModule {
   return {
+    name: "auto-updater",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
@@ -45,15 +44,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              deps.autoUpdater.dispose();
-            } catch (error) {
-              deps.logger.error(
-                "AutoUpdater lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
-            }
+            deps.autoUpdater.dispose();
           },
         },
       },

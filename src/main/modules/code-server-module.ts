@@ -79,6 +79,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   let codeServerPort = 0;
 
   return {
+    name: "code-server",
     hooks: {
       [APP_START_OPERATION_ID]: {
         // -------------------------------------------------------------------
@@ -128,7 +129,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             if (pluginServer) {
               try {
                 pluginPort = await pluginServer.start();
-                logger.info("PluginServer started", { port: pluginPort });
 
                 // Pass pluginPort to CodeServerManager so extensions can connect
                 codeServerManager.setPluginPort(pluginPort);
@@ -165,20 +165,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              // Stop code-server
-              await codeServerManager.stop();
+            // Stop code-server
+            await codeServerManager.stop();
 
-              // Close PluginServer AFTER code-server (extensions disconnect first)
-              if (pluginServer) {
-                await pluginServer.close();
-              }
-            } catch (error) {
-              logger.error(
-                "CodeServer lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
+            // Close PluginServer AFTER code-server (extensions disconnect first)
+            if (pluginServer) {
+              await pluginServer.close();
             }
           },
         },

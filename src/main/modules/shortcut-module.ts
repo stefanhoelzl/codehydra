@@ -39,6 +39,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
   let controller: ShortcutController | null = null;
 
   return {
+    name: "shortcut",
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {

@@ -55,6 +55,7 @@ function createServerManagerModule(
   options?: { fail?: boolean }
 ): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -77,6 +78,7 @@ function createServerManagerModule(
 
 function createMcpShutdownModule(state: DisposalState): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -98,6 +100,7 @@ function createPluginServerModule(
   options?: { fail?: boolean }
 ): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -120,6 +123,7 @@ function createPluginServerModule(
 
 function createTelemetryModule(state: DisposalState): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -138,6 +142,7 @@ function createTelemetryModule(state: DisposalState): IntentModule {
 
 function createViewShutdownModule(state: DisposalState): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -156,6 +161,7 @@ function createViewShutdownModule(state: DisposalState): IntentModule {
 
 function createBadgeShutdownModule(state: DisposalState): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -174,6 +180,7 @@ function createBadgeShutdownModule(state: DisposalState): IntentModule {
 
 function createAutoUpdaterShutdownModule(state: DisposalState): IntentModule {
   return {
+    name: "test",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -297,6 +304,7 @@ describe("AppShutdown Operation", () => {
     it("quit hook fires after all stop hooks complete", async () => {
       const order: string[] = [];
       const stopModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             stop: {
@@ -308,6 +316,7 @@ describe("AppShutdown Operation", () => {
         },
       };
       const quitModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: {
@@ -331,6 +340,7 @@ describe("AppShutdown Operation", () => {
     it("second dispatch is no-op, services disposed only once", async () => {
       let disposeCount = 0;
       const countingModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             stop: {

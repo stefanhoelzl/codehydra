@@ -157,6 +157,7 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
   });
 
   const module: IntentModule = {
+    name: "view",
     hooks: {
       // -------------------------------------------------------------------
       // ui:set-mode → set: capture previous mode, apply new mode
@@ -408,32 +409,24 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              // Cleanup loading state callback
-              if (loadingChangeCleanupFn) {
-                loadingChangeCleanupFn();
-                loadingChangeCleanupFn = null;
-              }
+            // Cleanup loading state callback
+            if (loadingChangeCleanupFn) {
+              loadingChangeCleanupFn();
+              loadingChangeCleanupFn = null;
+            }
 
-              // Destroy all views before disposing layers (uses viewLayer internally)
-              viewManager.destroy();
+            // Destroy all views before disposing layers (uses viewLayer internally)
+            viewManager.destroy();
 
-              // Dispose layers in reverse initialization order
-              if (deps.viewLayer) {
-                await deps.viewLayer.dispose();
-              }
-              if (deps.windowLayer) {
-                await deps.windowLayer.dispose();
-              }
-              if (deps.sessionLayer) {
-                await deps.sessionLayer.dispose();
-              }
-            } catch (error) {
-              logger.error(
-                "View lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
+            // Dispose layers in reverse initialization order
+            if (deps.viewLayer) {
+              await deps.viewLayer.dispose();
+            }
+            if (deps.windowLayer) {
+              await deps.windowLayer.dispose();
+            }
+            if (deps.sessionLayer) {
+              await deps.sessionLayer.dispose();
             }
           },
         },

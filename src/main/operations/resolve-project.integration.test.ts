@@ -47,6 +47,7 @@ function createTestSetup(resolveHandler?: (ctx: HookContext) => Promise<ResolveH
 
   if (resolveHandler) {
     const module: IntentModule = {
+      name: "test",
       hooks: {
         [RESOLVE_PROJECT_OPERATION_ID]: {
           resolve: { handler: resolveHandler },

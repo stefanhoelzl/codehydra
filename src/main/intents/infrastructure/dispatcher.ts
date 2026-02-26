@@ -3,12 +3,29 @@
  *
  * Orchestrates: interceptor pipeline → operation resolution → hook injection → execute → emit events.
  * Events are emitted inline when `ctx.emit()` is called during operation execution.
+ *
+ * When a Logger is provided, the dispatcher logs:
+ * - Intent dispatch start (info)
+ * - Interceptor blocks (warn)
+ * - Hook point execution with timing, module names, results, errors (debug)
+ * - Hook errors (warn)
+ * - Event emissions with subscriber names (info)
+ * - Intent completion with timing (info)
+ * - Intent failure (error)
  */
 
 import type { Intent, IntentResult, DomainEvent } from "./types";
-import type { Operation, OperationContext, DispatchFn } from "./operation";
+import type {
+  Operation,
+  OperationContext,
+  DispatchFn,
+  ResolvedHooks,
+  HookContext,
+} from "./operation";
+import type { HookResult } from "./operation";
 import type { IHookRegistry } from "./hook-registry";
 import type { IntentModule } from "./module";
+import type { Logger } from "../../../services/logging/types";
 
 // =============================================================================
 // IntentHandle
@@ -117,7 +134,16 @@ export class Dispatcher implements IDispatcher {
   private readonly interceptors: IntentInterceptor[] = [];
   private readonly subscribers = new Map<string, Set<EventHandler>>();
 
-  constructor(private readonly hookRegistry: IHookRegistry) {}
+  /** operationId → hookPointId → module names[] */
+  private readonly hookModuleNames = new Map<string, Map<string, string[]>>();
+
+  /** eventType → module names[] */
+  private readonly eventSubscriberNames = new Map<string, string[]>();
+
+  constructor(
+    private readonly hookRegistry: IHookRegistry,
+    private readonly logger?: Logger
+  ) {}
 
   /**
    * Register an operation for a specific intent type.
@@ -143,12 +169,14 @@ export class Dispatcher implements IDispatcher {
       for (const [operationId, hookPoints] of Object.entries(module.hooks)) {
         for (const [hookPointId, handler] of Object.entries(hookPoints)) {
           this.hookRegistry.register(operationId, hookPointId, handler);
+          this.trackHookModule(operationId, hookPointId, module.name);
         }
       }
     }
     if (module.events) {
       for (const [eventType, handler] of Object.entries(module.events)) {
         this.subscribe(eventType, handler);
+        this.trackEventSubscriber(eventType, module.name);
       }
     }
     if (module.interceptors) {
@@ -179,17 +207,83 @@ export class Dispatcher implements IDispatcher {
     return handle;
   }
 
+  private trackHookModule(operationId: string, hookPointId: string, moduleName: string): void {
+    let opMap = this.hookModuleNames.get(operationId);
+    if (!opMap) {
+      opMap = new Map<string, string[]>();
+      this.hookModuleNames.set(operationId, opMap);
+    }
+    let names = opMap.get(hookPointId);
+    if (!names) {
+      names = [];
+      opMap.set(hookPointId, names);
+    }
+    names.push(moduleName);
+  }
+
+  private trackEventSubscriber(eventType: string, moduleName: string): void {
+    let names = this.eventSubscriberNames.get(eventType);
+    if (!names) {
+      names = [];
+      this.eventSubscriberNames.set(eventType, names);
+    }
+    names.push(moduleName);
+  }
+
+  private createLoggedHooks(hooks: ResolvedHooks, operationId: string): ResolvedHooks {
+    return {
+      collect: async <T>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>> => {
+        const modules = this.hookModuleNames.get(operationId)?.get(hookPointId) ?? [];
+        const start = performance.now();
+        const result = await hooks.collect<T>(hookPointId, ctx);
+        const duration = Math.round(performance.now() - start);
+
+        this.logger!.debug("hook", {
+          op: operationId,
+          hook: hookPointId,
+          modules: modules.join(","),
+          results: result.results.length,
+          errors: result.errors.length,
+          ms: duration,
+        });
+
+        if (result.errors.length > 0) {
+          for (const error of result.errors) {
+            this.logger!.warn("hook error", {
+              op: operationId,
+              hook: hookPointId,
+              error: error.message,
+            });
+          }
+        }
+
+        return result;
+      },
+    };
+  }
+
   private async runPipeline<I extends Intent>(
     intent: I,
     causation: readonly string[] | undefined,
     handle: IntentHandle<IntentResult<I>>
   ): Promise<void> {
+    const pipelineStart = performance.now();
+
     try {
+      this.logger?.info("dispatch", {
+        intent: intent.type,
+        causation: causation?.join(" > ") ?? "",
+      });
+
       // Run interceptor pipeline
       let current: Intent | null = intent;
       for (const interceptor of this.interceptors) {
         current = await interceptor.before(current);
         if (current === null) {
+          this.logger?.warn("interceptor blocked", {
+            intent: intent.type,
+            interceptor: interceptor.id,
+          });
           handle.signalAccepted(false);
           handle.resolve(undefined as IntentResult<I>);
           return;
@@ -217,6 +311,9 @@ export class Dispatcher implements IDispatcher {
 
       // Resolve hooks for this operation
       const hooks = this.hookRegistry.resolve(operation.id);
+      const loggedHooks: ResolvedHooks = this.logger
+        ? this.createLoggedHooks(hooks, operation.id)
+        : hooks;
 
       // Build operation context
       const ctx: OperationContext<Intent> = {
@@ -225,19 +322,34 @@ export class Dispatcher implements IDispatcher {
         emit: (event: DomainEvent) => {
           const handlers = this.subscribers.get(event.type);
           if (handlers) {
+            if (this.logger) {
+              const names = this.eventSubscriberNames.get(event.type) ?? [];
+              this.logger.info("emit", {
+                event: event.type,
+                subscribers: names.join(","),
+              });
+            }
             for (const handler of handlers) {
               handler(event);
             }
           }
         },
-        hooks,
+        hooks: loggedHooks,
         causation: causationChain,
       };
 
       // Execute operation
       const result = await operation.execute(ctx);
+
+      const duration = Math.round(performance.now() - pipelineStart);
+      this.logger?.info("completed", { intent: current.type, ms: duration });
+
       handle.resolve(result as IntentResult<I>);
     } catch (e) {
+      this.logger?.error("failed", {
+        intent: intent.type,
+        error: e instanceof Error ? e.message : String(e),
+      });
       // Ensure accepted is signaled even if interceptor itself throws.
       // Calling signalAccepted twice is safe — Promise resolves only once.
       handle.signalAccepted(true);

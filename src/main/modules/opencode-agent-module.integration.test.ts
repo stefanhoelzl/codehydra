@@ -1030,6 +1030,7 @@ describe("OpenCodeAgentModule Integration", () => {
 
       // Need a quit hook module to avoid errors in AppShutdownOperation
       const quitModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },
@@ -1053,6 +1054,7 @@ describe("OpenCodeAgentModule Integration", () => {
       await activateModule(setup, "claude");
 
       const quitModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },

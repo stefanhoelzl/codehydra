@@ -25,6 +25,7 @@ interface KeepFilesModuleDeps {
 
 export function createKeepFilesModule(deps: KeepFilesModuleDeps): IntentModule {
   return {
+    name: "keepfiles",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {

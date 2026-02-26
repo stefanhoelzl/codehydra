@@ -36,6 +36,7 @@ export interface LoggingModuleDeps {
  */
 export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
   return {
+    name: "logging",
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {

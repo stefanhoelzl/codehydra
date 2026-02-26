@@ -32,6 +32,7 @@ export interface ScriptModuleDeps {
  */
 export function createScriptModule(deps: ScriptModuleDeps): IntentModule {
   return {
+    name: "script",
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {

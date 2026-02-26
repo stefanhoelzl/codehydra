@@ -148,8 +148,8 @@ class MinimalStopOperation implements Operation<Intent, void> {
   readonly id = APP_SHUTDOWN_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect("stop", { intent: ctx.intent });
-    if (errors.length > 0) throw errors[0]!;
+    // Matches real AppShutdownOperation: collect() catches errors, does not rethrow
+    await ctx.hooks.collect("stop", { intent: ctx.intent });
   }
 }
 
@@ -1180,7 +1180,7 @@ describe("ClaudeAgentModule", () => {
       expect(mockASM.dispose).not.toHaveBeenCalled();
     });
 
-    it("handles non-fatal stop errors", async () => {
+    it("collect catches stop error, dispatch still resolves", async () => {
       const mockDepsResult = createMockDeps();
       mockDepsResult.mockSM.dispose.mockRejectedValue(new Error("dispose failed"));
       const { dispatcher, module } = createTestSetup(mockDepsResult);
@@ -1188,7 +1188,7 @@ describe("ClaudeAgentModule", () => {
 
       dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
 
-      // Should not throw - errors are caught internally
+      // Handler throws directly, but collect() catches the error
       await expect(
         dispatcher.dispatch({ type: "app:shutdown", payload: {} })
       ).resolves.not.toThrow();

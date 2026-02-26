@@ -22,7 +22,6 @@ import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/co
 import type { TelemetryService } from "../../services/telemetry/types";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { BuildInfo } from "../../services/platform/build-info";
-import type { Logger } from "../../services/logging/types";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { ConfigAgentType } from "../../services/config/config-values";
 
@@ -31,7 +30,6 @@ interface TelemetryModuleDeps {
   readonly platformInfo: PlatformInfo;
   readonly buildInfo: BuildInfo;
   readonly dispatcher: Dispatcher;
-  readonly logger: Logger;
 }
 
 export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
@@ -57,6 +55,7 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
   }
 
   return {
+    name: "telemetry",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
@@ -76,16 +75,8 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            try {
-              if (deps.telemetryService) {
-                await deps.telemetryService.shutdown();
-              }
-            } catch (error) {
-              deps.logger.error(
-                "Telemetry lifecycle shutdown failed (non-fatal)",
-                {},
-                error instanceof Error ? error : undefined
-              );
+            if (deps.telemetryService) {
+              await deps.telemetryService.shutdown();
             }
           },
         },

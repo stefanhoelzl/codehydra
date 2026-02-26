@@ -971,6 +971,7 @@ describe("ViewModule Integration", () => {
     it("calls viewManager.destroy() and disposes shell layers", async () => {
       // Need a quit module to prevent missing handler error
       const quitModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },
@@ -1015,6 +1016,7 @@ describe("ViewModule Integration", () => {
     it("calls loading change unsubscribe during shutdown", async () => {
       const cleanupFn = vi.fn();
       const quitModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },
@@ -1069,6 +1071,7 @@ describe("ViewModule Integration", () => {
   describe("app-shutdown with null layers", () => {
     it("does not throw when layers are null", async () => {
       const quitModule: IntentModule = {
+        name: "test",
         hooks: {
           [APP_SHUTDOWN_OPERATION_ID]: {
             quit: { handler: async () => {} },

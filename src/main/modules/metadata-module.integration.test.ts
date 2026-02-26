@@ -104,6 +104,7 @@ function createTestSetup(): TestSetup {
 
   // resolve stub: validates workspacePath → returns projectPath + workspaceName
   const resolveModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
@@ -121,6 +122,7 @@ function createTestSetup(): TestSetup {
 
   // resolve-project stub: resolves projectPath → projectId (for set-metadata commands)
   const resolveProjectModule: IntentModule = {
+    name: "test",
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
