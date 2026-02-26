@@ -8,7 +8,6 @@ export {
   type ConfigKey,
   type ConfigAgentType,
   CONFIG_KEYS,
-  FILE_KEYS,
   DEFAULT_CONFIG_VALUES,
   configKeyToEnvVar,
   envVarToConfigKey,

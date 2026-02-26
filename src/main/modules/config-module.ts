@@ -27,11 +27,11 @@ import type {
 import type { ConfigureResult, InitHookContext } from "../operations/app-start";
 import {
   CONFIG_KEYS,
-  FILE_KEYS,
   DEFAULT_CONFIG_VALUES,
   envVarToConfigKey,
   parseConfigValue,
 } from "../../services/config/config-values";
+import { parseLogLevel } from "../../services/logging/electron-log-service";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import {
   CONFIG_SET_VALUES_OPERATION_ID,
@@ -214,7 +214,7 @@ function parseConfigFile(data: unknown): {
     if (renamedKey !== undefined) {
       result[renamedKey] = value;
       migrated = true;
-    } else if (FILE_KEYS.has(key as ConfigKey)) {
+    } else if (CONFIG_KEYS.has(key as ConfigKey)) {
       result[key] = value;
     }
   }
@@ -261,6 +261,33 @@ function validateFileValues(values: Partial<ConfigValues>): Partial<ConfigValues
   if (values["telemetry.distinct-id"] !== undefined) {
     if (typeof values["telemetry.distinct-id"] === "string") {
       result["telemetry.distinct-id"] = values["telemetry.distinct-id"];
+    }
+  }
+
+  if (values["log.level"] !== undefined) {
+    if (
+      typeof values["log.level"] === "string" &&
+      parseLogLevel(values["log.level"]) !== undefined
+    ) {
+      result["log.level"] = values["log.level"];
+    }
+  }
+
+  if (values["log.console"] !== undefined) {
+    if (typeof values["log.console"] === "boolean") {
+      result["log.console"] = values["log.console"];
+    }
+  }
+
+  if (values["log.filter"] !== undefined) {
+    if (typeof values["log.filter"] === "string") {
+      result["log.filter"] = values["log.filter"];
+    }
+  }
+
+  if (values["electron.flags"] !== undefined) {
+    if (typeof values["electron.flags"] === "string") {
+      result["electron.flags"] = values["electron.flags"];
     }
   }
 
@@ -362,13 +389,7 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
 
             // Migration: write directly to disk, no dispatch
             if (migrated) {
-              const json = JSON.stringify(
-                Object.fromEntries(
-                  Object.entries(fileValues).filter(([k]) => FILE_KEYS.has(k as ConfigKey))
-                ),
-                null,
-                2
-              );
+              const json = JSON.stringify(Object.fromEntries(Object.entries(fileValues)), null, 2);
               await fileSystem.mkdir(configPath.dirname);
               await fileSystem.writeFile(configPath, json);
               logger.debug("Config migrated", { path: configPath.toString() });
@@ -429,9 +450,7 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
               }
 
               for (const [key, value] of Object.entries(values)) {
-                if (FILE_KEYS.has(key as ConfigKey)) {
-                  fileContent[key] = value;
-                }
+                fileContent[key] = value;
               }
               await fileSystem.mkdir(configPath.dirname);
               await fileSystem.writeFile(configPath, JSON.stringify(fileContent, null, 2));
