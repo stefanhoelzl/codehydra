@@ -490,6 +490,7 @@ const configModule = createConfigModule({
   isPackaged: buildInfo.isPackaged,
   env: process.env as Record<string, string | undefined>,
   argv: process.argv,
+  stdout: process.stdout,
 });
 
 const electronLifecycleModule = createElectronLifecycleModule({

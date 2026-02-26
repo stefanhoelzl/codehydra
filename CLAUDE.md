@@ -309,6 +309,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | `log.level`             | `warn`    | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`) |
 | `log.output`            | `file`    | Output destinations: `file`, `console`, or `file,console`               |
 | `electron.flags`        | —         | Electron switches (e.g., `--disable-gpu`)                               |
+| `help`                  | `false`   | Print config help and exit                                              |
 
 Any key can appear in config.json, env vars, or CLI flags.
 
