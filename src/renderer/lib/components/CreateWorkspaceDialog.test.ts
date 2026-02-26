@@ -372,37 +372,34 @@ describe("CreateWorkspaceDialog component", () => {
       expect(okButton).toBeDisabled();
     });
 
-    it('name with / shows error "Name cannot contain /"', async () => {
+    it("name with / is valid (branch name style)", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await completeAllLoading();
 
       const nameInput = getNameInput();
-      // Note: Names with / are typically valid branch names, but the dialog validates against /
-      // The NameBranchDropdown filters options but allows free text
-      // Enter the invalid name and press Enter to confirm
       await enterName(nameInput, "feature/branch");
 
-      expect(screen.getByText(/name cannot contain \//i)).toBeInTheDocument();
+      expect(screen.queryByText(/name cannot contain/i)).not.toBeInTheDocument();
     });
 
-    it('name with \\ shows error "Name cannot contain \\"', async () => {
+    it("name with \\ shows error", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await completeAllLoading();
 
       const nameInput = getNameInput();
       await enterName(nameInput, "feature\\branch");
 
-      expect(screen.getByText(/name cannot contain \\/i)).toBeInTheDocument();
+      expect(screen.getByText(/name cannot contain/i)).toBeInTheDocument();
     });
 
-    it('name with .. shows error "Name cannot contain .."', async () => {
+    it("name with .. shows error", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await completeAllLoading();
 
       const nameInput = getNameInput();
       await enterName(nameInput, "feature..branch");
 
-      expect(screen.getByText(/name cannot contain \.\./i)).toBeInTheDocument();
+      expect(screen.getByText(/name cannot contain/i)).toBeInTheDocument();
     });
 
     it("name > 100 chars shows error", async () => {

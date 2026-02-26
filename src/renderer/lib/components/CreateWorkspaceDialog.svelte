@@ -12,6 +12,7 @@
     type ProjectId,
     type Project,
   } from "$lib/api";
+  import { validateWorkspaceName } from "@shared/api/types";
   import { closeDialog, openGitCloneDialog } from "$lib/stores/dialogs.svelte.js";
   import { getProjectById, projects } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
@@ -69,14 +70,8 @@
 
   // Validate name
   function validateName(value: string): string | null {
-    if (!value.trim()) return "Name is required";
-    if (value.includes("/")) return "Name cannot contain /";
-    if (value.includes("\\")) return "Name cannot contain \\";
-    if (value.includes("..")) return "Name cannot contain ..";
-    if (value.length > 100) return "Name must be 100 characters or less";
-    if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
-      return "Name can only contain letters, numbers, dash, underscore";
-    }
+    const formatError = validateWorkspaceName(value);
+    if (formatError) return formatError;
     if (existingNames.includes(value.toLowerCase())) return "Workspace already exists";
     return null;
   }

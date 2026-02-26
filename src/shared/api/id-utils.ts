@@ -26,5 +26,6 @@ export function extractWorkspaceName(workspacePath: string): WorkspaceName {
   // Get basename (last segment)
   const lastSlash = trimmed.lastIndexOf("/");
   const basename = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  return basename as WorkspaceName;
+  // Reverse filesystem sanitization: sanitizeWorkspaceName replaces / with %
+  return basename.replace(/%/g, "/") as WorkspaceName;
 }

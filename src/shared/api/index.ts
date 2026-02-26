@@ -51,8 +51,8 @@ export type {
   AppState,
 } from "./types";
 
-// Type guards
-export { isProjectId, isWorkspaceName } from "./types";
+// Type guards and validation
+export { isProjectId, isWorkspaceName, validateWorkspaceName } from "./types";
 
 // API interfaces
 export type {

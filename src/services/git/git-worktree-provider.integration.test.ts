@@ -184,6 +184,73 @@ describe("GitWorktreeProvider integration", () => {
     });
   });
 
+  describe("discover name resolution", () => {
+    it("returns branch name (not sanitized basename) for workspaces with /", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature/login"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature%login",
+                path: "/workspaces/feature%login",
+                branch: "feature/login",
+              },
+            ],
+            branchConfigs: {
+              "feature/login": { "codehydra.base": "main" },
+            },
+          },
+        },
+      });
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+      expect(discovered).toHaveLength(1);
+      expect(discovered[0]?.name).toBe("feature/login");
+      expect(discovered[0]?.branch).toBe("feature/login");
+    });
+
+    it("falls back to filesystem name for detached HEAD workspaces", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "detached-ws",
+                path: "/workspaces/detached-ws",
+                branch: null,
+              },
+            ],
+          },
+        },
+      });
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+      expect(discovered).toHaveLength(1);
+      expect(discovered[0]?.name).toBe("detached-ws");
+      expect(discovered[0]?.branch).toBeNull();
+    });
+  });
+
   describe("metadata setMetadata/getMetadata", () => {
     it("setMetadata persists and getMetadata retrieves", async () => {
       const mockClient = createMockGitClient({

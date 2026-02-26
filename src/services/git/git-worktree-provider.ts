@@ -11,7 +11,7 @@
 import type { IGitClient } from "./git-client";
 import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspace } from "./types";
 import { WorkspaceError, getErrorMessage } from "../errors";
-import { sanitizeWorkspaceName } from "../platform/paths";
+import { sanitizeWorkspaceName, unsanitizeWorkspaceName } from "../platform/paths";
 import { isValidMetadataKey } from "../../shared/api/types";
 import type { FileSystemLayer } from "../platform/filesystem";
 import type { Logger } from "../logging";
@@ -254,7 +254,7 @@ export class GitWorktreeProvider {
       }
 
       workspaces.push({
-        name: wt.name,
+        name: wt.branch ?? wt.name,
         path: wt.path,
         branch: wt.branch,
         metadata,
@@ -520,7 +520,7 @@ export class GitWorktreeProvider {
     // If worktree not found (retry after partial failure), extract branch from path
     // For git worktrees, the last path segment is the branch name
     // Note: Use ternary (not ??) to preserve null for detached HEAD workspaces
-    const branchName = worktree ? worktree.branch : workspacePath.basename;
+    const branchName = worktree ? worktree.branch : unsanitizeWorkspaceName(workspacePath.basename);
 
     // Step 1: Try to remove worktree, save error if it fails
     // We save the error to throw later, after attempting branch deletion

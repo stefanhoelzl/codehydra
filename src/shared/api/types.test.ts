@@ -8,6 +8,7 @@ import {
   type WorkspaceName,
   isProjectId,
   isWorkspaceName,
+  validateWorkspaceName,
   isValidMetadataKey,
   METADATA_KEY_REGEX,
 } from "./types";
@@ -189,6 +190,15 @@ describe("isWorkspaceName - Type Guard", () => {
       expect(isWorkspaceName("feature#1")).toBe(false);
       expect(isWorkspaceName("feature$1")).toBe(false);
     });
+
+    it("should reject names containing double dots", () => {
+      expect(isWorkspaceName("a..b")).toBe(false);
+      expect(isWorkspaceName("..foo")).toBe(false);
+    });
+
+    it("should reject names containing backslash", () => {
+      expect(isWorkspaceName("feature\\branch")).toBe(false);
+    });
   });
 
   describe("type narrowing", () => {
@@ -200,6 +210,51 @@ describe("isWorkspaceName - Type Guard", () => {
         expect(name).toBe(value);
       }
     });
+  });
+});
+
+describe("validateWorkspaceName - Validation with error messages", () => {
+  it("returns null for valid names", () => {
+    expect(validateWorkspaceName("feature-branch")).toBeNull();
+    expect(validateWorkspaceName("release.1.0")).toBeNull();
+    expect(validateWorkspaceName("feature/login")).toBeNull();
+    expect(validateWorkspaceName("a")).toBeNull();
+  });
+
+  it("returns error for empty string", () => {
+    expect(validateWorkspaceName("")).toBe("Name is required");
+  });
+
+  it("returns error for names exceeding max length", () => {
+    const tooLong = "a".repeat(101);
+    expect(validateWorkspaceName(tooLong)).toBe("Name must be 100 characters or less");
+  });
+
+  it("returns error for double dots", () => {
+    expect(validateWorkspaceName("a..b")).toBe('Name cannot contain ".."');
+    expect(validateWorkspaceName("..foo")).toBe('Name cannot contain ".."');
+  });
+
+  it("returns error for backslash", () => {
+    expect(validateWorkspaceName("feature\\branch")).toBe('Name cannot contain "\\"');
+  });
+
+  it("returns error for invalid characters", () => {
+    expect(validateWorkspaceName("feature@branch")).toBe(
+      "Name can only contain letters, numbers, dash, underscore, dot, forward slash"
+    );
+  });
+
+  it("returns error for names starting with non-alphanumeric", () => {
+    expect(validateWorkspaceName("-feature")).toBe(
+      "Name can only contain letters, numbers, dash, underscore, dot, forward slash"
+    );
+    expect(validateWorkspaceName(".feature")).toBe(
+      "Name can only contain letters, numbers, dash, underscore, dot, forward slash"
+    );
+    expect(validateWorkspaceName("/feature")).toBe(
+      "Name can only contain letters, numbers, dash, underscore, dot, forward slash"
+    );
   });
 });
 
