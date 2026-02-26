@@ -73,11 +73,20 @@ export function getClaudeLatestVersionUrl(): string {
 }
 
 /**
+ * Get the relative path to the Claude executable within the extracted directory.
+ *
+ * @param platform - Operating system platform
+ * @returns Relative path to the executable
+ */
+export function getClaudeExecutablePath(platform: SupportedPlatform): string {
+  return platform === "win32" ? "claude.exe" : "claude";
+}
+
+/**
  * Get the binary filename for the current platform.
  */
 function getBinaryFilename(platform: SupportedPlatform): string {
-  // Claude CLI is named 'claude' on all platforms
-  return platform === "win32" ? "claude.exe" : "claude";
+  return getClaudeExecutablePath(platform);
 }
 
 /**

@@ -7,17 +7,33 @@
  */
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { DefaultPathProvider } from "../platform/path-provider";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { DefaultNetworkLayer } from "../platform/network";
 import { DefaultBinaryDownloadService } from "../binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../binary-download/archive-extractor";
-import { BINARY_CONFIGS, CODE_SERVER_VERSION, OPENCODE_VERSION } from "../binary-download/versions";
+import {
+  CODE_SERVER_VERSION,
+  getCodeServerUrl,
+  getCodeServerExecutablePath,
+} from "../code-server/setup-info";
+import {
+  OPENCODE_VERSION,
+  getOpencodeUrl,
+  getOpencodeExecutablePath,
+} from "../../agents/opencode/setup-info";
 import { SILENT_LOGGER } from "../logging";
 import { createMockBuildInfo } from "../platform/build-info.test-utils";
 import { NodePlatformInfo } from "../../main/platform-info";
-import type { BinaryType } from "../binary-download/types";
+import type { DownloadRequest } from "../binary-download/types";
 import type { PlatformInfo } from "../platform/platform-info";
+import type { SupportedPlatform, SupportedArch } from "../../agents/types";
+
+/**
+ * Binary types supported for test downloads.
+ */
+export type TestBinaryType = "code-server" | "opencode";
 
 /**
  * Options for ensureBinaryForTests.
@@ -45,16 +61,41 @@ export function getTestPathProvider(): DefaultPathProvider {
 }
 
 /**
- * Get the version for a binary type.
+ * Build a DownloadRequest for a binary type.
  */
-function getBinaryVersion(binary: BinaryType): string {
-  const config = BINARY_CONFIGS[binary];
-  if (config.version === null) {
-    // For binaries with null version (like Claude), we can't download a pinned version
-    // Return a placeholder - caller should handle this case
-    throw new Error(`Binary ${binary} has no pinned version. Use BinaryResolutionService instead.`);
+function buildDownloadRequest(
+  binary: TestBinaryType,
+  pathProvider: DefaultPathProvider,
+  platformInfo: PlatformInfo
+): { request: DownloadRequest; binaryPath: string } {
+  const platform = platformInfo.platform as SupportedPlatform;
+  const arch = platformInfo.arch as SupportedArch;
+
+  if (binary === "code-server") {
+    const destDir = pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative();
+    const executablePath = getCodeServerExecutablePath(platform);
+    return {
+      request: {
+        name: "code-server",
+        url: getCodeServerUrl(platform, arch),
+        destDir,
+        executablePath,
+      },
+      binaryPath: join(destDir, executablePath),
+    };
   }
-  return config.version;
+
+  const destDir = pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative();
+  const executablePath = getOpencodeExecutablePath(platform);
+  return {
+    request: {
+      name: "opencode",
+      url: getOpencodeUrl(platform, arch),
+      destDir,
+      executablePath,
+    },
+    binaryPath: join(destDir, executablePath),
+  };
 }
 
 /**
@@ -64,11 +105,11 @@ function getBinaryVersion(binary: BinaryType): string {
  * @param options - Options for path provider
  * @returns true if the binary exists at the expected path
  */
-export function isBinaryInstalled(binary: BinaryType, options?: EnsureBinaryOptions): boolean {
+export function isBinaryInstalled(binary: TestBinaryType, options?: EnsureBinaryOptions): boolean {
   try {
     const pathProvider = options?.pathProvider ?? getTestPathProvider();
-    const version = getBinaryVersion(binary);
-    const binaryPath = pathProvider.getBinaryPath(binary, version).toNative();
+    const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
+    const { binaryPath } = buildDownloadRequest(binary, pathProvider, platformInfo);
     return existsSync(binaryPath);
   } catch {
     return false;
@@ -99,15 +140,12 @@ export function isBinaryInstalled(binary: BinaryType, options?: EnsureBinaryOpti
  * ```
  */
 export async function ensureBinaryForTests(
-  binary: BinaryType,
+  binary: TestBinaryType,
   options?: EnsureBinaryOptions
 ): Promise<void> {
   const pathProvider = options?.pathProvider ?? getTestPathProvider();
   const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
-
-  // Get version
-  const version = getBinaryVersion(binary);
-  const binaryPath = pathProvider.getBinaryPath(binary, version).toNative();
+  const { request, binaryPath } = buildDownloadRequest(binary, pathProvider, platformInfo);
 
   // Check if already installed
   if (existsSync(binaryPath)) {
@@ -115,6 +153,7 @@ export async function ensureBinaryForTests(
   }
 
   // Download the binary
+  const version = binary === "code-server" ? CODE_SERVER_VERSION : OPENCODE_VERSION;
   console.log(`Downloading ${binary} v${version} for tests...`);
 
   const httpClient = new DefaultNetworkLayer(SILENT_LOGGER);
@@ -125,12 +164,10 @@ export async function ensureBinaryForTests(
     httpClient,
     fileSystem,
     archiveExtractor,
-    pathProvider,
-    platformInfo,
     SILENT_LOGGER
   );
 
-  await downloadService.download(binary, (progress) => {
+  await downloadService.download(request, (progress) => {
     if (progress.totalBytes) {
       const percent = Math.round((progress.bytesDownloaded / progress.totalBytes) * 100);
       process.stdout.write(`\r  Downloading ${binary}: ${percent}%`);
@@ -148,7 +185,7 @@ export async function ensureBinaryForTests(
  * @param options - Options for download behavior
  */
 export async function ensureBinariesForTests(
-  binaries: readonly BinaryType[],
+  binaries: readonly TestBinaryType[],
   options?: EnsureBinaryOptions
 ): Promise<void> {
   for (const binary of binaries) {
@@ -165,10 +202,13 @@ export async function ensureBinariesForTests(
  * @returns Absolute path to the binary
  * @throws Error if the binary is not installed
  */
-export function getBinaryPathForTests(binary: BinaryType, options?: EnsureBinaryOptions): string {
+export function getBinaryPathForTests(
+  binary: TestBinaryType,
+  options?: EnsureBinaryOptions
+): string {
   const pathProvider = options?.pathProvider ?? getTestPathProvider();
-  const version = getBinaryVersion(binary);
-  const binaryPath = pathProvider.getBinaryPath(binary, version).toNative();
+  const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
+  const { binaryPath } = buildDownloadRequest(binary, pathProvider, platformInfo);
 
   if (!existsSync(binaryPath)) {
     throw new Error(

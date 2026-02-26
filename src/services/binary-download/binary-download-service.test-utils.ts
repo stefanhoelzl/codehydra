@@ -2,8 +2,7 @@
  * Test utilities for BinaryDownloadService.
  */
 
-// Note: BinaryDownloadService is referenced in type comments only
-import type { BinaryType, DownloadProgressCallback } from "./types";
+import type { DownloadRequest, DownloadProgressCallback } from "./types";
 import type { BinaryDownloadErrorCode } from "./errors";
 import { BinaryDownloadError } from "./errors";
 import { vi, type Mock } from "vitest";
@@ -13,14 +12,9 @@ import { vi, type Mock } from "vitest";
  */
 export interface MockBinaryDownloadServiceOptions {
   /**
-   * If set, isInstalled returns this value for all binaries.
+   * If set, isInstalled returns this value for all directories.
    */
   installed?: boolean;
-
-  /**
-   * Per-binary installed status.
-   */
-  installedBinaries?: Record<BinaryType, boolean>;
 
   /**
    * If set, download throws this error.
@@ -29,20 +23,16 @@ export interface MockBinaryDownloadServiceOptions {
     message: string;
     code: BinaryDownloadErrorCode;
   };
-
-  /**
-   * Custom binary paths to return.
-   */
-  binaryPaths?: Record<BinaryType, string>;
 }
 
 /**
  * Mock BinaryDownloadService with spies on all methods.
  */
 export interface MockBinaryDownloadService {
-  isInstalled: Mock<(binary: BinaryType) => Promise<boolean>>;
-  download: Mock<(binary: BinaryType, onProgress?: DownloadProgressCallback) => Promise<void>>;
-  getBinaryPath: Mock<(binary: BinaryType) => string>;
+  isInstalled: Mock<(destDir: string) => Promise<boolean>>;
+  download: Mock<
+    (request: DownloadRequest, onProgress?: DownloadProgressCallback) => Promise<void>
+  >;
 }
 
 /**
@@ -54,17 +44,8 @@ export interface MockBinaryDownloadService {
 export function createMockBinaryDownloadService(
   options: MockBinaryDownloadServiceOptions = {}
 ): MockBinaryDownloadService {
-  const defaultPaths: Record<BinaryType, string> = {
-    "code-server": "/app-data/code-server/4.106.3/bin/code-server",
-    opencode: "/app-data/opencode/0.1.47/opencode",
-    claude: "/app-data/claude/1.0.58/claude",
-  };
-
   return {
-    isInstalled: vi.fn(async (binary: BinaryType): Promise<boolean> => {
-      if (options.installedBinaries) {
-        return options.installedBinaries[binary] ?? false;
-      }
+    isInstalled: vi.fn(async (): Promise<boolean> => {
       return options.installed ?? false;
     }),
 
@@ -72,13 +53,6 @@ export function createMockBinaryDownloadService(
       if (options.downloadError) {
         throw new BinaryDownloadError(options.downloadError.message, options.downloadError.code);
       }
-    }),
-
-    getBinaryPath: vi.fn((binary: BinaryType): string => {
-      if (options.binaryPaths) {
-        return options.binaryPaths[binary] ?? defaultPaths[binary];
-      }
-      return defaultPaths[binary];
     }),
   };
 }

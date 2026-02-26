@@ -4,20 +4,16 @@
 
 // Types
 export type {
-  BinaryType,
   SupportedPlatform,
   SupportedArch,
   DownloadProgress,
   DownloadProgressCallback,
-  BinaryConfig,
+  DownloadRequest,
 } from "./types.js";
 
 // Errors
 export type { BinaryDownloadErrorCode, ArchiveErrorCode } from "./errors.js";
 export { BinaryDownloadError, ArchiveError } from "./errors.js";
-
-// Version constants
-export { CODE_SERVER_VERSION, OPENCODE_VERSION, BINARY_CONFIGS } from "./versions.js";
 
 // Archive extractor
 export type { ArchiveExtractor } from "./archive-extractor.js";
@@ -29,6 +25,7 @@ export { DefaultBinaryDownloadService } from "./binary-download-service.js";
 
 // Agent binary manager
 export type {
+  AgentBinaryConfig,
   AgentBinaryPreflightResult,
   AgentBinaryPreflightError,
   AgentBinaryType,

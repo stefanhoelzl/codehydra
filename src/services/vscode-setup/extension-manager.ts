@@ -15,7 +15,6 @@ import { validateExtensionsManifest } from "./types";
 import { listInstalledExtensions, removeFromExtensionsJson } from "./extension-utils";
 import { Path } from "../platform/path";
 import { ExtensionError, getErrorMessage } from "../errors";
-import { CODE_SERVER_VERSION } from "../binary-download/versions";
 
 /**
  * Preflight result for extension check.
@@ -57,6 +56,7 @@ export class ExtensionManager {
     private readonly pathProvider: PathProvider,
     private readonly fileSystem: FileSystemLayer,
     private readonly processRunner: ProcessRunner,
+    private readonly codeServerBinaryPath: string,
     private readonly logger?: Logger
   ) {
     this.assetsDir = pathProvider.vscodeAssetsDir;
@@ -219,8 +219,7 @@ export class ExtensionManager {
    * Run code-server to install an extension.
    */
   private async runInstallExtension(vsixPath: string): Promise<void> {
-    const codeServerPath = this.pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION);
-    const proc = this.processRunner.run(codeServerPath.toNative(), [
+    const proc = this.processRunner.run(this.codeServerBinaryPath, [
       "--install-extension",
       vsixPath,
       "--extensions-dir",

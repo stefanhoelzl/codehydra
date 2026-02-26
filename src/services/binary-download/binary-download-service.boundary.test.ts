@@ -14,14 +14,13 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { DefaultArchiveExtractor } from "./archive-extractor";
-import { BINARY_CONFIGS, CODE_SERVER_VERSION } from "./versions";
 import { DefaultNetworkLayer } from "../platform/network";
 import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { SILENT_LOGGER } from "../logging";
-import { createMockPathProvider } from "../platform/path-provider.test-utils";
-import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
-import type { SupportedArch, SupportedPlatform } from "./types";
+import { getCodeServerUrl } from "../code-server/setup-info";
+import { getOpencodeUrl } from "../../agents/opencode/setup-info";
+import type { SupportedArch, SupportedPlatform, DownloadRequest } from "./types";
 
 describe("BinaryDownloadService (boundary)", () => {
   describe("URL validation", () => {
@@ -62,7 +61,7 @@ describe("BinaryDownloadService (boundary)", () => {
             return;
           }
 
-          const url = BINARY_CONFIGS["code-server"].getUrl(platform, arch);
+          const url = getCodeServerUrl(platform, arch);
 
           // Use HEAD request to check URL validity (follows redirects)
           const response = await networkLayer.fetch(url, { timeout: 10000 });
@@ -84,7 +83,7 @@ describe("BinaryDownloadService (boundary)", () => {
             return;
           }
 
-          const url = BINARY_CONFIGS["opencode"].getUrl(platform, arch);
+          const url = getOpencodeUrl(platform, arch);
 
           const response = await networkLayer.fetch(url, { timeout: 10000 });
 
@@ -142,37 +141,32 @@ describe("BinaryDownloadService (boundary)", () => {
         },
       };
 
-      const mockPathProvider = createMockPathProvider({
-        bundlesRootDir: tempDir,
-        dataRootDir: tempDir,
-        binDir: path.join(tempDir, "bin"),
-      });
-
-      const mockPlatformInfo = createMockPlatformInfo({
-        platform: "linux",
-        arch: "x64",
-      });
+      const destDir = path.join(tempDir, "code-server", "4.109.2");
 
       const service = new DefaultBinaryDownloadService(
         mockHttpClient,
         new DefaultFileSystemLayer(SILENT_LOGGER),
-        new DefaultArchiveExtractor(),
-        mockPathProvider,
-        mockPlatformInfo
+        new DefaultArchiveExtractor()
       );
 
+      const request: DownloadRequest = {
+        name: "code-server",
+        url: "https://example.com/code-server.tar.gz",
+        destDir,
+        executablePath: "bin/test-binary",
+      };
+
       // Download (uses our mock HTTP client)
-      await service.download("code-server");
+      await service.download(request);
 
       // Verify the binary was extracted and flattened (nested dir moved up)
-      const binaryDir = path.join(tempDir, "code-server", CODE_SERVER_VERSION);
-      const binPath = path.join(binaryDir, "bin", "test-binary");
+      const binPath = path.join(destDir, "bin", "test-binary");
 
       const content = await fs.readFile(binPath, "utf-8");
       expect(content).toBe("#!/bin/sh\necho hello");
 
       // Verify config.json is also present
-      const configPath = path.join(binaryDir, "lib", "config.json");
+      const configPath = path.join(destDir, "lib", "config.json");
       const configContent = await fs.readFile(configPath, "utf-8");
       expect(configContent).toBe('{"version": "1.0.0"}');
     });
@@ -206,19 +200,19 @@ describe("BinaryDownloadService (boundary)", () => {
         },
       };
 
-      const mockPathProvider = createMockPathProvider({
-        bundlesRootDir: tempDir,
-        dataRootDir: tempDir,
-        binDir: path.join(tempDir, "bin"),
-      });
+      const destDir = path.join(tempDir, "code-server", "4.109.2");
 
       const service = new DefaultBinaryDownloadService(
         mockHttpClient,
         new DefaultFileSystemLayer(SILENT_LOGGER),
-        new DefaultArchiveExtractor(),
-        mockPathProvider,
-        createMockPlatformInfo({ platform: "linux", arch: "x64" })
+        new DefaultArchiveExtractor()
       );
+
+      const request: DownloadRequest = {
+        name: "code-server",
+        url: "https://example.com/code-server.tar.gz",
+        destDir,
+      };
 
       const progressUpdates: Array<{
         phase: "downloading" | "extracting";
@@ -226,7 +220,7 @@ describe("BinaryDownloadService (boundary)", () => {
         totalBytes: number | null;
       }> = [];
 
-      await service.download("code-server", (progress) => {
+      await service.download(request, (progress) => {
         progressUpdates.push({ ...progress });
       });
 

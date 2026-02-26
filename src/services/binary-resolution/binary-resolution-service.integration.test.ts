@@ -14,6 +14,13 @@ import { createMockProcessRunner, type MockProcessRunner } from "../platform/pro
 import { createMockLogger } from "../logging/logging.test-utils";
 import type { PathProvider } from "../platform/path-provider";
 import type { Logger } from "../logging";
+import type { ResolvableBinaryType } from "./types";
+
+const TEST_EXECUTABLE_PATHS: Record<ResolvableBinaryType, string> = {
+  "code-server": "bin/code-server",
+  opencode: "opencode",
+  claude: "claude",
+};
 
 describe("BinaryResolutionService", () => {
   let fileSystem: MockFileSystemLayer;
@@ -37,6 +44,7 @@ describe("BinaryResolutionService", () => {
       fileSystem,
       processRunner,
       pathProvider,
+      executablePaths: TEST_EXECUTABLE_PATHS,
       logger,
     });
   }
@@ -64,6 +72,7 @@ describe("BinaryResolutionService", () => {
         fileSystem,
         processRunner,
         pathProvider,
+        executablePaths: TEST_EXECUTABLE_PATHS,
         logger,
       });
 
@@ -84,6 +93,7 @@ describe("BinaryResolutionService", () => {
         fileSystem,
         processRunner,
         pathProvider,
+        executablePaths: TEST_EXECUTABLE_PATHS,
         logger,
       });
 
@@ -164,6 +174,7 @@ describe("BinaryResolutionService", () => {
         fileSystem,
         processRunner,
         pathProvider,
+        executablePaths: TEST_EXECUTABLE_PATHS,
         logger,
       });
 
@@ -190,6 +201,7 @@ describe("BinaryResolutionService", () => {
         fileSystem,
         processRunner,
         pathProvider,
+        executablePaths: TEST_EXECUTABLE_PATHS,
         logger,
       });
 
@@ -216,6 +228,7 @@ describe("BinaryResolutionService", () => {
         fileSystem,
         processRunner,
         pathProvider,
+        executablePaths: TEST_EXECUTABLE_PATHS,
         logger,
       });
 
@@ -247,6 +260,7 @@ describe("BinaryResolutionService", () => {
         fileSystem,
         processRunner,
         pathProvider,
+        executablePaths: TEST_EXECUTABLE_PATHS,
         logger,
       });
 

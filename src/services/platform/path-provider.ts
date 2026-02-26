@@ -3,7 +3,6 @@ import type { BuildInfo } from "./build-info";
 import type { PlatformInfo } from "./platform-info";
 import { projectDirName } from "./paths";
 import { Path } from "./path";
-import { BINARY_CONFIGS } from "../binary-download/versions";
 
 /**
  * Application path provider.
@@ -110,14 +109,6 @@ export interface PathProvider {
   getBinaryDir(type: "code-server" | "opencode" | "claude", version: string): Path;
 
   /**
-   * Get the binary executable path for a specific version.
-   * @param type - Binary type ("code-server" | "opencode" | "claude")
-   * @param version - Version string (e.g., "4.107.0")
-   * @returns Path to the binary executable
-   */
-  getBinaryPath(type: "code-server" | "opencode" | "claude", version: string): Path;
-
-  /**
    * Get the bundled Node.js path from a specific code-server version.
    * @param codeServerVersion - Version of code-server
    * @returns Path to the bundled node executable
@@ -159,7 +150,7 @@ export class DefaultPathProvider implements PathProvider {
 
   /** Bundles root for binary paths */
   private readonly bundlesRoot: Path;
-  /** Platform for binary path construction */
+  /** Platform for bundled node path construction */
   private readonly platform: "darwin" | "linux" | "win32";
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
@@ -251,19 +242,6 @@ export class DefaultPathProvider implements PathProvider {
 
   getBinaryDir(type: "code-server" | "opencode" | "claude", version: string): Path {
     return new Path(this.bundlesRoot, type, version);
-  }
-
-  getBinaryPath(type: "code-server" | "opencode" | "claude", version: string): Path {
-    const versionDir = this.getBinaryDir(type, version);
-    // Get binary relative path based on type
-    // code-server and opencode use BINARY_CONFIGS, claude uses direct path
-    let binaryRelPath: string;
-    if (type === "claude") {
-      binaryRelPath = this.platform === "win32" ? "claude.exe" : "claude";
-    } else {
-      binaryRelPath = BINARY_CONFIGS[type].extractedBinaryPath(this.platform);
-    }
-    return new Path(versionDir, binaryRelPath);
   }
 
   getBundledNodePath(codeServerVersion: string): Path {

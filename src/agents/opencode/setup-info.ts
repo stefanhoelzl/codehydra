@@ -59,10 +59,20 @@ export function getOpencodeUrl(platform: SupportedPlatform, arch: SupportedArch)
 }
 
 /**
+ * Get the relative path to the OpenCode executable within the extracted directory.
+ *
+ * @param platform - Operating system platform
+ * @returns Relative path to the executable
+ */
+export function getOpencodeExecutablePath(platform: SupportedPlatform): string {
+  return platform === "win32" ? "opencode.exe" : "opencode";
+}
+
+/**
  * Get the binary filename for the current platform.
  */
 function getBinaryFilename(platform: SupportedPlatform): string {
-  return platform === "win32" ? "opencode.exe" : "opencode";
+  return getOpencodeExecutablePath(platform);
 }
 
 /**

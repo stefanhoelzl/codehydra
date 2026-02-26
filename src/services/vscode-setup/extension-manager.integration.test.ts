@@ -15,10 +15,13 @@ import type { FileSystemLayer, DirEntry } from "../platform/filesystem";
 import type { PathProvider } from "../platform/path-provider";
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
 import { Path } from "../platform/path";
+import { CODE_SERVER_VERSION } from "../code-server/setup-info";
 
 // =============================================================================
 // Test Setup
 // =============================================================================
+
+const TEST_CODE_SERVER_BINARY_PATH = `/app/binaries/code-server-${CODE_SERVER_VERSION}`;
 
 const TEST_MANIFEST = JSON.stringify([
   { id: "codehydra.sidekick", version: "0.0.1", vsix: "codehydra-sidekick-0.0.1.vsix" },
@@ -30,8 +33,6 @@ function createMockPathProvider(): PathProvider {
     vscodeAssetsDir: new Path("/app/assets"),
     vscodeExtensionsDir: new Path("/app/vscode/extensions"),
     extensionsRuntimeDir: new Path("/app/extensions"),
-    getBinaryPath: (binary: string, version: string) =>
-      new Path(`/app/binaries/${binary}-${version}`),
     // Add other required properties with minimal implementations
     dataRootDir: new Path("/app"),
     projectsDir: new Path("/app/projects"),
@@ -111,7 +112,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem({ installedExtensions: new Map() });
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       const result = await manager.preflight();
 
       expect(result.success).toBe(true);
@@ -132,7 +138,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem({ installedExtensions: installed });
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       const result = await manager.preflight();
 
       expect(result.success).toBe(true);
@@ -152,7 +163,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem({ installedExtensions: installed });
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       const result = await manager.preflight();
 
       expect(result.success).toBe(true);
@@ -168,7 +184,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem({ readFileError: new Error("File not found") });
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       const result = await manager.preflight();
 
       expect(result.success).toBe(false);
@@ -182,7 +203,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem({ manifestContent: "not valid json" });
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       const result = await manager.preflight();
 
       expect(result.success).toBe(false);
@@ -195,11 +221,16 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem();
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       await manager.install(["codehydra.sidekick"]);
 
       expect(processRunner.run).toHaveBeenCalledWith(
-        path.normalize("/app/binaries/code-server-4.109.2"),
+        path.normalize(TEST_CODE_SERVER_BINARY_PATH),
         expect.arrayContaining([
           "--install-extension",
           expect.stringContaining("codehydra-sidekick-0.0.1.vsix"),
@@ -212,7 +243,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem();
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       await manager.install([]);
 
       expect(processRunner.run).not.toHaveBeenCalled();
@@ -223,7 +259,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem();
       const processRunner = createMockProcessRunner(1, "Installation failed");
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
 
       await expect(manager.install(["codehydra.sidekick"])).rejects.toThrow(
         "Failed to install extension"
@@ -236,7 +277,12 @@ describe("ExtensionManager", () => {
       const processRunner = createMockProcessRunner();
       const onProgress = vi.fn();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       await manager.install(["codehydra.sidekick", "publisher.extension"], onProgress);
 
       expect(onProgress).toHaveBeenCalledWith("Installing codehydra.sidekick...");
@@ -251,7 +297,12 @@ describe("ExtensionManager", () => {
       const fs = createMockFileSystem({ installedExtensions: installed });
       const processRunner = createMockProcessRunner();
 
-      const manager = new ExtensionManager(pathProvider, fs, processRunner);
+      const manager = new ExtensionManager(
+        pathProvider,
+        fs,
+        processRunner,
+        TEST_CODE_SERVER_BINARY_PATH
+      );
       await manager.cleanOutdated(["codehydra.sidekick"]);
 
       expect(fs.rm).toHaveBeenCalledWith(

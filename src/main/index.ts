@@ -51,6 +51,7 @@ import {
 import { PostHogTelemetryService } from "../services/telemetry";
 import { AutoUpdater } from "../services/auto-updater";
 import { ExecaProcessRunner } from "../services/platform/process";
+import { Path } from "../services/platform/path";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
 import { DefaultImageLayer } from "../services/platform/image";
@@ -64,9 +65,20 @@ import {
   DefaultArchiveExtractor,
   AgentBinaryManager,
   type BinaryDownloadService,
-  CODE_SERVER_VERSION,
-  OPENCODE_VERSION,
+  type DownloadRequest,
 } from "../services/binary-download";
+import {
+  CODE_SERVER_VERSION,
+  getCodeServerUrl,
+  getCodeServerExecutablePath,
+} from "../services/code-server/setup-info";
+import {
+  OPENCODE_VERSION,
+  getOpencodeUrl,
+  getOpencodeExecutablePath,
+} from "../agents/opencode/setup-info";
+import { CLAUDE_VERSION, getClaudeUrl, getClaudeExecutablePath } from "../agents/claude/setup-info";
+import type { SupportedPlatform, SupportedArch } from "../agents/types";
 import { ExtensionManager } from "../services/vscode-setup/extension-manager";
 import { AgentStatusManager, createAgentServerManager } from "../agents";
 import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
@@ -200,14 +212,29 @@ const binaryDownloadService: BinaryDownloadService = new DefaultBinaryDownloadSe
   networkLayer,
   fileSystemLayer,
   new DefaultArchiveExtractor(),
-  pathProvider,
-  platformInfo,
   loggingService.createLogger("binary-download")
 );
 
+// Compute platform-specific executable paths and download URLs
+const platform = platformInfo.platform as SupportedPlatform;
+const arch = platformInfo.arch as SupportedArch;
+
+const codeServerExecutablePath = getCodeServerExecutablePath(platform);
+const codeServerBinaryPath = new Path(
+  pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION),
+  codeServerExecutablePath
+).toNative();
+
+const codeServerDownloadRequest: DownloadRequest = {
+  name: "code-server",
+  url: getCodeServerUrl(platform, arch),
+  destDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
+  executablePath: codeServerExecutablePath,
+};
+
 const codeServerConfig: CodeServerConfig = {
   port: getCodeServerPort(buildInfo),
-  binaryPath: pathProvider.getBinaryPath("code-server", CODE_SERVER_VERSION).toNative(),
+  binaryPath: codeServerBinaryPath,
   runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
   extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
   userDataDir: pathProvider.vscodeUserDataDir.toNative(),
@@ -222,17 +249,29 @@ const codeServerManager = new CodeServerManager(
   networkLayer,
   networkLayer,
   loggingService.createLogger("code-server"),
-  binaryDownloadService
+  { service: binaryDownloadService, request: codeServerDownloadRequest }
 );
 
 // Per-agent binary managers (one per agent type, created upfront)
 const claudeBinaryManager = new AgentBinaryManager(
-  "claude",
+  {
+    name: "claude",
+    version: CLAUDE_VERSION,
+    destDir: CLAUDE_VERSION ? pathProvider.getBinaryDir("claude", CLAUDE_VERSION).toNative() : "",
+    url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
+    executablePath: getClaudeExecutablePath(platform),
+  },
   binaryDownloadService,
   loggingService.createLogger("agent-binary")
 );
 const opencodeBinaryManager = new AgentBinaryManager(
-  "opencode",
+  {
+    name: "opencode",
+    version: OPENCODE_VERSION,
+    destDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
+    url: getOpencodeUrl(platform, arch),
+    executablePath: getOpencodeExecutablePath(platform),
+  },
   binaryDownloadService,
   loggingService.createLogger("agent-binary")
 );
@@ -242,6 +281,7 @@ const setupExtensionManager = new ExtensionManager(
   pathProvider,
   fileSystemLayer,
   processRunner,
+  codeServerBinaryPath,
   loggingService.createLogger("ext-manager")
 );
 

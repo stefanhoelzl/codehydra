@@ -7,11 +7,25 @@
  */
 
 import type { BinaryDownloadService } from "./binary-download-service";
-import type { DownloadProgressCallback, BinaryType } from "./types";
-import type { AgentType } from "../../agents/types";
+import type { DownloadProgressCallback, DownloadRequest } from "./types";
 import type { Logger } from "../logging";
-import { BINARY_CONFIGS } from "./versions";
 import { AgentBinaryError, getErrorMessage } from "../errors";
+
+/**
+ * Configuration for an agent binary.
+ */
+export interface AgentBinaryConfig {
+  /** Binary name ("claude" | "opencode") */
+  readonly name: string;
+  /** Version string, or null to skip download (prefers system binary) */
+  readonly version: string | null;
+  /** Extraction destination directory */
+  readonly destDir: string;
+  /** Download URL */
+  readonly url: string;
+  /** Relative path to the executable within the extracted directory */
+  readonly executablePath: string;
+}
 
 /**
  * Preflight result for agent binary check.
@@ -38,30 +52,18 @@ export interface AgentBinaryPreflightError {
 
 /**
  * Agent binary type for download operations.
- * Excludes "code-server" since that's handled by CodeServerManager.
  */
-export type AgentBinaryType = Exclude<BinaryType, "code-server">;
-
-/**
- * Maps AgentType to AgentBinaryType.
- */
-function agentTypeToBinaryType(agentType: AgentType): AgentBinaryType {
-  return agentType === "claude" ? "claude" : "opencode";
-}
+export type AgentBinaryType = "opencode" | "claude";
 
 /**
  * Manager for agent binary preflight and download operations.
  */
 export class AgentBinaryManager {
-  private readonly binaryType: AgentBinaryType;
-
   constructor(
-    agentType: AgentType,
+    private readonly config: AgentBinaryConfig,
     private readonly binaryDownloadService: BinaryDownloadService,
     private readonly logger?: Logger
-  ) {
-    this.binaryType = agentTypeToBinaryType(agentType);
-  }
+  ) {}
 
   /**
    * Check if the agent binary needs to be downloaded.
@@ -73,22 +75,20 @@ export class AgentBinaryManager {
    */
   async preflight(): Promise<AgentBinaryPreflightResult | AgentBinaryPreflightError> {
     try {
-      const config = BINARY_CONFIGS[this.binaryType];
-
       // Skip check for binaries without pinned versions (version: null)
       // These prefer system binary and don't need download
-      if (config.version === null) {
-        this.logger?.debug("Agent binary prefers system binary", { binaryType: this.binaryType });
+      if (this.config.version === null) {
+        this.logger?.debug("Agent binary prefers system binary", { name: this.config.name });
         return {
           success: true,
           needsDownload: false,
         };
       }
 
-      const isInstalled = await this.binaryDownloadService.isInstalled(this.binaryType);
+      const isInstalled = await this.binaryDownloadService.isInstalled(this.config.destDir);
 
       this.logger?.debug("Agent binary preflight", {
-        binaryType: this.binaryType,
+        name: this.config.name,
         isInstalled,
         needsDownload: !isInstalled,
       });
@@ -96,12 +96,12 @@ export class AgentBinaryManager {
       return {
         success: true,
         needsDownload: !isInstalled,
-        ...(isInstalled ? {} : { binaryType: this.binaryType }),
+        ...(isInstalled ? {} : { binaryType: this.config.name as AgentBinaryType }),
       };
     } catch (error) {
       const message = getErrorMessage(error);
       this.logger?.warn("Agent binary preflight failed", {
-        binaryType: this.binaryType,
+        name: this.config.name,
         error: message,
       });
       return {
@@ -121,28 +121,33 @@ export class AgentBinaryManager {
    * @throws AgentBinaryError if download fails
    */
   async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-    const config = BINARY_CONFIGS[this.binaryType];
-
     // Don't download binaries that prefer system binary
-    if (config.version === null) {
+    if (this.config.version === null) {
       this.logger?.debug("Skipping agent binary download (prefers system)", {
-        binaryType: this.binaryType,
+        name: this.config.name,
       });
       return;
     }
 
-    this.logger?.info("Downloading agent binary", { binaryType: this.binaryType });
+    this.logger?.info("Downloading agent binary", { name: this.config.name });
+
+    const request: DownloadRequest = {
+      name: this.config.name,
+      url: this.config.url,
+      destDir: this.config.destDir,
+      executablePath: this.config.executablePath,
+    };
 
     try {
-      await this.binaryDownloadService.download(this.binaryType, onProgress);
-      this.logger?.info("Agent binary download complete", { binaryType: this.binaryType });
+      await this.binaryDownloadService.download(request, onProgress);
+      this.logger?.info("Agent binary download complete", { name: this.config.name });
     } catch (error) {
       const message = getErrorMessage(error);
       this.logger?.warn("Agent binary download failed", {
-        binaryType: this.binaryType,
+        name: this.config.name,
         error: message,
       });
-      throw new AgentBinaryError(`Failed to download ${this.binaryType}: ${message}`);
+      throw new AgentBinaryError(`Failed to download ${this.config.name}: ${message}`);
     }
   }
 
@@ -150,6 +155,6 @@ export class AgentBinaryManager {
    * Get the binary type this manager handles.
    */
   getBinaryType(): AgentBinaryType {
-    return this.binaryType;
+    return this.config.name as AgentBinaryType;
   }
 }
