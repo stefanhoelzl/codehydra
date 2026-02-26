@@ -290,26 +290,26 @@ See docs/API.md for full Plugin API and MCP Server documentation.
 
 All settings use dot-separated, kebab-case config keys. The same key works in three places:
 
-| Source      | Format                                          | Example              |
-| ----------- | ----------------------------------------------- | -------------------- |
-| config.json | key as-is (file keys only)                      | `"agent": "claude"`  |
+| Source      | Format                                         | Example               |
+| ----------- | ---------------------------------------------- | --------------------- |
+| config.json | key as-is (file keys only)                     | `"agent": "claude"`   |
 | Env var     | `CH_` prefix, `.` → `__`, `-` → `_`, UPPERCASE | `CH_LOG__LEVEL=debug` |
-| CLI flag    | `--` prefix                                     | `--log.level=debug`  |
+| CLI flag    | `--` prefix                                    | `--log.level=debug`   |
 
 Precedence (highest wins): CLI flag > env var > config.json > computed defaults > static defaults.
 
-| Key                    | Default   | Description                                |
-| ---------------------- | --------- | ------------------------------------------ |
-| `agent`                | `null`    | Agent selection: claude\|opencode          |
-| `version.claude`       | `null`    | Claude agent version override              |
-| `version.opencode`     | `null`    | OpenCode agent version override            |
-| `version.code-server`  | `4.107.0` | Code-server version                        |
-| `telemetry.enabled`    | `true`    | Enable telemetry (false in dev/unpackaged) |
-| `telemetry.distinct-id`| —         | Telemetry user ID (auto-generated)         |
-| `log.level`            | `warn`    | Log level: silly\|debug\|info\|warn\|error |
-| `log.console`          | `false`   | Print logs to stdout/stderr                |
-| `log.filter`           | —         | Filter logs by scope (e.g., `git,process`) |
-| `electron.flags`       | —         | Electron switches (e.g., `--disable-gpu`)  |
+| Key                     | Default   | Description                                |
+| ----------------------- | --------- | ------------------------------------------ |
+| `agent`                 | `null`    | Agent selection: claude\|opencode          |
+| `version.claude`        | `null`    | Claude agent version override              |
+| `version.opencode`      | `null`    | OpenCode agent version override            |
+| `version.code-server`   | `4.107.0` | Code-server version                        |
+| `telemetry.enabled`     | `true`    | Enable telemetry (false in dev/unpackaged) |
+| `telemetry.distinct-id` | —         | Telemetry user ID (auto-generated)         |
+| `log.level`             | `warn`    | Log level: silly\|debug\|info\|warn\|error |
+| `log.console`           | `false`   | Print logs to stdout/stderr                |
+| `log.filter`            | —         | Filter logs by scope (e.g., `git,process`) |
+| `electron.flags`        | —         | Electron switches (e.g., `--disable-gpu`)  |
 
 File keys (persisted to config.json): `agent`, `version.*`, `telemetry.*`.
 Runtime-only keys (env/CLI only): `log.*`, `electron.*`.
