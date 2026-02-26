@@ -797,9 +797,7 @@ describe("Dispatcher", () => {
 
         dispatcher.registerModule(testModule);
 
-        const hookLogs = logger.calls.filter(
-          (c) => c.level === "silly" && c.message === "  hook"
-        );
+        const hookLogs = logger.calls.filter((c) => c.level === "silly" && c.message === "  hook");
         expect(hookLogs).toHaveLength(2);
         expect(hookLogs[0]!.context).toEqual({
           module: "hook-mod",
@@ -844,8 +842,18 @@ describe("Dispatcher", () => {
         const testModule: IntentModule = {
           name: "interceptor-mod",
           interceptors: [
-            { id: "guard-a", async before(i: Intent) { return i; } },
-            { id: "guard-b", async before(i: Intent) { return i; } },
+            {
+              id: "guard-a",
+              async before(i: Intent) {
+                return i;
+              },
+            },
+            {
+              id: "guard-b",
+              async before(i: Intent) {
+                return i;
+              },
+            },
           ],
         };
 
