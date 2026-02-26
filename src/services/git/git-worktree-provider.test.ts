@@ -376,8 +376,9 @@ describe("GitWorktreeProvider", () => {
 
       expect(workspaces).toHaveLength(3);
 
-      const workspaceA = workspaces.find((w) => w.name === "workspace-a");
-      const workspaceB = workspaces.find((w) => w.name === "workspace-b");
+      // name is derived from branch (or filesystem name for detached HEAD)
+      const workspaceA = workspaces.find((w) => w.name === "branch-a");
+      const workspaceB = workspaces.find((w) => w.name === "branch-b");
       const workspaceC = workspaces.find((w) => w.name === "workspace-c");
 
       expect(workspaceA?.metadata.base).toBe("configured-base"); // Uses config

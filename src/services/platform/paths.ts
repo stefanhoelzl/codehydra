@@ -48,6 +48,19 @@ export function sanitizeWorkspaceName(name: string): string {
 }
 
 /**
+ * Reverse the sanitization of a workspace name.
+ * Replaces `%` with `/` to recover the original branch name.
+ *
+ * Safe because `%` is not in the workspace name character set — only sanitized names contain it.
+ *
+ * @param name Sanitized filesystem name
+ * @returns Original workspace/branch name
+ */
+export function unsanitizeWorkspaceName(name: string): string {
+  return name.replace(/%/g, "/");
+}
+
+/**
  * Encode a file path for use in URLs.
  * Percent-encodes special characters while preserving path structure.
  *

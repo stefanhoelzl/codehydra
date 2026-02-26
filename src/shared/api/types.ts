@@ -61,16 +61,29 @@ export function isProjectId(value: string): value is ProjectId {
 }
 
 /**
+ * Validate a workspace name and return an error message or null.
+ * @param value String to validate
+ * @returns Error message if invalid, null if valid
+ */
+export function validateWorkspaceName(value: string): string | null {
+  if (!value) return "Name is required";
+  if (value.length > WORKSPACE_NAME_MAX_LENGTH)
+    return `Name must be ${WORKSPACE_NAME_MAX_LENGTH} characters or less`;
+  if (value.includes("..")) return 'Name cannot contain ".."';
+  if (value.includes("\\")) return 'Name cannot contain "\\"';
+  if (!WORKSPACE_NAME_REGEX.test(value)) {
+    return "Name can only contain letters, numbers, dash, underscore, dot, forward slash";
+  }
+  return null;
+}
+
+/**
  * Type guard for WorkspaceName validation.
  * @param value String to validate
  * @returns True if the value matches WorkspaceName format
  */
 export function isWorkspaceName(value: string): value is WorkspaceName {
-  return (
-    value.length > 0 &&
-    value.length <= WORKSPACE_NAME_MAX_LENGTH &&
-    WORKSPACE_NAME_REGEX.test(value)
-  );
+  return validateWorkspaceName(value) === null;
 }
 
 // =============================================================================
