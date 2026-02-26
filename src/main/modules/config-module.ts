@@ -30,8 +30,8 @@ import {
   DEFAULT_CONFIG_VALUES,
   envVarToConfigKey,
   parseConfigValue,
+  validateConfigValue,
 } from "../../services/config/config-values";
-import { parseLogLevel } from "../../services/logging/electron-log-service";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import {
   CONFIG_SET_VALUES_OPERATION_ID,
@@ -205,7 +205,7 @@ function parseConfigFile(data: unknown): {
         result["telemetry.distinct-id"] = legacy.telemetry.distinctId;
     }
 
-    return { values: validateFileValues(result as Partial<ConfigValues>), migrated };
+    return { values: validateFileValues(result), migrated };
   }
 
   // Flat format — apply key renames if needed, then copy known file-layer keys
@@ -219,78 +219,21 @@ function parseConfigFile(data: unknown): {
     }
   }
 
-  return { values: validateFileValues(result as Partial<ConfigValues>), migrated };
+  return { values: validateFileValues(result), migrated };
 }
 
 /**
- * Validate file-layer values. Returns only valid entries.
+ * Validate file-layer values using the schema's validators. Returns only valid entries.
  */
-function validateFileValues(values: Partial<ConfigValues>): Partial<ConfigValues> {
+function validateFileValues(values: Record<string, unknown>): Partial<ConfigValues> {
   const result: Record<string, unknown> = {};
-
-  if (values.agent !== undefined) {
-    if (values.agent === null || values.agent === "claude" || values.agent === "opencode") {
-      result.agent = values.agent;
+  for (const [key, value] of Object.entries(values)) {
+    if (!CONFIG_KEYS.has(key as ConfigKey) || value === undefined) continue;
+    const validated = validateConfigValue(key as ConfigKey, value);
+    if (validated !== undefined) {
+      result[key] = validated;
     }
   }
-
-  if (values["version.claude"] !== undefined) {
-    if (values["version.claude"] === null || typeof values["version.claude"] === "string") {
-      result["version.claude"] = values["version.claude"];
-    }
-  }
-
-  if (values["version.opencode"] !== undefined) {
-    if (values["version.opencode"] === null || typeof values["version.opencode"] === "string") {
-      result["version.opencode"] = values["version.opencode"];
-    }
-  }
-
-  if (values["version.code-server"] !== undefined) {
-    if (typeof values["version.code-server"] === "string") {
-      result["version.code-server"] = values["version.code-server"];
-    }
-  }
-
-  if (values["telemetry.enabled"] !== undefined) {
-    if (typeof values["telemetry.enabled"] === "boolean") {
-      result["telemetry.enabled"] = values["telemetry.enabled"];
-    }
-  }
-
-  if (values["telemetry.distinct-id"] !== undefined) {
-    if (typeof values["telemetry.distinct-id"] === "string") {
-      result["telemetry.distinct-id"] = values["telemetry.distinct-id"];
-    }
-  }
-
-  if (values["log.level"] !== undefined) {
-    if (
-      typeof values["log.level"] === "string" &&
-      parseLogLevel(values["log.level"]) !== undefined
-    ) {
-      result["log.level"] = values["log.level"];
-    }
-  }
-
-  if (values["log.console"] !== undefined) {
-    if (typeof values["log.console"] === "boolean") {
-      result["log.console"] = values["log.console"];
-    }
-  }
-
-  if (values["log.filter"] !== undefined) {
-    if (typeof values["log.filter"] === "string") {
-      result["log.filter"] = values["log.filter"];
-    }
-  }
-
-  if (values["electron.flags"] !== undefined) {
-    if (typeof values["electron.flags"] === "string") {
-      result["electron.flags"] = values["electron.flags"];
-    }
-  }
-
   return result as Partial<ConfigValues>;
 }
 

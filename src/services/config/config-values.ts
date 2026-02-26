@@ -19,6 +19,7 @@ import { parseLogLevelSpec, parseLogOutput } from "../logging/electron-log-servi
 interface ConfigKeyDef<T> {
   readonly default: T;
   readonly parse: (raw: string) => T | undefined; // undefined = invalid
+  readonly validate: (value: unknown) => T | undefined; // undefined = invalid
 }
 
 function key<T>(def: ConfigKeyDef<T>): ConfigKeyDef<T> {
@@ -45,39 +46,48 @@ export const CONFIG = {
   agent: key<ConfigAgentType>({
     default: null,
     parse: (s) => (s === "claude" || s === "opencode" ? s : s === "" ? null : undefined),
+    validate: (v) => (v === null || v === "claude" || v === "opencode" ? v : undefined),
   }),
   "version.claude": key<string | null>({
     default: null,
     parse: (s) => (s === "" ? null : s),
+    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
   }),
   "version.opencode": key<string | null>({
     default: null,
     parse: (s) => (s === "" ? null : s),
+    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
   }),
   "version.code-server": key<string>({
     default: "4.107.0",
     parse: (s) => (s.length > 0 ? s : undefined),
+    validate: (v) => (typeof v === "string" ? v : undefined),
   }),
   "telemetry.enabled": key<boolean>({
     default: true,
     parse: (s) =>
       s === "true" || s === "1" ? true : s === "false" || s === "0" ? false : undefined,
+    validate: (v) => (typeof v === "boolean" ? v : undefined),
   }),
   "telemetry.distinct-id": key<string | undefined>({
     default: undefined,
     parse: (s) => (s === "" ? undefined : s),
+    validate: (v) => (typeof v === "string" ? v : undefined),
   }),
   "log.level": key<string>({
     default: "warn",
     parse: parseLogLevelSpec,
+    validate: (v) => (typeof v === "string" ? parseLogLevelSpec(v) : undefined),
   }),
   "log.output": key<string>({
     default: "file",
     parse: parseLogOutput,
+    validate: (v) => (typeof v === "string" ? parseLogOutput(v) : undefined),
   }),
   "electron.flags": key<string | undefined>({
     default: undefined,
     parse: (s) => (s === "" ? undefined : s),
+    validate: (v) => (typeof v === "string" ? v : undefined),
   }),
 } as const satisfies Record<string, ConfigKeyDef<unknown>>;
 
@@ -132,4 +142,17 @@ export function parseConfigValue(key: ConfigKey, raw: string): ConfigValues[Conf
   const def = CONFIG[key];
   if (!def) return undefined;
   return def.parse(raw) as ConfigValues[ConfigKey] | undefined;
+}
+
+/**
+ * Validate an unknown JSON value for a given config key using the schema's validator.
+ * Returns undefined if the key is unknown or the value is invalid.
+ */
+export function validateConfigValue(
+  key: ConfigKey,
+  value: unknown
+): ConfigValues[ConfigKey] | undefined {
+  const def = CONFIG[key];
+  if (!def) return undefined;
+  return def.validate(value) as ConfigValues[ConfigKey] | undefined;
 }
