@@ -9,7 +9,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import path from "node:path";
 import { ExtensionManager } from "./extension-manager";
 import type { FileSystemLayer, DirEntry } from "../platform/filesystem";
 import type { PathProvider } from "../platform/path-provider";
@@ -230,7 +229,7 @@ describe("ExtensionManager", () => {
       await manager.install(["codehydra.sidekick"]);
 
       expect(processRunner.run).toHaveBeenCalledWith(
-        path.normalize(TEST_CODE_SERVER_BINARY_PATH),
+        TEST_CODE_SERVER_BINARY_PATH,
         expect.arrayContaining([
           "--install-extension",
           expect.stringContaining("codehydra-sidekick-0.0.1.vsix"),
