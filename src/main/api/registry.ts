@@ -95,7 +95,6 @@ export class ApiRegistry implements IApiRegistry {
       };
       this.ipcLayer.handle(channel, ipcHandler);
       this.registeredChannels.push(channel);
-      this.logger.debug("Registered IPC handler", { path, channel });
     }
   }
 
