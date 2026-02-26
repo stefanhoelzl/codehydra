@@ -80,7 +80,6 @@ export interface IpcLayer {
 // ============================================================================
 
 import { ipcMain } from "electron";
-import type { Logger } from "../logging";
 
 /**
  * Default implementation of IpcLayer using Electron's ipcMain.
@@ -90,8 +89,6 @@ import type { Logger } from "../logging";
  */
 export class DefaultIpcLayer implements IpcLayer {
   private readonly registeredChannels = new Set<string>();
-
-  constructor(private readonly logger: Logger) {}
 
   handle(channel: string, handler: IpcHandler): void {
     if (this.registeredChannels.has(channel)) {
@@ -103,7 +100,6 @@ export class DefaultIpcLayer implements IpcLayer {
 
     ipcMain.handle(channel, handler);
     this.registeredChannels.add(channel);
-    this.logger.debug("IPC handler registered", { channel });
   }
 
   removeHandler(channel: string): void {
@@ -116,24 +112,20 @@ export class DefaultIpcLayer implements IpcLayer {
 
     ipcMain.removeHandler(channel);
     this.registeredChannels.delete(channel);
-    this.logger.debug("IPC handler removed", { channel });
   }
 
   removeAllHandlers(): void {
     for (const channel of this.registeredChannels) {
       ipcMain.removeHandler(channel);
-      this.logger.debug("IPC handler removed", { channel });
     }
     this.registeredChannels.clear();
   }
 
   on(channel: string, listener: IpcEventHandler): void {
     ipcMain.on(channel, listener);
-    this.logger.debug("IPC event listener registered", { channel });
   }
 
   removeListener(channel: string, listener: IpcEventHandler): void {
     ipcMain.removeListener(channel, listener);
-    this.logger.debug("IPC event listener removed", { channel });
   }
 }

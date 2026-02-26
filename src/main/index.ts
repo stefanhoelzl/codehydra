@@ -180,7 +180,7 @@ const windowLayer = new DefaultWindowLayer(
 const viewLayer = new DefaultViewLayer(windowLayer, loggingService.createLogger("view"));
 const sessionLayer = new DefaultSessionLayer(loggingService.createLogger("view"));
 const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
-const ipcLayer = new DefaultIpcLayer(loggingService.createLogger("api"));
+const ipcLayer = new DefaultIpcLayer();
 
 // 5. Service construction
 
