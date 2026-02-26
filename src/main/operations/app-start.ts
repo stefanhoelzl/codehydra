@@ -216,21 +216,18 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       let setupComplete = false;
       while (!setupComplete) {
         try {
-          await ctx.dispatch(
-            {
-              type: INTENT_SETUP,
-              payload: {
-                needsAgentSelection: checkResult.needsAgentSelection,
-                needsBinaryDownload: checkResult.needsBinaryDownload,
-                missingBinaries: checkResult.missingBinaries,
-                needsExtensions: checkResult.needsExtensions,
-                missingExtensions: checkResult.missingExtensions,
-                outdatedExtensions: checkResult.outdatedExtensions,
-                configuredAgent: checkResult.configuredAgent,
-              },
+          await ctx.dispatch({
+            type: INTENT_SETUP,
+            payload: {
+              needsAgentSelection: checkResult.needsAgentSelection,
+              needsBinaryDownload: checkResult.needsBinaryDownload,
+              missingBinaries: checkResult.missingBinaries,
+              needsExtensions: checkResult.needsExtensions,
+              missingExtensions: checkResult.missingExtensions,
+              outdatedExtensions: checkResult.outdatedExtensions,
+              configuredAgent: checkResult.configuredAgent,
             },
-            ctx.causation
-          );
+          });
           setupComplete = true;
         } catch (error) {
           // Setup failed -- error event already emitted by SetupOperation
@@ -282,13 +279,10 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // The mount handler in activate ensures the renderer is subscribed before these fire.
     for (const projectPath of projectPaths) {
       try {
-        await ctx.dispatch(
-          {
-            type: INTENT_OPEN_PROJECT,
-            payload: { path: new Path(projectPath) },
-          } as OpenProjectIntent,
-          ctx.causation
-        );
+        await ctx.dispatch({
+          type: INTENT_OPEN_PROJECT,
+          payload: { path: new Path(projectPath) },
+        } as OpenProjectIntent);
       } catch {
         // Skip invalid projects (no longer exist, not git repos, etc.)
       }
