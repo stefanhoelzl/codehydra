@@ -292,7 +292,7 @@ All settings use dot-separated, kebab-case config keys. The same key works in th
 
 | Source      | Format                                         | Example               |
 | ----------- | ---------------------------------------------- | --------------------- |
-| config.json | key as-is (file keys only)                     | `"agent": "claude"`   |
+| config.json | key as-is                                      | `"agent": "claude"`   |
 | Env var     | `CH_` prefix, `.` → `__`, `-` → `_`, UPPERCASE | `CH_LOG__LEVEL=debug` |
 | CLI flag    | `--` prefix                                    | `--log.level=debug`   |
 
@@ -310,8 +310,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | `log.output`            | `file`    | Output destinations: `file`, `console`, or `file,console`               |
 | `electron.flags`        | —         | Electron switches (e.g., `--disable-gpu`)                               |
 
-File keys (persisted to config.json): `agent`, `version.*`, `telemetry.*`.
-Runtime-only keys (env/CLI only): `log.*`, `electron.*`.
+Any key can appear in config.json, env vars, or CLI flags.
 
 Source of truth: `src/services/config/config-values.ts` (the `CONFIG` schema object).
 

@@ -38,11 +38,8 @@ export type ConfigAgentType = "claude" | "opencode" | null;
 /**
  * The single source of truth for all configuration keys.
  *
- * File-layer keys (persisted to config.json):
- *   agent, version.*, telemetry.*
- *
- * Override-layer keys (env vars / CLI flags, runtime-only):
- *   log.*, electron.*
+ * Any key can appear in config.json, env vars, or CLI flags.
+ * Precedence (highest wins): CLI flag > env var > config.json > computed defaults > static defaults.
  */
 export const CONFIG = {
   agent: key<ConfigAgentType>({
@@ -98,18 +95,6 @@ export type ConfigValues = {
  * Set of all valid config keys, derived from the schema.
  */
 export const CONFIG_KEYS: ReadonlySet<ConfigKey> = new Set(Object.keys(CONFIG) as ConfigKey[]);
-
-/**
- * Keys that are persisted to config.json (file layer).
- */
-export const FILE_KEYS: ReadonlySet<ConfigKey> = new Set<ConfigKey>([
-  "agent",
-  "version.claude",
-  "version.opencode",
-  "version.code-server",
-  "telemetry.enabled",
-  "telemetry.distinct-id",
-]);
 
 /**
  * Default configuration values, derived from the schema.

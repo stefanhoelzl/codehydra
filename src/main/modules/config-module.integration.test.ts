@@ -693,7 +693,7 @@ describe("ConfigModule Integration", () => {
       const content = await fileSystem.readFile(CONFIG_PATH);
       const parsed = JSON.parse(content) as Record<string, unknown>;
 
-      // Should be flat format with only dispatched FILE_KEYS
+      // Should be flat format with only the dispatched keys
       expect(parsed["agent"]).toBe("claude");
       expect(parsed["version.claude"]).toBe("2.0.0");
       expect(parsed["telemetry.enabled"]).toBe(false);
@@ -702,7 +702,7 @@ describe("ConfigModule Integration", () => {
       expect(parsed["versions"]).toBeUndefined();
       expect(parsed["versions.codeServer"]).toBeUndefined();
 
-      // Should not contain non-FILE_KEYS
+      // Should not contain keys that were not in the dispatch
       expect(parsed["log.level"]).toBeUndefined();
       expect(parsed["log.output"]).toBeUndefined();
       expect(parsed["electron.flags"]).toBeUndefined();
