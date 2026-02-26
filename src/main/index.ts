@@ -503,6 +503,9 @@ const electronLifecycleModule = createElectronLifecycleModule({
 const loggingModule = createLoggingModule({
   loggingService,
   registerLogHandlers: () => registerLogHandlers(loggingService),
+  buildInfo,
+  platformInfo,
+  logger: appLogger,
 });
 
 const scriptModule = createScriptModule({

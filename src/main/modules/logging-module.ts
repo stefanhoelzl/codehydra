@@ -1,16 +1,21 @@
 /**
- * LoggingModule - Initializes the logging service.
+ * LoggingModule - Initializes the logging service and logs startup/config info.
  *
- * Provides the "init" hook on app-start to initialize the logging service
- * (enabling renderer logging via IPC) and register log handlers.
+ * Hooks:
+ * - app:start → "before-ready": logs build and platform info
+ * - app:start → "init": initializes logging service, registers IPC log handlers
  *
- * Subscribes to config:updated events to reconfigure logging when
- * log.level, log.console, or log.filter values change.
+ * Events:
+ * - config:updated: logs all changed values, reconfigures logging when
+ *   log.level, log.console, or log.filter values change
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { LoggingService } from "../../services/logging";
+import type { Logger } from "../../services/logging/types";
+import type { BuildInfo } from "../../services/platform/build-info";
+import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { parseLoggerFilter } from "../../services/logging/electron-log-service";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
@@ -24,6 +29,9 @@ export interface LoggingModuleDeps {
   readonly loggingService: Pick<LoggingService, "initialize" | "configure">;
   /** Called after initialize() to register IPC log handlers. */
   readonly registerLogHandlers: () => void;
+  readonly buildInfo: Pick<BuildInfo, "version" | "isDevelopment" | "isPackaged">;
+  readonly platformInfo: Pick<PlatformInfo, "platform" | "arch">;
+  readonly logger: Logger;
 }
 
 // =============================================================================
@@ -39,6 +47,17 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
     name: "logging",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        "before-ready": {
+          handler: async (): Promise<void> => {
+            deps.logger.info("App starting", {
+              version: deps.buildInfo.version,
+              isDev: deps.buildInfo.isDevelopment,
+              isPackaged: deps.buildInfo.isPackaged,
+              platform: deps.platformInfo.platform,
+              arch: deps.platformInfo.arch,
+            });
+          },
+        },
         init: {
           handler: async (): Promise<void> => {
             deps.loggingService.initialize();
@@ -50,6 +69,14 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
     events: {
       [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
         const { values } = (event as ConfigUpdatedEvent).payload;
+
+        // Log all config changes
+        const context: Record<string, string | number | boolean | null> = {};
+        for (const [key, value] of Object.entries(values)) {
+          context[key] = value ?? null;
+        }
+        deps.logger.info("Config updated", context);
+
         // Reconfigure logging when any log-related value changes
         if (
           values["log.level"] !== undefined ||
