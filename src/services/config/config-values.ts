@@ -41,6 +41,13 @@ function parseBool(s: string): boolean | undefined {
 export type ConfigAgentType = "claude" | "opencode" | null;
 
 /**
+ * Auto-update behavior preference.
+ * "always" = background check + download (default).
+ * "never" = skip auto-update entirely.
+ */
+export type AutoUpdatePreference = "always" | "never";
+
+/**
  * The single source of truth for all configuration keys.
  *
  * Any key can appear in config.json, env vars, or CLI flags.
@@ -51,6 +58,11 @@ export const CONFIG = {
     default: null,
     parse: (s) => (s === "claude" || s === "opencode" ? s : s === "" ? null : undefined),
     validate: (v) => (v === null || v === "claude" || v === "opencode" ? v : undefined),
+  }),
+  "auto-update": key<AutoUpdatePreference>({
+    default: "always",
+    parse: (s) => (s === "always" || s === "never" ? s : undefined),
+    validate: (v) => (v === "always" || v === "never" ? v : undefined),
   }),
   "version.claude": key<string | null>({
     default: null,
