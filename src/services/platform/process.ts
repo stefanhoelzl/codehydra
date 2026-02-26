@@ -2,6 +2,7 @@
  * Process spawning utilities.
  */
 
+import type { Readable } from "node:stream";
 import { execa } from "execa";
 import type { Logger } from "../logging";
 
@@ -143,11 +144,13 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
   private readonly logger: Logger;
   private readonly command: string;
   private cachedResult: ProcessResult | null = null;
+  private readonly streamingActive: boolean;
 
   constructor(subprocess: ExecaSubprocess, logger: Logger, command: string) {
     this.subprocess = subprocess;
     this.logger = logger;
     this.command = command;
+    this.streamingActive = this.setupStreamLogging();
   }
 
   get pid(): number | undefined {
@@ -299,12 +302,61 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
   }
 
   /**
+   * Set up real-time streaming of stdout/stderr to the logger.
+   * Returns true if streaming was activated (streams were available).
+   */
+  private setupStreamLogging(): boolean {
+    const { stdout, stderr } = this.subprocess;
+
+    if (!stdout && !stderr) {
+      return false;
+    }
+
+    if (stdout) {
+      this.attachStreamLogger(stdout as Readable, "stdout");
+    }
+    if (stderr) {
+      this.attachStreamLogger(stderr as Readable, "stderr");
+    }
+
+    return true;
+  }
+
+  /**
+   * Attach a line-buffered logger to a readable stream.
+   * Logs complete lines as they arrive, flushes partial line on stream end.
+   */
+  private attachStreamLogger(stream: Readable, name: "stdout" | "stderr"): void {
+    let buffer = "";
+    const prefix = `[${this.command} ${this.pid ?? 0}]`;
+
+    stream.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop()!;
+
+      for (const line of lines) {
+        if (line.trim() === "") continue;
+        this.logger.debug(`${prefix} ${name}: ${line}`);
+      }
+    });
+
+    stream.on("end", () => {
+      if (buffer.trim() !== "") {
+        this.logger.debug(`${prefix} ${name}: ${buffer}`);
+      }
+    });
+  }
+
+  /**
    * Log the result of a completed process.
    */
   private logResult(result: ProcessResult): void {
-    // Log stdout/stderr lines
-    this.logOutputLines(result.stdout, "stdout");
-    this.logOutputLines(result.stderr, "stderr");
+    // Skip batch logging when streaming was active (already logged in real-time)
+    if (!this.streamingActive) {
+      this.logOutputLines(result.stdout, "stdout");
+      this.logOutputLines(result.stderr, "stderr");
+    }
 
     // Log exit status
     if (result.signal) {
