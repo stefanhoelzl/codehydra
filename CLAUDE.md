@@ -301,6 +301,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | Key                     | Default   | Description                                                             |
 | ----------------------- | --------- | ----------------------------------------------------------------------- |
 | `agent`                 | `null`    | Agent selection: claude\|opencode                                       |
+| `auto-update`           | `always`  | Auto-update preference: always\|never                                   |
 | `version.claude`        | `null`    | Claude agent version override                                           |
 | `version.opencode`      | `null`    | OpenCode agent version override                                         |
 | `version.code-server`   | `4.107.0` | Code-server version                                                     |

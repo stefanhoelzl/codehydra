@@ -102,10 +102,11 @@ def main() -> None:
 
         print("Done!\n")
 
+    args = ["--auto-update=never"] + sys.argv[1:]
     if platform.system() == "Windows":
-        sys.exit(subprocess.run([str(binary_path)] + sys.argv[1:]).returncode)
+        sys.exit(subprocess.run([str(binary_path)] + args).returncode)
     else:
-        os.execv(str(binary_path), [str(binary_path)] + sys.argv[1:])
+        os.execv(str(binary_path), [str(binary_path)] + args)
 
 
 if __name__ == "__main__":

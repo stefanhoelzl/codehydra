@@ -203,6 +203,11 @@ describe("ConfigModule Integration", () => {
       const result = parseEnvVars({ CH_LOG__LEVEL: "not-a-level" });
       expect(result["log.level"]).toBeUndefined();
     });
+
+    it("maps CH_AUTO_UPDATE=never to auto-update", () => {
+      const result = parseEnvVars({ CH_AUTO_UPDATE: "never" });
+      expect(result["auto-update"]).toBe("never");
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -234,6 +239,11 @@ describe("ConfigModule Integration", () => {
       expect(result["log.level"]).toBe("debug");
       expect(result["log.output"]).toBe("console");
       expect(result.agent).toBe("claude");
+    });
+
+    it("parses --auto-update=never flag", () => {
+      const result = parseCliArgs(["--auto-update=never"]);
+      expect(result["auto-update"]).toBe("never");
     });
   });
 
@@ -436,6 +446,28 @@ describe("ConfigModule Integration", () => {
       expect(events).toHaveLength(1);
       expect(events[0]!.payload.values.agent).toBe("claude");
       expect(events[0]!.payload.values["version.code-server"]).toBe("4.200.0");
+    });
+
+    it("auto-update value from config.json round-trips through init", async () => {
+      const configContent = JSON.stringify({ "auto-update": "never" });
+
+      const { dispatcher } = createTestSetup({
+        configFileContent: configContent,
+        isPackaged: true,
+      });
+
+      const events: ConfigUpdatedEvent[] = [];
+      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload.values["auto-update"]).toBe("never");
     });
 
     it("returns configuredAgent from effective config", async () => {

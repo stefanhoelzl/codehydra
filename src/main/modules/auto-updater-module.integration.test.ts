@@ -31,6 +31,10 @@ import {
   type UpdateAvailableIntent,
 } from "../operations/update-available";
 import { createAutoUpdaterModule } from "./auto-updater-module";
+import type { IntentModule } from "../intents/infrastructure/module";
+import type { DomainEvent } from "../intents/infrastructure/types";
+import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
+import type { ConfigValues } from "../../services/config/config-values";
 import type { AutoUpdater, UpdateAvailableCallback } from "../../services/auto-updater";
 
 // =============================================================================
@@ -122,6 +126,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
   autoUpdater: MockAutoUpdater;
   updateOperation: TrackingUpdateOperation;
+  module: IntentModule;
 }
 
 function createTestSetup(overrides?: { disposeThrows?: Error }): TestSetup {
@@ -144,7 +149,21 @@ function createTestSetup(overrides?: { disposeThrows?: Error }): TestSetup {
 
   dispatcher.registerModule(autoUpdaterModule);
 
-  return { dispatcher, autoUpdater, updateOperation };
+  return { dispatcher, autoUpdater, updateOperation, module: autoUpdaterModule };
+}
+
+/**
+ * Simulate a config:updated event by calling the module's event handler directly.
+ */
+function simulateConfigUpdated(
+  module: IntentModule,
+  values: Partial<Readonly<ConfigValues>>
+): void {
+  const event: ConfigUpdatedEvent = {
+    type: EVENT_CONFIG_UPDATED,
+    payload: { values },
+  };
+  module.events![EVENT_CONFIG_UPDATED]!(event as DomainEvent);
 }
 
 function startIntent(): AppStartIntent {
@@ -198,5 +217,37 @@ describe("AutoUpdaterModule Integration", () => {
 
     // Handler throws, but collect() catches it and shutdown is best-effort
     await expect(dispatcher.dispatch(shutdownIntent())).resolves.toBeUndefined();
+  });
+
+  it("auto-update=always (default) starts autoUpdater", async () => {
+    const { dispatcher, autoUpdater, module } = createTestSetup();
+
+    simulateConfigUpdated(module, { "auto-update": "always" });
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(autoUpdater.startCalled).toBe(true);
+  });
+
+  it("auto-update=never skips autoUpdater.start()", async () => {
+    const { dispatcher, autoUpdater, module } = createTestSetup();
+
+    simulateConfigUpdated(module, { "auto-update": "never" });
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(autoUpdater.startCalled).toBe(false);
+  });
+
+  it("auto-update=never still calls dispose() on shutdown", async () => {
+    const { dispatcher, autoUpdater, module } = createTestSetup();
+
+    simulateConfigUpdated(module, { "auto-update": "never" });
+
+    await dispatcher.dispatch(startIntent());
+    await dispatcher.dispatch(shutdownIntent());
+
+    expect(autoUpdater.startCalled).toBe(false);
+    expect(autoUpdater.disposeCalled).toBe(true);
   });
 });
