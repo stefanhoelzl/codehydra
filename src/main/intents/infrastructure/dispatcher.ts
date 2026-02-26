@@ -157,6 +157,7 @@ export class Dispatcher implements IDispatcher {
       throw new Error(`Operation already registered for intent type: ${intentType}`);
     }
     this.operations.set(intentType, operation as unknown as Operation<Intent, unknown>);
+    this.logger?.debug("register operation", { intent: intentType });
   }
 
   addInterceptor(interceptor: IntentInterceptor): void {
@@ -165,11 +166,13 @@ export class Dispatcher implements IDispatcher {
   }
 
   registerModule(module: IntentModule): void {
+    this.logger?.debug("register module", { module: module.name });
     if (module.hooks) {
       for (const [operationId, hookPoints] of Object.entries(module.hooks)) {
         for (const [hookPointId, handler] of Object.entries(hookPoints)) {
           this.hookRegistry.register(operationId, hookPointId, handler);
           this.trackHookModule(operationId, hookPointId, module.name);
+          this.logger?.silly("  hook", { module: module.name, op: operationId, hook: hookPointId });
         }
       }
     }
@@ -177,11 +180,13 @@ export class Dispatcher implements IDispatcher {
       for (const [eventType, handler] of Object.entries(module.events)) {
         this.subscribe(eventType, handler);
         this.trackEventSubscriber(eventType, module.name);
+        this.logger?.silly("  event", { module: module.name, event: eventType });
       }
     }
     if (module.interceptors) {
       for (const interceptor of module.interceptors) {
         this.addInterceptor(interceptor);
+        this.logger?.silly("  interceptor", { module: module.name, interceptor: interceptor.id });
       }
     }
   }
