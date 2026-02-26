@@ -14,6 +14,7 @@
  * - Intent failure (error)
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Intent, IntentResult, DomainEvent } from "./types";
 import type {
   Operation,
@@ -133,6 +134,7 @@ export class Dispatcher implements IDispatcher {
   private readonly operations = new Map<string, Operation<Intent, unknown>>();
   private readonly interceptors: IntentInterceptor[] = [];
   private readonly subscribers = new Map<string, Set<EventHandler>>();
+  private readonly causationContext = new AsyncLocalStorage<readonly string[]>();
 
   /** operationId → hookPointId → module names[] */
   private readonly hookModuleNames = new Map<string, Map<string, string[]>>();
@@ -208,7 +210,8 @@ export class Dispatcher implements IDispatcher {
     causation?: readonly string[]
   ): IntentHandle<IntentResult<I>> {
     const handle = new IntentHandle<IntentResult<I>>();
-    void this.runPipeline(intent, causation, handle);
+    const resolvedCausation = causation ?? this.causationContext.getStore();
+    void this.runPipeline(intent, resolvedCausation, handle);
     return handle;
   }
 
@@ -343,8 +346,9 @@ export class Dispatcher implements IDispatcher {
         causation: causationChain,
       };
 
-      // Execute operation
-      const result = await operation.execute(ctx);
+      // Execute operation within causation context so that any
+      // dispatcher.dispatch() calls from hooks inherit the chain.
+      const result = await this.causationContext.run(causationChain, () => operation.execute(ctx));
 
       const duration = Math.round(performance.now() - pipelineStart);
       this.logger?.info("completed", { intent: current.type, ms: duration });

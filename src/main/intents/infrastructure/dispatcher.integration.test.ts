@@ -553,6 +553,104 @@ describe("Dispatcher", () => {
     });
   });
 
+  describe("AsyncLocalStorage causation", () => {
+    it("hook handler inherits causation via ALS when calling dispatcher.dispatch() directly", async () => {
+      const hookRegistry = new HookRegistry();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher(hookRegistry, logger);
+
+      // Child operation captures its causation
+      const capturedCausation: (readonly string[])[] = [];
+      dispatcher.registerOperation("test:child", {
+        id: "child-op",
+        execute: async (ctx) => {
+          capturedCausation.push(ctx.causation);
+        },
+      });
+
+      // Parent operation with a hook point
+      dispatcher.registerOperation("test:parent", {
+        id: "parent-op",
+        execute: async (ctx) => {
+          await ctx.hooks.collect("run", { intent: ctx.intent });
+        },
+      });
+
+      // Hook handler dispatches directly on the dispatcher (not via ctx.dispatch)
+      // — simulating what hook modules do in practice
+      const hookModule: IntentModule = {
+        name: "dispatching-hook",
+        hooks: {
+          "parent-op": {
+            run: {
+              handler: async () => {
+                await dispatcher.dispatch({ type: "test:child", payload: {} });
+              },
+            },
+          },
+        },
+      };
+      dispatcher.registerModule(hookModule);
+
+      await dispatcher.dispatch({ type: "test:parent", payload: {} });
+
+      // Child should see parent in its causation chain via ALS
+      expect(capturedCausation).toHaveLength(1);
+      expect(capturedCausation[0]).toEqual(["test:parent", "test:child"]);
+
+      // Verify the log shows the ALS-resolved causation
+      const childDispatchLog = logger.calls.find(
+        (c) =>
+          c.level === "info" &&
+          c.message === "dispatch" &&
+          (c.context as Record<string, unknown>).intent === "test:child"
+      );
+      expect(childDispatchLog).toBeDefined();
+      expect((childDispatchLog!.context as Record<string, unknown>).causation).toBe("test:parent");
+    });
+
+    it("explicit causation takes precedence over ALS context", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      const capturedCausation: (readonly string[])[] = [];
+      dispatcher.registerOperation("test:child", {
+        id: "child-op",
+        execute: async (ctx) => {
+          capturedCausation.push(ctx.causation);
+        },
+      });
+
+      dispatcher.registerOperation("test:parent", {
+        id: "parent-op",
+        execute: async (ctx) => {
+          await ctx.hooks.collect("run", { intent: ctx.intent });
+        },
+      });
+
+      // Hook handler passes explicit causation — should override ALS
+      const hookModule: IntentModule = {
+        name: "explicit-causation-hook",
+        hooks: {
+          "parent-op": {
+            run: {
+              handler: async () => {
+                await dispatcher.dispatch({ type: "test:child", payload: {} }, ["custom:origin"]);
+              },
+            },
+          },
+        },
+      };
+      dispatcher.registerModule(hookModule);
+
+      await dispatcher.dispatch({ type: "test:parent", payload: {} });
+
+      // Explicit causation should be used, not ALS
+      expect(capturedCausation).toHaveLength(1);
+      expect(capturedCausation[0]).toEqual(["custom:origin", "test:child"]);
+    });
+  });
+
   describe("logging", () => {
     it("logs dispatch start with intent type and causation", async () => {
       const hookRegistry = new HookRegistry();
