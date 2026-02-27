@@ -25,6 +25,8 @@ export interface HttpRequestOptions {
   readonly timeout?: number;
   /** External abort signal to cancel the request */
   readonly signal?: AbortSignal;
+  /** Optional HTTP headers to include in the request */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -146,7 +148,10 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
     }
 
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, {
+        signal: controller.signal,
+        ...(options?.headers && { headers: options.headers }),
+      });
       this.logger.debug("Fetch complete", { url, status: response.status });
       return response;
     } catch (error) {

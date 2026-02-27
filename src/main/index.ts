@@ -116,6 +116,7 @@ import { createScriptModule } from "./modules/script-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
+import { createAutoPrModule } from "./modules/auto-pr-module";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import { ConfigSetValuesOperation, INTENT_CONFIG_SET_VALUES } from "./operations/config-set-values";
@@ -521,6 +522,14 @@ const workspaceSelectionModule = createWorkspaceSelectionModule(agentStatusManag
 const mcpModule = createMcpModule({
   mcpServerManager,
 });
+const autoPrModule = createAutoPrModule({
+  processRunner,
+  httpClient: networkLayer,
+  fs: fileSystemLayer,
+  logger: loggingService.createLogger("auto-pr"),
+  dataRootDir: pathProvider.dataRootDir.toString(),
+  dispatcher,
+});
 
 // 8. New modules
 
@@ -641,6 +650,7 @@ dispatcher.registerModule(electronLifecycleModule);
 dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(shortcutModule);
+dispatcher.registerModule(autoPrModule);
 dispatcher.registerModule(ipcEventBridge);
 
 // Register lifecycle.ready handler (bridges mount signal + projects-loaded deferred)
