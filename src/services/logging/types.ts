@@ -56,7 +56,8 @@ export type LoggerName =
   | "updater" // AutoUpdater - auto-update service
   | "agent" // AgentServerManager / AgentStatusManager - agent lifecycle
   | "shortcut" // ShortcutController - keyboard shortcut detection
-  | "dispatcher"; // Dispatcher - intent dispatch pipeline
+  | "dispatcher" // Dispatcher - intent dispatch pipeline
+  | "auto-pr"; // AutoPrModule - GitHub PR workspace automation
 
 /**
  * Context data for log entries.

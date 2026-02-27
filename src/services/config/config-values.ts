@@ -104,6 +104,11 @@ export const CONFIG = {
     parse: (s) => (s === "" ? undefined : s),
     validate: (v) => (typeof v === "string" ? v : undefined),
   }),
+  "experimental.auto-pr-workspaces": key<boolean>({
+    default: false,
+    parse: parseBool,
+    validate: (v) => (typeof v === "boolean" ? v : undefined),
+  }),
   help: key<boolean>({
     default: false,
     parse: parseBool,
