@@ -341,14 +341,10 @@ if (!result.success) {
 **Testing with Mocks:**
 
 ```typescript
-import { createMockProcessRunner, createMockSpawnedProcess } from "../platform/process.test-utils";
+import { createMockProcessRunner } from "../platform/process.state-mock";
 
-// Create mock with controllable behavior
-const mockProc = createMockSpawnedProcess({
-  pid: 12345,
-  waitResult: { exitCode: 0, stdout: "output", stderr: "" },
-});
-const runner = createMockProcessRunner(mockProc);
+// Create mock with controllable behavior and state tracking
+const runner = createMockProcessRunner();
 
 // Inject into service
 const service = new SomeService(runner);
@@ -932,7 +928,7 @@ All paths below are relative to `src/services/`.
 | `FileSystemLayer`      | `createFileSystemMock()`           | `platform/filesystem.state-mock.ts`               |
 | `HttpClient`           | `createMockHttpClient()`           | `platform/network.test-utils.ts`                  |
 | `PortManager`          | `createPortManagerMock()`          | `platform/port-manager.state-mock.ts`             |
-| `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.test-utils.ts`                  |
+| `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.state-mock.ts`                  |
 | `PathProvider`         | `createMockPathProvider()`         | `platform/path-provider.test-utils.ts`            |
 | `WorkspaceLockHandler` | `createMockWorkspaceLockHandler()` | `platform/workspace-lock-handler.test-utils.ts`   |
 

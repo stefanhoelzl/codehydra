@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
@@ -490,6 +491,32 @@ describe("ExecaProcessRunner", () => {
       },
       TEST_TIMEOUT
     );
+
+    it(
+      "wait() resolves with signal when killed during active wait",
+      async () => {
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        // Start waiting (no timeout - waits until process exits)
+        const waitPromise = proc.wait();
+
+        // Kill after a small delay while wait is active
+        setTimeout(() => void proc.kill(2000, 500), 10);
+
+        const result = await waitPromise;
+
+        if (isWindows) {
+          // Windows: taskkill terminates with exit code, no POSIX signal
+          expect(result.exitCode).not.toBeNull();
+        } else {
+          expect(result.exitCode).toBeNull();
+          expect(result.signal).toBe("SIGTERM");
+        }
+      },
+      TEST_TIMEOUT
+    );
   });
 
   describe("environment isolation", () => {
@@ -594,6 +621,29 @@ describe("ExecaProcessRunner", () => {
         expect(result.exitCode).toBeNull();
         expect(result.stderr).toContain("ENOENT");
         expect(proc.pid).toBeUndefined();
+      },
+      TEST_TIMEOUT
+    );
+
+    it.skipIf(isWindows)(
+      "handles non-executable file with EACCES",
+      async () => {
+        const tempDir = await mkdtemp(path.join(os.tmpdir(), "process-test-"));
+        const tempFile = path.join(tempDir, "not-executable.txt");
+        await writeFile(tempFile, "just text, not executable code");
+        await chmod(tempFile, 0o644);
+
+        try {
+          const proc = runner.run(tempFile, []);
+          runningProcesses.push(proc);
+
+          const result = await proc.wait();
+
+          expect(result.exitCode).toBeNull();
+          expect(result.stderr.toLowerCase()).toMatch(/eacces|permission/);
+        } finally {
+          await rm(tempDir, { recursive: true, force: true });
+        }
       },
       TEST_TIMEOUT
     );
