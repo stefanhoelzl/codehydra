@@ -193,7 +193,6 @@ describe("ClaudeCodeServerManager integration", () => {
 
       expect(markActiveHandler).toHaveBeenCalledTimes(2);
     });
-
   });
 
   describe("hook handling", () => {

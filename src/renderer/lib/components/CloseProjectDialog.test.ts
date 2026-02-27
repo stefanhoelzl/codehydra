@@ -461,7 +461,6 @@ describe("CloseProjectDialog component", () => {
       const submitButton = screen.getByRole("button", { name: /close project/i });
       expect(submitButton).toHaveFocus();
     });
-
   });
 
   describe("edge cases", () => {

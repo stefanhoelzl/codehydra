@@ -520,7 +520,6 @@ describe("OpenCodeClient", () => {
 
       expect(listener).toHaveBeenCalledWith(event);
     });
-
   });
 
   describe("connect", () => {
