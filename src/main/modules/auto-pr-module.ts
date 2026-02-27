@@ -31,8 +31,10 @@ import type { ProcessRunner } from "../../services/platform/process";
 import type { HttpClient } from "../../services/platform/network";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Logger } from "../../services/logging/types";
+import type { InitialPrompt } from "../../shared/api/types";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../shared/error-utils";
+import { renderTemplate } from "../../services/template/liquid-renderer";
 
 // =============================================================================
 // Persistence Types
@@ -135,6 +137,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
   let enabled = false;
   // Tracked from config:updated events (fires during app:start init phase, before activate)
   let configEnabled = false;
+  let templatePath: string | null = null;
   // Prevents the event handler from triggering activation during initial startup
   let initialActivationDone = false;
 
@@ -214,7 +217,10 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     return [...data.items];
   }
 
-  async function fetchPrDetail(repo: string, prNumber: number): Promise<GitHubPrDetail | null> {
+  async function fetchPrDetail(
+    repo: string,
+    prNumber: number
+  ): Promise<Record<string, unknown> | null> {
     const url = `${GITHUB_API_BASE}/repos/${repo}/pulls/${prNumber}`;
 
     const response = await deps.httpClient.fetch(url, {
@@ -231,7 +237,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       return null;
     }
 
-    return (await response.json()) as GitHubPrDetail;
+    return (await response.json()) as Record<string, unknown>;
   }
 
   async function fetchRepoDetail(repo: string): Promise<GitHubRepoDetail | null> {
@@ -255,13 +261,31 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
   // ------ Workspace Lifecycle ------
 
+  async function buildInitialPrompt(prDetail: Record<string, unknown>): Promise<InitialPrompt> {
+    if (templatePath === null) {
+      return { prompt: "", agent: "plan" };
+    }
+    try {
+      const templateContent = await deps.fs.readFile(templatePath);
+      const rendered = renderTemplate(templateContent, prDetail);
+      return { prompt: rendered, agent: "plan" };
+    } catch (error) {
+      deps.logger.warn("Failed to read/render PR template, falling back to empty prompt", {
+        templatePath,
+        error: getErrorMessage(error),
+      });
+      return { prompt: "", agent: "plan" };
+    }
+  }
+
   async function createPrWorkspace(
     prUrl: string,
     repo: string,
     prNumber: number,
     headRef: string,
     cloneUrl: string,
-    baseRef: string
+    baseRef: string,
+    prDetail: Record<string, unknown>
   ): Promise<void> {
     const workspaceName = buildWorkspaceName(prNumber, headRef);
 
@@ -279,6 +303,8 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         return;
       }
 
+      const initialPrompt = await buildInitialPrompt(prDetail);
+
       // Create the workspace
       const wsResult = await deps.dispatcher.dispatch({
         type: INTENT_OPEN_WORKSPACE,
@@ -287,6 +313,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
           base: `origin/${baseRef}`,
           stealFocus: false,
           projectPath: project.path,
+          initialPrompt,
         },
       } as OpenWorkspaceIntent);
 
@@ -393,6 +420,10 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       const prDetail = await fetchPrDetail(repo, item.number);
       if (!prDetail) continue;
 
+      const head = prDetail.head as GitHubPrDetail["head"] | undefined;
+      const base = prDetail.base as GitHubPrDetail["base"] | undefined;
+      if (!head?.ref || !base?.ref) continue;
+
       const repoDetail = await fetchRepoDetail(repo);
       if (!repoDetail) continue;
 
@@ -400,9 +431,10 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         prUrl,
         repo,
         item.number,
-        prDetail.head.ref,
+        head.ref,
         repoDetail.clone_url,
-        prDetail.base.ref
+        base.ref,
+        prDetail
       );
     }
 
@@ -487,6 +519,10 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     events: {
       [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
         const { values } = (event as ConfigUpdatedEvent).payload;
+        if ("experimental.pr-auto-workspace.template-path" in values) {
+          templatePath =
+            (values["experimental.pr-auto-workspace.template-path"] as string | null) ?? null;
+        }
         if ("experimental.auto-pr-workspaces" in values) {
           const newValue = values["experimental.auto-pr-workspaces"];
           configEnabled = newValue === true;

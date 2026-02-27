@@ -59,19 +59,23 @@ import { createAutoPrModule } from "./auto-pr-module";
 class MinimalActivateOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
   configEnabled: boolean;
+  extraConfigValues: Record<string, unknown>;
 
-  constructor(configEnabled: boolean) {
+  constructor(configEnabled: boolean, extraConfigValues?: Record<string, unknown>) {
     this.configEnabled = configEnabled;
+    this.extraConfigValues = extraConfigValues ?? {};
   }
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     // Simulate config module emitting config:updated during init phase
+    const values: Record<string, unknown> = { ...this.extraConfigValues };
     if (this.configEnabled) {
+      values["experimental.auto-pr-workspaces"] = true;
+    }
+    if (Object.keys(values).length > 0) {
       const configEvent: ConfigUpdatedEvent = {
         type: EVENT_CONFIG_UPDATED,
-        payload: {
-          values: { "experimental.auto-pr-workspaces": true },
-        },
+        payload: { values },
       };
       ctx.emit(configEvent);
     }
@@ -185,9 +189,15 @@ function searchResponse(
 
 function prDetailResponse(headRef: string, baseRef: string): string {
   return JSON.stringify({
-    head: { ref: headRef },
-    base: { ref: baseRef },
+    number: 42,
+    title: "Add login feature",
+    body: "This PR adds a login feature with OAuth support.",
     html_url: "https://github.com/org/repo/pull/42",
+    head: { ref: headRef, sha: "abc123" },
+    base: { ref: baseRef, sha: "def456" },
+    user: { login: "johndoe", id: 12345 },
+    draft: false,
+    labels: [{ name: "enhancement" }],
   });
 }
 
@@ -219,6 +229,8 @@ function createTestSetup(options?: {
   ghAuthFails?: boolean;
   configEnabled?: boolean;
   existingState?: string;
+  templatePath?: string | null;
+  templateContent?: string;
 }): TestSetup {
   const configEnabled = options?.configEnabled ?? true;
 
@@ -241,6 +253,9 @@ function createTestSetup(options?: {
   if (options?.existingState) {
     fsEntries["/data/auto-pr-workspaces.json"] = file(options.existingState);
   }
+  if (options?.templatePath && options.templateContent !== undefined) {
+    fsEntries[options.templatePath] = file(options.templateContent);
+  }
   const fs = createFileSystemMock({ entries: fsEntries });
 
   const hookRegistry = new HookRegistry();
@@ -250,7 +265,14 @@ function createTestSetup(options?: {
   const openWorkspaceOp = new TrackingOpenWorkspaceOperation();
   const deleteWorkspaceOp = new TrackingDeleteWorkspaceOperation();
 
-  dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation(configEnabled));
+  const extraConfig: Record<string, unknown> = {};
+  if (options?.templatePath !== undefined) {
+    extraConfig["experimental.pr-auto-workspace.template-path"] = options.templatePath;
+  }
+  dispatcher.registerOperation(
+    INTENT_APP_START,
+    new MinimalActivateOperation(configEnabled, extraConfig)
+  );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, openProjectOp);
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
@@ -351,6 +373,10 @@ describe("AutoPrModule Integration", () => {
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
       expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("pr-42/feature-login");
       expect(openWorkspaceOp.dispatched[0]!.payload.stealFocus).toBe(false);
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "",
+        agent: "plan",
+      });
     });
 
     it("does not recreate workspace for already-tracked PR", async () => {
@@ -514,6 +540,110 @@ describe("AutoPrModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openProjectOp.dispatched).toHaveLength(0);
+    });
+  });
+
+  describe("initial prompt and plan mode", () => {
+    const TEMPLATE_PATH = "/data/review.liquid";
+
+    function setupWithPr(options?: { templatePath: string | null; templateContent: string }) {
+      const setup = createTestSetup(options);
+      setup.httpClient.setResponse(SEARCH_URL, {
+        body: searchResponse([
+          {
+            number: 42,
+            htmlUrl: "https://github.com/org/repo/pull/42",
+            repositoryUrl: "https://api.github.com/repos/org/repo",
+          },
+        ]),
+      });
+      setup.httpClient.setResponse(PR_DETAIL_URL, {
+        body: prDetailResponse("feature-login", "main"),
+      });
+      setup.httpClient.setResponse(REPO_DETAIL_URL, {
+        body: repoDetailResponse("https://github.com/org/repo.git"),
+      });
+      return setup;
+    }
+
+    it("uses plan mode with empty prompt when no template configured", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr();
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "",
+        agent: "plan",
+      });
+    });
+
+    it("renders template file with PR detail data when template-path configured", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "Review PR #{{ number }}: {{ title }} by {{ user.login }}",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "Review PR #42: Add login feature by johndoe",
+        agent: "plan",
+      });
+    });
+
+    it("falls back to empty prompt when template file not found", async () => {
+      const setup = createTestSetup({ templatePath: "/data/nonexistent.liquid" });
+      setup.httpClient.setResponse(SEARCH_URL, {
+        body: searchResponse([
+          {
+            number: 42,
+            htmlUrl: "https://github.com/org/repo/pull/42",
+            repositoryUrl: "https://api.github.com/repos/org/repo",
+          },
+        ]),
+      });
+      setup.httpClient.setResponse(PR_DETAIL_URL, {
+        body: prDetailResponse("feature-login", "main"),
+      });
+      setup.httpClient.setResponse(REPO_DETAIL_URL, {
+        body: repoDetailResponse("https://github.com/org/repo.git"),
+      });
+      const { dispatcher, openWorkspaceOp } = setup;
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "",
+        agent: "plan",
+      });
+    });
+
+    it("falls back to empty prompt on template render failure", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "{% invalid_tag %}",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "",
+        agent: "plan",
+      });
+    });
+
+    it("picks up template-path config for workspace creation", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "Branch: {{ head.ref }}",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "Branch: feature-login",
+        agent: "plan",
+      });
     });
   });
 });
