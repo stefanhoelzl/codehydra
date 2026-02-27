@@ -109,6 +109,11 @@ export const CONFIG = {
     parse: parseBool,
     validate: (v) => (typeof v === "boolean" ? v : undefined),
   }),
+  "experimental.pr-auto-workspace.template-path": key<string | null>({
+    default: null,
+    parse: (s) => (s === "" ? null : s),
+    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
+  }),
   help: key<boolean>({
     default: false,
     parse: parseBool,

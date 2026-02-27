@@ -60,6 +60,7 @@
     "electron-updater": "^6.7.3",
     "execa": "^9.6.1",
     "ignore": "^7.0.5",
+    "liquidjs": "^10.24.0",
     "posthog-node": "^5.24.2",
     "simple-git": "^3.30.0",
     "socket.io": "^4.8.1",
