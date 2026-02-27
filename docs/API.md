@@ -175,7 +175,7 @@ const workspace = await api.workspace.create("fix-bug-123", "main", {
 // Create workspace with initial prompt and specific agent
 const workspace = await api.workspace.create("refactor-api", "main", {
   initialPrompt: { prompt: "Refactor the API module for better testability", agent: "coder" },
-  keepInBackground: true, // Don't switch to the new workspace
+  stealFocus: false, // Don't switch to the new workspace
 });
 ```
 
@@ -183,7 +183,7 @@ const workspace = await api.workspace.create("refactor-api", "main", {
 
 - The new workspace is created in the same project as the current workspace
 - `initialPrompt` can be a string (uses default agent) or `{ prompt, agent }` object
-- If `keepInBackground` is `true`, the UI stays on the current workspace; otherwise it switches to the new one
+- If `stealFocus` is `false`, the UI stays on the current workspace (unless no workspace is active); if `true` or omitted, it switches to the new one
 - The initial prompt is sent asynchronously after the workspace is ready (fire-and-forget)
 
 #### Execute VS Code Commands
@@ -323,7 +323,7 @@ type InitialPrompt = string | { prompt: string; agent?: string };
 
 interface WorkspaceCreateOptions {
   initialPrompt?: InitialPrompt;
-  keepInBackground?: boolean;
+  stealFocus?: boolean;
 }
 
 interface Workspace {
@@ -469,12 +469,12 @@ interface WorkspaceCreateRequest {
   name: string; // Name for the new workspace (becomes branch name)
   base: string; // Base branch to create the workspace from
   initialPrompt?: InitialPrompt; // Optional initial prompt to send to AI agent
-  keepInBackground?: boolean; // If true, don't switch to the new workspace. Default: false
+  stealFocus?: boolean; // If true, switch to the new workspace. Default: false for API calls
 }
 
 interface WorkspaceCreateOptions {
   initialPrompt?: InitialPrompt;
-  keepInBackground?: boolean;
+  stealFocus?: boolean;
 }
 
 interface Workspace {

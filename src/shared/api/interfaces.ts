@@ -54,8 +54,9 @@ export interface IProjectApi {
 export interface WorkspaceCreateOptions {
   /** Optional initial prompt to send after workspace is created */
   readonly initialPrompt?: InitialPrompt;
-  /** If true, don't switch to the new workspace (default: false = switch to it) */
-  readonly keepInBackground?: boolean;
+  /** If true, steal focus from current workspace. If false, don't steal focus but still
+   *  switch when no workspace is active. Default: switch (undefined treated as true). */
+  readonly stealFocus?: boolean;
   /**
    * Workspace path of the calling workspace.
    * Used by Plugin API / MCP server as an alternative to projectId.
@@ -71,7 +72,7 @@ export interface IWorkspaceApi {
    * @param projectPath Project path to create the workspace in
    * @param name Name of the new workspace
    * @param base Base branch to create the workspace from
-   * @param options Optional creation options (initialPrompt, keepInBackground)
+   * @param options Optional creation options (initialPrompt, stealFocus)
    */
   create(
     projectPath: string | undefined,
@@ -200,8 +201,8 @@ export interface ApiEvents {
     readonly workspace: Workspace;
     /** True if an initial prompt was provided for the workspace */
     readonly hasInitialPrompt?: boolean;
-    /** True if workspace should stay in background (no auto-switch) */
-    readonly keepInBackground?: boolean;
+    /** If false, workspace should not steal focus (but still switches when nothing is active) */
+    readonly stealFocus?: boolean;
   }) => void;
   "workspace:removed": (event: WorkspaceRef) => void;
   "workspace:switched": (event: WorkspaceRef | null) => void;

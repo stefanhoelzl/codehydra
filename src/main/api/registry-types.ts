@@ -51,8 +51,9 @@ export interface WorkspaceCreatePayload {
   readonly base: string;
   /** Optional initial prompt to send after workspace is created */
   readonly initialPrompt?: InitialPrompt;
-  /** If true, don't switch to the new workspace (default: false = switch to it) */
-  readonly keepInBackground?: boolean;
+  /** If true, steal focus from current workspace. If false, don't steal focus but still
+   *  switch when no workspace is active. Default: switch (undefined treated as true). */
+  readonly stealFocus?: boolean;
   /** Workspace path of the calling workspace (Plugin API / MCP alternative to projectId) */
   readonly callerWorkspacePath?: string;
 }

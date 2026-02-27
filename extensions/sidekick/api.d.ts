@@ -117,8 +117,9 @@ export type InitialPrompt = string | { readonly prompt: string; readonly agent?:
 export interface WorkspaceCreateOptions {
   /** Optional initial prompt to send after workspace is created */
   readonly initialPrompt?: InitialPrompt;
-  /** If true, don't switch to the new workspace (default: false = switch to it) */
-  readonly keepInBackground?: boolean;
+  /** If true, steal focus from current workspace. If false, don't steal focus but still
+   *  switch when no workspace is active. Default: switch (undefined treated as true). */
+  readonly stealFocus?: boolean;
 }
 
 /**
@@ -317,7 +318,7 @@ export interface WorkspaceApi {
    * // Create workspace with initial prompt and specific agent
    * const ws = await api.workspace.create('fix-bug-123', 'main', {
    *   initialPrompt: { prompt: 'Fix the login bug', agent: 'coder' },
-   *   keepInBackground: true  // Don't switch to the new workspace
+   *   stealFocus: false  // Don't switch to the new workspace
    * });
    * ```
    */

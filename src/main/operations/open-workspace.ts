@@ -63,7 +63,9 @@ export interface OpenWorkspacePayload {
   readonly workspaceName?: string;
   readonly base?: string;
   readonly initialPrompt?: InitialPrompt;
-  readonly keepInBackground?: boolean;
+  /** If true, switch to the new workspace. If false, don't steal focus but still switch when
+   *  no workspace is active. Default behavior (undefined): switch. */
+  readonly stealFocus?: boolean;
   /** When set, skip worktree creation and populate context from existing workspace data. */
   readonly existingWorkspace?: ExistingWorkspaceData;
   /** Authoritative project path. */
@@ -100,7 +102,7 @@ export interface WorkspaceCreatedPayload {
   readonly metadata: Readonly<Record<string, string>>;
   readonly workspaceUrl: string;
   readonly initialPrompt?: NormalizedInitialPrompt;
-  readonly keepInBackground?: boolean;
+  readonly stealFocus?: boolean;
 }
 
 export interface WorkspaceCreatedEvent extends DomainEvent {
@@ -324,8 +326,8 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       ...(ctx.intent.payload.initialPrompt !== undefined && {
         initialPrompt: normalizeInitialPrompt(ctx.intent.payload.initialPrompt),
       }),
-      ...(ctx.intent.payload.keepInBackground !== undefined && {
-        keepInBackground: ctx.intent.payload.keepInBackground,
+      ...(ctx.intent.payload.stealFocus !== undefined && {
+        stealFocus: ctx.intent.payload.stealFocus,
       }),
     };
 
@@ -335,16 +337,12 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     };
     ctx.emit(event);
 
-    // Dispatch workspace:switch if not keepInBackground
-    if (!ctx.intent.payload.keepInBackground) {
-      const switchIntent: SwitchWorkspaceIntent = {
+    // Dispatch workspace:switch if stealFocus is not explicitly false
+    if (ctx.intent.payload.stealFocus !== false) {
+      await ctx.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: {
-          workspacePath,
-          focus: true,
-        },
-      };
-      await ctx.dispatch(switchIntent);
+        payload: { workspacePath, focus: true },
+      } as SwitchWorkspaceIntent);
     }
 
     return workspace;

@@ -372,11 +372,11 @@ export class McpServer implements IMcpServer {
                   'Set agent to "plan" for read-only/planning mode, ' +
                   "or omit agent for full-permission implementation mode."
               ),
-            keepInBackground: z
+            stealFocus: z
               .boolean()
               .optional()
               .describe(
-                "If true, don't switch to the new workspace (default: true = stay in background for API calls)"
+                "If true, switch to the new workspace (default: false = stay in background for API calls)"
               ),
           }),
         },
@@ -393,8 +393,8 @@ export class McpServer implements IMcpServer {
               | string
               | { prompt: string; agent?: string; model?: PromptModel }
               | undefined;
-            // Default to true for API calls (keep in background)
-            const keepInBackground = (args.keepInBackground as boolean | undefined) ?? true;
+            // Default to false for API calls (stay in background)
+            const stealFocus = (args.stealFocus as boolean | undefined) ?? false;
 
             // If initialPrompt provided, resolve model from caller's session if not specified
             let finalPrompt: { prompt: string; agent?: string; model?: PromptModel } | undefined;
@@ -421,7 +421,7 @@ export class McpServer implements IMcpServer {
             const result = await this.api.workspaces.create(undefined, name, base, {
               callerWorkspacePath: workspacePath,
               ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
-              ...(keepInBackground && { keepInBackground }),
+              stealFocus,
             });
             return this.successResult(result);
           } catch (error) {
