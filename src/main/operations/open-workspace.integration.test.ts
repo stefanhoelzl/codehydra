@@ -23,6 +23,8 @@
  * #16: existingWorkspace uses projectPath directly
  * #17: Incomplete payload returns bases
  * #18: project:resolve failure propagates error
+ * #20: stealFocus=false with no active workspace dispatches switch
+ * #21: stealFocus=false with active workspace skips switch
  *
  * Regression coverage (APP_LIFECYCLE_INTENTS #10):
  * The agentModule's setup hook behavior (starting per-workspace server) is tested
@@ -84,6 +86,13 @@ import type {
   ResolveHookResult as ResolveProjectResolveHookResult,
   ResolveHookInput as ResolveProjectHookInput,
 } from "./resolve-project";
+import {
+  GetActiveWorkspaceOperation,
+  GET_ACTIVE_WORKSPACE_OPERATION_ID,
+  INTENT_GET_ACTIVE_WORKSPACE,
+} from "./get-active-workspace";
+import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
+import type { WorkspaceRef } from "../../shared/api/types";
 
 // =============================================================================
 // Test Constants
@@ -197,6 +206,8 @@ interface TestSetupOptions {
   throwOnCreate?: boolean;
   setupThrows?: boolean;
   workspaceUrl?: string;
+  /** Active workspace ref returned by GetActiveWorkspaceOperation. Default: null (no active workspace). */
+  activeWorkspaceRef?: WorkspaceRef | null;
 }
 
 interface TestSetup {
@@ -223,6 +234,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
   // Shared resolve modules for workspace:resolve and project:resolve
   const resolveWorkspaceModule: IntentModule = {
@@ -299,6 +311,21 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   };
 
   const fetchBasesModule = opts?.fetchBasesModule ?? defaultFetchBasesModule;
+
+  // GetActiveWorkspace module: returns configurable active workspace ref
+  const activeWorkspaceRef = opts?.activeWorkspaceRef ?? null;
+  const getActiveWorkspaceModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
+        get: {
+          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
+            return { workspaceRef: activeWorkspaceRef };
+          },
+        },
+      },
+    },
+  };
 
   // WorktreeModule: "create" hook — returns CreateHookResult
   const worktreeModule: IntentModule = {
@@ -431,6 +458,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     resolveWorkspaceModule,
     resolveProjectResolveModule,
     switchViewModule,
+    getActiveWorkspaceModule,
     fetchBasesModule,
     worktreeModule,
     keepFilesModule,
@@ -640,7 +668,13 @@ describe("OpenWorkspace Operation", () => {
 
   describe("stealFocus flag included in event payload (#8)", () => {
     it("includes stealFocus in event when false", async () => {
-      const setup = createTestSetup();
+      const setup = createTestSetup({
+        activeWorkspaceRef: {
+          projectId: PROJECT_ID,
+          workspaceName: "other" as import("../../shared/api/types").WorkspaceName,
+          path: "/workspaces/other",
+        },
+      });
 
       const receivedEvents: DomainEvent[] = [];
       setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
@@ -923,6 +957,7 @@ describe("OpenWorkspace Operation", () => {
       dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
       dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
       dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+      dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
       // Shared resolve modules
       const resolveWorkspaceModule: IntentModule = {
@@ -1022,9 +1057,23 @@ describe("OpenWorkspace Operation", () => {
         },
       };
 
+      const getActiveWorkspaceModule: IntentModule = {
+        name: "test",
+        hooks: {
+          [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
+            get: {
+              handler: async (): Promise<GetActiveWorkspaceHookResult> => {
+                return { workspaceRef: null };
+              },
+            },
+          },
+        },
+      };
+
       dispatcher.registerModule(resolveWorkspaceModule);
       dispatcher.registerModule(resolveProjectResolveModule);
       dispatcher.registerModule(switchViewModule);
+      dispatcher.registerModule(getActiveWorkspaceModule);
       dispatcher.registerModule(fetchBasesModule);
       dispatcher.registerModule(worktreeModule);
       dispatcher.registerModule(agentModule);
@@ -1041,4 +1090,55 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
+  describe("stealFocus=false with no active workspace dispatches switch (#20)", () => {
+    it("switches when no workspace is currently active", async () => {
+      const setup = createTestSetup({ activeWorkspaceRef: null });
+
+      const switchedIntents: DomainEvent[] = [];
+      setup.dispatcher.subscribe("workspace:switched", (event) => {
+        switchedIntents.push(event);
+      });
+
+      const result = await setup.dispatcher.dispatch(
+        createIntent(setup.projectId, { stealFocus: false })
+      );
+
+      // Operation succeeds
+      expect(result).toBeDefined();
+      const workspace = result as Workspace;
+      expect(workspace.path).toBe(WORKSPACE_PATH);
+
+      // Switch was dispatched (workspace:switched event emitted)
+      expect(switchedIntents.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("stealFocus=false with active workspace skips switch (#21)", () => {
+    it("does not switch when another workspace is active", async () => {
+      const setup = createTestSetup({
+        activeWorkspaceRef: {
+          projectId: PROJECT_ID,
+          workspaceName: "other-ws" as import("../../shared/api/types").WorkspaceName,
+          path: "/workspaces/other-ws",
+        },
+      });
+
+      const switchedIntents: DomainEvent[] = [];
+      setup.dispatcher.subscribe("workspace:switched", (event) => {
+        switchedIntents.push(event);
+      });
+
+      const result = await setup.dispatcher.dispatch(
+        createIntent(setup.projectId, { stealFocus: false })
+      );
+
+      // Operation succeeds
+      expect(result).toBeDefined();
+      const workspace = result as Workspace;
+      expect(workspace.path).toBe(WORKSPACE_PATH);
+
+      // No switch dispatched
+      expect(switchedIntents).toHaveLength(0);
+    });
+  });
 });
