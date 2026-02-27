@@ -248,7 +248,7 @@ const codehydraApi = {
     create(
       name: string,
       base: string,
-      options?: { initialPrompt?: InitialPrompt; keepInBackground?: boolean }
+      options?: { initialPrompt?: InitialPrompt; stealFocus?: boolean }
     ) {
       // Client-side validation
       if (typeof name !== "string" || name.trim().length === 0) {
@@ -280,7 +280,7 @@ const codehydraApi = {
         name,
         base,
         initialPrompt: options?.initialPrompt,
-        keepInBackground: options?.keepInBackground,
+        stealFocus: options?.stealFocus,
       };
       return emitApiCall("api:workspace:create", request);
     },

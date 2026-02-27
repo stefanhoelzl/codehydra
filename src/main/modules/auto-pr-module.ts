@@ -285,7 +285,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         payload: {
           workspaceName,
           base: `origin/${baseRef}`,
-          keepInBackground: true,
+          stealFocus: false,
           projectPath: project.path,
         },
       } as OpenWorkspaceIntent);

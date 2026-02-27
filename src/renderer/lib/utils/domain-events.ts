@@ -111,8 +111,8 @@ export function setupDomainEvents(
   unsubscribes.push(
     api.on("workspace:created", (event) => {
       stores.addWorkspace(event.projectId, event.workspace);
-      // Only switch to new workspace if not kept in background
-      if (!event.keepInBackground) {
+      // Switch to new workspace unless stealFocus is explicitly false
+      if (event.stealFocus !== false) {
         stores.setActiveWorkspace({
           projectId: event.projectId,
           workspaceName: event.workspace.name,

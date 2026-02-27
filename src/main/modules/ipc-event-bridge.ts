@@ -157,7 +157,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
           path: p.workspacePath,
         },
         ...(p.initialPrompt && { hasInitialPrompt: true }),
-        ...(p.keepInBackground && { keepInBackground: true }),
+        ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
       });
     },
     [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
@@ -262,8 +262,8 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
           workspaceName: payload.name,
           base: payload.base,
           ...(payload.initialPrompt !== undefined && { initialPrompt: payload.initialPrompt }),
-          ...(payload.keepInBackground !== undefined && {
-            keepInBackground: payload.keepInBackground,
+          ...(payload.stealFocus !== undefined && {
+            stealFocus: payload.stealFocus,
           }),
           ...(payload.callerWorkspacePath !== undefined && {
             callerWorkspacePath: payload.callerWorkspacePath,

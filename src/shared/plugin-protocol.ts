@@ -181,8 +181,9 @@ export interface WorkspaceCreateRequest {
   readonly base: string;
   /** Optional initial prompt to send after workspace is created */
   readonly initialPrompt?: InitialPrompt;
-  /** If true, don't switch to the new workspace (default: false = switch to it) */
-  readonly keepInBackground?: boolean;
+  /** If true, steal focus from current workspace. If false, don't steal focus but still
+   *  switch when no workspace is active. Default: switch (undefined treated as true). */
+  readonly stealFocus?: boolean;
 }
 
 /**
@@ -247,9 +248,9 @@ export function validateWorkspaceCreateRequest(
     }
   }
 
-  // Validate keepInBackground (optional)
-  if ("keepInBackground" in request && typeof request.keepInBackground !== "boolean") {
-    return { valid: false, error: "Field 'keepInBackground' must be a boolean" };
+  // Validate stealFocus (optional)
+  if ("stealFocus" in request && typeof request.stealFocus !== "boolean") {
+    return { valid: false, error: "Field 'stealFocus' must be a boolean" };
   }
 
   return { valid: true };

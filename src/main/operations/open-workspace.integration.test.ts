@@ -14,7 +14,7 @@
  * #5: Setup handler failure fails workspace creation
  * #6: Unknown project throws
  * #7: Initial prompt included in event payload
- * #8: keepInBackground flag included in event payload
+ * #8: stealFocus flag included in event payload
  * #9: Interceptor cancels creation
  * #10: Keepfiles copies files after worktree creation
  * #11: Keepfiles failure does not fail workspace creation
@@ -638,8 +638,8 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
-  describe("keepInBackground flag included in event payload (#8)", () => {
-    it("includes keepInBackground in event when true", async () => {
+  describe("stealFocus flag included in event payload (#8)", () => {
+    it("includes stealFocus in event when false", async () => {
       const setup = createTestSetup();
 
       const receivedEvents: DomainEvent[] = [];
@@ -647,14 +647,14 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent(setup.projectId, { keepInBackground: true }));
+      await setup.dispatcher.dispatch(createIntent(setup.projectId, { stealFocus: false }));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.keepInBackground).toBe(true);
+      expect(event.payload.stealFocus).toBe(false);
     });
 
-    it("does not include keepInBackground when not specified", async () => {
+    it("does not include stealFocus when not specified", async () => {
       const setup = createTestSetup();
 
       const receivedEvents: DomainEvent[] = [];
@@ -666,7 +666,7 @@ describe("OpenWorkspace Operation", () => {
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.keepInBackground).toBeUndefined();
+      expect(event.payload.stealFocus).toBeUndefined();
     });
   });
 
@@ -1040,4 +1040,5 @@ describe("OpenWorkspace Operation", () => {
       });
     });
   });
+
 });

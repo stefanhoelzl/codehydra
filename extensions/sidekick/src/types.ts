@@ -52,7 +52,7 @@ export interface WorkspaceCreateRequest {
   readonly name: string;
   readonly base: string;
   readonly initialPrompt?: InitialPrompt;
-  readonly keepInBackground?: boolean;
+  readonly stealFocus?: boolean;
 }
 
 // Socket.IO typed events

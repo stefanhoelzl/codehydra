@@ -350,7 +350,7 @@ describe("AutoPrModule Integration", () => {
 
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
       expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("pr-42/feature-login");
-      expect(openWorkspaceOp.dispatched[0]!.payload.keepInBackground).toBe(true);
+      expect(openWorkspaceOp.dispatched[0]!.payload.stealFocus).toBe(false);
     });
 
     it("does not recreate workspace for already-tracked PR", async () => {

@@ -131,8 +131,8 @@ export function wirePluginApi(
           if (request.initialPrompt !== undefined) {
             options.initialPrompt = request.initialPrompt;
           }
-          if (request.keepInBackground !== undefined) {
-            options.keepInBackground = request.keepInBackground;
+          if (request.stealFocus !== undefined) {
+            options.stealFocus = request.stealFocus;
           }
 
           return api.workspaces.create(undefined, request.name, request.base, options);

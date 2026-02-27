@@ -235,7 +235,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
               base: workspace.metadata.base ?? "",
               existingWorkspace,
               projectPath,
-              keepInBackground: true,
+              stealFocus: false,
             },
           };
 
