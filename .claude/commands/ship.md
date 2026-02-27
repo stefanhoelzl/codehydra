@@ -224,7 +224,6 @@ If ship-wait exited with code 1 and the output contains "CI failed":
    Code issues (do NOT retry): test failures, lint errors, build errors, type errors.
 
 4. If infrastructure issue:
-
    - Rerun the failed job(s):
      ```bash
      gh run rerun --repo stefanhoelzl/codehydra <run-id> --failed
