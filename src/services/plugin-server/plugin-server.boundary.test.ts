@@ -6,13 +6,11 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { io as ioClient } from "socket.io-client";
-import { PluginServer } from "./plugin-server";
 import type { ApiCallHandlers } from "./plugin-server";
-import { DefaultNetworkLayer } from "../platform/network";
-import { SILENT_LOGGER } from "../logging/logging.test-utils";
 import { delay } from "@shared/test-fixtures";
 import {
   createTestClient,
+  createPluginServerEnv,
   waitForConnect,
   waitForDisconnect,
   createMockCommandHandler,
@@ -20,6 +18,7 @@ import {
   type TestClientSocket,
 } from "./plugin-server.test-utils";
 import type { WorkspaceStatus } from "../../shared/api/types";
+import type { PluginConfig } from "../../shared/plugin-protocol";
 
 // Longer timeout for CI environments
 const TEST_TIMEOUT = 15000;
@@ -28,46 +27,20 @@ const TEST_TIMEOUT = 15000;
 const TIMING_TOLERANCE_MS = 10;
 
 describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
-  let server: PluginServer;
-  let networkLayer: DefaultNetworkLayer;
-  let port: number;
-  let clients: TestClientSocket[] = [];
-
+  let env: Awaited<ReturnType<typeof createPluginServerEnv>>;
   beforeEach(async () => {
-    networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
-    // Use polling transport in tests - websocket transport doesn't work in vitest
-    // due to vitest's module transformation breaking the ws package
-    server = new PluginServer(networkLayer, SILENT_LOGGER, { transports: ["polling"] });
-    port = await server.start();
+    env = await createPluginServerEnv();
   });
-
-  afterEach(async () => {
-    // Disconnect all clients
-    for (const client of clients) {
-      if (client.connected) {
-        client.disconnect();
-      }
-    }
-    clients = [];
-
-    // Close server
-    if (server) {
-      await server.close();
-    }
-  });
-
-  // Helper to create and track clients
-  function createClient(workspacePath: string): TestClientSocket {
-    const client = createTestClient(port, { workspacePath });
-    clients.push(client);
-    return client;
+  afterEach(() => env.cleanup());
+  function createClient(workspacePath: string) {
+    return env.createClient(workspacePath);
   }
 
   describe("server startup", () => {
     it("starts on dynamic port", async () => {
-      expect(port).toBeGreaterThan(0);
-      expect(port).toBeLessThan(65536);
-      expect(server.getPort()).toBe(port);
+      expect(env.port).toBeGreaterThan(0);
+      expect(env.port).toBeLessThan(65536);
+      expect(env.server.getPort()).toBe(env.port);
     });
   });
 
@@ -77,13 +50,12 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await waitForConnect(client);
 
       expect(client.connected).toBe(true);
-      expect(server.isConnected("/test/workspace")).toBe(true);
+      expect(env.server.isConnected("/test/workspace")).toBe(true);
     });
 
     it("rejects client with invalid auth", async () => {
       // Client with empty workspace path
-      const client = createTestClient(port, { workspacePath: "" });
-      clients.push(client);
+      const client = createTestClient(env.port, { workspacePath: "" });
 
       let rejected = false;
       client.on("disconnect", () => {
@@ -99,11 +71,12 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await delay(500);
 
       expect(rejected || !client.connected).toBe(true);
+      client.disconnect();
     });
 
     it("rejects client with missing workspacePath property", async () => {
       // Client with auth object that has no workspacePath property at all
-      const client = ioClient(`http://127.0.0.1:${port}`, {
+      const client = ioClient(`http://127.0.0.1:${env.port}`, {
         // Use polling transport to match server configuration
         transports: ["polling"],
         autoConnect: false,
@@ -112,7 +85,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           otherProp: "someValue",
         },
       }) as TestClientSocket;
-      clients.push(client);
 
       let rejected = false;
       client.on("disconnect", () => {
@@ -128,6 +100,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await delay(500);
 
       expect(rejected || !client.connected).toBe(true);
+      client.disconnect();
     });
   });
 
@@ -143,7 +116,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       client.on("command", handler);
 
       // Send command from server
-      const result = await server.sendCommand(
+      const result = await env.server.sendCommand(
         "/test/workspace",
         "workbench.action.closeSidebar",
         []
@@ -164,7 +137,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
       client.on("command", handler);
 
-      const result = await server.sendCommand("/test/workspace", "unknown.command", []);
+      const result = await env.server.sendCommand("/test/workspace", "unknown.command", []);
 
       expect(result.success).toBe(false);
       expect(result).toHaveProperty("error", "Command failed");
@@ -180,7 +153,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       const start = Date.now();
-      const result = await server.sendCommand(
+      const result = await env.server.sendCommand(
         "/test/workspace",
         "test.command",
         [],
@@ -204,21 +177,17 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       (client.io.opts as { reconnectionDelayMax: number }).reconnectionDelayMax = 200;
 
       await waitForConnect(client);
-      expect(server.isConnected("/test/workspace")).toBe(true);
+      expect(env.server.isConnected("/test/workspace")).toBe(true);
 
-      // Close server
-      await server.close();
+      const oldPort = env.port;
 
-      // Wait for client to detect disconnect
-      await waitForDisconnect(client);
-
-      // Start new server on new port
-      server = new PluginServer(networkLayer, SILENT_LOGGER, { transports: ["polling"] });
-      const newPort = await server.start();
+      // Close server and all clients, then start fresh
+      await env.cleanup();
+      env = await createPluginServerEnv();
 
       // Client should not auto-reconnect to new port (different URL)
       // This is expected behavior - extension would need to reconnect manually
-      expect(newPort).not.toBe(port);
+      expect(env.port).not.toBe(oldPort);
     });
   });
 
@@ -232,7 +201,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // All should be connected
       for (const ws of workspaces) {
-        expect(server.isConnected(ws)).toBe(true);
+        expect(env.server.isConnected(ws)).toBe(true);
       }
 
       // Set up handlers
@@ -242,7 +211,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // Send commands to each workspace
       const results = await Promise.all(
-        workspaces.map((ws) => server.sendCommand(ws, "test.command", []))
+        workspaces.map((ws) => env.server.sendCommand(ws, "test.command", []))
       );
 
       // All should succeed
@@ -265,34 +234,30 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // Send commands to all workspaces in parallel
       const results = await Promise.all(
-        workspaces.map((ws) => server.sendCommand(ws, "test.command", []))
+        workspaces.map((ws) => env.server.sendCommand(ws, "test.command", []))
       );
 
       // All should succeed
       expect(results.every((r) => r.success)).toBe(true);
 
       // All should be connected
-      expect(workspaces.every((ws) => server.isConnected(ws))).toBe(true);
+      expect(workspaces.every((ws) => env.server.isConnected(ws))).toBe(true);
     });
   });
 
   describe("port reuse", () => {
     it("can restart on new port after close", async () => {
-      // Close server
-      await server.close();
-
-      // Restart - should get a new port
-      server = new PluginServer(networkLayer, SILENT_LOGGER, { transports: ["polling"] });
-      port = await server.start();
+      await env.cleanup();
+      env = await createPluginServerEnv();
 
       // Port should be valid
-      expect(port).toBeGreaterThan(0);
-      expect(port).toBeLessThan(65536);
+      expect(env.port).toBeGreaterThan(0);
+      expect(env.port).toBeLessThan(65536);
 
       // Verify we can connect
       const client = createClient("/test/workspace");
       await waitForConnect(client);
-      expect(server.isConnected("/test/workspace")).toBe(true);
+      expect(env.server.isConnected("/test/workspace")).toBe(true);
     });
   });
 
@@ -304,7 +269,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
         },
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -330,7 +295,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         getMetadata: { base: "develop", note: "testing" },
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -352,7 +317,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         getAgentSession: { port: 12345, sessionId: "session-abc123" },
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -374,7 +339,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         getAgentSession: null,
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -395,7 +360,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         getAgentSession: { success: false, error: "Workspace not found" },
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -414,7 +379,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("setMetadata round-trip via real Socket.IO", async () => {
       const handlers = createMockApiHandlers();
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -434,7 +399,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("setMetadata validates request before calling handler", async () => {
       const handlers = createMockApiHandlers();
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -451,7 +416,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("returns error when no handlers registered", async () => {
-      // Note: NOT calling server.onApiCall()
+      // Note: NOT calling env.server.onApiCall()
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -466,7 +431,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("passes workspace path from socket.data to callback", async () => {
       const handlers = createMockApiHandlers();
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       // Connect with specific workspace path
       const client = createClient("/my/special/workspace");
@@ -481,7 +446,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("handles concurrent API calls from different workspaces", async () => {
       const handlers = createMockApiHandlers();
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client1 = createClient("/workspace/one");
       const client2 = createClient("/workspace/two");
@@ -517,7 +482,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           });
         }),
       };
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -544,7 +509,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         ...createMockApiHandlers(),
         getStatus: vi.fn().mockRejectedValue(new Error("Database error")),
       };
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -571,7 +536,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
             })
         ),
       };
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -596,7 +561,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // Verify server is still operational by connecting a new client
       const newClient = createClient("/test/workspace2");
-      clients.push(newClient);
       await waitForConnect(newClient);
 
       // Server should still be able to handle new requests
@@ -617,7 +581,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         executeCommand: "command result",
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -646,7 +610,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         executeCommand: undefined,
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -669,7 +633,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("executeCommand validates request before calling handler", async () => {
       const handlers = createMockApiHandlers();
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -689,7 +653,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         executeCommand: { success: false, error: "Command not found: invalid.command" },
       });
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -719,7 +683,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
             })
         ),
       };
-      server.onApiCall(handlers);
+      env.server.onApiCall(handlers);
 
       const client = createClient("/test/workspace");
       await waitForConnect(client);
@@ -763,13 +727,8 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     // See extensions/codehydra-sidekick/extension.js for client-side validation.
 
     it("sends config with isDevelopment: true when configured", async () => {
-      // Close default server and create one with isDevelopment: true
-      await server.close();
-      server = new PluginServer(networkLayer, SILENT_LOGGER, {
-        transports: ["polling"],
-        isDevelopment: true,
-      });
-      port = await server.start();
+      await env.cleanup();
+      env = await createPluginServerEnv({ isDevelopment: true });
 
       const client = createClient("/test/workspace");
 
@@ -787,13 +746,8 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("sends config with isDevelopment: false when configured", async () => {
-      // Close default server and create one with isDevelopment: false
-      await server.close();
-      server = new PluginServer(networkLayer, SILENT_LOGGER, {
-        transports: ["polling"],
-        isDevelopment: false,
-      });
-      port = await server.start();
+      await env.cleanup();
+      env = await createPluginServerEnv({ isDevelopment: false });
 
       const client = createClient("/test/workspace");
 
@@ -826,12 +780,8 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("sends config event on reconnection", async () => {
-      await server.close();
-      server = new PluginServer(networkLayer, SILENT_LOGGER, {
-        transports: ["polling"],
-        isDevelopment: true,
-      });
-      port = await server.start();
+      await env.cleanup();
+      env = await createPluginServerEnv({ isDevelopment: true });
 
       const client = createClient("/test/workspace");
 
@@ -866,6 +816,73 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       expect(configCount).toBe(2);
     });
+
+    it("sends config with agent type when client connects", async () => {
+      // Store workspace config before client connects
+      env.server.setWorkspaceConfig("/test/workspace", {}, "opencode");
+
+      const client = createClient("/test/workspace");
+      const configPromise = new Promise<PluginConfig>((resolve) => {
+        client.on("config", (config) => resolve(config));
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      expect(config.isDevelopment).toBe(false);
+      expect(config.agentType).toBe("opencode");
+    });
+
+    it("sends config with environment variables", async () => {
+      env.server.setWorkspaceConfig(
+        "/test/workspace",
+        { TEST_VAR: "test-value", ANOTHER_VAR: "another" },
+        "opencode"
+      );
+
+      const client = createClient("/test/workspace");
+      const configPromise = new Promise<PluginConfig>((resolve) => {
+        client.on("config", (config) => resolve(config));
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      expect(config.env).toEqual({ TEST_VAR: "test-value", ANOTHER_VAR: "another" });
+    });
+
+    it("sends config with null env when no config stored", async () => {
+      const client = createClient("/test/workspace");
+      const configPromise = new Promise<PluginConfig>((resolve) => {
+        client.on("config", (config) => resolve(config));
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      expect(config.env).toBeNull();
+    });
+
+    it("handles concurrent workspace connections independently", async () => {
+      env.server.setWorkspaceConfig("/workspace/one", { WORKSPACE: "/workspace/one" }, "opencode");
+      env.server.setWorkspaceConfig("/workspace/two", { WORKSPACE: "/workspace/two" }, "opencode");
+
+      const client1 = createClient("/workspace/one");
+      const client2 = createClient("/workspace/two");
+
+      const config1Promise = new Promise<PluginConfig>((resolve) => {
+        client1.on("config", (config) => resolve(config));
+      });
+      const config2Promise = new Promise<PluginConfig>((resolve) => {
+        client2.on("config", (config) => resolve(config));
+      });
+
+      await Promise.all([waitForConnect(client1), waitForConnect(client2)]);
+      const [config1, config2] = await Promise.all([config1Promise, config2Promise]);
+
+      expect(config1.env).toEqual({ WORKSPACE: "/workspace/one" });
+      expect(config2.env).toEqual({ WORKSPACE: "/workspace/two" });
+    });
   });
 
   describe("sendExtensionHostShutdown", () => {
@@ -881,7 +898,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       const startTime = Date.now();
-      await server.sendExtensionHostShutdown("/test/workspace");
+      await env.server.sendExtensionHostShutdown("/test/workspace");
       const elapsed = Date.now() - startTime;
 
       // Should resolve quickly after disconnect
@@ -900,7 +917,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       const startTime = Date.now();
-      await server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 500 });
+      await env.server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 500 });
       const elapsed = Date.now() - startTime;
 
       // Should timeout after ~500ms (allow tolerance for timer precision)
@@ -911,7 +928,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     it("handles missing socket gracefully", async () => {
       // No client connected for this workspace
       const startTime = Date.now();
-      await server.sendExtensionHostShutdown("/nonexistent/workspace");
+      await env.server.sendExtensionHostShutdown("/nonexistent/workspace");
       const elapsed = Date.now() - startTime;
 
       // Should return immediately (not wait for timeout)
@@ -933,7 +950,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       setTimeout(() => client.disconnect(), 100);
 
       const startTime = Date.now();
-      await server.sendExtensionHostShutdown("/test/workspace");
+      await env.server.sendExtensionHostShutdown("/test/workspace");
       const elapsed = Date.now() - startTime;
 
       // Should resolve when client disconnects, well before 5s timeout
@@ -952,7 +969,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       const startTime = Date.now();
-      await server.sendExtensionHostShutdown("/test/workspace");
+      await env.server.sendExtensionHostShutdown("/test/workspace");
       const elapsed = Date.now() - startTime;
 
       // Should resolve on disconnect despite ack error
@@ -964,7 +981,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await waitForConnect(client);
 
       // Don't handle shutdown - let it timeout
-      await server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 100 });
+      await env.server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 100 });
 
       // Now disconnect the client
       client.disconnect();
@@ -972,10 +989,9 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // Server should still be operational (no dangling listeners causing issues)
       const newClient = createClient("/test/workspace2");
-      clients.push(newClient);
       await waitForConnect(newClient);
 
-      expect(server.isConnected("/test/workspace2")).toBe(true);
+      expect(env.server.isConnected("/test/workspace2")).toBe(true);
     });
 
     it("is idempotent for same workspace", async () => {
@@ -993,10 +1009,10 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       // First call - client stays connected
-      await server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 200 });
+      await env.server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 200 });
 
       // Second call - client disconnects
-      await server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 200 });
+      await env.server.sendExtensionHostShutdown("/test/workspace", { timeoutMs: 200 });
 
       expect(shutdownCount).toBe(2);
     });
