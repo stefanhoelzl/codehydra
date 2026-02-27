@@ -30,27 +30,7 @@ import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import type { UIMode } from "../../shared/ipc";
 import { SILENT_LOGGER } from "../../services/logging";
 
-// =============================================================================
-// Mock ApiRegistry for IpcEventBridge
-// =============================================================================
-
-interface MockApiRegistry {
-  emit: ReturnType<typeof vi.fn>;
-  register: ReturnType<typeof vi.fn>;
-  on: ReturnType<typeof vi.fn>;
-  getInterface: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-}
-
-function createMockApiRegistry(): MockApiRegistry {
-  return {
-    emit: vi.fn(),
-    register: vi.fn(),
-    on: vi.fn().mockReturnValue(() => {}),
-    getInterface: vi.fn(),
-    dispose: vi.fn(),
-  };
-}
+import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-utils";
 
 // =============================================================================
 // Behavioral Mocks
@@ -110,11 +90,11 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
   };
 
   // Optionally wire IpcEventBridge
-  const mockApiRegistry = createMockApiRegistry();
+  const mockApiRegistry = createMockRegistry();
   const modules: IntentModule[] = [setModeModule];
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry,
+      apiRegistry: mockApiRegistry,
       getApi: () => {
         throw new Error("not wired");
       },
