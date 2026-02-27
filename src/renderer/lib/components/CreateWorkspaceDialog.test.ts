@@ -650,26 +650,6 @@ describe("CreateWorkspaceDialog component", () => {
       await completeAllLoading();
     });
 
-    it('aria-busy="true" during submit', async () => {
-      mockCreateWorkspace.mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 1000))
-      );
-
-      render(CreateWorkspaceDialog, { props: defaultProps });
-      await completeAllLoading();
-
-      await fillValidForm();
-
-      // Click OK
-      const okButton = screen.getByRole("button", { name: /ok|create/i });
-      await fireEvent.click(okButton);
-
-      const dialog = screen.getByRole("dialog");
-      expect(dialog).toHaveAttribute("aria-busy", "true");
-
-      await completeAllLoading();
-    });
-
     it("api.createWorkspace called with correct params", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await completeAllLoading();

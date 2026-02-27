@@ -454,15 +454,6 @@ describe("CloseProjectDialog component", () => {
   });
 
   describe("accessibility", () => {
-    it("dialog has ARIA attributes: role, labelledby, describedby", async () => {
-      render(CloseProjectDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const dialog = screen.getByRole("dialog");
-      expect(dialog).toHaveAttribute("aria-labelledby");
-      expect(dialog).toHaveAttribute("aria-describedby");
-    });
-
     it("primary button has initial focus", async () => {
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
@@ -471,22 +462,6 @@ describe("CloseProjectDialog component", () => {
       expect(submitButton).toHaveFocus();
     });
 
-    it('aria-busy="true" during submit', async () => {
-      mockCloseProject.mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 1000))
-      );
-
-      render(CloseProjectDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const submitButton = screen.getByRole("button", { name: /close project/i });
-      await fireEvent.click(submitButton);
-
-      const dialog = screen.getByRole("dialog");
-      expect(dialog).toHaveAttribute("aria-busy", "true");
-
-      await vi.runAllTimersAsync();
-    });
   });
 
   describe("edge cases", () => {

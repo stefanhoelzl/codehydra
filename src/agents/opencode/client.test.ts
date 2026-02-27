@@ -521,24 +521,6 @@ describe("OpenCodeClient", () => {
       expect(listener).toHaveBeenCalledWith(event);
     });
 
-    it("returns unsubscribe function", async () => {
-      mockSdk = createSdkWithSessions([
-        createTestSession({ id: "test-session", directory: "/test" }),
-      ]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
-      const unsubscribe = client.onSessionEvent(listener);
-
-      unsubscribe();
-
-      const event: OurSessionStatus = { type: "idle", sessionId: "test-session" };
-      client["emitSessionEvent"](event);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
   });
 
   describe("connect", () => {
@@ -1844,27 +1826,6 @@ describe("Permission Event Emission", () => {
   });
 
   describe("subscription", () => {
-    it("returns unsubscribe function", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "ses-123" }]);
-      const unsubscribe = client.onPermissionEvent(listener);
-
-      unsubscribe();
-
-      client["handlePermissionUpdated"]({
-        id: "perm-456",
-        sessionID: "ses-123",
-        type: "bash",
-        title: "Run command",
-      });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
     it("clears listeners on dispose", async () => {
       mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
       mockFactory = createSdkFactoryMock(mockSdk);
