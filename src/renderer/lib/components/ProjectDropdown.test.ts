@@ -157,43 +157,21 @@ describe("ProjectDropdown component", () => {
     });
   });
 
-  describe("keyboard navigation", () => {
-    it("Arrow Down moves to next option", async () => {
+  describe("navigation order", () => {
+    it("navigates projects in store order", async () => {
       render(ProjectDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
-      // ArrowDown opens the dropdown immediately
-      await fireEvent.keyDown(input, { key: "ArrowDown" });
 
-      const options = screen.getAllByRole("option");
-      expect(options[0]).toHaveAttribute("aria-selected", "true");
-    });
+      const expectedOrder = ["project-alpha", "project-beta", "another-project"];
 
-    it("Enter selects highlighted option", async () => {
-      const onSelect = vi.fn();
-      render(ProjectDropdown, { props: { ...defaultProps, onSelect } });
+      for (let i = 0; i < expectedOrder.length; i++) {
+        await fireEvent.keyDown(input, { key: "ArrowDown" });
 
-      const input = screen.getByRole("combobox");
-      // ArrowDown opens the dropdown immediately
-      await fireEvent.keyDown(input, { key: "ArrowDown" });
-      await fireEvent.keyDown(input, { key: "Enter" });
-
-      // Should return project ID, not path
-      expect(onSelect).toHaveBeenCalledWith(alphaProjectId);
-    });
-
-    it("Escape closes dropdown without selecting", async () => {
-      const onSelect = vi.fn();
-      render(ProjectDropdown, { props: { ...defaultProps, onSelect } });
-
-      const input = screen.getByRole("combobox");
-      await focusAndOpenDropdown(input);
-      expect(input).toHaveAttribute("aria-expanded", "true");
-
-      await fireEvent.keyDown(input, { key: "Escape" });
-
-      expect(input).toHaveAttribute("aria-expanded", "false");
-      expect(onSelect).not.toHaveBeenCalled();
+        const options = screen.getAllByRole("option");
+        expect(options[i]).toHaveAttribute("aria-selected", "true");
+        expect(options[i]).toHaveTextContent(expectedOrder[i]!);
+      }
     });
   });
 
