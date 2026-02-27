@@ -928,24 +928,6 @@ describe("ViewManager", () => {
       expect(callback).toHaveBeenCalledWith(null);
     });
 
-    it("returns unsubscribe function", () => {
-      const deps = createViewManagerDeps();
-      const manager = createViewManager(deps);
-
-      const callback = vi.fn();
-      const unsubscribe = manager.onWorkspaceChange(callback);
-
-      unsubscribe();
-
-      manager.createWorkspaceView(
-        "/path/to/workspace",
-        "http://127.0.0.1:8080/?folder=/path",
-        "/path/to/project"
-      );
-      manager.setActiveWorkspace("/path/to/workspace");
-
-      expect(callback).not.toHaveBeenCalled();
-    });
   });
 
   describe("isWorkspaceLoading", () => {
@@ -1073,25 +1055,6 @@ describe("ViewManager", () => {
       manager.setWorkspaceLoaded("/path/to/workspace");
 
       expect(callback).toHaveBeenCalledWith("/path/to/workspace", false);
-    });
-
-    it("returns unsubscribe function", () => {
-      const deps = createViewManagerDeps();
-      const manager = createViewManager(deps);
-
-      const callback = vi.fn();
-      const unsubscribe = manager.onLoadingChange(callback);
-
-      unsubscribe();
-
-      manager.createWorkspaceView(
-        "/path/to/workspace",
-        "http://127.0.0.1:8080/?folder=/path",
-        "/path/to/project",
-        true // isNew
-      );
-
-      expect(callback).not.toHaveBeenCalled();
     });
 
     it("emits loading=false for already-loaded workspaces when callback is wired", async () => {

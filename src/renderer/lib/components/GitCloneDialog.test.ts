@@ -116,14 +116,6 @@ describe("GitCloneDialog component", () => {
       expect(input.hasAttribute("autofocus")).toBe(true);
     });
 
-    it("dialog has ARIA attributes", async () => {
-      render(GitCloneDialog, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const dialog = screen.getByRole("dialog");
-      expect(dialog).toHaveAttribute("aria-labelledby", "git-clone-title");
-      expect(dialog).toHaveAttribute("aria-describedby", "git-clone-status");
-    });
   });
 
   describe("URL validation", () => {

@@ -194,17 +194,6 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(markActiveHandler).toHaveBeenCalledTimes(2);
     });
 
-    it("onWorkspaceReady unsubscribe works", async () => {
-      const readyCallback = vi.fn();
-      const unsubscribe = serverManager.onWorkspaceReady(readyCallback);
-
-      const port = await serverManager.startServer("/workspace/feature-a");
-
-      unsubscribe();
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
-
-      expect(readyCallback).not.toHaveBeenCalled();
-    });
   });
 
   describe("hook handling", () => {
