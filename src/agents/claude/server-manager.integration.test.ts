@@ -225,100 +225,87 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChangesB).toEqual(["busy"]);
     });
 
-    it("WrapperStart -> idle", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
+    it.each([
+      {
+        hookName: "WrapperStart",
+        setupHooks: [] as string[],
+        extraPayload: {},
+        expectedChanges: ["idle"],
+        finalStatus: "idle",
+      },
+      {
+        hookName: "WrapperEnd",
+        setupHooks: ["SessionStart"],
+        extraPayload: {},
+        expectedChanges: ["idle", "none"],
+        finalStatus: "none",
+      },
+      {
+        hookName: "SessionStart",
+        setupHooks: [] as string[],
+        extraPayload: { session_id: "test-session" },
+        expectedChanges: ["idle"],
+        finalStatus: "idle",
+      },
+      {
+        hookName: "UserPromptSubmit",
+        setupHooks: ["SessionStart"],
+        extraPayload: {},
+        expectedChanges: ["idle", "busy"],
+        finalStatus: "busy",
+      },
+      {
+        hookName: "PermissionRequest",
+        setupHooks: ["SessionStart", "UserPromptSubmit"],
+        extraPayload: {},
+        expectedChanges: ["idle", "busy", "idle"],
+        finalStatus: "idle",
+      },
+      {
+        hookName: "PreCompact",
+        setupHooks: ["SessionStart"],
+        extraPayload: {},
+        expectedChanges: ["idle", "busy"],
+        finalStatus: "busy",
+      },
+      {
+        hookName: "Stop",
+        setupHooks: ["SessionStart", "UserPromptSubmit"],
+        extraPayload: {},
+        expectedChanges: ["idle", "busy", "idle"],
+        finalStatus: "idle",
+      },
+      {
+        hookName: "SessionEnd",
+        setupHooks: ["SessionStart"],
+        extraPayload: {},
+        expectedChanges: ["idle", "none"],
+        finalStatus: "none",
+      },
+    ])(
+      "$hookName -> $finalStatus",
+      async ({ hookName, setupHooks, extraPayload, expectedChanges, finalStatus }) => {
+        const port = await serverManager.startServer("/workspace/feature-a");
+        const statusChanges: AgentStatus[] = [];
+        serverManager.onStatusChange("/workspace/feature-a", (status) => {
+          statusChanges.push(status);
+        });
 
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+        for (const hook of setupHooks) {
+          await sendHook(port, hook, { workspacePath: "/workspace/feature-a" });
+        }
+        await sendHook(port, hookName, {
+          workspacePath: "/workspace/feature-a",
+          ...extraPayload,
+        });
 
-      expect(statusChanges).toEqual(["idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
-    });
-
-    it("WrapperEnd -> none", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
-
-      // Start session first
-      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
-      // Then wrapper ends (Claude closed)
-      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
-
-      expect(statusChanges).toEqual(["idle", "none"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
-    });
-
-    it("SessionStart -> idle", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
-
-      await sendHook(port, "SessionStart", {
-        workspacePath: "/workspace/feature-a",
-        session_id: "test-session",
-      });
-
-      expect(statusChanges).toEqual(["idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
-      expect(serverManager.getSessionId("/workspace/feature-a")).toBe("test-session");
-    });
-
-    it("UserPromptSubmit -> busy", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
-
-      // First make idle
-      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
-      // Then submit prompt
-      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
-
-      expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
-    });
-
-    it("PermissionRequest -> idle", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
-
-      // Start session and make busy
-      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
-      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
-      // Permission request while busy
-      await sendHook(port, "PermissionRequest", { workspacePath: "/workspace/feature-a" });
-
-      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
-    });
-
-    it("PreCompact -> busy", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
-
-      // Start session (idle)
-      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
-      // Compaction starts
-      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
-
-      expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
-    });
+        expect(statusChanges).toEqual(expectedChanges);
+        expect(serverManager.getStatus("/workspace/feature-a")).toBe(finalStatus);
+        if (hookName === "SessionStart") {
+          expect(serverManager.getSessionId("/workspace/feature-a")).toBe("test-session");
+        }
+      }
+    );
 
     it("SessionStart during automatic compaction stays busy", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
@@ -402,37 +389,6 @@ describe("ClaudeCodeServerManager integration", () => {
 
       expect(statusChanges).toEqual(["idle", "busy", "none", "idle"]);
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
-    });
-
-    it("Stop -> idle", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
-
-      // Start session and make busy
-      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
-      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
-      // Stop
-      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
-
-      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-    });
-
-    it("SessionEnd -> none", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange("/workspace/feature-a", (status) => {
-        statusChanges.push(status);
-      });
-
-      // Start and end session
-      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
-      await sendHook(port, "SessionEnd", { workspacePath: "/workspace/feature-a" });
-
-      expect(statusChanges).toEqual(["idle", "none"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
     });
 
     it("PreToolUse does not change status without prior PermissionRequest", async () => {

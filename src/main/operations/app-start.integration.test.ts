@@ -791,17 +791,42 @@ describe("AppStart Operation", () => {
   // ===========================================================================
 
   describe("activate hook receives mcpPort from start results (#15)", () => {
-    it("passes mcpPort from MCP start handler to activate handlers", async () => {
+    it.each([
+      {
+        portName: "mcpPort" as const,
+        modules: (s: TestState) => [createCodeServerModule(s), createMcpModule(s)],
+        expected: 9090,
+        label: "passes mcpPort from MCP start handler to activate handlers",
+      },
+      {
+        portName: "mcpPort" as const,
+        modules: (s: TestState) => [createCodeServerModule(s)],
+        expected: null,
+        label: "passes null mcpPort when no start handler returns mcpPort",
+      },
+      {
+        portName: "codeServerPort" as const,
+        modules: (s: TestState) => [createCodeServerModule(s), createMcpModule(s)],
+        expected: 8080,
+        label: "passes codeServerPort from CodeServer start handler to activate handlers",
+      },
+      {
+        portName: "codeServerPort" as const,
+        modules: (s: TestState) => [createMcpModule(s)],
+        expected: null,
+        label: "passes null codeServerPort when no start handler returns codeServerPort",
+      },
+    ])("$label", async ({ portName, modules, expected }) => {
       const state = createTestState();
-      let receivedMcpPort: number | null | undefined;
+      let receivedPort: number | null | undefined;
 
-      const mcpPortReaderModule: IntentModule = {
+      const readerModule: IntentModule = {
         name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             activate: {
               handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-                receivedMcpPort = (ctx as ActivateHookContext).mcpPort;
+                receivedPort = (ctx as ActivateHookContext)[portName];
                 return {};
               },
             },
@@ -809,94 +834,14 @@ describe("AppStart Operation", () => {
         },
       };
 
-      const { dispatcher } = createTestSetup([
-        createCodeServerModule(state),
-        createMcpModule(state),
-        mcpPortReaderModule,
-      ]);
-
+      const { dispatcher } = createTestSetup([...modules(state), readerModule]);
       await dispatcher.dispatch(appStartIntent());
 
-      expect(receivedMcpPort).toBe(9090);
-    });
-
-    it("passes null mcpPort when no start handler returns mcpPort", async () => {
-      const state = createTestState();
-      let receivedMcpPort: number | null | undefined;
-
-      const mcpPortReaderModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [APP_START_OPERATION_ID]: {
-            activate: {
-              handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-                receivedMcpPort = (ctx as ActivateHookContext).mcpPort;
-                return {};
-              },
-            },
-          },
-        },
-      };
-
-      const { dispatcher } = createTestSetup([createCodeServerModule(state), mcpPortReaderModule]);
-
-      await dispatcher.dispatch(appStartIntent());
-
-      expect(receivedMcpPort).toBeNull();
-    });
-
-    it("passes codeServerPort from CodeServer start handler to activate handlers", async () => {
-      const state = createTestState();
-      let receivedCodeServerPort: number | null | undefined;
-
-      const portReaderModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [APP_START_OPERATION_ID]: {
-            activate: {
-              handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-                receivedCodeServerPort = (ctx as ActivateHookContext).codeServerPort;
-                return {};
-              },
-            },
-          },
-        },
-      };
-
-      const { dispatcher } = createTestSetup([
-        createCodeServerModule(state),
-        createMcpModule(state),
-        portReaderModule,
-      ]);
-
-      await dispatcher.dispatch(appStartIntent());
-
-      expect(receivedCodeServerPort).toBe(8080);
-    });
-
-    it("passes null codeServerPort when no start handler returns codeServerPort", async () => {
-      const state = createTestState();
-      let receivedCodeServerPort: number | null | undefined;
-
-      const portReaderModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [APP_START_OPERATION_ID]: {
-            activate: {
-              handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-                receivedCodeServerPort = (ctx as ActivateHookContext).codeServerPort;
-                return {};
-              },
-            },
-          },
-        },
-      };
-
-      const { dispatcher } = createTestSetup([createMcpModule(state), portReaderModule]);
-
-      await dispatcher.dispatch(appStartIntent());
-
-      expect(receivedCodeServerPort).toBeNull();
+      if (expected === null) {
+        expect(receivedPort).toBeNull();
+      } else {
+        expect(receivedPort).toBe(expected);
+      }
     });
   });
 
