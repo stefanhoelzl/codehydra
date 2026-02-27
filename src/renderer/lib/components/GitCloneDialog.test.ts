@@ -115,7 +115,6 @@ describe("GitCloneDialog component", () => {
       // vscode-textfield with autofocus attribute
       expect(input.hasAttribute("autofocus")).toBe(true);
     });
-
   });
 
   describe("URL validation", () => {

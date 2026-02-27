@@ -927,7 +927,6 @@ describe("ViewManager", () => {
 
       expect(callback).toHaveBeenCalledWith(null);
     });
-
   });
 
   describe("isWorkspaceLoading", () => {
