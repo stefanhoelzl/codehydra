@@ -1,17 +1,22 @@
 // @vitest-environment node
 
 /**
- * Integration test for ShortcutController.
- * Tests the full path from input event through to mode changes.
+ * Integration tests for ShortcutController.
+ * Tests the full path from input event through to mode changes and shortcut key emission.
+ *
+ * IMPORTANT: These tests verify that NO keys are prevented via preventDefault().
+ * This is intentional - Electron bug #37336 causes keyUp events to not fire when
+ * keyDown was prevented. By letting all keys propagate, we ensure reliable Alt
+ * keyUp detection for exiting shortcut mode.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { UIMode } from "../shared/ipc";
+import type { ShortcutKey } from "../shared/shortcuts";
 import { ShortcutController } from "./shortcut-controller";
 import type { ShortcutControllerDeps } from "./shortcut-controller";
 import type { KeyboardInput, Unsubscribe } from "../services/shell/view";
-import type { ViewHandle } from "../services/shell/types";
-import type { WindowHandle } from "../services/shell/types";
+import type { ViewHandle, WindowHandle } from "../services/shell/types";
 
 /**
  * Creates a KeyboardInput object for testing.
@@ -47,17 +52,20 @@ function createWindowHandle(id: string = "window-1"): WindowHandle {
 }
 
 /**
- * Tracks captured callbacks for viewLayer and windowLayer mocks.
+ * Tracks captured callbacks and unsubscribe spies for viewLayer and windowLayer mocks.
  */
 interface MockCallbacks {
   inputCallbacks: Map<string, (input: KeyboardInput, preventDefault: () => void) => void>;
   destroyedCallbacks: Map<string, () => void>;
+  inputUnsubscribes: Map<string, ReturnType<typeof vi.fn<() => void>>>;
+  destroyedUnsubscribes: Map<string, ReturnType<typeof vi.fn<() => void>>>;
   blurCallback: (() => void) | null;
+  blurUnsubscribe: ReturnType<typeof vi.fn<() => void>>;
 }
 
 /**
- * Creates mock dependencies for ShortcutController with setMode API.
- * Supports all UIMode values: workspace, shortcut, dialog, hover
+ * Creates mock dependencies for ShortcutController with bidirectional mode state.
+ * setMode updates currentMode so getMode reflects the change (like the real system).
  */
 function createMockDeps(initialMode: UIMode = "workspace"): {
   deps: ShortcutControllerDeps;
@@ -66,6 +74,7 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
     focusUI: ReturnType<typeof vi.fn<() => void>>;
     setMode: ReturnType<typeof vi.fn<(mode: UIMode) => void>>;
     getMode: ReturnType<typeof vi.fn<() => UIMode>>;
+    onShortcut: ReturnType<typeof vi.fn<(key: ShortcutKey) => void>>;
   };
 } {
   let currentMode: UIMode = initialMode;
@@ -73,7 +82,10 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
   const callbacks: MockCallbacks = {
     inputCallbacks: new Map(),
     destroyedCallbacks: new Map(),
+    inputUnsubscribes: new Map(),
+    destroyedUnsubscribes: new Map(),
     blurCallback: null,
+    blurUnsubscribe: vi.fn<() => void>(),
   };
 
   const mocks = {
@@ -82,29 +94,35 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
       currentMode = mode;
     }),
     getMode: vi.fn<() => UIMode>().mockImplementation(() => currentMode),
+    onShortcut: vi.fn<(key: ShortcutKey) => void>(),
   };
 
   const deps: ShortcutControllerDeps = {
     focusUI: mocks.focusUI,
     setMode: mocks.setMode,
     getMode: mocks.getMode,
+    onShortcut: mocks.onShortcut,
     viewLayer: {
       onBeforeInputEvent(
         handle: ViewHandle,
         callback: (input: KeyboardInput, preventDefault: () => void) => void
       ): Unsubscribe {
         callbacks.inputCallbacks.set(handle.id, callback);
-        return vi.fn();
+        const unsub = vi.fn<() => void>();
+        callbacks.inputUnsubscribes.set(handle.id, unsub);
+        return unsub;
       },
       onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe {
         callbacks.destroyedCallbacks.set(handle.id, callback);
-        return vi.fn();
+        const unsub = vi.fn<() => void>();
+        callbacks.destroyedUnsubscribes.set(handle.id, unsub);
+        return unsub;
       },
     },
     windowLayer: {
       onBlur(_handle: WindowHandle, callback: () => void): Unsubscribe {
         callbacks.blurCallback = callback;
-        return vi.fn();
+        return callbacks.blurUnsubscribe;
       },
     },
     windowHandle: createWindowHandle(),
@@ -144,184 +162,401 @@ describe("ShortcutController Integration", () => {
     vi.useRealTimers();
   });
 
-  describe("hover-mode-ipc-flow", () => {
-    it("Alt+X activates shortcut mode when mode is 'hover'", () => {
-      // Create a fresh controller with initial mode as "hover"
-      // This simulates the state after renderer sends "hover" mode via IPC
+  describe("view registration", () => {
+    it("subscribes to input and destroyed events on register", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+
+      expect(mockResult.callbacks.inputCallbacks.has("view-1")).toBe(true);
+      expect(mockResult.callbacks.destroyedCallbacks.has("view-1")).toBe(true);
+    });
+
+    it("does not register the same view twice", () => {
+      const handle = createViewHandle("view-1");
+      const onBeforeInputSpy = vi.spyOn(mockResult.deps.viewLayer, "onBeforeInputEvent");
+      const onDestroyedSpy = vi.spyOn(mockResult.deps.viewLayer, "onDestroyed");
+
+      controller.registerView(handle);
+      controller.registerView(handle);
+
+      expect(onBeforeInputSpy).toHaveBeenCalledTimes(1);
+      expect(onDestroyedSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not throw when unregistering non-registered view", () => {
+      const handle = createViewHandle("view-1");
+      expect(() => controller.unregisterView(handle)).not.toThrow();
+    });
+
+    it("calls unsubscribe functions on unregister", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+      controller.unregisterView(handle);
+
+      expect(mockResult.callbacks.inputUnsubscribes.get("view-1")).toHaveBeenCalled();
+      expect(mockResult.callbacks.destroyedUnsubscribes.get("view-1")).toHaveBeenCalled();
+    });
+
+    it("auto-unregisters when view is destroyed", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+
+      const destroyedCallback = mockResult.callbacks.destroyedCallbacks.get("view-1");
+      expect(destroyedCallback).toBeDefined();
+      destroyedCallback!();
+
+      expect(mockResult.callbacks.inputUnsubscribes.get("view-1")).toHaveBeenCalled();
+      expect(mockResult.callbacks.destroyedUnsubscribes.get("view-1")).toHaveBeenCalled();
+    });
+  });
+
+  describe("Alt+X activation", () => {
+    it("activates shortcut mode from workspace mode", () => {
+      const handle = createViewHandle("ws-view");
+      controller.registerView(handle);
+
+      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
+      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
+      vi.runAllTimers();
+
+      expect(mockResult.mocks.getMode()).toBe("shortcut");
+      expect(mockResult.mocks.focusUI).not.toHaveBeenCalled();
+    });
+
+    it("activates shortcut mode from hover mode", () => {
       const hoverResult = createMockDeps("hover");
       const hoverController = new ShortcutController(hoverResult.deps);
 
       try {
-        // 1. Register a workspace view
         const handle = createViewHandle("ws-view");
         hoverController.registerView(handle);
 
-        // 2. Verify input callback was captured
-        expect(hoverResult.callbacks.inputCallbacks.has("ws-view")).toBe(true);
-
-        // 3. Simulate Alt+X keyboard sequence
-        simulateInput(hoverResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
-        simulateInput(hoverResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
-
-        // 4. setMode is deferred, flush timers
-        vi.runAllTimers();
-
-        // 5. Verify Alt+X is ALLOWED in hover mode - setMode("shortcut") should be called
-        expect(hoverResult.mocks.setMode).toHaveBeenCalledTimes(1);
-        expect(hoverResult.mocks.setMode).toHaveBeenCalledWith("shortcut");
-      } finally {
-        hoverController.dispose();
-      }
-    });
-
-    it("Alt+X is blocked when mode is 'dialog'", () => {
-      // Create a fresh controller with initial mode as "dialog"
-      // This simulates the state when a dialog is open
-      const dialogResult = createMockDeps("dialog");
-      const dialogController = new ShortcutController(dialogResult.deps);
-
-      try {
-        // 1. Register a workspace view
-        const handle = createViewHandle("ws-view");
-        dialogController.registerView(handle);
-
-        // 2. Verify input callback was captured
-        expect(dialogResult.callbacks.inputCallbacks.has("ws-view")).toBe(true);
-
-        // 3. Simulate Alt+X keyboard sequence
-        simulateInput(dialogResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
-        simulateInput(dialogResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
-
-        // 4. Flush timers
-        vi.runAllTimers();
-
-        // 5. Verify Alt+X is BLOCKED in dialog mode - setMode should NOT be called
-        expect(dialogResult.mocks.setMode).not.toHaveBeenCalled();
-      } finally {
-        dialogController.dispose();
-      }
-    });
-
-    it("transitions from hover to shortcut mode correctly", () => {
-      // This test verifies the full flow:
-      // 1. Renderer sends "hover" mode via IPC (simulated by initial mode)
-      // 2. User presses Alt+X
-      // 3. Mode changes from "hover" to "shortcut"
-
-      const hoverResult = createMockDeps("hover");
-      const hoverController = new ShortcutController(hoverResult.deps);
-
-      try {
-        const handle = createViewHandle("ws-view");
-        hoverController.registerView(handle);
-
-        // Verify initial mode is "hover"
-        expect(hoverResult.mocks.getMode()).toBe("hover");
-
-        // Trigger Alt+X
         simulateInput(hoverResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
         simulateInput(hoverResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
         vi.runAllTimers();
 
-        // Verify transition to "shortcut" mode
-        expect(hoverResult.mocks.setMode).toHaveBeenCalledWith("shortcut");
-        // After setMode, the mock updates currentMode, so getMode returns "shortcut"
         expect(hoverResult.mocks.getMode()).toBe("shortcut");
       } finally {
         hoverController.dispose();
       }
     });
-  });
 
-  describe("keyboard-wiring-roundtrip", () => {
-    it("Alt+X triggers setMode('shortcut')", () => {
-      // 1. Create and register a view handle (simulating workspace view)
+    it("activates shortcut mode with uppercase X", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("Alt", "keyDown"));
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("X", "keyDown"));
+      vi.runAllTimers();
+
+      expect(mockResult.mocks.getMode()).toBe("shortcut");
+    });
+
+    it("does not activate when mode is dialog", () => {
+      const dialogResult = createMockDeps("dialog");
+      const dialogController = new ShortcutController(dialogResult.deps);
+
+      try {
+        const handle = createViewHandle("ws-view");
+        dialogController.registerView(handle);
+
+        simulateInput(dialogResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
+        simulateInput(dialogResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
+        vi.runAllTimers();
+
+        expect(dialogResult.mocks.setMode).not.toHaveBeenCalled();
+        expect(dialogResult.mocks.getMode()).toBe("dialog");
+      } finally {
+        dialogController.dispose();
+      }
+    });
+
+    it("does not activate when only Alt is pressed", () => {
       const handle = createViewHandle("ws-view");
       controller.registerView(handle);
 
-      // 2. Verify input callback was captured
-      expect(mockResult.callbacks.inputCallbacks.has("ws-view")).toBe(true);
+      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
 
-      // 3. Simulate Alt keydown
-      const { preventDefault: altPD } = simulateInput(
-        mockResult.callbacks,
-        "ws-view",
-        createKeyboardInput("Alt", "keyDown")
-      );
+      expect(mockResult.mocks.setMode).not.toHaveBeenCalled();
+    });
 
-      // NOTE: Alt keydown is NOT prevented - this allows Chromium to track the key
-      // so that keyUp fires when Alt is released. See regression test in unit tests.
-      expect(altPD).not.toHaveBeenCalled();
+    it("does not activate when X is pressed without prior Alt", () => {
+      const handle = createViewHandle("ws-view");
+      controller.registerView(handle);
 
-      // 4. Simulate X keydown
-      const { preventDefault: xPD } = simulateInput(
-        mockResult.callbacks,
-        "ws-view",
-        createKeyboardInput("x", "keyDown")
-      );
+      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
 
-      // 5. Verify the full chain was executed:
-      // - X keydown is NOT prevented (Electron bug #37336 workaround)
-      // If X is prevented, releasing X before Alt breaks keyUp for ALL keys
-      expect(xPD).not.toHaveBeenCalled();
+      expect(mockResult.mocks.setMode).not.toHaveBeenCalled();
+    });
 
-      // - setMode is deferred via setImmediate, flush timers
+    it("does not activate when non-X key follows Alt", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("Alt", "keyDown"));
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("j", "keyDown"));
+
+      vi.runAllTimers();
+      expect(mockResult.mocks.setMode).not.toHaveBeenCalled();
+    });
+
+    it("Alt+X with multiple views calls setMode once", () => {
+      const handle1 = createViewHandle("view-1");
+      const handle2 = createViewHandle("view-2");
+      controller.registerView(handle1);
+      controller.registerView(handle2);
+
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("Alt", "keyDown"));
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("x", "keyDown"));
       vi.runAllTimers();
 
-      // - setMode("shortcut") was called (unified API handles z-order and focus)
       expect(mockResult.mocks.setMode).toHaveBeenCalledTimes(1);
       expect(mockResult.mocks.setMode).toHaveBeenCalledWith("shortcut");
+    });
+  });
 
-      // - focusUI is no longer called directly (setMode handles it internally)
-      expect(mockResult.mocks.focusUI).not.toHaveBeenCalled();
+  describe("Alt release exits shortcut mode", () => {
+    it("Alt keyUp exits shortcut mode back to workspace", () => {
+      const shortcutResult = createMockDeps("shortcut");
+      const shortcutController = new ShortcutController(shortcutResult.deps);
+
+      try {
+        const handle = createViewHandle("view-1");
+        shortcutController.registerView(handle);
+
+        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("Alt", "keyUp"));
+
+        expect(shortcutResult.mocks.getMode()).toBe("workspace");
+      } finally {
+        shortcutController.dispose();
+      }
     });
 
-    it("verifies setMode is the only call (no legacy callbacks)", () => {
-      const handle = createViewHandle("ws-view");
+    it("Alt keyUp in workspace mode is a no-op", () => {
+      const handle = createViewHandle("view-1");
       controller.registerView(handle);
 
-      // Track execution order
-      const executionOrder: string[] = [];
-      mockResult.mocks.setMode.mockImplementation(() => {
-        executionOrder.push("setMode");
-      });
-      mockResult.mocks.focusUI.mockImplementation(() => {
-        executionOrder.push("focusUI");
-      });
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("Alt", "keyUp"));
 
-      // Trigger Alt+X
-      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
-      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
+      expect(mockResult.mocks.setMode).not.toHaveBeenCalled();
+    });
 
-      // setMode is deferred via setImmediate, flush timers
+    it("full Alt+X activation then Alt release cycle", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+
+      // Alt+X activates shortcut mode
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("Alt", "keyDown"));
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("x", "keyDown"));
+      vi.runAllTimers();
+      expect(mockResult.mocks.getMode()).toBe("shortcut");
+
+      // Alt release exits shortcut mode
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("Alt", "keyUp"));
+      expect(mockResult.mocks.getMode()).toBe("workspace");
+    });
+  });
+
+  describe("no keys are prevented (#37336)", () => {
+    it("no keys in the Alt+X to shortcut-key to Alt-release sequence are prevented", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+
+      // Alt keyDown
+      const { preventDefault: altDownPD } = simulateInput(
+        mockResult.callbacks,
+        "view-1",
+        createKeyboardInput("Alt", "keyDown")
+      );
+      expect(altDownPD).not.toHaveBeenCalled();
+
+      // X keyDown
+      const { preventDefault: xDownPD } = simulateInput(
+        mockResult.callbacks,
+        "view-1",
+        createKeyboardInput("x", "keyDown")
+      );
+      expect(xDownPD).not.toHaveBeenCalled();
+
       vi.runAllTimers();
 
-      // Verify only setMode is called (unified API handles everything)
-      expect(executionOrder).toEqual(["setMode"]);
+      // ArrowUp keyDown in shortcut mode
+      const { preventDefault: arrowPD } = simulateInput(
+        mockResult.callbacks,
+        "view-1",
+        createKeyboardInput("ArrowUp", "keyDown")
+      );
+      expect(arrowPD).not.toHaveBeenCalled();
+
+      // Alt keyUp
+      const { preventDefault: altUpPD } = simulateInput(
+        mockResult.callbacks,
+        "view-1",
+        createKeyboardInput("Alt", "keyUp")
+      );
+      expect(altUpPD).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("shortcut key emission", () => {
+    it.each([
+      ["ArrowUp", "up"],
+      ["ArrowDown", "down"],
+      ["ArrowLeft", "left"],
+      ["ArrowRight", "right"],
+      ["Enter", "enter"],
+      ["Delete", "delete"],
+      ["Backspace", "delete"],
+      ["0", "0"],
+      ["1", "1"],
+      ["2", "2"],
+      ["3", "3"],
+      ["4", "4"],
+      ["5", "5"],
+      ["6", "6"],
+      ["7", "7"],
+      ["8", "8"],
+      ["9", "9"],
+    ] as const)("emits %s as shortcut key %s", (input, expected: ShortcutKey) => {
+      const shortcutResult = createMockDeps("shortcut");
+      const shortcutController = new ShortcutController(shortcutResult.deps);
+
+      try {
+        const handle = createViewHandle("view-1");
+        shortcutController.registerView(handle);
+
+        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput(input, "keyDown"));
+
+        expect(shortcutResult.mocks.onShortcut).toHaveBeenCalledWith(expected);
+      } finally {
+        shortcutController.dispose();
+      }
     });
 
-    it("does not trigger chain when only Alt is pressed (no X follow-up)", () => {
-      const handle = createViewHandle("ws-view");
+    it("ignores shortcut keys in workspace mode", () => {
+      const handle = createViewHandle("view-1");
       controller.registerView(handle);
 
-      // Only press Alt
-      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("Alt", "keyDown"));
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("ArrowUp", "keyDown"));
 
-      // Verify nothing in the chain was called
-      expect(mockResult.mocks.setMode).not.toHaveBeenCalled();
-      expect(mockResult.mocks.focusUI).not.toHaveBeenCalled();
+      expect(mockResult.mocks.onShortcut).not.toHaveBeenCalled();
     });
 
-    it("does not trigger chain when X is pressed without prior Alt", () => {
-      const handle = createViewHandle("ws-view");
+    it("ignores shortcut keys in dialog mode", () => {
+      const dialogResult = createMockDeps("dialog");
+      const dialogController = new ShortcutController(dialogResult.deps);
+
+      try {
+        const handle = createViewHandle("view-1");
+        dialogController.registerView(handle);
+
+        simulateInput(dialogResult.callbacks, "view-1", createKeyboardInput("Enter", "keyDown"));
+
+        expect(dialogResult.mocks.onShortcut).not.toHaveBeenCalled();
+      } finally {
+        dialogController.dispose();
+      }
+    });
+
+    it("does not emit for unknown key in shortcut mode", () => {
+      const shortcutResult = createMockDeps("shortcut");
+      const shortcutController = new ShortcutController(shortcutResult.deps);
+
+      try {
+        const handle = createViewHandle("view-1");
+        shortcutController.registerView(handle);
+
+        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("a", "keyDown"));
+
+        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
+      } finally {
+        shortcutController.dispose();
+      }
+    });
+
+    it("Escape is not handled (handled by renderer)", () => {
+      const shortcutResult = createMockDeps("shortcut");
+      const shortcutController = new ShortcutController(shortcutResult.deps);
+
+      try {
+        const handle = createViewHandle("view-1");
+        shortcutController.registerView(handle);
+
+        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("Escape", "keyDown"));
+
+        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
+      } finally {
+        shortcutController.dispose();
+      }
+    });
+
+    it("does not emit on keyUp", () => {
+      const shortcutResult = createMockDeps("shortcut");
+      const shortcutController = new ShortcutController(shortcutResult.deps);
+
+      try {
+        const handle = createViewHandle("view-1");
+        shortcutController.registerView(handle);
+
+        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("ArrowUp", "keyUp"));
+
+        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
+      } finally {
+        shortcutController.dispose();
+      }
+    });
+  });
+
+  describe("edge cases", () => {
+    it("auto-repeat events are ignored", () => {
+      const handle = createViewHandle("view-1");
       controller.registerView(handle);
 
-      // Only press X (no prior Alt)
-      simulateInput(mockResult.callbacks, "ws-view", createKeyboardInput("x", "keyDown"));
+      const { preventDefault } = simulateInput(
+        mockResult.callbacks,
+        "view-1",
+        createKeyboardInput("Alt", "keyDown", { isAutoRepeat: true })
+      );
 
-      // Verify nothing in the chain was called
+      expect(preventDefault).not.toHaveBeenCalled();
+    });
+
+    it("window blur resets pending Alt state", () => {
+      const handle = createViewHandle("view-1");
+      controller.registerView(handle);
+
+      // Alt down to enter ALT_WAITING
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("Alt", "keyDown"));
+
+      // Window blur resets state
+      mockResult.callbacks.blurCallback!();
+
+      // X down should NOT activate (state was reset)
+      simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("x", "keyDown"));
+      vi.runAllTimers();
+
       expect(mockResult.mocks.setMode).not.toHaveBeenCalled();
-      expect(mockResult.mocks.focusUI).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cleanup", () => {
+    it("subscribes to window blur on construction", () => {
+      expect(mockResult.callbacks.blurCallback).not.toBeNull();
+    });
+
+    it("dispose unregisters all views and window blur handler", () => {
+      const handle1 = createViewHandle("view-1");
+      const handle2 = createViewHandle("view-2");
+      controller.registerView(handle1);
+      controller.registerView(handle2);
+
+      controller.dispose();
+
+      expect(mockResult.callbacks.inputUnsubscribes.get("view-1")).toHaveBeenCalled();
+      expect(mockResult.callbacks.destroyedUnsubscribes.get("view-1")).toHaveBeenCalled();
+      expect(mockResult.callbacks.inputUnsubscribes.get("view-2")).toHaveBeenCalled();
+      expect(mockResult.callbacks.destroyedUnsubscribes.get("view-2")).toHaveBeenCalled();
+      expect(mockResult.callbacks.blurUnsubscribe).toHaveBeenCalled();
     });
   });
 });
