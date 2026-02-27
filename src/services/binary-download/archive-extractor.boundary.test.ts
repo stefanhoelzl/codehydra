@@ -119,6 +119,60 @@ describe("TarExtractor (boundary)", () => {
       errorCode: "INVALID_ARCHIVE",
     });
   });
+
+  it("throws INVALID_ARCHIVE for corrupt gzip payload", async () => {
+    // Valid gzip header followed by garbage deflate data triggers a zlib error
+    const corruptGzip = Buffer.from([
+      0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xff, 0xff, 0xff, 0xff, 0xff,
+    ]);
+    await fs.writeFile(archivePath, corruptGzip);
+
+    const extractor = new TarExtractor();
+
+    await expect(extractor.extract(archivePath, new Path(destDir))).rejects.toThrow(ArchiveError);
+    await expect(extractor.extract(archivePath, new Path(destDir))).rejects.toMatchObject({
+      errorCode: "INVALID_ARCHIVE",
+    });
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "throws PERMISSION_DENIED for unwritable destination",
+    async () => {
+      // Create a valid tar.gz archive
+      const sourceDir = path.join(tempDir, "source");
+      await fs.mkdir(sourceDir, { recursive: true });
+      await fs.writeFile(path.join(sourceDir, "file.txt"), "content");
+      await tar.create({ gzip: true, file: archivePath, cwd: sourceDir }, ["."]);
+
+      // Create a read-only parent so mkdir for the dest fails with EACCES
+      const lockedParent = path.join(tempDir, "locked");
+      await fs.mkdir(lockedParent);
+      await fs.chmod(lockedParent, 0o555);
+      const lockedDest = path.join(lockedParent, "extracted");
+
+      const extractor = new TarExtractor();
+      try {
+        await expect(extractor.extract(archivePath, new Path(lockedDest))).rejects.toThrow(
+          ArchiveError
+        );
+        await expect(extractor.extract(archivePath, new Path(lockedDest))).rejects.toMatchObject({
+          errorCode: "PERMISSION_DENIED",
+        });
+      } finally {
+        await fs.chmod(lockedParent, 0o755);
+      }
+    }
+  );
+
+  it("throws EXTRACTION_FAILED for nonexistent archive path", async () => {
+    const extractor = new TarExtractor();
+    const missingPath = path.join(tempDir, "nonexistent.tar.gz");
+
+    await expect(extractor.extract(missingPath, new Path(destDir))).rejects.toThrow(ArchiveError);
+    await expect(extractor.extract(missingPath, new Path(destDir))).rejects.toMatchObject({
+      errorCode: "EXTRACTION_FAILED",
+    });
+  });
 });
 
 describe("ZipExtractor (boundary)", () => {
@@ -175,6 +229,16 @@ describe("ZipExtractor (boundary)", () => {
 
     expect(caughtError).toBeInstanceOf(ArchiveError);
     expect(["INVALID_ARCHIVE", "EXTRACTION_FAILED"]).toContain(caughtError!.errorCode);
+  });
+
+  it("throws EXTRACTION_FAILED for nonexistent archive path", async () => {
+    const extractor = new ZipExtractor();
+    const missingPath = path.join(tempDir, "nonexistent.zip");
+
+    await expect(extractor.extract(missingPath, new Path(destDir))).rejects.toThrow(ArchiveError);
+    await expect(extractor.extract(missingPath, new Path(destDir))).rejects.toMatchObject({
+      errorCode: "EXTRACTION_FAILED",
+    });
   });
 });
 
