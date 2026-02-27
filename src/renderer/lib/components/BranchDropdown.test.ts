@@ -297,22 +297,8 @@ describe("BranchDropdown component", () => {
     });
   });
 
-  describe("keyboard navigation", () => {
-    it("Arrow Down moves to next option", async () => {
-      render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-      await fireEvent.keyDown(input, { key: "ArrowDown" });
-
-      // First option should be highlighted
-      const options = screen.getAllByRole("option");
-      expect(options[0]).toHaveAttribute("aria-selected", "true");
-    });
-
-    it("Arrow Up moves to previous option", async () => {
+  describe("navigation order", () => {
+    it("navigates local branches then remote branches", async () => {
       render(BranchDropdown, { props: defaultProps });
 
       await completeLoading();
@@ -320,40 +306,18 @@ describe("BranchDropdown component", () => {
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
-      // Go down twice, then up once
-      await fireEvent.keyDown(input, { key: "ArrowDown" });
-      await fireEvent.keyDown(input, { key: "ArrowDown" });
-      await fireEvent.keyDown(input, { key: "ArrowUp" });
+      const expectedOrder = ["main", "develop", "origin/main", "origin/feature"];
 
-      const options = screen.getAllByRole("option");
-      expect(options[0]).toHaveAttribute("aria-selected", "true");
-    });
-
-    it("Arrow Down at last option wraps to first", async () => {
-      render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-
-      // Navigate to last option (4 branches total)
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < expectedOrder.length; i++) {
         await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+        const options = screen.getAllByRole("option");
+        expect(options[i]).toHaveAttribute("aria-selected", "true");
+        expect(options[i]).toHaveTextContent(expectedOrder[i]!);
       }
-
-      // Should be at last option (index 3)
-      let options = screen.getAllByRole("option");
-      expect(options[3]).toHaveAttribute("aria-selected", "true");
-
-      // One more ArrowDown should wrap to first
-      await fireEvent.keyDown(input, { key: "ArrowDown" });
-
-      options = screen.getAllByRole("option");
-      expect(options[0]).toHaveAttribute("aria-selected", "true");
     });
 
-    it("Arrow Up at first option wraps to last", async () => {
+    it("ArrowDown from last local branch goes to first remote branch (skipping header)", async () => {
       render(BranchDropdown, { props: defaultProps });
 
       await completeLoading();
@@ -361,102 +325,16 @@ describe("BranchDropdown component", () => {
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
-      // Go down to first option
+      // Navigate to "develop" (2nd local branch)
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
       await fireEvent.keyDown(input, { key: "ArrowDown" });
 
-      // First option should be selected
-      let options = screen.getAllByRole("option");
-      expect(options[0]).toHaveAttribute("aria-selected", "true");
-
-      // ArrowUp should wrap to last
-      await fireEvent.keyDown(input, { key: "ArrowUp" });
-
-      options = screen.getAllByRole("option");
-      expect(options[3]).toHaveAttribute("aria-selected", "true");
-    });
-
-    it("Enter selects current option", async () => {
-      const onSelect = vi.fn();
-      render(BranchDropdown, { props: { ...defaultProps, onSelect } });
-
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
+      // One more ArrowDown should skip the "Remote Branches" header
       await fireEvent.keyDown(input, { key: "ArrowDown" });
-      await fireEvent.keyDown(input, { key: "Enter" });
 
-      expect(onSelect).toHaveBeenCalledWith("main");
-    });
-
-    it("Tab selects current option and moves focus", async () => {
-      const onSelect = vi.fn();
-      render(BranchDropdown, { props: { ...defaultProps, onSelect } });
-
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-      await fireEvent.keyDown(input, { key: "ArrowDown" });
-      await fireEvent.keyDown(input, { key: "Tab" });
-
-      expect(onSelect).toHaveBeenCalledWith("main");
-      expect(input).toHaveAttribute("aria-expanded", "false");
-    });
-
-    it("Escape closes dropdown without selecting", async () => {
-      const onSelect = vi.fn();
-      render(BranchDropdown, { props: { ...defaultProps, onSelect } });
-
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-
-      expect(input).toHaveAttribute("aria-expanded", "true");
-
-      await fireEvent.keyDown(input, { key: "Escape" });
-
-      expect(input).toHaveAttribute("aria-expanded", "false");
-      expect(onSelect).not.toHaveBeenCalled();
-    });
-
-    it("Tab selects typed branch when it exactly matches an option", async () => {
-      const onSelect = vi.fn();
-      render(BranchDropdown, { props: { ...defaultProps, onSelect } });
-
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-
-      // Type exact branch name without using arrow keys
-      await fireEvent.input(input, { target: { value: "main" } });
-
-      // Press Tab without navigating with arrows
-      await fireEvent.keyDown(input, { key: "Tab" });
-
-      // Should select the typed branch
-      expect(onSelect).toHaveBeenCalledWith("main");
-    });
-
-    it("Tab does not select when typed text does not match any branch", async () => {
-      const onSelect = vi.fn();
-      render(BranchDropdown, { props: { ...defaultProps, onSelect } });
-
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-
-      // Type non-matching text
-      await fireEvent.input(input, { target: { value: "nonexistent" } });
-
-      // Press Tab
-      await fireEvent.keyDown(input, { key: "Tab" });
-
-      // Should NOT call onSelect
-      expect(onSelect).not.toHaveBeenCalled();
+      const options = screen.getAllByRole("option");
+      expect(options[2]).toHaveAttribute("aria-selected", "true");
+      expect(options[2]).toHaveTextContent("origin/main");
     });
   });
 

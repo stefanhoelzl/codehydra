@@ -418,4 +418,82 @@ describe("NameBranchDropdown component", () => {
       expect(input).toHaveAttribute("data-autofocus");
     });
   });
+
+  describe("keyboard navigation", () => {
+    it("navigates derivable local branches then derivable remote branches", async () => {
+      const branches: BaseInfo[] = [
+        { name: "main", isRemote: false }, // No derives — excluded
+        { name: "feature-auth", isRemote: false, derives: "feature-auth" },
+        { name: "feature-login", isRemote: false, derives: "feature-login" },
+        { name: "origin/main", isRemote: true }, // No derives — excluded
+        { name: "origin/feature-payments", isRemote: true, derives: "feature-payments" },
+      ];
+
+      await renderWithBranches(branches);
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      // First ArrowDown opens dropdown (openOnFocus=false) and highlights first option
+      const expectedOrder = ["feature-auth", "feature-login", "feature-payments"];
+
+      for (let i = 0; i < expectedOrder.length; i++) {
+        await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+        const options = screen.getAllByRole("option");
+        expect(options[i]).toHaveAttribute("aria-selected", "true");
+        expect(options[i]).toHaveTextContent(expectedOrder[i]!);
+      }
+
+      // Verify excluded branches are not in the options
+      const allOptions = screen.getAllByRole("option");
+      const optionTexts = allOptions.map((o) => o.textContent);
+      expect(optionTexts).not.toContain("main");
+      expect(optionTexts).not.toContain("origin/main");
+    });
+
+    it("selects highlighted branch via Enter with correct payload", async () => {
+      const onSelect = vi.fn();
+      const branches: BaseInfo[] = [
+        {
+          name: "feature-auth",
+          isRemote: false,
+          derives: "feature-auth",
+          base: "origin/feature-auth",
+        },
+      ];
+
+      await renderWithBranches(branches, { onSelect });
+
+      const input = screen.getByRole("combobox");
+      await focusAndOpenDropdown(input);
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).toHaveBeenCalledWith({
+        name: "feature-auth",
+        suggestedBase: "origin/feature-auth",
+        isExistingBranch: true,
+      });
+    });
+
+    it("Enter with no highlighted option submits typed text as custom name", async () => {
+      const onSelect = vi.fn();
+      const branches: BaseInfo[] = [
+        { name: "feature-auth", isRemote: false, derives: "feature-auth" },
+      ];
+
+      await renderWithBranches(branches, { onSelect });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "my-custom-branch" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).toHaveBeenCalledWith({
+        name: "my-custom-branch",
+        isExistingBranch: false,
+      });
+    });
+  });
 });
