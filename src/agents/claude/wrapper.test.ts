@@ -4,8 +4,13 @@
  * Tests buildInitialPromptArgs function.
  */
 
-import { describe, it, expect } from "vitest";
-import { buildInitialPromptArgs, buildPermissionArgs, type InitialPromptConfig } from "./wrapper";
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  buildInitialPromptArgs,
+  buildPermissionArgs,
+  shouldContinue,
+  type InitialPromptConfig,
+} from "./wrapper";
 
 describe("buildPermissionArgs", () => {
   it("returns --dangerously-skip-permissions when no agent", () => {
@@ -84,5 +89,26 @@ describe("buildInitialPromptArgs", () => {
     const config: InitialPromptConfig = { prompt: "", agent: "plan" };
     const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["--agent", "plan"]);
+  });
+});
+
+describe("shouldContinue", () => {
+  afterEach(() => {
+    delete process.env._CH_CLAUDE_CONTINUE;
+  });
+
+  it("returns true when _CH_CLAUDE_CONTINUE is '1'", () => {
+    process.env._CH_CLAUDE_CONTINUE = "1";
+    expect(shouldContinue()).toBe(true);
+  });
+
+  it("returns false when _CH_CLAUDE_CONTINUE is not set", () => {
+    delete process.env._CH_CLAUDE_CONTINUE;
+    expect(shouldContinue()).toBe(false);
+  });
+
+  it("returns false when _CH_CLAUDE_CONTINUE is '0'", () => {
+    process.env._CH_CLAUDE_CONTINUE = "0";
+    expect(shouldContinue()).toBe(false);
   });
 });

@@ -37,20 +37,20 @@ describe("PluginServer", () => {
 
     it("stores config without throwing", () => {
       expect(() =>
-        server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode")
+        server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode", true)
       ).not.toThrow();
     });
 
     it("allows config to be overwritten", () => {
-      server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode");
+      server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode", true);
 
       expect(() =>
-        server.setWorkspaceConfig("/test/workspace", { PORT: "9090" }, "claude")
+        server.setWorkspaceConfig("/test/workspace", { PORT: "9090" }, "claude", false)
       ).not.toThrow();
     });
 
     it("removes config without throwing", () => {
-      server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode");
+      server.setWorkspaceConfig("/test/workspace", { PORT: "8080" }, "opencode", true);
 
       expect(() => server.removeWorkspaceConfig("/test/workspace")).not.toThrow();
     });

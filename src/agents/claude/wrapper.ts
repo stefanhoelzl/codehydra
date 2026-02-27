@@ -154,6 +154,8 @@ export interface SpawnResult {
  */
 export interface RunClaudeOptions {
   shell: boolean;
+  /** Skip the automatic --continue attempt (new workspace with no prior session) */
+  skipContinue?: boolean;
 }
 
 /**
@@ -218,8 +220,8 @@ export function runClaude(
   options: RunClaudeOptions,
   deps: RunClaudeDeps = defaultDeps
 ): SpawnResult {
-  // Check if user already passed resume flags - skip auto-continue if so
-  if (hasUserResumeFlag(baseArgs)) {
+  // Check if user already passed resume flags or skipContinue is set
+  if (hasUserResumeFlag(baseArgs) || options.skipContinue) {
     const result = deps.spawnSync(claudeBinary, baseArgs, {
       stdio: "inherit",
       shell: options.shell,
@@ -255,6 +257,14 @@ export function runClaude(
     exitCode: retryResult.status,
     error: retryResult.error,
   };
+}
+
+/**
+ * Check if the wrapper should attempt --continue for session resume.
+ * Returns true when _CH_CLAUDE_CONTINUE=1 (reopened workspace with prior session).
+ */
+function shouldContinue(): boolean {
+  return process.env._CH_CLAUDE_CONTINUE === "1";
 }
 
 /**
@@ -394,7 +404,11 @@ async function main(): Promise<never> {
 
   // 7. Spawn Claude with automatic session resume
   // Use shell on Windows to resolve binary name via PATH (handles .cmd shims)
-  const result = runClaude(claudeBinary, args, { shell: isWindows });
+  // Skip --continue attempt for new workspaces (no prior session to resume)
+  const result = runClaude(claudeBinary, args, {
+    shell: isWindows,
+    skipContinue: !shouldContinue(),
+  });
 
   // 8. Notify wrapper end (Claude has exited)
   await notifyHook("WrapperEnd");
@@ -424,4 +438,5 @@ export {
   getInitialPromptConfig,
   buildInitialPromptArgs,
   buildPermissionArgs,
+  shouldContinue,
 };

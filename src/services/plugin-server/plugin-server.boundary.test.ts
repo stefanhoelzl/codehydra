@@ -819,7 +819,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("sends config with agent type when client connects", async () => {
       // Store workspace config before client connects
-      env.server.setWorkspaceConfig("/test/workspace", {}, "opencode");
+      env.server.setWorkspaceConfig("/test/workspace", {}, "opencode", true);
 
       const client = createClient("/test/workspace");
       const configPromise = new Promise<PluginConfig>((resolve) => {
@@ -837,7 +837,8 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       env.server.setWorkspaceConfig(
         "/test/workspace",
         { TEST_VAR: "test-value", ANOTHER_VAR: "another" },
-        "opencode"
+        "opencode",
+        true
       );
 
       const client = createClient("/test/workspace");
@@ -864,8 +865,18 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("handles concurrent workspace connections independently", async () => {
-      env.server.setWorkspaceConfig("/workspace/one", { WORKSPACE: "/workspace/one" }, "opencode");
-      env.server.setWorkspaceConfig("/workspace/two", { WORKSPACE: "/workspace/two" }, "opencode");
+      env.server.setWorkspaceConfig(
+        "/workspace/one",
+        { WORKSPACE: "/workspace/one" },
+        "opencode",
+        true
+      );
+      env.server.setWorkspaceConfig(
+        "/workspace/two",
+        { WORKSPACE: "/workspace/two" },
+        "opencode",
+        true
+      );
 
       const client1 = createClient("/workspace/one");
       const client2 = createClient("/workspace/two");

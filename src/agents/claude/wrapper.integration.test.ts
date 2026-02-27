@@ -307,4 +307,37 @@ describe("runClaude session resume", () => {
 
     expect(mock.calls[0]?.opts.shell).toBe(false);
   });
+
+  it("skips --continue attempt when skipContinue is true", () => {
+    const mock = createSpawnMock([0]);
+
+    const result = runClaude(
+      "claude",
+      ["--ide", "--settings", "/path"],
+      { shell: false, skipContinue: true },
+      mock
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(mock.calls).toHaveLength(1);
+    // Should NOT have --continue prepended
+    expect(mock.calls[0]?.args[0]).toBe("--ide");
+    expect(mock.calls[0]?.args).not.toContain("--continue");
+  });
+
+  it("attempts --continue when skipContinue is false", () => {
+    const mock = createSpawnMock([0]);
+
+    const result = runClaude(
+      "claude",
+      ["--ide", "--settings", "/path"],
+      { shell: false, skipContinue: false },
+      mock
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(mock.calls).toHaveLength(1);
+    // Should have --continue prepended
+    expect(mock.calls[0]?.args[0]).toBe("--continue");
+  });
 });

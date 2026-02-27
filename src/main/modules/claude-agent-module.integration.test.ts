@@ -798,6 +798,62 @@ describe("ClaudeAgentModule", () => {
       expect(mockSM.setInitialPrompt).toHaveBeenCalled();
     });
 
+    it("includes _CH_CLAUDE_CONTINUE env var for reopened workspaces", async () => {
+      const { dispatcher, module } = createTestSetup();
+      await activateModule(dispatcher, module);
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+
+      const result = (await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+          existingWorkspace: {
+            path: "/test/workspace",
+            name: "feature-1",
+            branch: "feature-1",
+            metadata: {},
+          },
+        },
+      } as unknown as OpenWorkspaceIntent)) as SetupHookResult | undefined;
+
+      expect(result).toBeDefined();
+      expect(result!.envVars).toHaveProperty("_CH_CLAUDE_CONTINUE", "1");
+    });
+
+    it("does not include _CH_CLAUDE_CONTINUE for new workspaces", async () => {
+      const { dispatcher, module } = createTestSetup();
+      await activateModule(dispatcher, module);
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+
+      const result = (await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+        },
+      } as unknown as OpenWorkspaceIntent)) as SetupHookResult | undefined;
+
+      expect(result).toBeDefined();
+      expect(result!.envVars).not.toHaveProperty("_CH_CLAUDE_CONTINUE");
+    });
+
     it("returns undefined when inactive", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
