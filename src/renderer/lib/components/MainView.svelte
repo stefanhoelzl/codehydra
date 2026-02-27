@@ -29,6 +29,7 @@
     openCreateDialog,
     openRemoveDialog,
     openCloseProjectDialog,
+    closeDialog,
   } from "$lib/stores/dialogs.svelte.js";
   import {
     shortcutModeActive,
@@ -140,6 +141,16 @@
         clearTimeout(autoShowTimeout);
       }
     };
+  });
+
+  // Auto-close create dialog when first workspace appears (e.g., created via MCP or auto-PR)
+  let prevWorkspaceCount = 0;
+  $effect(() => {
+    const count = getAllWorkspaces().length;
+    if (prevWorkspaceCount === 0 && count > 0 && dialogState.value.type === "create") {
+      closeDialog();
+    }
+    prevWorkspaceCount = count;
   });
 
   // Derive deletion state for active workspace

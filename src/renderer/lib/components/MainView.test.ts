@@ -1200,4 +1200,118 @@ describe("MainView component", () => {
       });
     });
   });
+
+  describe("auto-close create dialog when first workspace appears", () => {
+    it("closes create dialog when workspace count transitions from 0 to >0", async () => {
+      // Start with no workspaces — auto-show opens the create dialog
+      const project = createMockProject({
+        id: asProjectId("test-project-12345678"),
+        workspaces: [],
+      });
+      mockApi.projects.list.mockResolvedValue([project]);
+
+      render(MainView);
+
+      // Wait for create dialog to auto-open
+      await waitFor(() => {
+        expect(dialogsStore.dialogState.value.type).toBe("create");
+      });
+
+      // Simulate a workspace appearing (e.g., created via MCP or auto-PR)
+      projectsStore.addWorkspace("/test/project", {
+        projectId: asProjectId("test-project-12345678"),
+        path: "/test/.worktrees/new-ws",
+        name: "new-ws" as WorkspaceName,
+        branch: "new-ws",
+        metadata: {},
+      });
+
+      // Dialog should auto-close
+      await waitFor(() => {
+        expect(dialogsStore.dialogState.value.type).toBe("closed");
+      });
+    });
+
+    it("does NOT close create dialog when workspace count transitions from >0 to more", async () => {
+      // Start with one workspace
+      const project = createMockProject({
+        id: asProjectId("test-project-12345678"),
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/existing",
+            name: "existing" as WorkspaceName,
+            branch: "existing",
+          },
+        ],
+      });
+      mockApi.projects.list.mockResolvedValue([project]);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      // Manually open create dialog (user clicked +)
+      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+
+      await waitFor(() => {
+        expect(dialogsStore.dialogState.value.type).toBe("create");
+      });
+
+      // Add another workspace (>0 → >0 transition)
+      projectsStore.addWorkspace("/test/project", {
+        projectId: asProjectId("test-project-12345678"),
+        path: "/test/.worktrees/second",
+        name: "second" as WorkspaceName,
+        branch: "second",
+        metadata: {},
+      });
+
+      // Give time for any close to trigger
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Dialog should still be open
+      expect(dialogsStore.dialogState.value.type).toBe("create");
+    });
+
+    it("does NOT close non-create dialogs when workspace appears", async () => {
+      // Start with one workspace, then remove it to get to 0
+      const project = createMockProject({
+        id: asProjectId("test-project-12345678"),
+        workspaces: [],
+      });
+      mockApi.projects.list.mockResolvedValue([project]);
+
+      render(MainView);
+
+      // Wait for loading to complete
+      await waitFor(() => {
+        expect(projectsStore.loadingState.value).toBe("loaded");
+      });
+
+      // Open a remove dialog (not create)
+      dialogsStore.openRemoveDialog(
+        asWorkspaceRef("test-project-12345678", "feature", "/test/.worktrees/feature")
+      );
+
+      expect(dialogsStore.dialogState.value.type).toBe("remove");
+
+      // Simulate a workspace appearing
+      projectsStore.addWorkspace("/test/project", {
+        projectId: asProjectId("test-project-12345678"),
+        path: "/test/.worktrees/new-ws",
+        name: "new-ws" as WorkspaceName,
+        branch: "new-ws",
+        metadata: {},
+      });
+
+      // Give time for any close to trigger
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Remove dialog should still be open
+      expect(dialogsStore.dialogState.value.type).toBe("remove");
+    });
+  });
 });
