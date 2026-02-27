@@ -790,25 +790,6 @@ describe("OpenCodeAgentModule Integration", () => {
         })
       );
     });
-
-    it("returns undefined when inactive", async () => {
-      const setup = createTestSetup();
-      await activateModule(setup, "claude");
-
-      setup.dispatcher.registerOperation("workspace:open", new MinimalSetupOperation());
-
-      const result = (await setup.dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as OpenWorkspaceIntent)) as SetupHookResult | undefined;
-
-      expect(result).toBeUndefined();
-      expect(setup.serverManager.startServer).not.toHaveBeenCalled();
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -837,26 +818,6 @@ describe("OpenCodeAgentModule Integration", () => {
       expect(setup.agentStatusManager.clearTuiTracking).toHaveBeenCalled();
       expect(result).toBeDefined();
       expect(result!.serverName).toBe("OpenCode");
-    });
-
-    it("returns undefined when inactive", async () => {
-      const setup = createTestSetup();
-      await activateModule(setup, "claude");
-
-      setup.dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
-
-      const result = (await setup.dispatcher.dispatch({
-        type: "workspace:delete",
-        payload: {
-          workspacePath: "/test/path",
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      } as DeleteWorkspaceIntent)) as ShutdownHookResult | undefined;
-
-      expect(result).toBeUndefined();
-      expect(setup.serverManager.stopServer).not.toHaveBeenCalled();
     });
 
     it("includes error when stopServer fails", async () => {
@@ -908,20 +869,6 @@ describe("OpenCodeAgentModule Integration", () => {
       expect(result).toBeDefined();
       expect(result!.agentStatus).toEqual({ status: "idle", counts: { idle: 1, busy: 0 } });
     });
-
-    it("returns undefined when inactive", async () => {
-      const setup = createTestSetup();
-      await activateModule(setup, "claude");
-
-      setup.dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
-
-      const result = (await setup.dispatcher.dispatch({
-        type: "workspace:get-status",
-        payload: { workspacePath: "/test/path" },
-      })) as GetStatusHookResult | undefined;
-
-      expect(result).toBeUndefined();
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -947,20 +894,6 @@ describe("OpenCodeAgentModule Integration", () => {
       expect(result).toBeDefined();
       expect(result!.session).toEqual({ port: 8080, sessionId: "sess-1" });
     });
-
-    it("returns undefined when inactive", async () => {
-      const setup = createTestSetup();
-      await activateModule(setup, "claude");
-
-      setup.dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
-
-      const result = (await setup.dispatcher.dispatch({
-        type: "agent:get-session",
-        payload: { workspacePath: "/test/path" },
-      })) as GetAgentSessionHookResult | undefined;
-
-      expect(result).toBeUndefined();
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -985,20 +918,6 @@ describe("OpenCodeAgentModule Integration", () => {
       expect(result!.port).toBe(8081);
     });
 
-    it("returns undefined when inactive", async () => {
-      const setup = createTestSetup();
-      await activateModule(setup, "claude");
-
-      setup.dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
-
-      const result = (await setup.dispatcher.dispatch({
-        type: "agent:restart",
-        payload: { workspacePath: "/test/path" },
-      })) as RestartAgentHookResult | undefined;
-
-      expect(result).toBeUndefined();
-    });
-
     it("throws when restart fails", async () => {
       const setup = createTestSetup();
       await activateModule(setup, null);
@@ -1017,6 +936,68 @@ describe("OpenCodeAgentModule Integration", () => {
         })
       ).rejects.toThrow("server not running");
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // returns undefined when inactive (parameterized)
+  // ---------------------------------------------------------------------------
+
+  describe("returns undefined when inactive", () => {
+    it.each<{
+      intentType: string;
+      operation: () => Operation<Intent, unknown>;
+      payload: Record<string, unknown>;
+      notCalled?: "startServer" | "stopServer";
+    }>([
+      {
+        intentType: "workspace:open",
+        operation: () => new MinimalSetupOperation(),
+        payload: { projectId: "test-12345678", workspaceName: "feature-1", base: "main" },
+        notCalled: "startServer",
+      },
+      {
+        intentType: "workspace:delete",
+        operation: () => new MinimalShutdownOperation(),
+        payload: {
+          workspacePath: "/test/path",
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+        notCalled: "stopServer",
+      },
+      {
+        intentType: "workspace:get-status",
+        operation: () => new MinimalGetStatusOperation(),
+        payload: { workspacePath: "/test/path" },
+      },
+      {
+        intentType: "agent:get-session",
+        operation: () => new MinimalGetSessionOperation(),
+        payload: { workspacePath: "/test/path" },
+      },
+      {
+        intentType: "agent:restart",
+        operation: () => new MinimalRestartOperation(),
+        payload: { workspacePath: "/test/path" },
+      },
+    ])(
+      "$intentType returns undefined when inactive",
+      async ({ intentType, operation, payload, notCalled }) => {
+        const setup = createTestSetup();
+        await activateModule(setup, "claude");
+        setup.dispatcher.registerOperation(intentType, operation());
+
+        const result = await setup.dispatcher.dispatch({ type: intentType, payload });
+
+        expect(result).toBeUndefined();
+        if (notCalled) {
+          expect(
+            setup.serverManager[notCalled as keyof typeof setup.serverManager]
+          ).not.toHaveBeenCalled();
+        }
+      }
+    );
   });
 
   // ---------------------------------------------------------------------------
