@@ -12,6 +12,7 @@ import type {
   AgentSelectedPayload,
 } from "../shared/ipc";
 import type { ShortcutKey } from "../shared/shortcuts";
+import type { InitialPrompt } from "../shared/api/types";
 
 /**
  * Function to unsubscribe from an event.
@@ -47,8 +48,18 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.PROJECT_FETCH_BASES, { projectPath }),
   },
   workspaces: {
-    create: (projectPath: string, name: string, base: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_CREATE, { projectPath, name, base }),
+    create: (
+      projectPath: string,
+      name: string,
+      base: string,
+      options?: { initialPrompt?: InitialPrompt; stealFocus?: boolean }
+    ) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_CREATE, {
+        projectPath,
+        name,
+        base,
+        ...options,
+      }),
     remove: (
       workspacePath: string,
       options?: {

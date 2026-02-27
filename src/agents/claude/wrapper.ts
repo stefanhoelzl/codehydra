@@ -120,7 +120,10 @@ function buildPermissionArgs(agent?: string): string[] {
  * @returns Array of CLI arguments (prompt, --model, --agent flags as needed)
  */
 function buildInitialPromptArgs(config: InitialPromptConfig): string[] {
-  const args: string[] = [config.prompt];
+  const args: string[] = [];
+  if (config.prompt) {
+    args.push(config.prompt);
+  }
 
   if (config.model !== undefined) {
     args.push("--model", config.model);

@@ -6,13 +6,12 @@
   import Icon from "./Icon.svelte";
   import {
     workspaces,
-    ui,
     projects as projectsApi,
     type Workspace,
     type ProjectId,
     type Project,
   } from "$lib/api";
-  import { validateWorkspaceName } from "@shared/api/types";
+  import { validateWorkspaceName, type InitialPrompt } from "@shared/api/types";
   import { closeDialog, openGitCloneDialog } from "$lib/stores/dialogs.svelte.js";
   import { getProjectById, projects } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
@@ -61,6 +60,25 @@
   let touched = $state(false);
   let createButtonRef: HTMLElement | undefined = $state();
   let nameInputRef: { focus: () => void } | undefined = $state();
+
+  // More options state
+  let showMoreOptions = $state(false);
+  let initialPrompt = $state("");
+  let agentMode = $state<"" | "plan">("");
+  let openInBackground = $state(false);
+  let agentModeRef: HTMLElement | undefined = $state();
+
+  // Direct event listener for vscode-single-select: its change event doesn't bubble,
+  // but Svelte 5 delegates 'change' to the document root, so onchange= misses it.
+  $effect(() => {
+    const el = agentModeRef;
+    if (!el) return;
+    const handler = (e: Event) => {
+      agentMode = (e.target as HTMLSelectElement).value as "" | "plan";
+    };
+    el.addEventListener("change", handler);
+    return () => el.removeEventListener("change", handler);
+  });
 
   // Get existing workspace names for duplicate validation (uses selectedProjectId)
   const existingNames = $derived.by(() => {
@@ -131,6 +149,16 @@
     setTimeout(() => createButtonRef?.focus(), 0);
   }
 
+  // Toggle more options visibility
+  function toggleMoreOptions(): void {
+    showMoreOptions = !showMoreOptions;
+    // Re-focus the toggle after DOM updates (it moves between actions row and content area)
+    setTimeout(() => {
+      const toggle = document.querySelector(".more-options-toggle") as HTMLElement | null;
+      toggle?.focus();
+    }, 0);
+  }
+
   // Handle form submission
   async function handleSubmit(): Promise<void> {
     // isFormValid includes hasProject check, so selectedProject is defined
@@ -141,9 +169,25 @@
 
     try {
       logger.debug("Dialog submitted", { type: "create-workspace" });
-      const workspace = await workspaces.create(selectedProject.path, name, selectedBranch);
-      // Switch to the newly created workspace to load its view
-      await ui.switchWorkspace(workspace.path);
+
+      // Build options from "More options" fields
+      const options: { initialPrompt?: InitialPrompt; stealFocus?: boolean } = {};
+      const trimmedPrompt = initialPrompt.trim();
+      if (trimmedPrompt || agentMode) {
+        options.initialPrompt = agentMode
+          ? { prompt: trimmedPrompt, agent: agentMode }
+          : trimmedPrompt;
+      }
+      if (openInBackground) {
+        options.stealFocus = false;
+      }
+
+      await workspaces.create(
+        selectedProject.path,
+        name,
+        selectedBranch,
+        Object.keys(options).length > 0 ? options : undefined
+      );
       closeDialog();
     } catch (error) {
       const message = getErrorMessage(error);
@@ -197,6 +241,18 @@
   const descriptionId = "create-workspace-desc";
   const nameErrorId = "name-error";
 </script>
+
+{#snippet moreOptionsToggle()}
+  <button
+    class="more-options-toggle"
+    onclick={toggleMoreOptions}
+    disabled={isSubmitting}
+    type="button"
+  >
+    <Icon name={showMoreOptions ? "chevron-down" : "chevron-right"} />
+    More options
+  </button>
+{/snippet}
 
 <Dialog {open} onClose={handleCancel} busy={isSubmitting} {titleId} {descriptionId}>
   {#snippet title()}
@@ -284,6 +340,51 @@
       {/if}
     </div>
 
+    {#if showMoreOptions}
+      {@render moreOptionsToggle()}
+
+      <div class="more-options-box">
+        <div class="ch-form-field">
+          <label for="initial-prompt" class="ch-form-label">Initial prompt</label>
+          <vscode-textarea
+            id="initial-prompt"
+            value={initialPrompt}
+            oninput={(e: Event) => {
+              initialPrompt = (e.target as HTMLTextAreaElement).value;
+            }}
+            disabled={isSubmitting}
+            rows={3}
+            resize="vertical"
+            placeholder="Optional prompt to send after creation"
+          ></vscode-textarea>
+        </div>
+
+        <div class="ch-form-field">
+          <label for="agent-mode" class="ch-form-label">Agent</label>
+          <vscode-single-select
+            id="agent-mode"
+            bind:this={agentModeRef}
+            value={agentMode}
+            disabled={isSubmitting}
+          >
+            <vscode-option value="">Full permissions</vscode-option>
+            <vscode-option value="plan">Plan mode (read-only)</vscode-option>
+          </vscode-single-select>
+        </div>
+
+        <div class="ch-checkbox-row">
+          <vscode-checkbox
+            checked={openInBackground}
+            onchange={(e: Event) => {
+              openInBackground = (e.target as HTMLElement & { checked: boolean }).checked;
+            }}
+            disabled={isSubmitting}
+            label="Open in background"
+          ></vscode-checkbox>
+        </div>
+      </div>
+    {/if}
+
     {#if isSubmitting}
       <div class="ch-status-message" aria-live="polite">Creating workspace...</div>
     {/if}
@@ -308,6 +409,9 @@
     <vscode-button secondary={true} onclick={handleCancel} disabled={isSubmitting}>
       Cancel
     </vscode-button>
+    {#if !showMoreOptions}
+      {@render moreOptionsToggle()}
+    {/if}
   {/snippet}
 </Dialog>
 
@@ -340,5 +444,39 @@
   /* Placeholder textfield when no project selected */
   .project-row :global(.no-project-placeholder) {
     flex: 1;
+  }
+
+  .more-options-box {
+    border: 1px solid var(--ch-input-border);
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 0;
+  }
+
+  .more-options-toggle {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--ch-foreground);
+    opacity: 0.8;
+    cursor: pointer;
+    margin-right: auto;
+  }
+
+  .more-options-toggle:hover {
+    opacity: 1;
+  }
+
+  .more-options-toggle:focus-visible {
+    opacity: 1;
+    outline: 1px solid var(--ch-focus-border);
+    outline-offset: 2px;
+  }
+
+  .more-options-toggle:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 </style>
